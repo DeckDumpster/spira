@@ -14,7 +14,6 @@
 
 use std::process::{Command, Stdio};
 
-use crate::bd::Bd;
 use crate::seam::Seam;
 
 /// One candidate's git verdict, in the exact shape `spira-claim deadlocked`'s
@@ -122,28 +121,15 @@ pub fn judge_one(seam: &dyn Seam, id: &str) -> Candidate {
     Candidate { id: id.to_string(), ok: true, why: String::new(), branch, base }
 }
 
-/// The non-enforce path reads bd's own `label list` rendering, which is never a bare
-/// label per line — real `bd label list <id>` prints a header, then `  - <label>` rows
-/// (verified against a live `bd`: `🏷️ Labels for <id>:` / `  - plan` / `  - spira-poison`).
-/// The just-landed bash's `grep -qx spira-poison` (exact whole-line match) can never match
-/// that output — a bug this port does not reproduce; `groomer.sh`'s own `triage-poison`
-/// case already used the substring form (`grep -q spira-poison`) for exactly this reason.
-fn is_poisoned(bd: &dyn Bd, seam: &dyn Seam, id: &str, enforce: bool) -> bool {
-    if enforce {
-        seam.lc_held_poison(id)
-    } else {
-        bd.label_list(id).map(|text| text.contains("spira-poison")).unwrap_or(false)
-    }
-}
-
 /// `groomer deadlocked [--apply]`: gather every poisoned candidate across the whole
 /// roster, judge each one's git state, and hand the verdicts to `spira-claim deadlocked`
 /// — which decides and writes. Returns the exit code and combined output to print.
-pub fn run(bd: &dyn Bd, seam: &dyn Seam, db: &str, apply: bool, enforce: bool, spira_claim_bin: &str) -> (i32, String) {
+pub fn run(seam: &dyn Seam, db: &str, apply: bool, spira_claim_bin: &str) -> (i32, String) {
     let members = seam.all_partition_members().unwrap_or_default();
     let mut candidates = Vec::new();
     for id in members.lines().map(str::trim).filter(|s| !s.is_empty()) {
-        if is_poisoned(bd, seam, id, enforce) {
+        // Poisoned is the lifecycle machine's hold, never bd's label.
+        if seam.lc_held_poison(id) {
             candidates.push(judge_one(seam, id));
         }
     }
@@ -176,7 +162,6 @@ pub fn run(bd: &dyn Bd, seam: &dyn Seam, db: &str, apply: bool, enforce: bool, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bd::fake::FakeBd;
     use crate::seam::fake::FakeSeam;
 
     #[test]
@@ -214,31 +199,10 @@ mod tests {
     }
 
     #[test]
-    fn is_poisoned_without_enforce_checks_the_label_list_exactly() {
-        let bd = FakeBd::new();
-        bd.set_labels("sp-1", &["plan", "spira-poison"]);
-        let seam = FakeSeam::new();
-        assert!(is_poisoned(&bd, &seam, "sp-1", false));
-        bd.set_labels("sp-2", &["plan"]);
-        assert!(!is_poisoned(&bd, &seam, "sp-2", false));
-    }
-
-    #[test]
-    fn is_poisoned_with_enforce_asks_the_lifecycle_machine_not_the_label() {
-        let bd = FakeBd::new();
-        bd.set_labels("sp-1", &["plan"]); // no spira-poison label
-        let seam = FakeSeam::new();
-        seam.held_poison.borrow_mut().insert("sp-1".to_string());
-        assert!(is_poisoned(&bd, &seam, "sp-1", true), "enforce path must consult the lifecycle hold, not bd's label");
-    }
-
-    #[test]
     fn run_invokes_spira_claim_with_an_empty_array_when_nothing_is_poisoned() {
-        let bd = FakeBd::new();
-        bd.set_labels("sp-1", &["plan"]); // not poisoned
-        let seam = FakeSeam::new();
+        let seam = FakeSeam::new(); // holds no poison
         *seam.partition_members.borrow_mut() = "sp-1\n".to_string();
-        let (code, _) = run(&bd, &seam, "/db", false, false, "true");
+        let (code, _) = run(&seam, "/db", false, "true");
         assert_eq!(code, 0, "the `true` stub always exits 0 — this just proves run() reaches and calls it");
         assert!(seam.log().iter().any(|c| c == "all_partition_members"));
     }

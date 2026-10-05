@@ -42,7 +42,7 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use cfg::{lifecycle_enforce, Context, Repo};
+use cfg::{Context, Repo};
 use host::{Clock, Host, Io, RealClock, RealRunner, RealSink, Runner, Spec};
 use pass::{Mode, Sentinel};
 
@@ -181,15 +181,12 @@ fn main() {
         Ok(c) => c,
         Err(e) => std::process::exit(fatal(&e)),
     };
-    // The unit's own environment, not conf.sh's (which defaults the key to 0).
-    let toml = ctx
-        .get("SPIRA_TOML_FILE")
-        .filter(|t| !t.is_empty())
-        .map(PathBuf::from);
-    let lc = lifecycle_enforce(
-        std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(),
-        toml.as_deref(),
-    );
+    // The retired lifecycle switch (sp-v62vn): a unit environment saying off is refused.
+    match spira_config::check_lifecycle_switch_env(std::env::var(spira_config::LIFECYCLE_ENFORCE_ENV).ok().as_deref()) {
+        Ok(Some(w)) => eprintln!("sentinel: {w}"),
+        Ok(None) => {}
+        Err(e) => std::process::exit(fatal(&e)),
+    }
     let runner = RealRunner {
         base_env: Some(ctx.env.clone()),
     };
@@ -203,7 +200,6 @@ fn main() {
         mode,
         exe.to_string_lossy().into_owned(),
         pass_id,
-        lc,
     );
     let code = s.run();
     temps::cleanup();

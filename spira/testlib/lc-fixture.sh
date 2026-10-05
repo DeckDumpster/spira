@@ -37,8 +37,7 @@ YAML
     LCFIX_PID=$!
     unset SPIRA_LC_SOCKET
     export SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$port" SPIRA_LC_DB=spira_lifecycle \
-        SPIRA_LC_DATA_DIR="$LCFIX_DIR" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
-        SPIRA_LIFECYCLE_ENFORCE=1
+        SPIRA_LC_DATA_DIR="$LCFIX_DIR" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=""
     local up=0
     for _ in $(seq 1 100); do
         if "$LCFIX_DOLT" --data-dir "$LCFIX_DIR" --host 127.0.0.1 --port "$port" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
@@ -61,7 +60,7 @@ lcfix_down() {
 }
 
 lcfix_env() {
-    printf 'SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD= SPIRA_LIFECYCLE_ENFORCE=1' \
+    printf 'SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD=' \
         "$SPIRA_LC_HOST" "$SPIRA_LC_PORT" "$SPIRA_LC_DB" "$SPIRA_LC_DATA_DIR" "$SPIRA_LC_USER"
 }
 

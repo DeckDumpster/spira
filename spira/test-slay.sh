@@ -136,8 +136,6 @@ done
 lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
-export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LCPORT"
 export SPIRA_LC_DB=spira_lifecycle

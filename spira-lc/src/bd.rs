@@ -46,9 +46,6 @@ pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
 pub struct LiveBd;
 
 impl crate::callers::Bd for LiveBd {
-    fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String> {
-        run(&["unclaim", id, "--if-assignee", actor]).map(|_| ())
-    }
     fn issue_type(&mut self, id: &str) -> Result<String, String> {
         let out = run(&["show", id, "--json"])?;
         let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
@@ -76,7 +73,6 @@ pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Resul
     let bead_sh = "bead.sh";
     let out = Command::new(bead_sh)
         .args(["file", title, "--for", persona, "--repo", repo, "--parent", parent])
-        .env(spira_config::LIFECYCLE_ENFORCE_ENV, "0")
         .output()
         .map_err(|e| format!("running {bead_sh}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -128,16 +124,11 @@ pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String>
 
 /// A harness tool by bare name on the launcher's PATH (sp-gypjk), run under `timeout` with
 /// the caller's persona as `SPIRA_FAYTH` — the czar fence in `queue` and `bdq` reads it, and
-/// the broker's own identity is never the persona that asked. `enforce_off` sets the
-/// lifecycle switch off in the child, exactly as [`file_child`] does for `bead.sh`, for a
-/// tool whose lifecycle half this broker performs itself. Returns the tool's own exit code
+/// the broker's own identity is never the persona that asked. Returns the tool's own exit code
 /// (stdout; stdout plus stderr when it failed).
-pub fn tool(program: &str, args: &[String], stdin: Option<&str>, actor: &str, enforce_off: bool, secs: u64) -> (i32, String) {
+pub fn tool(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64) -> (i32, String) {
     let mut cmd = Command::new("timeout");
     cmd.arg(secs.to_string()).arg(program).args(args).env("SPIRA_FAYTH", actor);
-    if enforce_off {
-        cmd.env(spira_config::LIFECYCLE_ENFORCE_ENV, "0");
-    }
     spawn(cmd, stdin, program)
 }
 

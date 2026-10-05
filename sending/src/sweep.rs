@@ -334,21 +334,15 @@ impl<'a> Sweep<'a> {
                 // is about to vanish, and with it the only proof the bead was not closed on
                 // nothing. Zero ahead is a fast-forward (whose own commit names the bead) or
                 // empty work; only a branch with commits whose diff is nonetheless on the
-                // base is the case this records. ON: a ContentOnBase event. OFF: the
-                // `content-landed` label CHECK 5's exemption still reads (the gap sp-arpjt
-                // closes — dc3e364bf dropped it for OFF).
+                // base is the case this records: a ContentOnBase event.
                 let ahead = g.ahead(lr, br).unwrap_or(0);
                 if ahead > 0 && !g.has_own_commit(lr, br, id) {
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
                     return;
                 }
                 if ahead > 0 {
-                    if self.w.enforce() {
-                        let proof = format!("merge-tree:{}", g.rev_parse(lr).unwrap_or_default());
-                        self.w.content_on_base(id, &proof);
-                    } else {
-                        self.w.label_add(id, "content-landed");
-                    }
+                    let proof = format!("merge-tree:{}", g.rev_parse(lr).unwrap_or_default());
+                    self.w.content_on_base(id, &proof);
                 }
                 self.send_landed(c, id, br, "SENT");
             }

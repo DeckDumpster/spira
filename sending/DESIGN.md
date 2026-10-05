@@ -57,10 +57,8 @@ computed. Otherwise, in order (the forge is asked only after every local check s
 | ORPHAN no-bead | no bead, real commits | write `refs/archive/<br>`, read it back, then reap |
 
 **Evidence before a content-landed delete** (only when the branch carried commits):
-`lifecycle_enforce` ON → `spira-lc content-on-base <id> merge-tree:<base-sha> sending`;
-OFF → `bd label add <id> content-landed`, the exemption CHECK 5 still reads. This closes
-the OFF gap sentinel/DESIGN.md §2.9 recorded (cutover row 39): `dc3e364bf` had made the
-shell write only the lifecycle event, a no-op with the switch off.
+`spira-lc content-on-base <id> merge-tree:<base-sha> sending`. The off-mode
+`content-landed` label went with the off mode (sp-v62vn).
 
 **PASS 2 — orphaned worktrees** (skipped for a one-bead run): a registered worktree under
 `$SPIRA_RUN/worktree/`, not a dot-named harness tree, whose branch ref is gone, and whose

@@ -27,7 +27,7 @@
 set -uo pipefail
 # THE TOOLS BESIDE THIS HOOK FIRST (sp-tf7nt). core.hooksPath points at a release's
 # spira/hooks, so <release>/spira and <release>/bin are this hook's own release. Under
-# lifecycle_enforce the model's PATH is restricted (aeon/src/restrict.rs: /usr/bin, /bin,
+# an aeon the model's PATH is restricted (aeon/src/restrict.rs: /usr/bin, /bin,
 # the release's bin/) and omits spira/, so a bare-name lookup alone refused every commit on
 # a fresh install; production only passed because the agent's shell inherited a profile
 # PATH. Still the release's tools, still refusing when one is missing.

@@ -156,7 +156,6 @@ spira/test-land-mode-local.sh
 spira/testlib/gate-fixture.sh
 spira/testlib.sh
 spira/test-lifecycle-classify.sh
-spira/test-lifecycle-enforce-gate.sh
 spira/test-livelock.sh
 spira/test-maechen-trigger.sh
 spira/test-mail-aeon.sh

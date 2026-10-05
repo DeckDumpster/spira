@@ -273,7 +273,6 @@ pub fn release_store(cfg: &Cfg) -> Reading {
 pub const ROWLESS_REFERENCE: &str = "incident:lifecycle-rowless-beads";
 
 pub struct RowlessCfg {
-    pub enforce: bool,
     pub bd: String,
     pub db: String,
     pub lc_bin: String,
@@ -300,7 +299,7 @@ pub fn rowless_cond(missing: &[String], cap: usize, sustain_secs: i64) -> Option
         reference: ROWLESS_REFERENCE.into(),
         title: "LIFECYCLE: open beads have no lifecycle row and can never be claimed".into(),
         body: format!(
-            "{} open bead(s) have no spira_lifecycle row (lifecycle_enforce is on), so no builder can claim them: {}{}.\n\nA creation path did not run `spira-lc create-bead`. Create the rows (`spira-lc create-bead <id>`) and find the path that filed them.\n",
+            "{} open bead(s) have no spira_lifecycle row so no builder can claim them: {}{}.\n\nA creation path did not run `spira-lc create-bead`. Create the rows (`spira-lc create-bead <id>`) and find the path that filed them.\n",
             missing.len(),
             shown.join(", "),
             if more > 0 { format!(" (+{more} more)") } else { String::new() }
@@ -322,9 +321,6 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
 /// machine; reading bd status here audits the machine's coverage and decides nothing about a
 /// bead the machine holds. The rule names this function; nothing else may do this.
 pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
-    if !cfg.enforce {
-        return Reading::Standing(Vec::new());
-    }
     let open = crate::deadline::output(
         "rowless open beads",
         Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]),
@@ -368,9 +364,7 @@ mod tests {
         };
         let bd = write("bd", "echo '[{\"id\":\"sp-a\"},{\"id\":\"sp-b\"}]'");
         let lc = write("lc", "echo '[{\"bead_id\":\"sp-a\"}]'");
-        let mut cfg = RowlessCfg { enforce: false, bd: bd.clone(), db: "x".into(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0 };
-        assert!(matches!(rowless_beads(&cfg), Reading::Standing(v) if v.is_empty()), "off must not alarm");
-        cfg.enforce = true;
+        let mut cfg = RowlessCfg { bd: bd.clone(), db: "x".into(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0 };
         match rowless_beads(&cfg) {
             Reading::Standing(v) => {
                 assert_eq!(v.len(), 1);

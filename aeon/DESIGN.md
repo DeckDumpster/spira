@@ -17,15 +17,15 @@ the bead store, the lifecycle machine, git and a handful of files under `$SPIRA_
 
 1. **Decides whether to work at all** — capacity, `world.halted`, `world.draining`, the
    account's capacity pause. Declining is a healthy outcome (exit 0, `awake <f> <reason>`).
-2. **Selects and claims one bead** — `spira-claim` ranks the ready set epic-first; the
-   atomic `bd update --claim` claims; the lifecycle machine (CAS Claim) authorises when
-   `lifecycle_enforce` is on.
+2. **Selects and claims one bead** — `spira-claim fayth-ready` supplies the lifecycle
+   machine's ready set and ranks it epic-first; a CAS Claim event on the lifecycle row is the
+   claim. There is no bd claim and no off mode (`lifecycle_enforce` is retired, sp-v62vn).
 3. **Builds one workspace** — one bead, one worktree, under the sanctioned root
    `$SPIRA_RUN/worktree/<bead>`; never adopts a tree another bead holds; never deletes a
    tree (moves it aside).
 4. **Renders the brief** — the persona's chamber template with `{{…}}` placeholders, the
-   operator's overlays, and session-specific blocks; how the session finishes (`bd close`
-   vs `work submit`) follows `lifecycle_enforce` and nothing else.
+   operator's overlays, and session-specific blocks; the session finishes through the
+   `work` verbs (`work submit` and kin) — the model has no `bd`.
 5. **Runs the model session** under a liveness lease (trace growth renews it) and a
    deliverable-progress wall (thrash), streaming its trace to `$SPIRA_RUN/<bead>.log`.
 6. **Judges the outcome** — closed is not landed: the verdict fences (commit naming the
@@ -50,7 +50,7 @@ ledger, the session — no claim, no worktree, no verdict.
   reopens, from `spira-claim requeues --json` — went with the eviction-race block, below.)
 - **Brief rendering is a separate module from claim selection** (`brief.rs` vs
   `claim.rs`): sp-f0qhr was ejected twice for mixing them. Nothing in `claim.rs` knows
-  about chambers, `{{FINISH}}` or `lifecycle_enforce`.
+  about chambers or `{{FINISH}}`.
 - **Not lib.sh.** lib.sh stays. Broad shared machinery is called through one documented
   subprocess seam (§5); aeon-specific decisions and all rendering are Rust.
 
@@ -79,7 +79,7 @@ on stderr, exit 1 (wording kept: callers grep `FATAL`).
 | exit | when |
 |---|---|
 | 0 | declined (capacity, halted, draining, paused, idle); dry run; poison raced; world-stop fence refused; lifecycle claim refused/unreachable; **bead closed or converted to submitted**; sweep that ran (outcome `unlanded`/`killed`) |
-| 1 | usage; no such fayth; unfenced predicate; claim-error (ready query / epic lookup / rank failed); `lifecycle_enforce` set with a binary missing; unmapped repo; unresolvable base; worktree could not be made; pre-session death (a `rc=0` there is coerced to 1) |
+| 1 | usage; no such fayth; unfenced predicate; claim-error (ready query / epic lookup / rank failed); a retired `SPIRA_LIFECYCLE_ENFORCE` that says off (refused by name, sp-v62vn); a release with no `model-bin/`; unmapped repo; unresolvable base; worktree could not be made; pre-session death (a `rc=0` there is coerced to 1) |
 | `SESSION_RC` | session ran and the bead was left open (unlanded / not-judged / yield-headless / submitted-but-open paths exit the session's own code, e.g. 1 or 124) |
 | `rc` (see below) | the disposition branches capacity, slain, thrash, lapsed, gate-unfinished, decision-blocked, timeout, requeue, operator-wait, submitted, pre-session |
 
@@ -123,8 +123,7 @@ Append-only, one line per write, `O_APPEND`, no lock. Timestamp is UTC second pr
   (`duration_ms`, `num_turns`, `usage.*`) over every `result` record and taking the last
   value of cumulative ones (`duration_api_ms`, `total_cost_usd`); integers use Python's
   round-half-even of `v/1000` or `v`; cost `%.4f`. A missing field is `?`, never 0.
-- `status` values written: `poison-raced`, `lifecycle-enforce-binary-missing`,
-  `lc-claim-refused`, `lc-claim-unreachable`, `world-stop-fence`, `unmapped-repo`,
+- `status` values written: `hold-raced`, `lc-claim-refused`, `lc-claim-unreachable`, `world-stop-fence`, `unmapped-repo`,
   `capacity`, `slain`, `requeue-thrash`, `requeue-thrash-charged`, `lapsed`,
   `gate-unfinished`, `decision-blocked`, `timeout`, `requeue-<cause>`, `operator-wait`,
   `submitted`, `yield-headless`, `pre-session`, `closed`, `open`, `in_progress`, `?`,
@@ -172,9 +171,7 @@ After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34
 
 | call | when |
 |---|---|
-| `ready <READY_ARGS> --label <FAYTH_LABELS> --exclude-label <CLAIM_EXCLUDE> --json` | selection (retried `SPIRA_CLAIM_RETRIES`×, delay `SPIRA_CLAIM_RETRY_DELAY_S`) |
-| `update <id> --claim --json` | one per ranked candidate, until one returns a row |
-| `show <id> --json` | poison race, world-stop label, teardown status, verdict, close reason, work-type |
+| `show <id> --json` | the claimed bead's content, world-stop label, teardown status, verdict, close reason, work-type |
 | `show <id>` (text) | the brief's bead body |
 | `state <id> branch` / `set-state <id> branch=<b>` | branch affinity |
 | `note <id> <text>` | every disposition and fence note (texts verbatim from aeon.sh) |
@@ -225,8 +222,9 @@ No `.github/workflows` file and no `round.sh` line invokes aeon.sh.
 ### 2.9 Environment
 
 Read from the unit's environment: `SPIRA_REQUIRE_LABEL` (folded into `FAYTH_LABELS`),
-`AEON_OWN_UNIT` (test override of `/proc/self/cgroup`), `SPIRA_LIFECYCLE_ENFORCE`
-(environment wins, as conf.sh), and every key conf.sh reads. The **child** environment
+`AEON_OWN_UNIT` (test override of `/proc/self/cgroup`), and every key conf.sh reads.
+`SPIRA_LIFECYCLE_ENFORCE` is retired (sp-v62vn): one that says off is refused by name before
+anything runs (`spira_config::check_lifecycle_switch_env`); one that says on is a warning. The **child** environment
 (session, hooks, scripts) is conf.sh's exported environment (snapshot, §5) plus, exactly as
 aeon.sh exported them: `SPIRA_AEON`, `BEADS_ACTOR=aeon-<name>`, `GIT_{AUTHOR,COMMITTER}_{NAME,EMAIL}`,
 `SPIRA_INCIDENT_REPO`, `BEAD_ID`, `SPIRA_MAIL`, `SPIRA_MAIL_FROM=<Fayth> <<fayth>@spira>`,
@@ -238,9 +236,9 @@ aeon.sh exported them: `SPIRA_AEON`, `BEADS_ACTOR=aeon-<name>`, `GIT_{AUTHOR,COM
 ### 2.10 Guarantees (each is a unit test)
 
 1. The ledger formats of §2.4, byte for byte; a dry run never writes one.
-2. `lifecycle_enforce` alone selects the restricted path, the lifecycle CAS claim and the
-   `{{FINISH}}` text; binary presence never does; enforce with a missing binary refuses
-   (exit 1) before any session setup (sp-74gzo, sp-wmcvb).
+2. Every session takes the restricted path, the lifecycle CAS claim and the `work`-verb
+   `{{FINISH}}` text — there is no other mode (sp-v62vn; was selected by `lifecycle_enforce`,
+   sp-74gzo, sp-wmcvb).
 3. The ready set reaches `spira-claim` on stdin; the epic lookup and the resumable set in
    files; no bead payload is ever in argv.
 4. A rank or lookup failure is `claim-error` (exit 1), never `idle`.
@@ -364,8 +362,8 @@ fenced; the code fences it — kept, see §8).
 Every `FAYTH_HEARTBEAT_SECONDS` (default 30): trace mtime changed → renew (deadline = now +
 lease); else now ≥ deadline → **lapse**; else fuse (`aeon_fuse_minutes`, integer) ≥ wall
 (`SPIRA_THRASH_MINUTES`, 20) **and** session minutes ≥ wall → **thrash**; else ok. Then
-`bd heartbeat <id>`; a failing heartbeat ends the heartbeat (as the bash subshell's
-`|| exit 0`). Lapse writes `.lapsed`, thrash writes `.thrash`, then the session's process
+`spira-lc renew <id> <holder> <deadline>` renews the lifecycle row's lease (sp-2jf0a); a
+refusal is logged once per change and never ends the heartbeat. Lapse writes `.lapsed`, thrash writes `.thrash`, then the session's process
 group is sent TERM and the aeon goes straight to teardown with rc 143 (the bash killed its
 own process group, so its trap ran with 143 and skipped the verdict block — same outcome).
 
@@ -506,11 +504,9 @@ wave 4.23 sp-0ffox — this crate was `aeon_name_take`'s only caller, so it drop
 seam entirely rather than keeping a lib.sh shim; `aeon_named` keeps an `aeon aeon-named
 <pidfile>` subcommand for cockpit-collect, the one caller left outside this crate).
 
-`lifecycle_enforce` is read as conf.sh reads it: the unit's environment wins
-(`SPIRA_LIFECYCLE_ENFORCE`, how fixtures pin it); otherwise `spira.lifecycle_enforce` from
-the `spira.toml` conf.sh resolved (`SPIRA_TOML_FILE`), through the `spira-config` library
-(law-config-through-the-cli-only); otherwise off. Binary presence is consulted only to
-refuse an enabled-but-unbuildable configuration.
+`lifecycle_enforce` is retired (sp-v62vn): the lifecycle machine is the only mode. A
+`SPIRA_LIFECYCLE_ENFORCE` in the unit's environment that says off is refused at start-up,
+naming the exit; `spira.lifecycle_enforce = false` is refused by `spira-config` itself.
 
 ## 7. Tests
 
@@ -524,13 +520,13 @@ Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
 | `ledger` | every ledger format byte for byte, cockpit-metrics' regex over it, dry run writes nothing, trim 20,000→5,000, session fields (sum vs last, half-even rounding, `?` never 0), `attempt_trace` segments across a 64 KiB chunk, trace-mark numbering |
 | `decide` | the disposition table row by row and its precedence, hb_tick (test-aeon-lease/test-thrash rows), world-stop, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
 | `verdict` | `verdict_committed` (branch then landrefs fallback), `delivers_verdict` (beads/note/report/applied.jsonl/check/action), `close_verdict` precedence (sp-8kqww, wave 4.33) |
-| `brief` | FINISH follows lifecycle_enforce only; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
+| `brief` | FINISH/FOLLOWUP/NO_BD are the `work` verbs; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
 | `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
 | `worktree` | fresh cut + resume; mislabeled branch reset (sp-om71s case 1); own branch at a previous path moved aside (case 2); test-aeon-worktree-evict-foreign.sh row for row, including the refused move |
 | `session` | lease lapse and thrash trip the stop and write their markers; the trip signals the session's group, never the aeon's; timeout is 124 |
 | `seam` | NUL framing; the fixed script sources lib.sh and the fayth, folds SPIRA_REQUIRE_LABEL, refuses a function off the allowlist; snapshot parsing |
-| `conf` | fayth defaults, the fence, lifecycle_enforce (environment wins, toml bool read through spira-config, binaries irrelevant), persona_model |
-| `run::tests` / `tests` | whole runs: fence, capacity, halted/draining/paused order, dry run, claim-error, idle, poison race, enforce refusal, binary presence never enforces, enforce restricts the model, refused lifecycle claim, world-stop fence, unmapped repo (+ world restarted), happy path to submitted (ledger, brief, argv, env scrub), unlanded exit code, slain (verdict skipped, rc 143), pre-session death, rebase-conflict requeue, sweep |
+| `conf` | fayth defaults, the fence, persona_model |
+| `run::tests` / `tests` | whole runs: fence, capacity, halted/draining/paused order, dry run, claim-error, idle, hold race, the machine's claim restricts the model, refused lifecycle claim, world-stop fence, unmapped repo (+ world restarted), happy path to submitted (ledger, brief, argv, env scrub), unlanded exit code, slain (verdict skipped, rc 143), pre-session death, rebase-conflict requeue, sweep |
 | `main` | argv grammar |
 
 The seam's fixed script was also exercised against this branch's real `lib.sh` with an
@@ -570,7 +566,7 @@ Changed:
    does not contain `aeon.sh`. Until cutover item 5 lands, lib.sh reads every binary
    aeon as dead (aeon_name_take would reuse names; pidfile-mode aeon_count would undercount),
    so items 1-5 land together.
-8. **`lifecycle_enforce = true` in spira.toml now takes effect.** conf.sh exports the toml
+8. **`lifecycle_enforce = true` in spira.toml now takes effect** (the key is since retired, sp-v62vn). conf.sh exports the toml
    bool as the string `true` and aeon.sh tested `= 1`, so the key could only ever be
    switched on from the environment or spira.conf's `1`. The Rust reads the typed key
    (and accepts `1`/`true` from the environment).

@@ -1630,7 +1630,7 @@ mod tests {
     }
 
     // ── lease renewal (sp-2jf0a) ──────────────────────────────────────────────────────
-    // With lifecycle_enforce on, the Claim's lease_until was set once and never renewed, so
+    // Before renewal, the Claim's lease_until was set once and never renewed, so
     // the stale-lease reaper cleared every session longer than lease + reclaim_grace.
 
     fn held(holder: &str, lease_until: i64) -> BeadRow {

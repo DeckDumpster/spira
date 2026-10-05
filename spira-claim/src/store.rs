@@ -31,8 +31,6 @@ pub struct Config {
     pub run: Option<String>,
     /// `spira.ask_label` — the operator-ask label (`unpoison`: the ask it closes).
     pub ask_label: Option<String>,
-    /// `spira.lifecycle_enforce` — whether the lifecycle machine is the poison's record.
-    pub lifecycle_enforce: Option<bool>,
     /// `spira.scope_label` (`ready_args`/`fayth_ready`; conf.sh's own default for this one
     /// is procedural — `SPIRA_HOME_REPO` — so a caller with no toml value falls back to the
     /// already-exported `$SPIRA_SCOPE_LABEL` rather than this field, never to a constant).
@@ -62,7 +60,6 @@ pub fn load_config() -> Config {
                 submitted_label: s.submitted_label,
                 run: s.run,
                 ask_label: s.ask_label,
-                lifecycle_enforce: s.lifecycle_enforce,
                 scope_label: s.scope_label,
                 no_loop_label: s.no_loop_label,
                 queue_wait_label: s.queue_wait_label,
@@ -100,35 +97,11 @@ impl Store {
     }
 
     /// Run `bd <args>` to completion; `Err` names the verb and bd's own first stderr line
-    /// (or the timeout/spawn failure). `pub` so `ready_count`/`cmd_claim_retry` (the
+    /// (or the timeout/spawn failure). `pub` so `cmd_claim_retry` (the
     /// generic bd-retry verb, which takes arbitrary caller argv main.rs never parses) can
     /// call it directly, same as every other read here.
     pub fn bd(&self, args: &[&str]) -> Result<String, String> {
         run(self.bd_cmd(args), self.timeout).map_err(|e| format!("bd {}: {e}", args.first().unwrap_or(&"")))
-    }
-
-    /// `ready_count <labels> <exclude-labels>` (lib.sh:459): one bd `ready` query, counted.
-    /// A FAILED QUERY IS NOT A ZERO (sp-3ntca) — `Err` names the failure; the caller prints
-    /// '0' to stdout regardless (every existing caller of the bash form only ever reads
-    /// stdout, never the exit code, so stdout must still carry a number).
-    pub fn ready_count(&self, ready_args: &[String], labels: &str, exclude: &str) -> Result<u64, String> {
-        let mut args: Vec<&str> = ready_args.iter().map(String::as_str).collect();
-        args.push("--label");
-        args.push(labels);
-        args.push("--exclude-label");
-        args.push(exclude);
-        args.push("--json");
-        let text = self.bd(&args)?;
-        Ok(bead::bdq::json_count(bead::bdq::json_only(&text)))
-    }
-
-    /// The live fetch `bulk_ready_by_fayth` makes when no `SPIRA_READY_SNAPSHOT` is
-    /// cached: `bd <ready_args> --json`, `json_only`-stripped.
-    pub fn ready_json(&self, ready_args: &[String]) -> Result<String, String> {
-        let mut args: Vec<&str> = ready_args.iter().map(String::as_str).collect();
-        args.push("--json");
-        let text = self.bd(&args)?;
-        Ok(bead::bdq::json_only(&text).to_string())
     }
 
     /// Every folded event for `ids`, one query per [`EVENT_CHUNK`] ids.

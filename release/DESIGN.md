@@ -318,10 +318,10 @@ On failure it files a `spira,incident` bead in the **production** database — t
 stage's, and never lets a forensics failure change canary's own exit status.
 
 `canary-worker` claims the first bead of the one ready set an aeon claims from (`spira-claim
-fayth-ready canary --json`; under lifecycle_enforce the machine's READY/REWORK rows) the way an
-aeon claims it — on, the lifecycle Claim event (lib.sh `lc_claim_bead`, a refusal falling
-through to the next candidate; a give-up is `spira-lc unclaim`); off, `bd update <id> --claim`
-— never a `bd ready --claim` of its own (sp-7g5q6). It then creates branch
+fayth-ready canary --json`: the machine's READY/REWORK rows) the way an aeon claims it — the
+lifecycle Claim event (lib.sh `lc_claim_bead`, a refusal falling through to the next
+candidate; a give-up is `spira-lc unclaim`) — never a `bd ready --claim` of its own
+(sp-7g5q6). It then creates branch
 `spira/<id>`, commits a marker file as `canary`/`canary@example.invalid`, pushes, records
 `branch=<name>` on the bead, and closes it. It is invoked only by `fake-summon.sh`, inheriting
 the full stage env; there is no per-stage copy of it (unlike `stage.sh`'s own

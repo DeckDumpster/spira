@@ -204,7 +204,7 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
 /// verdict fences and teardown's closed branch judge (sp-mve9i)? Read from the bead's
 /// lifecycle row, never bd's `status` (design §3.4: bd status is inert for work beads).
 ///
-/// A restricted session (`lifecycle_enforce`) hands its bead on only through the work verbs
+/// A restricted session (every session the aeon launches) hands its bead on only through the work verbs
 /// (`work submit`/`done`), which teardown's disposition reads as `submitted`
 /// (`lc_bead_verified`); bd's status never moved for it, so it never took this path and
 /// still does not. An unrestricted session's close is the row past the builder

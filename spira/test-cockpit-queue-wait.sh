@@ -13,14 +13,13 @@
 # matching what fayth_exclude passes to bd ready for each aeon.
 #
 # Since sp-7g5q6 the NEXT rows come from `spira-claim ready-count <labels> <excl> --json`:
-# bd's ready query with lifecycle_enforce off, the machine's READY rows with it on — either
-# way filtered to the partition's labels and away from the exclude set. So the fixture's
-# beads carry the partition's labels (the scope label too, whatever it resolves to), the
-# switch is pinned rather than read from whatever config the host has, and each mode is
-# driven: with it on, a spira-lc stand-in (testlib.sh lc_mirror_bd) tells the mock bd's
+# the lifecycle machine's READY rows (the only mode since sp-v62vn retired
+# lifecycle_enforce), filtered to the partition's labels and away from the exclude set. So
+# the fixture's beads carry the partition's labels (the scope label too, whatever it
+# resolves to), and a spira-lc stand-in (testlib.sh lc_mirror_bd) tells the mock bd's
 # story as lifecycle rows (sp-mve9i).
 #
-# WHAT THIS SUITE CHECKS (4 assertions per mode, lifecycle_enforce off then on).
+# WHAT THIS SUITE CHECKS (4 assertions).
 #   1. POSITIVE CONTROL: a normal bead (no wait label) appears in SP_NEXT.
 #   2. Queue-wait bead NOT in SP_NEXT: a bead carrying spira-queue-waiting is
 #      absent from the panel rows.
@@ -45,16 +44,14 @@ BASE_PATH="$PATH"
 # plan — what the builder fayth's FAYTH_LABELS asks every NEXT row to carry.
 SCOPE_JSON="${SPIRA_SCOPE_LABEL:+\"$SPIRA_SCOPE_LABEL\",}\"plan\""
 lc_mirror_bd "$TMP/lc"
-ENFORCE=0
 
 # run_core <bd-binary> <wait-label> -> stdout of cockpit-collect probe core (SP_NEXT* and
-# SP_READY keys), with lifecycle_enforce pinned to $ENFORCE; on, spira-claim reads the
-# lifecycle rows from the lc_mirror_bd stand-in first on PATH.
+# SP_READY keys); spira-claim reads the lifecycle rows from the lc_mirror_bd stand-in
+# first on PATH.
 run_core() {
-    local bd_path="$1" wait_label="${2:-spira-queue-waiting}" path="$BASE_PATH"
-    [ "$ENFORCE" = 1 ] && path="$TMP/lc:$BASE_PATH"
-    env -i PATH="$path" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_LIFECYCLE_ENFORCE="$ENFORCE" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+    local bd_path="$1" wait_label="${2:-spira-queue-waiting}"
+    env -i PATH="$TMP/lc:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
@@ -103,30 +100,27 @@ EOF
 }
 
 echo "test-cockpit-queue-wait.sh"
-for ENFORCE in 0 1; do
-    echo
-    echo "== lifecycle_enforce=$ENFORCE"
-    echo "1 — positive control: normal bead (no wait label) appears in SP_NEXT"
-    # Without this, an implementation that hides everything would pass the queue-wait test.
-    make_bd_normal "$TMP/bd-normal"
-    out="$(run_core "$TMP/bd-normal")"
-    want "normal bead in SP_NEXT (enforce=$ENFORCE)" "sp-normal" "$out"
+echo
+echo "1 — positive control: normal bead (no wait label) appears in SP_NEXT"
+# Without this, an implementation that hides everything would pass the queue-wait test.
+make_bd_normal "$TMP/bd-normal"
+out="$(run_core "$TMP/bd-normal")"
+want "normal bead in SP_NEXT" "sp-normal" "$out"
 
-    echo
-    echo "2 — queue-wait bead NOT in SP_NEXT"
-    make_bd_wait "$TMP/bd-wait" "spira-queue-waiting"
-    out="$(run_core "$TMP/bd-wait" "spira-queue-waiting")"
-    nowant "queue-wait bead absent from SP_NEXT (enforce=$ENFORCE)" "sp-qw-test" "$out"
+echo
+echo "2 — queue-wait bead NOT in SP_NEXT"
+make_bd_wait "$TMP/bd-wait" "spira-queue-waiting"
+out="$(run_core "$TMP/bd-wait" "spira-queue-waiting")"
+nowant "queue-wait bead absent from SP_NEXT" "sp-qw-test" "$out"
 
-    echo
-    echo "3 — SP_NEXT_N is 0 when only bead has wait label"
-    is "SP_NEXT_N=0 when all beads are queue-waiting (enforce=$ENFORCE)" "SP_NEXT_N=0" \
-        "$(printf '%s\n' "$out" | grep '^SP_NEXT_N=')"
+echo
+echo "3 — SP_NEXT_N is 0 when only bead has wait label"
+is "SP_NEXT_N=0 when all beads are queue-waiting" "SP_NEXT_N=0" \
+    "$(printf '%s\n' "$out" | grep '^SP_NEXT_N=')"
 
-    echo
-    echo "4 — SP_READY is 0 when only bead has wait label"
-    is "SP_READY=0 when all beads are queue-waiting (enforce=$ENFORCE)" "SP_READY=0" \
-        "$(printf '%s\n' "$out" | grep '^SP_READY=')"
-done
+echo
+echo "4 — SP_READY is 0 when only bead has wait label"
+is "SP_READY=0 when all beads are queue-waiting" "SP_READY=0" \
+    "$(printf '%s\n' "$out" | grep '^SP_READY=')"
 echo
 tl_summary

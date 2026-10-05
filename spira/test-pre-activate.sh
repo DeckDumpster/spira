@@ -220,7 +220,7 @@ chmod +x "$REL/bin/spira-lc"
 run "$REL"
 is   "lifecycle: migrations applied: exit 0" 0 "$rc"
 want "lifecycle: reports the check" "ok   lifecycle" "$out"
-want "lifecycle: runs admin-migrate against the release's own migrations, gated on enforce" "admin-migrate --if-enforced $REL/lifecycle/migrations" "$(cat "$TMP/lc-argv")"
+want "lifecycle: runs admin-migrate against the release's own migrations" "admin-migrate $REL/lifecycle/migrations" "$(cat "$TMP/lc-argv")"
 want "lifecycle: as the admin, not the service user" "root admin-migrate" "$(cat "$TMP/lc-argv")"
 
 REL="$TMP/rel-lc-bad"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"

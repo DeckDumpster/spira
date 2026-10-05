@@ -188,7 +188,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         bdjson_fixture: path_opt("bdjson_fixture"),
         pr_refresh_max: num("pr_refresh_max", 5).max(0) as u32,
         toml: path_opt("toml"),
-        lifecycle_enforce: false,
         // Empty only when conf.sh itself did not run (a stand-in lib.sh in a unit test);
         // in production conf.sh always sets SPIRA_ASK_LABEL before this seam reads it, so
         // no fallback literal belongs here (law-schema-over-code).

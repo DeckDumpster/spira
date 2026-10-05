@@ -52,6 +52,10 @@ continue` did).
 
 ## The lifecycle switch (operator decision, 2026-09-28)
 
+> RETIRED (sp-v62vn): `lifecycle_enforce` no longer exists — the lifecycle machine is the
+> only mode, so only the **ON** behaviour below survives. The OFF description is kept as the
+> record of this unapplied branch's design.
+
 `lifecycle_enforce` is the single switch for everything touching spira-lc, resolved by the
 queue crate's own `lifecycle_on` (DESIGN.md §10 on rw-queue): `SPIRA_LIFECYCLE_ENFORCE`
 (`1`/`true` = on, anything else = off) wins; else `spira.lifecycle_enforce` through the

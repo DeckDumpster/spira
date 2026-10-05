@@ -67,10 +67,10 @@ mkdir -p "$T/run" "$T/chamber" "$T/bin"
 
 # `aeon --escape <fayth>` (spira/escape.sh retired, sp-zpaq0) resolves its home from
 # SPIRA_HOME and requires <home>/lib.sh to exist; this one-line stub sources the REAL
-# lib.sh from $HERE, exactly test-lifecycle-enforce-gate.sh's own SPIRA_HOME/lib.sh trick.
+# lib.sh from $HERE.
 printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 
-# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-lifecycle-enforce-gate.sh, ...):
+# conf.d IS COPIED IN (matching test-aeon-sweep.sh, ...):
 # aeon derives its config registry from --home/SPIRA_HOME and now REFUSES to start if
 # conf.d is missing (sp-1cdgq) -- a --home with no conf.d used to resolve silently to
 # nothing instead of refusing. Without this, `aeon --escape` below dies at config

@@ -91,51 +91,17 @@ pub fn load_store(cfg: &Config) -> Result<Vec<Bead>, String> {
     parse_beads(&raw).map_err(|e| format!("bd list: {e}"))
 }
 
-fn split_labels(s: &str) -> Vec<String> {
-    s.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect()
-}
-
-/// The claimable set under one partition's predicate. lifecycle_enforce on: spira-claim's
-/// `ready-count --json`, the one ready set the summoner counts and an aeon claims from (the
-/// machine's READY/REWORK rows) — never bd's ready query nor the sentinel's bd-ready snapshot,
-/// whose status and assignee no claim writes (sp-7g5q6). A refusal is `Err`, never empty.
+/// The claimable set under one partition's predicate: spira-claim's `ready-count --json`,
+/// the one ready set the summoner counts and an aeon claims from (the machine's READY/REWORK
+/// rows) — never bd's ready query nor the sentinel's bd-ready snapshot, whose status and
+/// assignee no claim writes (sp-7g5q6). A refusal is `Err`, never empty.
 pub fn ready(cfg: &Config, labels: &str, exclude: &[String]) -> Result<HashSet<String>, String> {
-    if cfg.lifecycle_enforce {
-        let excl = exclude.join(",");
-        let o = run("timeout", &["60", cfg.claim_bin.as_str(), "ready-count", labels, &excl, "--json"], None, &[]);
-        if !o.ok {
-            return Err(format!("spira-claim ready-count {labels}: {}", o.stderr.trim()));
-        }
-        return Ok(parse_beads(&o.stdout).map_err(|e| format!("spira-claim ready-count {labels}: {e}"))?.into_iter().map(|b| b.id).collect());
-    }
-    let need = split_labels(labels);
-    if let Some(p) = cfg.ready_snapshot.as_ref() {
-        if let Ok(raw) = fs::read_to_string(p) {
-            let beads = parse_beads(&raw).map_err(|e| format!("{}: {e}", p.display()))?;
-            return Ok(beads
-                .into_iter()
-                .filter(|b| cfg.scope_label.is_empty() || b.has(&cfg.scope_label))
-                .filter(|b| need.iter().all(|l| b.has(l)))
-                .filter(|b| !exclude.iter().any(|x| b.has(x)))
-                .map(|b| b.id)
-                .collect());
-        }
-    }
     let excl = exclude.join(",");
-    let mut args: Vec<&str> = vec!["ready", "--limit", "0", "--exclude-type", "epic,event", "-u"];
-    if !cfg.scope_label.is_empty() {
-        args.extend(["--label", cfg.scope_label.as_str()]);
+    let o = run("timeout", &["60", cfg.claim_bin.as_str(), "ready-count", labels, &excl, "--json"], None, &[]);
+    if !o.ok {
+        return Err(format!("spira-claim ready-count {labels}: {}", o.stderr.trim()));
     }
-    if !cfg.no_loop_label.is_empty() {
-        args.extend(["--exclude-label", cfg.no_loop_label.as_str()]);
-    }
-    args.extend(["--label", labels]);
-    if !excl.is_empty() {
-        args.extend(["--exclude-label", excl.as_str()]);
-    }
-    args.push("--json");
-    let raw = bd(cfg, &args, None)?;
-    Ok(parse_beads(&raw).map_err(|e| format!("bd ready: {e}"))?.into_iter().map(|b| b.id).collect())
+    Ok(parse_beads(&o.stdout).map_err(|e| format!("spira-claim ready-count {labels}: {e}"))?.into_iter().map(|b| b.id).collect())
 }
 
 pub fn show(cfg: &Config, id: &str) -> Option<Bead> {
@@ -347,19 +313,6 @@ pub fn fayth_free(cfg: &Config, fayth: &str, pool: Option<i64>, exclude: Option<
         }
     }
     free
-}
-
-/// The legacy wait exemption: the label CHECK 2 put on a bead waiting on the operator before
-/// sp-i2m7y moved it onto a spira-lc `wait` hold (`SPIRA_RECLAIM_SKIP_LABEL`'s default; the
-/// key itself is retired, so the literal is the contract).
-pub const WAIT_LABEL: &str = "spira-waiting-operator"; // literal-ok: retired key's default
-
-/// Beads the ghost check must not reclaim because they are legitimately waiting: the beads
-/// carrying [`WAIT_LABEL`], read off the store the pass already loaded. The ghost rule runs
-/// with lifecycle_enforce off only, so this is never asked under the machine — whose wait
-/// holds CHECK 2's own reaper honours (sp-7g5q6).
-pub fn wait_held(beads: &[Bead]) -> HashSet<String> {
-    beads.iter().filter(|b| b.has(WAIT_LABEL)).map(|b| b.id.clone()).collect()
 }
 
 // ------------------------------------------------------------------------------------------

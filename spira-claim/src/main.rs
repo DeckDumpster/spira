@@ -2,7 +2,6 @@
 //! selection. See DESIGN.md for the contract; this file is argument handling only.
 
 mod audit;
-mod bd_claim;
 mod counters;
 mod deadlock;
 mod decide;
@@ -58,7 +57,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
        spira-claim fayth-ready <fayth> [--json]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
-       spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; plus $SPIRA_READY_SNAPSHOT)
+       spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; the machine's claimable set)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
        spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
@@ -379,21 +378,16 @@ fn read_ready(a: &Args, env: &mut Env) -> Result<Vec<ReadyRow>, Outcome> {
 
 /// The lifecycle rows the epic lookup reads a child's progress from (sp-mve9i: a work bead's
 /// state is its row, never bd's status). `known` is a snapshot the caller already holds
-/// (machine-mode `select`). Otherwise `spira-lc list` is read: with `lifecycle_enforce` on a
-/// machine that cannot answer is cannot-tell; off it is read quietly, and a machine that
-/// cannot answer leaves every epic unstarted — the started tier is a tie-break, and a
-/// guess at it from bd would be the very read this replaces (DESIGN.md §6a).
+/// (machine-mode `select`). Otherwise `spira-lc list` is read, and a machine that cannot
+/// answer is cannot-tell — never a guess from bd, which would be the very read this replaces
+/// (DESIGN.md §6a).
 fn epic_lc(st: &Store, known: Option<&HashMap<String, LifecycleRow>>) -> Result<HashMap<String, LifecycleRow>, Outcome> {
     if let Some(m) = known {
         return Ok(m.clone());
     }
-    match st.lifecycle_snapshot().and_then(|t| rank::parse_lifecycle(&t)) {
-        Ok(m) => Ok(m),
-        Err(e) if lifecycle_on() => {
-            Err(Outcome::cannot_tell(format!("epic lookup: lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)")))
-        }
-        Err(_) => Ok(HashMap::new()),
-    }
+    st.lifecycle_snapshot()
+        .and_then(|t| rank::parse_lifecycle(&t))
+        .map_err(|e| Outcome::cannot_tell(format!("epic lookup: lifecycle snapshot: {e} (the machine must answer)")))
 }
 
 fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
@@ -429,21 +423,6 @@ fn cmd_epics(a: &Args, env: &mut Env) -> Outcome {
     }
 }
 
-/// `lifecycle_enforce` for `select` (DESIGN.md §6a): `spira_config::lifecycle_enforce` —
-/// `SPIRA_LIFECYCLE_ENFORCE` wins, else `spira.lifecycle_enforce`, else off; the same rule
-/// as the aeon crate and as `unpoison` (§8.7). Tests pin it per thread instead of reading
-/// the host's environment or spira.toml, and default to off.
-fn lifecycle_on() -> bool {
-    #[cfg(test)]
-    {
-        tests::ENFORCE.with(|c| c.get())
-    }
-    #[cfg(not(test))]
-    {
-        spira_config::lifecycle_enforce(None)
-    }
-}
-
 fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
     let known = [
         "--fayth", "--ready", "--epics", "--resumable", "--top-tier", "--count", "--json", "--blockers",
@@ -474,20 +453,6 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => r,
         Err(o) => return o,
     };
-    // THE lifecycle switch (DESIGN.md §6a). Off: the poison is the spira-poison label — a
-    // labelled bead is not claimable — and `--blockers machine` is refused: claimability by
-    // the machine's rule needs the machine (sp-mve9i retired the bd-status stand-in; its
-    // caller, the aeon, asks for machine mode only with the switch on).
-    let enforce = lifecycle_on();
-    if !enforce {
-        rows.retain(|r| !rank::poisoned_by_label(r));
-        if machine {
-            return Outcome::usage(format!(
-                "{fayth}: --blockers machine needs lifecycle_enforce on — the machine's claim rule reads the machine; with it off, bd ready's own blocker rule (--blockers bd) is the one in force"
-            ));
-        }
-    }
-
     let mut machine_lc: Option<HashMap<String, LifecycleRow>> = None;
     if machine {
         let st = match store(a, &env.config) {
@@ -502,7 +467,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(m) => m,
             Err(e) => {
                 return Outcome::cannot_tell(format!(
-                    "{fayth}: lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)"
+                    "{fayth}: lifecycle snapshot: {e} (the machine must answer)"
                 ))
             }
         };
@@ -761,56 +726,18 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
     if a.has("--json") {
         return ready_rows_json(a, env, labels, exclude);
     }
-    if lifecycle_on() {
-        return match machine_claimable(a, env) {
-            Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
-            Err(e) => Outcome { code: 1, out: "0".into(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
-        };
-    }
-    let st = match store(a, &env.config) {
-        Ok(s) => s,
-        Err(e) => return Outcome::usage(e),
-    };
-    let args = ready_args_for(a, env);
-    match st.ready_count(&args, labels, exclude) {
-        Ok(n) => Outcome::ok(n.to_string()),
-        Err(e) => Outcome {
-            code: 1,
-            out: "0".into(),
-            err: format!("spira-claim: ready_count: query failed: {}", first_line(&e)),
-        },
+    match machine_claimable(a, env) {
+        Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
+        Err(e) => Outcome { code: 1, out: "0".into(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
     }
 }
 
-/// `ready-count --json`: under the machine, [`machine_claimable`]'s rows matching the
-/// labels; off, bd's ready query with them. Either way a reply that is not a JSON ready set
-/// is a refusal, never an empty queue.
+/// `ready-count --json`: [`machine_claimable`]'s rows matching the labels. A machine that
+/// cannot answer is a refusal, never an empty queue.
 fn ready_rows_json(a: &Args, env: &Env, labels: &str, exclude: &str) -> Outcome {
-    let refuse = |e: &str| Outcome { code: 1, out: String::new(), err: format!("spira-claim: ready_count: {}", first_line(e)) };
-    let rows = if lifecycle_on() {
-        match machine_claimable(a, env) {
-            Ok(rows) => rows,
-            Err(e) => return refuse(&e),
-        }
-    } else {
-        let st = match store(a, &env.config) {
-            Ok(s) => s,
-            Err(e) => return Outcome::usage(e),
-        };
-        let mut q = ready_args_for(a, env);
-        q.extend(["--label".to_string(), labels.to_string()]);
-        if !exclude.is_empty() {
-            q.extend(["--exclude-label".to_string(), exclude.to_string()]);
-        }
-        let text = match st.ready_json(&q) {
-            Ok(t) if !t.trim().is_empty() => t,
-            Ok(_) => return refuse("query failed: bd returned no JSON"),
-            Err(e) => return refuse(&format!("query failed: {e}")),
-        };
-        match rank::parse_ready(&text) {
-            Ok(rows) => rows,
-            Err(e) => return refuse(&e),
-        }
+    let rows = match machine_claimable(a, env) {
+        Ok(rows) => rows,
+        Err(e) => return Outcome { code: 1, out: String::new(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
     };
     let mine = ready::matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude));
     Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()))
@@ -919,7 +846,7 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
     0
 }
 
-/// lifecycle_enforce on: the beads a claim could actually take. The candidates are the
+/// The beads a claim could actually take. The candidates are the
 /// machine's READY/REWORK rows; bd is read only for their content (labels, type, priority,
 /// blockers), never for status or assignee — the same rule `select --blockers machine`
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
@@ -1001,45 +928,20 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome { code: 3, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
     };
     let exclude = fayth_exclude_str(env, &home, &me, &predicate.exclude_labels);
-    if lifecycle_on() {
-        let rows = match machine_claimable(a, env) {
-            Ok(r) => r,
-            Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
-        };
-        let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
-        let mine = ready::partition(&rows, &part, &queue_wait_label(env), &submitted_label_f(env));
-        if json {
-            return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
-        }
-        return Outcome::ok(mine.len().to_string());
-    }
-    let st = match store(a, &env.config) {
-        Ok(s) => s,
-        Err(e) => return Outcome::usage(e),
+    let rows = match machine_claimable(a, env) {
+        Ok(r) => r,
+        Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
     };
-    let args = ready_args_for(a, env);
+    let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
+    let mine = ready::partition(&rows, &part, &queue_wait_label(env), &submitted_label_f(env));
     if json {
-        let mut q = args.clone();
-        q.extend(["--label".to_string(), predicate.labels.clone(), "--exclude-label".to_string(), exclude.clone()]);
-        return match st.ready_json(&q) {
-            Ok(t) => Outcome::ok(format!("{}\n", if t.trim().is_empty() { "[]" } else { t.trim() })),
-            Err(e) => Outcome { code: 1, out: String::new(), err: format!("spira-claim: fayth_ready: query failed: {}", first_line(&e)) },
-        };
+        return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
     }
-    match st.ready_count(&args, &predicate.labels, &exclude) {
-        Ok(n) => Outcome::ok(n.to_string()),
-        Err(e) => Outcome {
-            code: 1,
-            out: "0".into(),
-            err: format!("spira-claim: ready_count: query failed: {}", first_line(&e)),
-        },
-    }
+    Outcome::ok(mine.len().to_string())
 }
 
 /// `bulk-ready-by-fayth`: `bulk_ready_by_fayth` (lib.sh:734) plus `ready-bucket.py`'s own
-/// bucketing ([`ready::bucket`]). `SPIRA_READY_SNAPSHOT`, read straight from the
-/// environment for the same reason as `SPIRA_READY_CACHE` (a per-pass signal, not config),
-/// replaces the live fetch when it names a readable file.
+/// bucketing ([`ready::bucket`]) over the machine's claimable set ([`machine_claimable`]).
 fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
@@ -1077,35 +979,9 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
     if parts.is_empty() {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
-    let enforced = if lifecycle_on() {
-        match machine_claimable(a, env) {
-            Ok(r) => Some(r),
-            Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {}", first_line(&e))),
-        }
-    } else {
-        None
-    };
-    let raw = match std::env::var("SPIRA_READY_SNAPSHOT").ok().filter(|p| !p.is_empty()).filter(|_| enforced.is_none()) {
-        Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
-        None if enforced.is_some() => "[]".to_string(),
-        None => {
-            let st = match store(a, &env.config) {
-                Ok(s) => s,
-                Err(e) => return Outcome::usage(e),
-            };
-            let args = ready_args_for(a, env);
-            // A failed live fetch is a silent, empty superset here, exactly as bash's own
-            // `raw="$(bdjson ... 2>/dev/null)"` (no `$?` check) — not this verb's failure.
-            st.ready_json(&args).unwrap_or_default()
-        }
-    };
-    if raw.trim().is_empty() {
-        return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
-    }
-    // ready-bucket.py: any parse exception is `d = []`, never a hard failure.
-    let rows = match enforced {
-        Some(r) => r,
-        None => rank::parse_ready(&raw).unwrap_or_default(),
+    let rows = match machine_claimable(a, env) {
+        Ok(r) => r,
+        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {}", first_line(&e))),
     };
     let counts = ready::bucket(&rows, &parts, &queue_wait_label(env), &submitted_label_f(env));
     Outcome {
@@ -1154,18 +1030,7 @@ fn unpoison_opts(a: &Args) -> Result<unpoison::Opts, String> {
         credit,
         actor,
         poison_at: a.num("--poison-at", env_p.unwrap_or(Thresholds::default().poison_at))?,
-        enforce: false, // resolved by cmd_unpoison from env and config
     })
-}
-
-/// `lifecycle_enforce`, resolved as the aeon crate resolves it (aeon/src/conf.rs): the
-/// environment's `SPIRA_LIFECYCLE_ENFORCE` wins ("1"/"true" on, anything else off), else
-/// `spira.lifecycle_enforce` through spira-config, else off.
-fn lifecycle_enforce(env_value: Option<&str>, cfg: &Config) -> bool {
-    match env_value {
-        Some(v) => v == "1" || v == "true",
-        None => cfg.lifecycle_enforce.unwrap_or(false),
-    }
 }
 
 fn env_nonempty(k: &str) -> Option<String> {
@@ -1173,11 +1038,10 @@ fn env_nonempty(k: &str) -> Option<String> {
 }
 
 fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
-    let mut o = match unpoison_opts(a) {
+    let o = match unpoison_opts(a) {
         Ok(o) => o,
         Err(e) => return Outcome::usage(e),
     };
-    o.enforce = lifecycle_enforce(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), &env.config);
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
@@ -1209,7 +1073,6 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
         asked_dir,
         ask_label,
         beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
-        enforce: o.enforce,
     };
     let (code, out) = unpoison::run(&o, &mut live);
     Outcome { code, out, err: String::new() }
@@ -1249,8 +1112,7 @@ fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {
     for r in rows {
         events_by.entry(r.issue_id.clone()).or_default().push(r);
     }
-    let enforce = lifecycle_on();
-    let lc = if enforce {
+    let lc = {
         let lc_text = match a.get("--lifecycle") {
             Some(p) => read_source(p, env.stdin),
             None => match store(a, &env.config) {
@@ -1259,13 +1121,11 @@ fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {
             },
         };
         match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
-            Ok(m) => Some(m),
-            Err(e) => return Outcome::cannot_tell(format!("lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)")),
+            Ok(m) => m,
+            Err(e) => return Outcome::cannot_tell(format!("lifecycle snapshot: {e} (the machine must answer)")),
         }
-    } else {
-        None
     };
-    Outcome::ok(audit::run(&audit::Opts { enforce }, &candidates, &events_by, lc.as_ref()))
+    Outcome::ok(audit::run(&candidates, &events_by, &lc))
 }
 
 /// `deadlocked`'s merge-status input comes from `groomer deadlocked`, which does the git
@@ -1287,7 +1147,6 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome::cannot_tell(e),
     };
     let actor = a.get("--actor").unwrap_or("groomer").to_string();
-    let enforce = lifecycle_enforce(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), &env.config);
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
@@ -1307,9 +1166,8 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor.clone(),
-        enforce,
     };
-    let o = deadlock::Opts { apply: a.has("--apply"), actor, enforce };
+    let o = deadlock::Opts { apply: a.has("--apply"), actor };
     let (code, out) = deadlock::run(&o, &candidates, &mut live);
     Outcome { code, out, err: String::new() }
 }
@@ -1527,7 +1385,6 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor,
-        enforce: lifecycle_on(),
     };
     let o = reopen::Opts { id: id.clone(), cause, note, suites, submitted_label: reopen_submitted_label(env) };
     let rc = reopen::run(&o, &mut live);

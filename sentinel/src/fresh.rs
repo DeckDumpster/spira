@@ -8,7 +8,7 @@
 //! the next pass decides it again from a fresh snapshot, and no write here is so urgent that
 //! it is better made blind.
 //!
-//! Lifecycle-ON writes are exempt: `spira-lc apply` carries the row version and the machine
+//! Lifecycle writes are exempt: `spira-lc apply` carries the row version and the machine
 //! refuses a stale one, which is the same guarantee made structurally.
 
 use std::collections::HashMap;

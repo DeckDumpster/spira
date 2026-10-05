@@ -87,8 +87,8 @@ releases_dir="$(dirname "$rel_root")"
 if [ -L "$releases_dir/current" ] && [ "$(cd "$releases_dir/current" 2>/dev/null && pwd -P)" = "$rel_root" ]; then
     hooks_ref="$releases_dir/current/$(basename "$home_real")/hooks"
 fi
-# pre-commit-guard.sh by its path beside the hooks too, never by bare name: under
-# lifecycle_enforce the model's PATH omits the release's spira/ (aeon/src/restrict.rs), so
+# pre-commit-guard.sh by its path beside the hooks too, never by bare name: the model's
+# restricted PATH omits the release's spira/ (aeon/src/restrict.rs), so
 # a bare `exec pre-commit-guard.sh` was "not found" and refused every commit (sp-djgb4).
 # Beside the hooks first, then PATH (a home whose hooks dir has no sibling guard refused
 # every commit after sp-djgb4 — sp-f96ah), else refuse naming it.

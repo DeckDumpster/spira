@@ -201,7 +201,6 @@ fn live(tag: &str, bd_body: &str) -> (Live, testkit::TempDir) {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: "harness".into(),
-        enforce: false,
     };
     (l, dir)
 }
@@ -229,30 +228,16 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
     // Exact order: reopen, strip the submitted label, release the claim, write the reopen
     // event (its own `sql` call — counters.rs's own tests already cover that INSERT byte
     // for byte, so only its presence and position are pinned here), then the note last.
-    assert_eq!(bd_argv.len(), 6, "{bd_log}");
-    assert_eq!(bd_argv[0], "ARGV [-C] [/fake/db] [reopen] [sp-a]");
-    assert_eq!(bd_argv[1], "ARGV [-C] [/fake/db] [update] [sp-a] [--status] [open] [--assignee] []");
-    assert_eq!(bd_argv[2], "ARGV [-C] [/fake/db] [label] [remove] [sp-a] [spira-submitted]");
-    assert_eq!(bd_argv[3], "ARGV [-C] [/fake/db] [assign] [sp-a] []");
-    assert!(bd_argv[4].starts_with("ARGV [-C] [/fake/db] [sql] [INSERT INTO events"), "{}", bd_argv[4]);
-    assert!(bd_argv[4].contains("'sp-a', 'reopen', 'harness', 'batch-eject'"), "{}", bd_argv[4]);
-    assert_eq!(bd_argv[5], "ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]");
-    assert!(bd_log.contains("STDIN a human-readable note"), "{bd_log}");
-}
-
-/// sp-mve9i: with lifecycle_enforce on, the reopen leaves bd's status alone — the bead's
-/// state is the machine's, and no bd claim exists to release by status.
-#[test]
-fn live_reopen_on_writes_no_bd_status() {
-    let (mut w, dir) = live("on", RECORD);
-    w.enforce = true;
-    let o = Opts { id: "sp-a".into(), cause: "batch-eject".into(), note: String::new(), suites: String::new(), submitted_label: "spira-submitted".into() };
-    assert_eq!(run(&o, &mut w), 0);
-    let bd_log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
-    let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
-    assert_eq!(bd_argv[0], "ARGV [-C] [/fake/db] [reopen] [sp-a]");
+    // sp-mve9i: no bd status write — the bead's state is the machine's.
+    assert_eq!(bd_argv.len(), 5, "{bd_log}");
     assert!(!bd_log.contains("[--status]"), "{bd_log}");
+    assert_eq!(bd_argv[0], "ARGV [-C] [/fake/db] [reopen] [sp-a]");
     assert_eq!(bd_argv[1], "ARGV [-C] [/fake/db] [label] [remove] [sp-a] [spira-submitted]");
+    assert_eq!(bd_argv[2], "ARGV [-C] [/fake/db] [assign] [sp-a] []");
+    assert!(bd_argv[3].starts_with("ARGV [-C] [/fake/db] [sql] [INSERT INTO events"), "{}", bd_argv[3]);
+    assert!(bd_argv[3].contains("'sp-a', 'reopen', 'harness', 'batch-eject'"), "{}", bd_argv[3]);
+    assert_eq!(bd_argv[4], "ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]");
+    assert!(bd_log.contains("STDIN a human-readable note"), "{bd_log}");
 }
 
 #[test]

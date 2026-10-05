@@ -29,8 +29,6 @@ struct Fake {
     /// Called on each sleep with the fake: the "sentinel" running meanwhile.
     on_sleep: Option<Sentinel>,
     sleeps: u32,
-    /// lifecycle_enforce off: any spira-lc call is a test failure.
-    lc_forbidden: bool,
 }
 
 impl Fake {
@@ -85,14 +83,12 @@ impl World for Fake {
         Ok(self.events.iter().filter(|e| e.issue_id == id).cloned().collect())
     }
     fn lc_row(&mut self, id: &str) -> Result<Option<LcRow>, String> {
-        assert!(!self.lc_forbidden, "spira-lc show called with lifecycle_enforce off ({id})");
         if self.fail_lc_read {
             return Err("exit 2: cannot tell".into());
         }
         Ok(self.lc.get(id).cloned())
     }
     fn lc_unhold_poison(&mut self, id: &str, row: &LcRow, _actor: &str) -> LcApply {
-        assert!(!self.lc_forbidden, "spira-lc event called with lifecycle_enforce off ({id})");
         if self.refuse_unhold_times > 0 {
             self.refuse_unhold_times -= 1;
             if let Some(r) = self.lc.get_mut(id) {
@@ -177,13 +173,7 @@ fn opts(beads: &[&str]) -> Opts {
         credit: None,
         actor: "unpoison".into(),
         poison_at: 3,
-        enforce: true,
     }
-}
-
-/// lifecycle_enforce off: the same options, and the machine must never be asked.
-fn legacy(beads: &[&str]) -> Opts {
-    Opts { enforce: false, ..opts(beads) }
 }
 
 const ASK: &str = "Spira bead sp-a — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?";
@@ -636,7 +626,6 @@ fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
         asked_dir: dir.join("run/poison-asked"),
         ask_label: "needs-ryan".into(), // literal-ok: fixture/fallback
         beads_actor: "harness".into(),
-        enforce: false,
     };
     (l, dir)
 }
@@ -730,147 +719,12 @@ fn live_ask_history_and_audit_log() {
     assert!(dir.join("run/sentinel.log").metadata().is_err(), "watch never needs sentinel.log");
 }
 
-// ---------------------------------------------------------------------------------------
-// lifecycle_enforce OFF (production today): the label is the poison, spira-lc is never called
-
-fn legacy_poisoned_a() -> Fake {
-    let mut f = Fake::new()
-        .bead("sp-a", "open", None, &["spira", "plan", "spira-poison"])
-        .claims("sp-a", 3)
-        .ask("sp-ask1", ASK);
-    f.asked.insert("sp-a".into());
-    f.lc_forbidden = true;
-    // Even an unreachable machine must not matter: it is never asked.
-    f.fail_lc_read = true;
-    f
-}
-
 #[test]
-fn off_clear_removes_the_label_and_never_calls_spira_lc() {
-    let mut f = legacy_poisoned_a();
-    let (code, out) = run(&legacy(&["sp-a"]), &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-    assert!(out.contains("OK   sp-a: cleared — attempts 3 -> 0, check4 decides \"none\""), "{out}");
-    assert!(!f.beads["sp-a"].labels.contains(&"spira-poison".to_string()));
-    assert_eq!(f.trail.first().map(String::as_str), Some("event:poison.cleared"), "floor first: {:?}", f.trail);
-    let floor = f.trail.iter().position(|t| t == "event:poison.cleared").unwrap();
-    let label = f.trail.iter().position(|t| t == "label").unwrap();
-    assert!(floor < label, "{:?}", f.trail);
-    assert!(!f.trail.contains(&"unhold".to_string()));
-    assert_eq!(f.closed.len(), 1);
-    assert!(!f.asked.contains("sp-a"));
-}
-
-#[test]
-fn off_live_holder_is_bd_in_progress_with_assignee() {
-    let mut f = Fake::new().bead("pz3", "in_progress", Some("aeon-test"), &["spira-poison"]).claims("pz3", 3);
-    f.lc_forbidden = true;
-    let (code, out) = run(&legacy(&["pz3"]), &mut f);
-    assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("FAIL pz3: held by aeon-test (in_progress)"), "{out}");
-    assert_eq!(f.writes(), 0);
-    // A lifecycle WORKING row is not consulted when off: an open, unassigned bead is clearable.
-    let mut f = legacy_poisoned_a().lc("sp-a", BeadState::Working, &[HoldKind::Poison], Some("aeon-x"));
-    let (code, out) = run(&legacy(&["sp-a"]), &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-}
-
-#[test]
-fn off_skip_and_dry_run() {
-    let mut f = Fake::new().bead("pz4", "open", None, &["spira"]).claims("pz4", 2);
-    f.lc_forbidden = true;
-    let (code, out) = run(&legacy(&["pz4"]), &mut f);
-    assert_eq!(code, EXIT_OK);
-    assert!(out.contains("SKIP pz4"), "{out}");
-    let mut f = legacy_poisoned_a();
-    let mut o = legacy(&["sp-a"]);
-    o.dry_run = true;
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_OK);
-    assert!(out.contains("WOULD sp-a: attempts 3, poisoned=1 — write poison.cleared, reset ask history, remove the spira-poison label (lifecycle_enforce off), note, resolve ask"), "{out}");
-    assert_eq!(f.writes(), 0);
-    // Off, at the threshold with no label: the floor still matters (the next pass would poison).
-    let mut f = Fake::new().bead("sp-n", "open", None, &["incident"]).claims("sp-n", 26);
-    f.lc_forbidden = true;
-    let (code, out) = run(&o_dry(&["sp-n"]), &mut f);
-    assert_eq!(code, EXIT_OK);
-    assert!(out.contains("WOULD sp-n: attempts 26, poisoned=0 — write poison.cleared, reset ask history, no spira-poison label to remove (lifecycle_enforce off)"), "{out}");
-}
-
-fn o_dry(b: &[&str]) -> Opts {
-    Opts { dry_run: true, ..legacy(b) }
-}
-
-#[test]
-fn off_verify_fails_when_label_stays() {
-    // Off, the label IS the poison: a failed removal is reported, and verify re-reads it.
-    let mut f2 = legacy_poisoned_a();
-    struct NoRemove<'a>(&'a mut Fake);
-    impl World for NoRemove<'_> {
-        fn bead(&mut self, id: &str) -> Result<Option<BeadRecord>, String> { self.0.bead(id) }
-        fn events(&mut self, id: &str) -> Result<Vec<EventRow>, String> { self.0.events(id) }
-        fn lc_row(&mut self, id: &str) -> Result<Option<LcRow>, String> { self.0.lc_row(id) }
-        fn lc_unhold_poison(&mut self, id: &str, r: &LcRow, a: &str) -> LcApply { self.0.lc_unhold_poison(id, r, a) }
-        fn write_event(&mut self, id: &str, t: &str, v: &str) -> Result<(), String> { self.0.write_event(id, t, v) }
-        fn clear_ask_history(&mut self, id: &str) -> Result<(), String> { self.0.clear_ask_history(id) }
-        fn ask_history_exists(&mut self, id: &str) -> bool { self.0.ask_history_exists(id) }
-        fn remove_label(&mut self, _: &str, _: &str) -> Result<(), String> { Err("bd label: exit 1: timeout".into()) }
-        fn note(&mut self, id: &str, t: &str) -> Result<(), String> { self.0.note(id, t) }
-        fn open_asks(&mut self) -> Result<Vec<AskRow>, String> { self.0.open_asks() }
-        fn close(&mut self, id: &str, r: &str) -> Result<(), String> { self.0.close(id, r) }
-        fn audit_len(&mut self) -> u64 { self.0.audit_len() }
-        fn audit_read_from(&mut self, o: u64) -> Result<Vec<u8>, String> { self.0.audit_read_from(o) }
-        fn now(&mut self) -> i64 { self.0.now() }
-        fn sleep(&mut self, s: u64) { self.0.sleep(s) }
-        fn mark_poison_lifted(&mut self, id: &str, a: u32) -> Result<(), String> { self.0.mark_poison_lifted(id, a) }
-    }
-    let (code, out) = run(&legacy(&["sp-a"]), &mut NoRemove(&mut f2));
-    assert_eq!(code, EXIT_FAILED, "{out}");
-    assert!(out.contains("     warn sp-a: label remove: bd label: exit 1: timeout"), "{out}");
-    assert!(out.contains("FAIL sp-a: did not verify: label-still-present"), "{out}");
-    assert!(out.contains("check4=clear"), "the legacy decision sees the label as the poison: {out}");
-}
-
-#[test]
-fn off_watch_reads_the_label_and_the_audit_log() {
-    let mut f = legacy_poisoned_a();
-    let mut o = legacy(&["sp-a"]);
-    o.watch = true;
-    f.on_sleep = Some(Box::new(|f: &mut Fake| {
-        let t = f.now;
-        match f.sleeps {
-            1 => f.log(t, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5"),
-            2 => f.log(t, "audit pass complete — 0 action(s), 0 progress"),
-            _ => {}
-        }
-    }));
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-    assert!(out.contains("OK   watch sp-a: still clear after a full audit pass"), "{out}");
-
-    let mut f = legacy_poisoned_a();
-    f.on_sleep = Some(Box::new(|f: &mut Fake| {
-        if f.sleeps == 1 {
-            f.beads.get_mut("sp-a").unwrap().labels.push("spira-poison".into());
-        }
-    }));
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("FAIL watch sp-a: re-poisoned by the pass"), "{out}");
-}
-
-#[test]
-fn on_unreachable_machine_is_a_loud_fail() {
+fn an_unreachable_machine_is_a_loud_fail() {
     let mut f = poisoned_a();
     f.fail_lc_read = true;
     let (code, out) = run(&opts(&["sp-a"]), &mut f);
     assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("lifecycle_enforce is on, so the machine must answer"), "{out}");
+    assert!(out.contains("the machine must answer"), "{out}");
     assert_eq!(f.writes(), 0);
-}
-
-#[test]
-fn off_reopen_sets_status_open_so_an_in_progress_bead_is_ready_again() {
-    let a = crate::bd_claim::off_release_args("sp-a");
-    assert_eq!(a, ["update", "sp-a", "--status", "open", "--assignee", ""]);
 }

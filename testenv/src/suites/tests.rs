@@ -827,14 +827,13 @@ fn lint_counts_every_violation_on_one_line_and_still_reports_the_others() {
     assert_eq!(t.out(), vec!["test-a.sh\tquarantined\t2026-09-01T00:00:00Z\tsp-1\tok"]);
 }
 
-// ------------------------------------------------------------------- lifecycle_enforce
+// --------------------------------------------------------------------------- spira-lc
 
-/// The operator's switch (lifecycle_enforce, 2026-09-28) decides whether spira-lc may be
-/// touched. `testenv suites` never runs spira-lc, reads SPIRA_LC_BIN or the switch itself:
-/// a transition's change bead (sp-lck63) reaches the lifecycle machine only through
-/// lib.sh's `lc_claim_bead` (the harness's one claim path) and `queue submit`'s certify.
+/// `testenv suites` never runs spira-lc or reads SPIRA_LC_BIN: a transition's change bead
+/// (sp-lck63) reaches the lifecycle machine only through lib.sh's `lc_claim_bead` (the
+/// harness's one claim path) and `queue submit`'s certify.
 #[test]
-fn suites_never_touches_spira_lc_in_either_lifecycle_mode() {
+fn suites_never_touches_spira_lc() {
     for (name, src) in [
         ("mod.rs", include_str!("mod.rs")),
         ("cmd.rs", include_str!("cmd.rs")),
@@ -842,15 +841,8 @@ fn suites_never_touches_spira_lc_in_either_lifecycle_mode() {
         ("ports.rs", include_str!("ports.rs")),
         ("real.rs", include_str!("real.rs")),
     ] {
-        for token in ["spira-lc", "SPIRA_LC_BIN", "lc.sh", "LIFECYCLE_ENFORCE", "lifecycle_enforce"] {
+        for token in ["spira-lc", "SPIRA_LC_BIN", "lc.sh"] {
             assert!(!src.contains(token), "{name} names {token}");
         }
     }
-    // nothing it resolves depends on the switch: settings are identical either way
-    let root = Path::new("/h");
-    let load = |v: &'static str| {
-        let env = move |k: &str| (k == "SPIRA_LIFECYCLE_ENFORCE").then(|| v.to_string());
-        Settings::load(&crate::settings::Source { env: &env, config: None }, root)
-    };
-    assert_eq!(load("0"), load("1"));
 }

@@ -49,7 +49,22 @@ TMP="$(mktemp -d)"; trap 'testdb_drop 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 
 STUBS="$TMP/stubs"
 mkdir -p "$STUBS"
-printf '#!/bin/sh\n[ "$1" = list ] && echo "[]"\nexit 0\n' > "$STUBS/spira-lc"; chmod +x "$STUBS/spira-lc"
+# The lifecycle machine is the only mode (sp-v62vn), so the ready set is the machine's: the
+# stub's `list` seeds a READY row for each work bead the bd fixture below declares.
+cat > "$STUBS/spira-lc" <<'LCSTUB'
+#!/bin/sh
+if [ "$1" = list ]; then
+    printf '['
+    sep=''
+    for id in sp-b1 sp-b2 sp-b3 sp-b4 sp-b5; do
+        printf '%s{"bead_id":"%s","state":"READY","holder":null,"lease_until":null,"holds":[]}' "$sep" "$id"
+        sep=','
+    done
+    printf ']\n'
+fi
+exit 0
+LCSTUB
+chmod +x "$STUBS/spira-lc"
 for _s in pilgrimage.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
@@ -154,7 +169,6 @@ run_pass() {
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     env -i \
         PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_LIFECYCLE_ENFORCE=0 \
         SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
@@ -225,12 +239,12 @@ echo
 echo "--audit — the decoupled worker actually does the walk, and never lands or summons:"
 # ======================================================================================
 rm -f "$SUMMON_LOG" "$SENDING_LOG" "$LAUNCH_ARGV"
-audit_out="$(run_pass "$_run" "--audit" SPIRA_LIFECYCLE_ENFORCE=1)"
+audit_out="$(run_pass "$_run" "--audit")"
 is   "audit: sending.sh IS called (with --skip-queue, sp-jci6o)" \
      "1" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 want "audit: sending.sh called with --skip-queue" \
      "--skip-queue" "$(cat "$SENDING_LOG" 2>/dev/null)"
-want "audit: CHECK4 runs (lifecycle off, so it declines to examine)" "CHECK4 lifecycle_enforce is off" "$audit_out"
+want "audit: CHECK4 runs" "CHECK4" "$audit_out"
 is   "audit: never summons (CHECK 7 is normal-pass only)" \
      "0" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
 is   "audit: never dispatches landing (CHECK 6 is normal-pass only)" \

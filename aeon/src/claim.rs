@@ -3,35 +3,13 @@
 //! Ranking is `spira-claim`'s: the ready set goes to it on STDIN and the epic lookup and the
 //! resumable set in FILES — never argv (sp-o4trx: the claim outage was argv E2BIG). The one
 //! thing left here is resumability, which needs the repo map and git and which spira-claim
-//! by design leaves to its caller. Nothing in this module knows about briefs, chambers or
-//! lifecycle_enforce (sp-f0qhr).
+//! by design leaves to its caller. Nothing in this module knows about briefs or chambers
+//! (sp-f0qhr).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use crate::bd::{self, BeadRow};
-use crate::ports::{Bd, Exec, Git};
-use crate::util;
-
-/// `claim_retry <bd args…>`: the query with `--json`, retried; Ok(json_only(stdout)) — an
-/// empty Ok is a real empty result — or Err(the one diagnostic line claim_retry printed).
-pub fn claim_retry(bd: &dyn Bd, args: &[String], tries: u32, delay: Duration) -> Result<String, String> {
-    let mut a = args.to_vec();
-    a.push("--json".into());
-    let tries = tries.max(1);
-    let mut last = util::Out::default();
-    for i in 1..=tries {
-        last = bd.bd(&a);
-        if last.success() {
-            return Ok(util::json_only(&last.stdout));
-        }
-        if i < tries {
-            std::thread::sleep(delay);
-        }
-    }
-    Err(format!("claim_retry: query failed after {tries} attempt(s): {}", last.first_err_line()))
-}
+use crate::bd::BeadRow;
+use crate::ports::{Exec, Git};
 
 /// One `spira-claim select --top-tier` line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,9 +52,6 @@ pub struct Selector<'a> {
     /// spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
     /// `_aeon_repo_info` bash seam this used to shell into.
     pub repos: &'a spira_config::repos::Registry,
-    /// `lifecycle_enforce`: `select` judges blockers by the machine's rows too
-    /// (`--blockers machine`), the rule the ready set was built with.
-    pub machine: bool,
 }
 
 impl Selector<'_> {
@@ -85,10 +60,10 @@ impl Selector<'_> {
     }
 
     fn select_args<'b>(&self, base: &[&'b str]) -> Vec<String> {
+        // The ready set is the machine's: `select` judges blockers by its rows too
+        // (`--blockers machine`), the rule the ready set was built with (sp-s9675.2).
         let mut a = crate::ports::s(base);
-        if self.machine {
-            a.extend(crate::ports::s(&["--blockers", "machine"]));
-        }
+        a.extend(crate::ports::s(&["--blockers", "machine"]));
         a
     }
 
@@ -179,47 +154,6 @@ pub struct Claimed {
     pub repo: String,
     pub row: BeadRow,
     pub raw: String,
-}
-
-/// One `bd update --claim` per ranked candidate, until one returns a row. Returns the
-/// claimed bead (or None: idle) and the log lines, in order.
-pub fn claim_loop(
-    bd: &dyn Bd,
-    ids: &[String],
-    resumable: &[String],
-    tier: Option<&str>,
-    who: &str,
-    tries: u32,
-    delay: Duration,
-) -> (Option<Claimed>, Vec<String>) {
-    let mut logs = Vec::new();
-    for id in ids {
-        match claim_retry(bd, &bd::args(&["update", id, "--claim"]), tries, delay) {
-            Err(e) => {
-                let e = if e.is_empty() { "bd gave no reason".to_string() } else { e };
-                logs.push(format!("{who}: claim query failed for ranked candidate {id}: {e} — trying the next ranked candidate"));
-            }
-            Ok(json) if !json.trim().is_empty() => {
-                if resumable.iter().any(|r| r == id) {
-                    logs.push(format!("{who}: resuming {id} ({}) — it already has work on its branch", tier.unwrap_or("top rank")));
-                } else {
-                    logs.push(format!("{who}: claiming {id} (epic-first rank)"));
-                }
-                let row = bd::first_row(&json);
-                return match row {
-                    Some(r) if !r.id.is_empty() => {
-                        let repo = r.label_value("repo:").unwrap_or_default();
-                        (Some(Claimed { id: r.id.clone(), repo, row: r, raw: json }), logs)
-                    }
-                    _ => (None, logs),
-                };
-            }
-            Ok(_) => logs.push(format!(
-                "{who}: ranked candidate {id} was claimed by another aeon between read and claim — trying the next ranked candidate"
-            )),
-        }
-    }
-    (None, logs)
 }
 
 /// One attempt's answer, spira-lc's own exit codes: 0 applied, 3 refused, else cannot tell.
@@ -334,7 +268,7 @@ mod tests {
     }
 
     fn sel<'a>(e: &'a FakeExec, repos: &'a spira_config::repos::Registry, g: &'a FakeGit, dir: &'a Path) -> Selector<'a> {
-        Selector { exec: e, git: g, claim_bin: "spira-claim", fayth: "builder", scratch: dir, pid: 7, repos, machine: false }
+        Selector { exec: e, git: g, claim_bin: "spira-claim", fayth: "builder", scratch: dir, pid: 7, repos }
     }
 
     const READY: &str = r#"[{"id":"sp-a","priority":1,"labels":["repo:svc"]},{"id":"sp-b","priority":1,"labels":["repo:svc","branch:spira/x"]}]"#;
@@ -362,11 +296,11 @@ mod tests {
         assert!(calls[2].1.contains(&"--resumable".to_string()));
     }
 
-    // sp-s9675.2: lifecycle_enforce on means the ready set already came from
-    // MACHINE_READY_ARGS (bd list, unfiltered by blockers) — select must be told to judge
-    // blockers itself, on both calls, or the widened set is never actually filtered.
+    // sp-s9675.2: the ready set comes from the machine (unfiltered by bd blockers) —
+    // select must be told to judge blockers itself, on both calls, or the widened set is
+    // never actually filtered.
     #[test]
-    fn machine_flag_adds_blockers_machine_to_both_select_calls() {
+    fn select_calls_carry_blockers_machine() {
         let dir = scratch("t-machine");
         let e = FakeExec {
             calls: Mutex::new(vec![]),
@@ -376,7 +310,7 @@ mod tests {
         };
         let repos = svc_registry(&dir);
         let g = FakeGit(0);
-        let sel = Selector { exec: &e, git: &g, claim_bin: "spira-claim", fayth: "builder", scratch: &dir, pid: 7, repos: &repos, machine: true };
+        let sel = Selector { exec: &e, git: &g, claim_bin: "spira-claim", fayth: "builder", scratch: &dir, pid: 7, repos: &repos };
         let _ = sel.select(READY);
         let calls = e.calls.lock().unwrap();
         // epics, --top-tier, --resumable — --blockers machine on both select calls only.
@@ -415,49 +349,6 @@ mod tests {
         let repos = svc_registry(dir.path());
         let g = FakeGit(0);
         assert_eq!(sel(&e, &repos, &g, &dir).select("[]"), Selection::Ranked { ids: vec!["sp-a".into()], resumable: vec![], tier: None });
-    }
-
-    struct ClaimBd {
-        answers: Mutex<Vec<Out>>,
-        seen: Mutex<Vec<Vec<String>>>,
-    }
-    impl Bd for ClaimBd {
-        fn bd(&self, args: &[String]) -> Out {
-            self.seen.lock().unwrap().push(args.to_vec());
-            self.answers.lock().unwrap().remove(0)
-        }
-    }
-
-    // test-aeon-resume-collision.sh: a lost race falls through to the next ranked candidate.
-    #[test]
-    fn claim_loop_falls_through_lost_races_and_errors() {
-        let bd = ClaimBd {
-            answers: Mutex::new(vec![Out::ok(""), Out::fail(1, "dolt lock\n"), Out::ok("warning\n[{\"id\":\"sp-c\",\"labels\":[\"repo:svc\"]}]")]),
-            seen: Mutex::new(vec![]),
-        };
-        let ids = vec!["sp-a".to_string(), "sp-b".into(), "sp-c".into()];
-        let (c, logs) = claim_loop(&bd, &ids, &["sp-c".into()], Some("P0/started/P1"), "builder/ifrit", 1, Duration::ZERO);
-        let c = c.unwrap();
-        assert_eq!((c.id.as_str(), c.repo.as_str()), ("sp-c", "svc"));
-        assert!(logs[0].contains("sp-a was claimed by another aeon between read and claim — trying the next ranked candidate"));
-        assert!(logs[1].contains("claim query failed for ranked candidate sp-b: claim_retry: query failed after 1 attempt(s): dolt lock"));
-        assert_eq!(logs[2], "builder/ifrit: resuming sp-c (P0/started/P1) — it already has work on its branch");
-        assert_eq!(bd.seen.lock().unwrap()[0], vec!["update", "sp-a", "--claim", "--json"]);
-    }
-
-    #[test]
-    fn nothing_claimable_is_idle() {
-        let bd = ClaimBd { answers: Mutex::new(vec![]), seen: Mutex::new(vec![]) };
-        let (c, logs) = claim_loop(&bd, &[], &[], None, "b/x", 3, Duration::ZERO);
-        assert!(c.is_none() && logs.is_empty());
-    }
-
-    #[test]
-    fn claim_retry_retries_then_reports_one_line() {
-        let bd = ClaimBd { answers: Mutex::new(vec![Out::fail(1, "e1\nmore"), Out::fail(1, "e2\nmore")]), seen: Mutex::new(vec![]) };
-        assert_eq!(claim_retry(&bd, &bd::args(&["ready"]), 2, Duration::ZERO), Err("claim_retry: query failed after 2 attempt(s): e2".into()));
-        let ok = ClaimBd { answers: Mutex::new(vec![Out::ok("")]), seen: Mutex::new(vec![]) };
-        assert_eq!(claim_retry(&ok, &bd::args(&["ready"]), 2, Duration::ZERO), Ok(String::new()), "a clean empty result is not an error");
     }
 
     #[test]

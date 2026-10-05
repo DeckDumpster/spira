@@ -200,10 +200,6 @@ impl<'a> Sentinel<'a> {
     /// One lifecycle read serves the main loop and the stale clear. A hold this pass applies
     /// is on a bead at or over the threshold, which the clear would never release anyway.
     pub fn check4(&self, snap: &Snapshot) {
-        if self.lc == crate::cfg::Lifecycle::Off {
-            self.log("CHECK4 lifecycle_enforce is off — no lifecycle machine to read, no poison decision");
-            return;
-        }
         let poisoned = self.poisoned_set();
         self.check4_main(snap, poisoned.as_ref());
         self.check4_closed(snap);

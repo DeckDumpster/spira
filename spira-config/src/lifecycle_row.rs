@@ -1,6 +1,5 @@
-//! Every path that creates a bead creates its lifecycle row too when `lifecycle_enforce` is
-//! on: a bead with no `spira_lifecycle` row can never be claimed. Off, nothing here runs
-//! `spira-lc`.
+//! Every path that creates a bead creates its lifecycle row too: a bead with no
+//! `spira_lifecycle` row can never be claimed.
 
 use std::process::{Command, Stdio};
 
@@ -24,18 +23,15 @@ pub fn created_id(stdout: &str) -> Option<String> {
     (!last.contains(char::is_whitespace)).then(|| last.to_string())
 }
 
-/// `Ok(true)`: the row exists now. `Ok(false)`: enforce is off and `bin` was never run.
-pub fn ensure_row_with(enforce: bool, bin: &str, id: &str) -> Result<bool, String> {
-    if !enforce {
-        return Ok(false);
-    }
+/// `Ok(())`: the row exists now.
+pub fn ensure_row_with(bin: &str, id: &str) -> Result<(), String> {
     let out = Command::new("timeout")
         .args([LC_TIMEOUT_SECS, bin, "create-bead", id])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run {bin}: {e}"))?;
     if out.status.success() {
-        Ok(true)
+        Ok(())
     } else {
         Err(format!(
             "{bin} create-bead {id} exited {}: {}{}",
@@ -46,31 +42,28 @@ pub fn ensure_row_with(enforce: bool, bin: &str, id: &str) -> Result<bool, Strin
     }
 }
 
-pub fn ensure_row(id: &str) -> Result<bool, String> {
-    ensure_row_retrying(crate::lifecycle_enforce(None), &lc_bin(), id, ROW_ATTEMPTS, 250)
+pub fn ensure_row(id: &str) -> Result<(), String> {
+    ensure_row_retrying(&lc_bin(), id, ROW_ATTEMPTS, 250)
 }
 
 const ROW_ATTEMPTS: u32 = 3;
 
 /// `create-bead` is idempotent, so a transient failure is retried before it is reported.
-pub fn ensure_row_retrying(enforce: bool, bin: &str, id: &str, attempts: u32, backoff_ms: u64) -> Result<bool, String> {
-    let mut last = ensure_row_with(enforce, bin, id);
+pub fn ensure_row_retrying(bin: &str, id: &str, attempts: u32, backoff_ms: u64) -> Result<(), String> {
+    let mut last = ensure_row_with(bin, id);
     for n in 1..attempts {
         if last.is_ok() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(backoff_ms * u64::from(n)));
-        last = ensure_row_with(enforce, bin, id);
+        last = ensure_row_with(bin, id);
     }
     last
 }
 
 /// Call after a successful `bd create` whose stdout is `created_stdout`. A failure is
 /// reported on stderr and returned; the bead exists, so the caller must not retry the create.
-pub fn after_create(who: &str, created_stdout: &str) -> Result<bool, String> {
-    if !crate::lifecycle_enforce(None) {
-        return Ok(false);
-    }
+pub fn after_create(who: &str, created_stdout: &str) -> Result<(), String> {
     let Some(id) = created_id(created_stdout) else {
         let e = format!("cannot read the created bead's id from {created_stdout:?}");
         eprintln!("{who}: LIFECYCLE: {e}; the new bead has no lifecycle row and cannot be claimed");
@@ -103,21 +96,18 @@ mod tests {
     }
 
     #[test]
-    fn on_creates_the_row_and_off_never_runs_the_binary() {
+    fn ensure_row_creates_the_row() {
         let t = testkit::TempDir::new("lcrow");
         let bin = stub(t.path(), 0);
-        assert_eq!(ensure_row_with(true, &bin, "sp-x"), Ok(true));
+        assert_eq!(ensure_row_with(&bin, "sp-x"), Ok(()));
         assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "create-bead sp-x\n");
-        std::fs::remove_file(t.path().join("calls")).unwrap();
-        assert_eq!(ensure_row_with(false, &bin, "sp-y"), Ok(false));
-        assert!(!t.path().join("calls").exists(), "off made a spira-lc call");
     }
 
     #[test]
     fn a_failing_create_bead_is_retried_then_reported() {
         let t = testkit::TempDir::new("lcrow-retry");
         let bin = stub(t.path(), 3);
-        assert!(ensure_row_retrying(true, &bin, "sp-r", 3, 0).is_err());
+        assert!(ensure_row_retrying(&bin, "sp-r", 3, 0).is_err());
         let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
         assert_eq!(calls.lines().count(), 3);
     }
@@ -126,7 +116,7 @@ mod tests {
     fn a_failing_create_bead_is_an_error() {
         let t = testkit::TempDir::new("lcrow-fail");
         let bin = stub(t.path(), 3);
-        assert!(ensure_row_with(true, &bin, "sp-z").unwrap_err().contains("exited 3"));
-        assert!(ensure_row_with(true, "/nonexistent/lc", "sp-z").is_err());
+        assert!(ensure_row_with(&bin, "sp-z").unwrap_err().contains("exited 3"));
+        assert!(ensure_row_with("/nonexistent/lc", "sp-z").is_err());
     }
 }

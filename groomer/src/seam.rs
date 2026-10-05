@@ -35,7 +35,7 @@ pub trait Seam {
     /// `spira_landrefs <path>`'s first ref — the base a branch in that repo lands on.
     fn land_base(&self, repo_path: &str) -> Result<String, String>;
     /// `spira-lc held <id> poison` — whether the lifecycle machine already holds this
-    /// bead's poison lock (lifecycle_enforce path only).
+    /// bead's poison lock.
     fn lc_held_poison(&self, id: &str) -> bool;
 }
 

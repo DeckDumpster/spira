@@ -114,6 +114,12 @@ pub fn spira_section(
                     warnings.push(format!("spira.conf: {key} is retired (sp-gypjk: tools are invoked by name) and ignored — remove it"));
                 }
             }
+            "SPIRA_LIFECYCLE_ENFORCE" => match crate::check_lifecycle_switch_env(Some(val)) {
+                Ok(_) => warnings.push(format!(
+                    "spira.conf: {key} is retired (sp-v62vn: the lifecycle machine is the only mode) and ignored — remove it"
+                )),
+                Err(e) => errors.push(format!("spira.conf: {e}")),
+            },
             "SPIRA_LC_BIN" | "SPIRA_PANEL" | "SPIRA_BROKER_BIN" | "SPIRA_CZAR_PASS_BIN" | "SPIRA_QUEUE_WATCH_BIN"
             | "SPIRA_SUPERVISE_BIN" | "SPIRA_LANDING_PASS_BIN" | "SPIRA_TSD_BIN" | "SPIRA_TSD_LIFECYCLE_EXPORT_BIN"
             | "SPIRA_RECONCILER_BIN" | "SPIRA_TEST_PLAN_BIN" | "SPIRA_RECONCILER_FLOW_BIN" | "SPIRA_LOOM_BIN" => warnings.push(format!(

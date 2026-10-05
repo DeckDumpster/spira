@@ -85,6 +85,13 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
 /// fayth file and lib.sh's own derived values, neither of which this subcommand needs.
 fn run_capacity(args: &[String]) -> i32 {
     let original: BTreeMap<String, String> = std::env::vars().collect();
+    // The lifecycle machine is the only mode (sp-v62vn): a retired switch saying off is
+    // refused here, by name, before anything runs; one saying on is a deprecation warning.
+    match spira_config::check_lifecycle_switch_env(original.get(spira_config::LIFECYCLE_ENFORCE_ENV).map(String::as_str)) {
+        Ok(Some(w)) => eprintln!("aeon: {w}"),
+        Ok(None) => {}
+        Err(e) => fatal(&format!("aeon: {e}")),
+    }
     let exe = std::env::current_exe().ok();
     let Some(home) = conf::resolve_home(None, &original, exe.as_deref()) else {
         fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
@@ -162,8 +169,6 @@ fn main() {
     if snap.vars.get("FAYTH_SOP_REQUIRED").is_some_and(|v| !v.is_empty()) {
         eprintln!("{}: FAYTH_SOP_REQUIRED is retired (sp-loycl) and ignored — remove it from the fayth", cli.fayth);
     }
-    let toml = conf.s("SPIRA_TOML_FILE");
-    let enforce = conf::lifecycle_enforce(&original, (!toml.is_empty()).then(|| Path::new(&toml)));
     let claim_bin = "spira-claim".to_string();
 
     let seam = BashSeam { lib: home.join("lib.sh"), fayth_file: fayth_file.clone(), fayth: cli.fayth.clone(), env: &env };
@@ -207,7 +212,6 @@ fn main() {
         pid: std::process::id(),
         own_unit,
         t0,
-        enforce,
         claim_bin,
         stop,
         hb_shutdown: Arc::new(AtomicBool::new(false)),

@@ -58,9 +58,8 @@ state; see §4 R7).
 | input | source | notes |
 |---|---|---|
 | the bead store | `$SPIRA_LIST_SNAPSHOT` when readable (sentinel's `bd list --all --limit 0` of this pass), else **one** `bd -C $SPIRA_DB list --all --limit 0 --brief --json` | the WHOLE store, closed beads included. One read per run, not per partition. |
-| the claimable set | `$SPIRA_READY_SNAPSHOT` when readable (filtered in-process by scope label, partition labels, exclusions), else per partition `bd ready --limit 0 --exclude-type epic,event -u [--label <scope>] [--exclude-label <no_loop label>] --label <labels> [--exclude-label <excl>] --json` | `bd ready` stays the authority on claimability |
+| the claimable set | per partition `spira-claim ready-count <labels> <exclude> --json` (§9) | the machine's READY/REWORK rows; a refusal is an `Err`, never an empty set |
 | partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the fayth's own, else `spira-poison,<ask>,<ci>` |
-| wait holds | `lifecycle_enforce` off: beads labelled `spira-waiting-operator` in the store already read; on: `spira-lc list --hold wait` → `[{bead_id}]` | §9: off never runs spira-lc; on, unreachable ⇒ cannot tell |
 | aeon liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/aeon-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `aeon.sh`) | never `pgrep -f` |
 | aeons per partition / fleet | `systemctl --user list-units 'spira-aeon-<fayth>-*' --no-legend` (and `'spira-aeon-*'`) when `SPIRA_SUMMON` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
 | capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the summon path |
@@ -91,7 +90,6 @@ Mechanical fixes, unchanged in effect:
 
 | kind | effect | stdout |
 |---|---|---|
-| `ghost` (lifecycle_enforce off only) | `bd reclaim --id <id> --older-than 1s [--label <partition>]`; one `reclaimed`/`ghost` row into `events` (`bd sql`); `bd note <id> --stdin` (fixed text); `branch.reclaimed` line in `$SPIRA_RUN/events.log` with the per-key cooldown in `$SPIRA_RUN/events/`; at exactly `SPIRA_RECLAIM_AT` (5) reclaims, a `reclaim-ceiling` escalation | `RECLAIMED <id> — <detail>` |
 | `stale-blocked` | `bd recompute-blocked` | `RECOMPUTED is_blocked — <id> stuck with every blocker closed` |
 
 Escalation: `$SPIRA_HOME/mail send operator --from 'Strand check <strand@spira>'
@@ -135,10 +133,9 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | pool | `SPIRA_MAX_AEONS` | `max_aeons` | unset (explicit 0 ⇒ pool-paused) |
 | fleet cap | `SPIRA_MAX_LIVE_AEONS` | `max_live_aeons` | 0 (unconfigured) |
 | throttle release | `SPIRA_QUEUE_THROTTLE_RELEASE_AT` | `queue_throttle_release_at` | 8 |
-| lifecycle switch | `SPIRA_LIFECYCLE_ENFORCE` (`1`/`true` on, anything else off) | `lifecycle_enforce` | off (§9) |
 | instance | `SPIRA_INSTANCE` | `instance` | `prod` |
-| grace windows | `SPIRA_GHOST_GRACE` (300), `SPIRA_STRAND_GRACE` (900), `SPIRA_RECLAIM_AT` (5), `SPIRA_EVENT_COOLDOWN` (3600), `BD_TIMEOUT` (180) | — | as shown |
-| snapshots | `SPIRA_LIST_SNAPSHOT`, `SPIRA_READY_SNAPSHOT` | — | none |
+| grace windows | `SPIRA_STRAND_GRACE` (900), `SPIRA_EVENT_COOLDOWN` (3600), `BD_TIMEOUT` (180) | — | as shown |
+| snapshots | `SPIRA_LIST_SNAPSHOT` | — | none |
 | test seams | `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON`, `SPIRA_CAPACITY_PAUSE`, `SPIRA_THROTTLE_STAMP`, `SPIRA_NOW` | — | |
 
 ## 3. Schema
@@ -173,11 +170,11 @@ Unknown fields are ignored; a missing field is its default. A `blocks` edge's ta
 TSV, five fields: `kind  id  disposition  detail  action`; disposition ∈ `act | escalate |
 info`; tabs inside detail/action are replaced by spaces. Internally `(partition, Row)`.
 
-Kinds: `ghost`(act) · `deferred-unescalated`(escalate) · `starved`(escalate) ·
+Kinds: `deferred-unescalated`(escalate) · `starved`(escalate) ·
 `capacity-paused` `pool-paused` `pass-truncated` `throttled` `fleet-saturated`(info) ·
 `throttle-unreadable`(escalate) · `empty`(escalate) · `waiting` `poisoned`(info) ·
 `stale-blocked`(act) · `blocked-external`(escalate) · `stuck`(escalate) · **`sequenced`
-(info, new)** · `cycle`(escalate). Escalation-only kind: `reclaim-ceiling`.
+(info, new)** · `cycle`(escalate).
 
 ### 3.3 Episode state `$SPIRA_RUN/strands.json`
 
@@ -251,8 +248,7 @@ Rules:
   (the old check saw only P, so a foreign live blocker read as none).
   A deferred bead whose `defer_until` is in the future is a timed hold: an `info` row `held` (`held-until <ts>`), never stranded. No `defer_until`, or one already past, stays stranded.
 
-Unchanged: ghost (in_progress, holder not alive, lease expired past grace, not ask-labelled,
-not wait-held); starved and its five info variants (capacity, pool, truncation, throttle,
+Unchanged: starved and its five info variants (capacity, pool, truncation, throttle,
 fleet) plus throttle-unreadable; cycle (Tarjan over P's open sub-graph).
 
 ## 5. Module layout
@@ -276,7 +272,7 @@ epic reported as empty. From tonight's asks, as fixtures built from `bd show` of
 edges: sp-yyltf (sp-vvt04/sp-cxlmq), sp-msk4h (sp-bpe4n, sp-7jail), sp-yyltf stuck
 (sp-srdjc), sp-zs04v (sp-mf03u → `sequenced`). Plus: all-closed epic is not empty; unknown
 blocker still reported; stuck still reported when the chain head is dead; stale-blocked;
-deferred exemption; ghost; cycle; starved variants; state aging/pruning; TSV/JSON shapes;
+deferred exemption; cycle; starved variants; state aging/pruning; TSV/JSON shapes;
 throttle-state parsing; `--from` parsing.
 
 ## 7. Cutover (operator's edits — not made by this bead)
@@ -299,29 +295,20 @@ This branch also carries `a21b071a1` (an aeon's earlier bash fix of the same def
 strand.sh/strand-classify.py/test-strand-classify.sh). It is superseded by this crate and
 dies with row 4; the operator may keep it as the interim fix until the cutover lands.
 
-## 9. Lifecycle switch
+## 9. The lifecycle machine
 
-**Finding (operator, 2026-09-28):** the lifecycle machine was never deployed on this host:
-no `spira_lifecycle` database, no `spira_lc` grant, no service or socket. **Decision:**
-`lifecycle_enforce` is THE switch for everything that touches the lifecycle machine.
+`lifecycle_enforce` was THE switch for everything that touches the lifecycle machine
+(operator, 2026-09-28). After the cutover (2026-10-05) it is retired (sp-v62vn): there is
+one mode, and the OFF half of this section's old table — `bd ready` as a partition's ready
+set, and the `ghost` rule with its `bd reclaim`, counter, note, event and `reclaim-ceiling`
+escalation — is deleted.
 
-**Resolution** (`Config::resolve` → `spira_config::resolve_lifecycle_enforce`, the aeon
-crate's rule): `SPIRA_LIFECYCLE_ENFORCE` in the environment wins (`1`/`true` on, anything
-else, including empty, off); else the typed `spira.lifecycle_enforce`; else **off**. `spira-lc`
-is invoked by name on the launcher's PATH (sp-gypjk), and its presence is never an input: a
-release always carries it, and it does not turn anything on.
+- **spira-lc:** never run by strand (sp-7g5q6).
+- **A partition's ready set:** `spira-claim ready-count <labels> <exclude> --json` — the
+  machine's READY/REWORK rows, the set the summoner counts and an aeon claims from; a
+  refusal is an `Err`, never an empty set.
+- **A dead holder:** not strand's. bd's in_progress and lease are written by no claim; a
+  WORKING row whose lease expired past its grace and is not wait-held is CHECK 2's
+  stale-lease reaper's (`sentinel/src/lifecycle.rs` `stale_leases` → `HolderDead`).
 
-| | **off** (production today) | **on** |
-|---|---|---|
-| spira-lc | **never run** | **never run** (sp-7g5q6) |
-| a partition's ready set | `bd ready` under the partition's predicate (or the sentinel's `SPIRA_READY_SNAPSHOT`) | `spira-claim ready-count <labels> <exclude> --json` — the machine's READY/REWORK rows, the set the summoner counts and an aeon claims from; a refusal is an `Err`, never an empty set |
-| ghost rule | in_progress, holder not alive, lease expired past grace, not ask-labelled, not carrying `spira-waiting-operator`; fixed by `bd reclaim --id <id> --older-than 1s [--label <partition>]` (no `--label` for partition `-`), then the counter/note/event/ceiling escalation | **none.** bd's in_progress and lease are written by no claim; a WORKING row whose lease expired past its grace and is not wait-held is CHECK 2's stale-lease reaper's (`sentinel/src/lifecycle.rs` `stale_leases` → `HolderDead`) |
-
-**Tests:** `config::lifecycle_switch_env_then_toml_then_off`,
-`check::off_ghost_fix_is_bd_reclaim`, `check::off_wait_exemption_is_the_legacy_label`,
-`check::on_the_ready_set_is_spira_claims_and_bd_is_never_asked`,
-`classify::ghost_needs_an_expired_lease_and_no_holder` (off: the row; on: none).
-
-**Cutover addition:** the sentinel passes `SPIRA_LIFECYCLE_ENFORCE=0|1` to strand; nothing
-else is needed. If strand is ever run outside conf.sh with no environment value, it reads
-`spira.lifecycle_enforce`, default off.
+**Test:** `check::the_ready_set_is_spira_claims_and_bd_is_never_asked`.

@@ -202,7 +202,7 @@ check_lifecycle() {
     fi
     local out rc
     out="$(env -u SPIRA_LC_PASSWORD_FILE SPIRA_LC_USER="${SPIRA_LC_ADMIN_USER:-root}" \
-        SPIRA_LC_PASSWORD="${SPIRA_LC_ADMIN_PASSWORD:-}" "$lc" admin-migrate --if-enforced "$mig" 2>&1)"
+        SPIRA_LC_PASSWORD="${SPIRA_LC_ADMIN_PASSWORD:-}" "$lc" admin-migrate "$mig" 2>&1)"
     rc=$?
     if [ "$rc" -eq 0 ]; then
         ok "lifecycle ($(printf '%s' "$out" | tail -1))"

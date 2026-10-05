@@ -229,20 +229,6 @@ impl Snapshot {
             .collect()
     }
 
-    /// ready_count "<scope,>plan" "spira-poison,<ask>" over the ready snapshot.
-    pub fn plan_ready(&self, cfg: &Cfg) -> Option<usize> {
-        let need = cfg.plan_labels();
-        let excl: Vec<String> = ["spira-poison".to_string(), cfg.ask.clone()]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect();
-        self.ready.as_ref().map(|r| {
-            r.iter()
-                .filter(|b| has_all(b, &need) && has_none(b, &excl))
-                .count()
-        })
-    }
-
     /// Plan beads an aeon holds: lifecycle WORKING (was `bd list --status in_progress`).
     pub fn plan_inprog(&self, cfg: &Cfg) -> usize {
         let need = cfg.plan_labels();
@@ -417,22 +403,7 @@ mod tests {
             s.plan_open(&cfg("other")).is_empty(),
             "another scope's plan beads are not this backlog"
         );
-        assert_eq!(
-            s.plan_ready(&cfg("spira")),
-            Some(1),
-            "poisoned and out-of-scope rows do not count"
-        );
-        assert_eq!(
-            s.plan_ready(&cfg("")),
-            Some(2),
-            "no scope: the scope label is not required"
-        );
         assert_eq!(s.plan_inprog(&cfg("spira")), 1);
-        assert_eq!(
-            Snapshot::from_json("[]", None).plan_ready(&cfg("spira")),
-            None,
-            "unknown is not zero"
-        );
     }
 
     #[test]

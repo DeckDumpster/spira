@@ -190,8 +190,7 @@ fn main() {
                 die("cannot find lib.sh (set SPIRA_HOME)");
             };
             let seam = LibSeam::new(home.join("lib.sh"));
-            let enforce = matches!(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), Some("1") | Some("true"));
-            let (code, out) = deadlocked::run(&bd, &seam, &bd.db, apply, enforce, "spira-claim");
+            let (code, out) = deadlocked::run(&seam, &bd.db, apply, "spira-claim");
             print!("{out}");
             std::process::exit(code);
         }

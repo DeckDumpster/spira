@@ -1,15 +1,9 @@
 //! The lifecycle machine is the only record: spira-lc is authoritative, and one that cannot
 //! be reached is a loud refusal of the step that needed it.
 
-/// Pin the switch into this process's environment before any child starts, so the bash
-/// this binary still runs (the lib.sh seams) resolves the same mode.
-pub fn pin_for_children(on: bool) {
-    std::env::set_var("SPIRA_LIFECYCLE_ENFORCE", if on { "1" } else { "0" });
-}
-
 /// The lifecycle machine, as far as this pass needs it: is it there?
 pub trait Lc {
-    /// `spira-lc list --state IN_DELIVERY`, parsed. Only ever called with the switch ON.
+    /// `spira-lc list --state IN_DELIVERY`, parsed.
     fn probe(&self) -> Result<(), String>;
     /// `spira-lc certify <id> <tip> <pass|red|infra> <detail>`: the gate outcome as an event.
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String>;
@@ -54,5 +48,5 @@ impl RealLc {
 }
 
 pub fn unreachable_line(why: &str, what: &str) -> String {
-    format!("landing: lifecycle_enforce is on and spira-lc is unreachable ({why}) — {what}; fix the lifecycle machine or turn lifecycle_enforce off")
+    format!("landing: spira-lc is unreachable ({why}) — {what}; fix the lifecycle machine (it is the only record of a delivery)")
 }

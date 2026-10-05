@@ -374,7 +374,7 @@ fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     Bd { args: Vec<String>, stdin: Option<String> },
-    Tool { program: &'static str, args: Vec<String>, stdin: Option<String>, enforce_off: bool },
+    Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     CreateRow,
 }
 
@@ -512,7 +512,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             }
             // bead.sh's own wrapper, not raw `bd dep add`: it refuses a blocks edge onto an
             // incident bead, which has no completion path (law-a-refusal-names-its-exit).
-            Ok(vec![Step::Tool { program: "bead.sh", args: [vec![s("dep"), s("add"), id, on], flatten(&f)].concat(), stdin: None, enforce_off: false }])
+            Ok(vec![Step::Tool { program: "bead.sh", args: [vec![s("dep"), s("add"), id, on], flatten(&f)].concat(), stdin: None }])
         }
         "relate" => {
             let x = bead_arg(verb, a, 0, "<bead-id>")?;
@@ -536,7 +536,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let Some(ev) = get(&f, "--evidence").filter(|e| !e.trim().is_empty()) else {
                 return Err(usage(verb, "--evidence <text> is required"));
             };
-            Ok(vec![Step::Tool { program: "groomer", args: vec![s("close"), id, s("--evidence"), ev.to_string()], stdin: None, enforce_off: false }])
+            Ok(vec![Step::Tool { program: "groomer", args: vec![s("close"), id, s("--evidence"), ev.to_string()], stdin: None }])
         }
         "file" => {
             let Some(title) = a.first().filter(|t| !t.trim().is_empty() && !t.starts_with('-')) else {
@@ -564,7 +564,6 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                 program: "bead.sh",
                 args: [vec![s("file"), title.clone()], flatten(&f)].concat(),
                 stdin: call.stdin.clone(),
-                enforce_off: true,
             }];
             if persona.is_some() {
                 steps.push(Step::CreateRow);
@@ -610,7 +609,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             if let Some(b) = cited {
                 args.extend([s("--bead"), b]);
             }
-            Ok(vec![Step::Tool { program: "mail", args, stdin: Some(body), enforce_off: false }])
+            Ok(vec![Step::Tool { program: "mail", args, stdin: Some(body) }])
         }
         tool => {
             let Some(&(_, program)) = TOOLS.iter().find(|(v, _)| *v == tool) else {
@@ -622,7 +621,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             if tool == "groom" && a.first().map(String::as_str) == Some("split-piece") {
                 split_piece_args(&a[1..])?;
             }
-            Ok(vec![Step::Tool { program, args: a.clone(), stdin: call.stdin.clone(), enforce_off: false }])
+            Ok(vec![Step::Tool { program, args: a.clone(), stdin: call.stdin.clone() }])
         }
     }
 }
@@ -694,10 +693,10 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 Ok(t) => (0, t),
                 Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
             },
-            Step::Tool { program, args, stdin, enforce_off } => {
+            Step::Tool { program, args, stdin } => {
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
-                crate::bd::tool(&prog, &args, stdin.as_deref(), actor, enforce_off, TOOL_SECS)
+                crate::bd::tool(&prog, &args, stdin.as_deref(), actor, TOOL_SECS)
             }
             Step::CreateRow => {
                 let new_id = out.trim().to_string();
@@ -731,7 +730,7 @@ mod tests {
     }
 
     fn tool(program: &'static str, args: &[&str]) -> Step {
-        Step::Tool { program, args: v(args), stdin: None, enforce_off: false }
+        Step::Tool { program, args: v(args), stdin: None }
     }
 
     // ---- the gate ----
@@ -871,7 +870,7 @@ mod tests {
         assert_eq!(
             plan("file", "-", &c).unwrap(),
             vec![
-                Step::Tool { program: "bead.sh", args: v(&["file", "a title", "--for", "builder", "--repo", "spira", "--body-file", "-"]), stdin: Some("body".into()), enforce_off: true },
+                Step::Tool { program: "bead.sh", args: v(&["file", "a title", "--for", "builder", "--repo", "spira", "--body-file", "-"]), stdin: Some("body".into()) },
                 Step::CreateRow
             ]
         );
@@ -907,7 +906,7 @@ mod tests {
     #[test]
     fn tools_forward_their_subcommand_and_stdin() {
         let c = split_reserved(&v(&["file", "a finding", "-", "--stdin", "payload", "--actor", "ops"]));
-        assert_eq!(plan("incident", "-", &c).unwrap(), vec![Step::Tool { program: "incident.sh", args: v(&["file", "a finding", "-"]), stdin: Some("payload".into()), enforce_off: false }]);
+        assert_eq!(plan("incident", "-", &c).unwrap(), vec![Step::Tool { program: "incident.sh", args: v(&["file", "a finding", "-"]), stdin: Some("payload".into()) }]);
         assert_eq!(plan("groom", "-", &call(&["sweep"], "groomer")).unwrap(), vec![tool("groomer", &["sweep"])]);
         assert_eq!(plan("queue", "-", &call(&["eject", "sp-a1", "--red"], "czar")).unwrap(), vec![tool("queue", &["eject", "sp-a1", "--red"])]);
         assert_eq!(plan("strand", "-", &call(&["detect-livelocked"], "groomer")).unwrap(), vec![tool("strand", &["detect-livelocked"])]);

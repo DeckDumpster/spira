@@ -114,10 +114,10 @@ struct Fixture {
 }
 
 fn build_fixture(tag: &str, with_aeon: bool) -> Fixture {
-    // bd: unconditionally one ready bead, for ANY query — the bd schema preflight inside
-    // conf.sh never reaches this stub at all (see this file's top doc); the only real
-    // consumer is spira-claim's own `ready_count`/`fayth-ready`.
-    build_fixture_with_bd(tag, with_aeon, "echo '[{\"id\":\"sp-fixture1\"}]'")
+    // bd: the label-aware store, whose plan beads are ready for a builder — the bd schema
+    // preflight inside conf.sh never reaches this stub at all (see this file's top doc); the
+    // only real consumer is spira-claim's own `ready_count`/`fayth-ready`.
+    build_fixture_with_bd(tag, with_aeon, FIXTURE_BD_SCRIPT)
 }
 
 /// [`build_fixture`], with the `bd` stub's own script body overridable — sp-xsnid's own
@@ -137,6 +137,9 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     std::fs::copy(build_bin("watchd", "watchd"), root.join("bin/watchd")).expect("copy watchd");
 
     write_script(&root.join("bin/bd"), bd_body);
+    // The ready set is the lifecycle machine's (sp-v62vn: there is no off mode): every id
+    // the bd stubs below know is a READY row with no holds.
+    write_script(&root.join("bin/spira-lc"), FIXTURE_LC_SCRIPT);
     // systemd-run: records its own argv (one line) and exits 0 — "stub the actual
     // systemd-run" (this bead's own part 3).
     let systemd_run_log = t.join("systemd-run.log");
@@ -164,22 +167,58 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
 const FIXTURE_BD_SCRIPT: &str = r#"
 prev=""
 label=""
+ids=""
 for a in "$@"; do
     if [ "$prev" = "--label" ]; then label="$a"; fi
+    if [ "$prev" = "--id" ]; then ids="$a"; fi
     prev="$a"
 done
+if [ -n "$ids" ]; then
+    # Content by id (the machine's ready set asks bd only for content): the id's prefix
+    # names its partition label, and every row carries the scope label the fixture's own
+    # config resolves to — the home repo, the name of the checkout `spira/` lives in
+    # (spira-config's compute_home_repo_default).
+    scope=$(basename "$(dirname "$(git -C "$(dirname "$0")/../spira/" rev-parse --path-format=absolute --git-common-dir)")")
+    printf '['
+    sep=""
+    for id in $(printf '%s' "$ids" | tr ',' ' '); do
+        case "$id" in
+            sp-p*) l=plan ;;
+            sp-i*) l=incident ;;
+            sp-s*) l=spike ;;
+            *) l=other ;;
+        esac
+        printf '%s{"id":"%s","status":"open","issue_type":"task","labels":["%s","%s"]}' "$sep" "$id" "$l" "$scope"
+        sep=","
+    done
+    printf ']\n'
+    exit 0
+fi
 case "$label" in
-    *incident*) n=5 ;;
-    *spike*) n=3 ;;
-    *plan*) n=7 ;;
-    *) n=0 ;;
+    *incident*) n=5; p=i ;;
+    *spike*) n=3; p=s ;;
+    *plan*) n=7; p=p ;;
+    *) n=0; p=x ;;
 esac
 i=0
 printf '['
 while [ "$i" -lt "$n" ]; do
     [ "$i" -gt 0 ] && printf ','
-    printf '{"id":"sp-x%d"}' "$i"
+    printf '{"id":"sp-%s%d"}' "$p" "$i"
     i=$((i + 1))
+done
+printf ']\n'
+"#;
+
+/// `spira-lc list`: the fixture's lifecycle rows — [`FIXTURE_BD_SCRIPT`]'s seven plan, five
+/// incident and three spike beads, each READY with
+/// no holds.
+const FIXTURE_LC_SCRIPT: &str = r#"
+printf '['
+sep=""
+for id in sp-p0 sp-p1 sp-p2 sp-p3 sp-p4 sp-p5 sp-p6 sp-i0 sp-i1 sp-i2 sp-i3 sp-i4 sp-s0 sp-s1 sp-s2; do
+    printf '%s{"bead_id":"%s","state":"READY","holds":"[]"}' "$sep" "$id"
+    sep=","
 done
 printf ']\n'
 "#;
@@ -188,13 +227,19 @@ printf ']\n'
 /// `FAYTH_LABELS` — the "fully resolved config" ground truth this test compares the
 /// rendered-unit-env run against: `builder` (`$SPIRA_PLAN_LABEL` = `plan`) draws 7,
 /// `ops` (`$SPIRA_INCIDENT_LABEL` = `incident`) draws 5, `spike` (`$SPIRA_SPIKE_LABEL` =
-/// `spike`) draws 3, and every other real chamber persona — none of whose own labels
+/// `spike`) draws 3, `concierge` (no partition) draws every ready bead, and every other real
+/// chamber persona — none of whose own labels
 /// mention any of those three substrings — draws 0.
 fn expected_fixture_count(fayth: &str) -> u64 {
     match fayth {
         "builder" => 7,
         "ops" => 5,
         "spike" => 3,
+        // `concierge.fayth` declares `FAYTH_LABELS=""` — no partition at all, so its predicate
+        // (bd's or the machine's) matches every ready bead: all fifteen rows. A declared-empty
+        // literal never refuses (spira-claim's own `fayth_ready_cli_a_guarded_or_declared_
+        // literal_empty_never_refuses`); it is not the bare-reference widen this test guards.
+        "concierge" => 15,
         _ => 0,
     }
 }
@@ -608,3 +653,4 @@ fn config_reading_units_resolve_their_keys_under_the_rendered_unit_env() {
         }
     }
 }
+

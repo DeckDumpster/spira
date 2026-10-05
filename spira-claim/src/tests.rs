@@ -8,15 +8,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static N: AtomicUsize = AtomicUsize::new(0);
 
-thread_local! {
-    /// The lifecycle switch as `select` sees it in this test's thread (main.rs `lifecycle_on`).
-    pub static ENFORCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-fn enforce(on: bool) {
-    ENFORCE.with(|c| c.set(on));
-}
-
 /// A file's path, and the scratch dir that holds it: the file is removed when this drops,
 /// so hold it for as long as anything reads the path (sp-qgfdi).
 struct Tmp {
@@ -339,7 +330,6 @@ fn machine_fixture() -> (String, Tmp, Tmp) {
 
 #[test]
 fn machine_mode_count_and_claim_agree_on_the_fixture() {
-    enforce(true);
     let (ready, lc, recs) = machine_fixture();
     let base = ["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs];
     let mut ranked_args = base.to_vec();
@@ -357,7 +347,6 @@ fn machine_mode_count_and_claim_agree_on_the_fixture() {
 
 #[test]
 fn machine_mode_stack_max_depth_zero_is_todays_rule() {
-    enforce(true);
     let (ready, lc, recs) = machine_fixture();
     let o = run(
         &["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs,
@@ -377,7 +366,6 @@ fn machine_mode_stack_max_depth_zero_is_todays_rule() {
 
 #[test]
 fn machine_mode_bad_snapshot_is_cannot_tell() {
-    enforce(true);
     let (ready, _, recs) = machine_fixture();
     let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &tmp(""), "--blocker-records", &recs], &ready);
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
@@ -393,51 +381,16 @@ fn bd_mode_does_not_refilter() {
 
 // ---- the lifecycle switch (DESIGN.md §6a) ------------------------------------------------
 
-/// sp-mve9i: off, `--blockers machine` is refused — the bd-status stand-in for the
-/// machine's rule (every blocker bd-closed) is retired — and nothing is read to refuse it.
 #[test]
-fn off_machine_mode_is_refused_and_never_reads_the_lifecycle() {
-    enforce(false);
-    let (ready, _, recs) = machine_fixture();
-    let garbage = tmp("not json");
-    let epics = tmp("{}");
-    for extra in [vec![], vec!["--lifecycle".to_string(), garbage.to_string()]] {
-        let mut args: Vec<String> =
-            ["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs, "--epics", &epics]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-        args.extend(extra);
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        let o = run(&args, &ready);
-        assert_eq!((o.code, o.out.as_str()), (USAGE, ""), "{}", o.err);
-        assert!(o.err.contains("needs lifecycle_enforce on"), "{}", o.err);
-    }
-}
-
-#[test]
-fn off_spira_poison_label_is_not_claimable() {
-    enforce(false);
-    let ready = serde_json::json!([
-        {"id":"P","priority":0,"labels":["repo:spira","spira-poison"]},
-        {"id":"Q","priority":1,"labels":["repo:spira"]}
-    ])
-    .to_string();
-    assert_eq!(run(&["select", "--fayth", "t", "--count"], &ready).out, "1\n");
-}
-
-#[test]
-fn on_bd_mode_is_unchanged_and_the_label_is_not_the_poison() {
-    // On, the poison is the lifecycle hold; bd mode does not refilter (bd ready already
-    // applied the predicate's exclusions), exactly as before the switch.
-    enforce(true);
+fn bd_mode_is_unchanged_and_the_label_is_not_the_poison() {
+    // The poison is the lifecycle hold; bd mode does not refilter (bd ready already
+    // applied the predicate's exclusions).
     let ready = serde_json::json!([{"id":"P","priority":0,"labels":["spira-poison"]}]).to_string();
     assert_eq!(run(&["select", "--fayth", "t", "--count"], &ready).out, "1\n");
 }
 
 #[test]
-fn on_machine_mode_unreachable_machine_is_cannot_tell() {
-    enforce(true);
+fn machine_mode_unreachable_machine_is_cannot_tell() {
     let (ready, _, recs) = machine_fixture();
     // Unreachable by construction: no spira-lc on PATH. Inheriting the caller's PATH and
     // SPIRA_LC_* reached the production store from the gate and passed only while it was slow.
@@ -445,7 +398,7 @@ fn on_machine_mode_unreachable_machine_is_cannot_tell() {
     let _env = testkit::env(&[("PATH", Some(no_lc.path().to_str().unwrap()))]);
     let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs], &ready);
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
-    assert!(o.err.contains("lifecycle_enforce is on"), "{}", o.err);
+    assert!(o.err.contains("the machine must answer"), "{}", o.err);
 }
 
 // ---- stack: the aeon's own claim-time proposal ----------------------------------------
@@ -559,8 +512,7 @@ fn store_passes_db_and_chunks_ids() {
 /// `epics`: bd list --id gives the epic priorities, bd children the children, and each
 /// child's progress is its lifecycle row (sp-mve9i) — sp-E's child is SUBMITTED, so sp-E is
 /// started, though bd says the child is open; sp-F's is READY, though bd says closed.
-fn epics_with(lc: Option<&str>, on: bool) -> Outcome {
-    enforce(on);
+fn epics_with(lc: Option<&str>) -> Outcome {
     let bd = sh(r#"case "$*" in
   *children*sp-E*) echo '[{"id":"k","status":"open","labels":[]}]' ;;
   *children*sp-F*) echo '[{"id":"k2","status":"closed","labels":[]}]' ;;
@@ -578,31 +530,24 @@ esac"#);
         ("PATH", Some(path.as_str())),
     ]);
     let o = run(&["epics"], r#"[{"id":"a","parent":"sp-E"},{"id":"b","parent":"sp-F"}]"#);
-    enforce(false);
     o
 }
 
 #[test]
 fn epics_reads_each_childs_progress_from_its_lifecycle_row() {
     let lc = r#"[{"bead_id":"k","state":"SUBMITTED","holds":"[]"},{"bead_id":"k2","state":"READY","holds":"[]"}]"#;
-    for on in [true, false] {
-        let o = epics_with(Some(lc), on);
-        assert_eq!(o.code, 0, "{}", o.err);
-        let l: EpicLookup = serde_json::from_str(o.out.trim()).unwrap();
-        assert_eq!(l.prio.get("sp-E"), Some(&0));
-        assert_eq!(l.started, vec!["sp-E".to_string()], "enforce={on}");
-    }
+    let o = epics_with(Some(lc));
+    assert_eq!(o.code, 0, "{}", o.err);
+    let l: EpicLookup = serde_json::from_str(o.out.trim()).unwrap();
+    assert_eq!(l.prio.get("sp-E"), Some(&0));
+    assert_eq!(l.started, vec!["sp-E".to_string()]);
 }
 
 #[test]
-fn epics_with_no_machine_is_cannot_tell_on_and_unstarted_off() {
-    let on = epics_with(None, true);
-    assert_eq!((on.code, on.out.as_str()), (CANNOT_TELL, ""));
-    assert!(on.err.contains("lifecycle_enforce is on"), "{}", on.err);
-    let off = epics_with(None, false);
-    assert_eq!(off.code, 0, "{}", off.err);
-    let l: EpicLookup = serde_json::from_str(off.out.trim()).unwrap();
-    assert!(l.started.is_empty(), "off, a machine that does not answer starts nothing: {l:?}");
+fn epics_with_no_machine_is_cannot_tell() {
+    let o = epics_with(None);
+    assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
+    assert!(o.err.contains("the machine must answer"), "{}", o.err);
 }
 
 #[test]
@@ -618,19 +563,6 @@ fn unpoison_usage_errors() {
     let o = run(&["unpoison", "--bead", "sp-a"], "");
     assert!(o.err.contains("--cause is required"), "{}", o.err);
     assert!(o.out.is_empty());
-}
-
-#[test]
-fn lifecycle_enforce_resolution_matches_aeon() {
-    let on = Config { lifecycle_enforce: Some(true), ..Config::default() };
-    let unset = Config::default();
-    assert!(lifecycle_enforce(None, &on));
-    assert!(!lifecycle_enforce(Some("0"), &on), "the environment wins");
-    assert!(!lifecycle_enforce(Some(""), &on), "set-but-empty is off, as aeon");
-    assert!(lifecycle_enforce(Some("1"), &unset));
-    assert!(lifecycle_enforce(Some("true"), &unset));
-    assert!(!lifecycle_enforce(Some("yes"), &unset));
-    assert!(!lifecycle_enforce(None, &unset), "default off");
 }
 
 // ---- ready / claim CLI (wave 4.25, sp-obhv6) -------------------------------------------
@@ -668,9 +600,11 @@ fn ready_args_cli_prints_one_token_a_line_in_order() {
 #[test]
 fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
     let bd = sh("echo 'dolt: connection refused' >&2; exit 1");
+    let path = fake_lc_path(&lc_ready(&["a"]));
     let _env = testkit::env(&[
         ("SPIRA_BD", Some(bd.as_str())),
         ("SPIRA_DB", None),
+        ("PATH", Some(path.as_str())),
     ]);
     let o = run(&["ready-count", "plan", "spira-poison", "--noloop-label", "no-loop"], ""); // literal-ok: fixture value
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "a failed query is not a clean zero (sp-3ntca)");
@@ -679,10 +613,14 @@ fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
 
 #[test]
 fn ready_count_cli_real_count() {
-    let bd = sh("echo '[1,2,3]'");
+    let bd = sh(&format!("echo '{}'", plan_rows(&["a", "b", "c"])));
+    let path = fake_lc_path(&lc_ready(&["a", "b", "c"]));
     let _env = testkit::env(&[
         ("SPIRA_BD", Some(bd.as_str())),
         ("SPIRA_DB", None),
+        ("SPIRA_SCOPE_LABEL", None),
+        ("SPIRA_NO_LOOP_LABEL", None),
+        ("PATH", Some(path.as_str())),
     ]);
     let o = run(&["ready-count", "plan", ""], "");
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "3", ""));
@@ -818,12 +756,14 @@ fn fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero() {
 fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
     let home = chamber_home(&[("probe", "plan", "")]);
     let bd = sh("echo 'Error: the database is locked by another dolt process' >&2; exit 1");
+    let path = fake_lc_path(&lc_ready(&["a"]));
     let _env = testkit::env(&[
         ("SPIRA_HOME", Some(home.as_str())),
         ("SPIRA_BD", Some(bd.as_str())),
         ("SPIRA_DB", None),
         ("SPIRA_READY_CACHE", None),
         ("SPIRA_FAYTHS", None),
+        ("PATH", Some(path.as_str())),
     ]);
     let o = run(&["fayth-ready", "probe"], "");
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "the fayth file is right there — this is not the no-fayth code");
@@ -869,12 +809,14 @@ fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens
 fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
     let home = chamber_home(&[("concierge", "", "")]);
     let bd = sh("echo '[]'");
+    let path = fake_lc_path("[]");
     let _env = testkit::env(&[
         ("SPIRA_HOME", Some(home.as_str())),
         ("SPIRA_BD", Some(bd.as_str())),
         ("SPIRA_DB", None),
         ("SPIRA_READY_CACHE", None),
         ("SPIRA_FAYTHS", None),
+        ("PATH", Some(path.as_str())),
     ]);
     let o = run(&["fayth-ready", "concierge"], "");
     assert_eq!((o.code, o.out.as_str()), (0, "0"), "a declared-empty literal predicate must never refuse: {}", o.err);
@@ -929,27 +871,34 @@ fn fayth_home_pure_function_prefers_the_env_override_and_falls_back_to_the_relea
 fn fayth_ready_cli_real_count_including_zero() {
     let home = chamber_home(&[("probe", "plan", "")]);
     let bd_zero = sh("echo '[]'");
+    let path_zero = fake_lc_path("[]");
     let zero = testkit::env(&[
         ("SPIRA_HOME", Some(home.as_str())),
         ("SPIRA_BD", Some(bd_zero.as_str())),
         ("SPIRA_DB", None),
         ("SPIRA_READY_CACHE", None),
         ("SPIRA_FAYTHS", None),
+        ("PATH", Some(path_zero.as_str())),
     ]);
     let o = run(&["fayth-ready", "probe"], "");
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "0", ""));
     drop(zero);
 
-    let bd_seven = sh("echo '[1,2,3,4,5,6,7]'");
+    let seven = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
+    let bd_seven = sh(&format!("echo '{}'", plan_rows(&seven)));
+    let path = fake_lc_path(&lc_ready(&seven));
     let _env = testkit::env(&[
         ("SPIRA_HOME", Some(home.as_str())),
         ("SPIRA_BD", Some(bd_seven.as_str())),
         ("SPIRA_DB", None),
         ("SPIRA_READY_CACHE", None),
         ("SPIRA_FAYTHS", None),
+        ("SPIRA_SCOPE_LABEL", None),
+        ("SPIRA_NO_LOOP_LABEL", None),
+        ("PATH", Some(path.as_str())),
     ]);
     let o2 = run(&["fayth-ready", "probe"], "");
-    assert_eq!((o2.code, o2.out.as_str()), (0, "7"));
+    assert_eq!((o2.code, o2.out.as_str()), (0, "7"), "{}", o2.err);
 }
 
 #[test]
@@ -973,11 +922,14 @@ fn bulk_ready_by_fayth_cli_buckets_one_fetch_by_the_chamber_roster() {
     let bd = sh(
         r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"b","labels":["spira","ops-trigger"]},{"id":"c","labels":["spira","plan","spira-submitted"]}]'"#,
     );
+    let path = fake_lc_path(&lc_ready(&["a", "b", "c"]));
     let _env = testkit::env(&[
         ("SPIRA_HOME", Some(home.as_str())),
         ("SPIRA_BD", Some(bd.as_str())),
         ("SPIRA_DB", None),
-        ("SPIRA_READY_SNAPSHOT", None),
+        ("SPIRA_SCOPE_LABEL", None),
+        ("SPIRA_NO_LOOP_LABEL", None),
+        ("PATH", Some(path.as_str())),
         ("SPIRA_FAYTHS", None),
         ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
         ("SPIRA_QUEUE_WAIT_LABEL", None),
@@ -995,11 +947,14 @@ fn bulk_ready_by_fayth_cli_excludes_exactly_what_fayth_ready_excludes() {
     let bd = sh(
         r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"e","labels":["spira","plan","spira-open-children"]},{"id":"f","labels":["spira","plan","fayth:ops"]}]'"#,
     );
+    let path = fake_lc_path(&lc_ready(&["a", "e", "f"]));
     let _env = testkit::env(&[
         ("SPIRA_HOME", Some(home.as_str())),
         ("SPIRA_BD", Some(bd.as_str())),
         ("SPIRA_DB", None),
-        ("SPIRA_READY_SNAPSHOT", None),
+        ("SPIRA_SCOPE_LABEL", None),
+        ("SPIRA_NO_LOOP_LABEL", None),
+        ("PATH", Some(path.as_str())),
         ("SPIRA_READY_CACHE", None),
         ("SPIRA_FAYTHS", None),
         ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
@@ -1010,33 +965,32 @@ fn bulk_ready_by_fayth_cli_excludes_exactly_what_fayth_ready_excludes() {
     assert_eq!(o.out, "builder 1\nops 0\n", "{}", o.err);
 }
 
-#[test]
-fn bulk_ready_by_fayth_cli_reads_the_snapshot_instead_of_calling_bd() {
-    let home = chamber_home(&[("builder", "spira,plan", "")]);
-    let snap = tmp(r#"[{"id":"a","labels":["spira","plan"]}]"#);
-    let bd = sh("echo 'bd must not be called' >&2; exit 1");
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_READY_SNAPSHOT", Some(snap.as_str())),
-        ("SPIRA_FAYTHS", None),
-    ]);
-    let o = run(&["bulk-ready-by-fayth"], "");
-    assert_eq!((o.code, o.out.as_str()), (0, "builder 1\n"));
+// ---- fayth-ready / bulk-ready-by-fayth: the machine's ready set --------------------------------
+
+/// `spira-lc list` rows: each id READY with no holds.
+fn lc_ready(ids: &[&str]) -> String {
+    let rows: Vec<String> = ids.iter().map(|id| format!(r#"{{"bead_id":"{id}","state":"READY","holds":"[]"}}"#)).collect();
+    format!("[{}]", rows.join(","))
 }
 
-// ---- fayth-ready / bulk-ready-by-fayth under lifecycle_enforce -------------------------
+/// bd's content of each id: an open task labelled `plan`.
+fn plan_rows(ids: &[&str]) -> String {
+    let rows: Vec<String> =
+        ids.iter().map(|id| format!(r#"{{"id":"{id}","status":"open","issue_type":"task","labels":["plan"]}}"#)).collect();
+    format!("[{}]", rows.join(","))
+}
 
 /// A PATH directory holding a `spira-lc` that prints `lc`.
 fn fake_lc_path(lc: &str) -> Tmp {
     let dir = testkit::TempDir::new("spira-claim-lc");
     testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\ncat <<'EOF'\n{lc}\nEOF\n"));
-    let path = format!("{}:{}", dir.to_string_lossy(), std::env::var("PATH").unwrap_or_default());
+    // The system directories, never the process PATH: another test may hold a narrowed PATH
+    // (an unreachable-machine fixture) while this one is built, outside the env lock.
+    let path = format!("{}:/usr/bin:/bin", dir.to_string_lossy());
     Tmp { path, _dir: dir }
 }
 
 fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
-    enforce(true);
     let home = chamber_home(&[("probe", "plan", "")]);
     let bd = sh(&format!("case \"$*\" in *--id*) echo '{recs}';; *) echo '{ready}';; esac"));
     let path = fake_lc_path(lc);
@@ -1045,12 +999,10 @@ fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
         ("SPIRA_BD", Some(bd.as_str())),
         ("SPIRA_DB", None),
         ("SPIRA_READY_CACHE", None),
-        ("SPIRA_READY_SNAPSHOT", None),
         ("SPIRA_FAYTHS", None),
         ("PATH", Some(path.as_str())),
     ]);
     let o = run(verb, "");
-    enforce(false);
     o
 }
 
@@ -1141,7 +1093,7 @@ fn a_held_ready_row_is_not_ready_but_a_wait_hold_is_judged_through_its_blockers(
 // count is, so a display and the summoner cannot disagree.
 
 #[test]
-fn ready_count_json_is_the_machine_set_with_titles_under_enforce() {
+fn ready_count_json_is_the_machine_set_with_titles() {
     let bd_both = r#"[{"id":"W","title":"held","status":"open","priority":1,"issue_type":"task","labels":["plan"]},
     {"id":"P","title":"take me","status":"in_progress","assignee":"aeon-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
     let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, bd_both, &["ready-count", "plan", "spira-poison", "--json"]);
@@ -1153,17 +1105,4 @@ fn ready_count_json_is_the_machine_set_with_titles_under_enforce() {
     assert_eq!((none.code, ids_of(&none.out)), (0, Vec::<String>::new()), "{}", none.err);
     let refused = enforced_count(BD_OPEN_UNASSIGNED, "not json", bd_both, &["ready-count", "plan", "", "--json"]);
     assert_eq!((refused.code, refused.out.as_str()), (1, ""), "a machine that cannot answer is no empty queue");
-}
-
-#[test]
-fn ready_count_json_off_is_bds_ready_query_and_refuses_a_non_json_reply() {
-    let bd = sh(r#"case "$*" in *"ready"*"--label plan"*) echo '[{"id":"a","title":"A","labels":["plan"]}]';; *) echo '[]';; esac"#);
-    let _env = testkit::env(&[("SPIRA_BD", Some(bd.as_str())), ("SPIRA_DB", None), ("SPIRA_SCOPE_LABEL", None), ("SPIRA_NO_LOOP_LABEL", None)]);
-    let o = run(&["ready-count", "plan", "spira-poison", "--json"], "");
-    assert_eq!((o.code, ids_of(&o.out)), (0, vec!["a".to_string()]), "{}", o.err);
-    drop(_env);
-    let bd = sh("echo 'schema version mismatch'");
-    let _env = testkit::env(&[("SPIRA_BD", Some(bd.as_str())), ("SPIRA_DB", None)]);
-    let o = run(&["ready-count", "plan", "", "--json"], "");
-    assert_eq!((o.code, o.out.as_str()), (1, ""), "{}", o.err);
 }
