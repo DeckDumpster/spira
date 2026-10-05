@@ -33,14 +33,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
 unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN \
       TESTDB_MODE TESTDB_STARTED_SERVICE SPIRA_DB

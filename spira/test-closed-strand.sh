@@ -141,10 +141,10 @@ JSONL2
 
     # The collector's funnel reads spira-lc; with no store it prints ? (CANNOT TELL). An empty
     # throwaway store is a real zero, so the beads here are all the done stage.
-    CARGO_BIN="$(PATH="$HOME/.cargo/bin:$PATH" command -v cargo 2>/dev/null || true)"
     DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-    if [ -z "$CARGO_BIN" ] || [ -z "$DOLT_BIN" ]; then
-        echo "SKIP strand-anomaly-split: cargo or dolt missing (needed for spira_lifecycle)" >&2
+    LC_BIN="$(command -v spira-lc 2>/dev/null || true)"
+    if [ -z "$LC_BIN" ] || [ -z "$DOLT_BIN" ]; then
+        echo "SKIP strand-anomaly-split: spira-lc or dolt missing (needed for spira_lifecycle)" >&2
         tl_summary
         exit 0
     fi
@@ -167,14 +167,10 @@ YAML
         "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && break
         sleep 0.2
     done
-    LC_TARGET="$TMP/lc-cargo-target"
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_TARGET" \
-        "$CARGO_BIN" build --manifest-path "$HERE/../spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
-        || { echo "spira-lc failed to build: $(cat "$TMP/lc-build.log")" >&2; exit 1; }
-    LC_ENV=(SPIRA_LC_BIN="$LC_TARGET/debug/spira-lc" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
+    LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
             SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
             SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")
-    env "${LC_ENV[@]}" "$LC_TARGET/debug/spira-lc" admin-apply-ddl "$HERE/../lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1 \
+    env "${LC_ENV[@]}" "$LC_BIN" admin-apply-ddl "$HERE/../lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1 \
         || { echo "spira_lifecycle schema failed: $(cat "$TMP/lc-schema.log")" >&2; exit 1; }
 
     cout="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 "${LC_ENV[@]}" \

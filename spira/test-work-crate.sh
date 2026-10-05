@@ -25,24 +25,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# Same hazard as test-lifecycle-container.sh: a suite run inside testenv-batch.sh's own
-# podman exec inherits its own CARGO_TARGET_DIR; pin one this suite controls.
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-export CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD"
-export CARGO_TERM_COLOR=never
-
-out="$("$CARGO_BIN" test --manifest-path "$REPO/work/Cargo.toml" --quiet 2>&1)"
-wantrc "cargo test -p work" 0 $?
-want "cargo test -p work: all pass, none ignored" "test result: ok" "$out"
-nowant "cargo test -p work: nothing failed" "FAILED" "$out"
+# (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 # The tree's own `work`, resolved on the suite's PATH (sp-gypjk); its absolute path is kept
 # because a case below runs it under a minimal `env -i PATH`.

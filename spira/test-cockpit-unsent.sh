@@ -38,11 +38,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
 # can overwrite PATH with the harness's own tool directories. Needed only for the
 # BATCHED-stranded/-too-long section below, which now reads spira-lc instead of landstate.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — needed to build spira-lc"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
 
@@ -52,7 +47,7 @@ TMP="$(mktemp -d)"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$BASE_PATH"
+export PATH="$(dirname "$DOLT_BIN"):$BASE_PATH"
 
 # spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
 # and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
@@ -87,11 +82,7 @@ done
 [ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
 
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
-CARGO_TARGET_DIR_FOR_LC="$TMP/lc-cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_LC" \
-    "$CARGO_BIN" build --manifest-path "$REPO_ROOT/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
-LC_BIN="$CARGO_TARGET_DIR_FOR_LC/debug/spira-lc"
+LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
 SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \

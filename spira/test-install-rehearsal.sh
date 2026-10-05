@@ -174,14 +174,15 @@ iszero "configure.sh exits 0" "$?"
 
 # ===========================================================================
 echo
-echo "build spira-install (sp-31dm0: systemd/install.sh is retired; it is a compiled binary now):"
+echo "stage spira-install (sp-31dm0: systemd/install.sh is retired; it is a compiled binary now):"
 # ===========================================================================
-# Targeted, not a full workspace build (the gap sp-isom7 tracks for the release's own bin/
-# staying stubbed here): only the crate this suite itself now needs to exec.
-"${CEXEC[@]}" "$CNAME" bash -c \
-    'cd /workspace && cargo build --release -p install --bin spira-install 2>&1' >&2
-iszero "cargo build -p install exits 0" "$?"
-INSTALL_BIN="/workspace/target/release/spira-install"
+# The tree's own build of spira-install, by name on this suite's PATH, copied in — the
+# rehearsal installs the built binary; it never compiles (per Ryan 2026-10-05).
+_si="$(command -v spira-install 2>/dev/null || true)"
+[ -n "$_si" ] || bail "spira-install is not on PATH (the tree's build provides it)"
+INSTALL_BIN="/tmp/spira-install"
+podman cp "$_si" "$CNAME:$INSTALL_BIN" >&2 && podman exec "$CNAME" chmod 0755 "$INSTALL_BIN" >&2
+iszero "the tree's spira-install is staged in the container" "$?"
 
 # Create the fake database marker. The .beads directory satisfies directory-existence
 # checks in ready.sh ("database absent — no .beads") and seed.sh without requiring

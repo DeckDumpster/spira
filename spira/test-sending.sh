@@ -39,11 +39,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 

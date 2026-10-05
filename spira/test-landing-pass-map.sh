@@ -33,26 +33,9 @@ echo "map is unset or unreadable — the actual 1704-fire defect. This runs the 
 echo "seam (bash + lib.sh + conf.sh, DESIGN.md §8 D1), not a stub — the private map parser"
 echo "these fields once had is gone (D1)."
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-landing-pass-map: cargo not found — landing-pass binary cannot be built"
-    exit 77
-fi
 
-LP_BIN="$HERE/../target/release/landing-pass"   # path-ok: reuses a cargo build already on disk, built fresh below if absent
-if [ ! -x "$LP_BIN" ]; then
-    printf '  (building landing-pass into %s)\n' "$TMP/landing-pass-target"
-    if ! CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$TMP/landing-pass-target" \
-        "$CARGO_BIN" build --release --manifest-path "$HERE/../landing-pass/Cargo.toml" >&2
-    then
-        bad "landing-pass builds" "cargo build failed"
-    fi
-    LP_BIN="$TMP/landing-pass-target/release/landing-pass"   # path-ok: this test's own scratch cargo build output
-fi
-[ -x "$LP_BIN" ] || bail "landing-pass binary present at $LP_BIN"
+LP_BIN="$(command -v landing-pass 2>/dev/null || true)"
+[ -n "$LP_BIN" ] || bail "landing-pass is not on PATH (the tree's build provides it)"
 
 # A fixture SPIRA_HOME carrying REAL conf.sh/lib.sh (symlinked, never a hand copy): the
 # context seam sources them exactly as production does. Deliberately no fallback config

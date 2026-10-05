@@ -27,30 +27,12 @@ lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]";
 
 echo "test-broker.sh"
 
-# Resolve cargo; skip if absent (law-absence-needs-a-positive-control: skip, not vacuous pass).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-broker: cargo not found — broker binary cannot be built"
-    exit 77
-fi
 
 
 # Scratch space: also used if we need to build broker from a writable copy.
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-# =========================================================================
-echo
-echo "CARGO TEST — broker's own #[test] units (policy/submit/execute/read)"
-# =========================================================================
-CARGO_TEST_LOG="$T/cargo-test-broker.log"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/broker-test-target" \
-    "$CARGO_BIN" test --locked -p broker --manifest-path "$HERE/../Cargo.toml" \
-    --no-fail-fast > "$CARGO_TEST_LOG" 2>&1
-_cargo_test_rc=$?
-report_cargo "$CARGO_TEST_LOG" "$_cargo_test_rc"
+# (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 # =========================================================================
 echo

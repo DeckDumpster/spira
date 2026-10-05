@@ -79,20 +79,7 @@ RECONCILER_SH="$HERE/reconciler.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — reconciler binary cannot be built"
-# THE WORKSPACE BINARY FIRST, THEN A LOCKED WORKSPACE BUILD. The shipped tree (and
-# testenv-batch --with-bins) already carries target/release/reconciler. Building the crate
-# out of a copy with no Cargo.lock re-resolved every dependency to its newest release, and
-# one of those needs edition2024 — which the pinned 1.82 toolchain cannot build, so the
-# suite went red the moment the test image stopped carrying a newer cargo.
-CARGO_TEST_LOG="$T/cargo-test-reconciler.log"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/reconciler-test-target" \
-    "$CARGO_BIN" test --locked -p reconciler --manifest-path "$HERE/../Cargo.toml" \
-    --no-fail-fast > "$CARGO_TEST_LOG" 2>&1
-_cargo_test_rc=$?
-report_cargo "$CARGO_TEST_LOG" "$_cargo_test_rc"
+# (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 command -v reconciler >/dev/null 2>&1 || bail "reconciler is not on PATH"
 

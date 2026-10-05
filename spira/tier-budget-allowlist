@@ -145,7 +145,6 @@ test-cockpit-rebuild.sh	T1	24.0
 test-cockpit-remote.sh	T1	2.0
 test-cockpit-repo-labels.sh	T1	3.5
 test-cockpit-runtime-path.sh	T1	2.0
-test-cockpit-rust.sh	T2	32.0
 test-cockpit-self.sh	T1	4.0
 test-cockpit-snap-absent.sh	T1	3.5
 test-cockpit-sop.sh	T1	5.0
@@ -327,7 +326,6 @@ test-skew-refresh.sh	T1	4.0
 test-slay.sh	T1	61.0
 test-sop.sh	T1	41.0
 test-spike.sh	T1	32.0
-test-spira-config.sh	T1	20.0
 test-statute-projection.sh	T1	9.0
 test-strand-capacity.sh	T1	4.0
 test-strand-deferred.sh	T1	2.0

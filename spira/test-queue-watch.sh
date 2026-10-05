@@ -38,25 +38,10 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-queue-watch: cargo not found on PATH or at ~/.cargo/bin" >&2
-    exit 77
-fi
-export PATH="$(dirname "$CARGO_BIN"):$PATH"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-# --- 1. unit replays -------------------------------------------------------------------------
-UNIT_OUT="$T/unit-test.out"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/target" "$CARGO_BIN" test --no-fail-fast \
-    --manifest-path "$ROOT/queue-watch/Cargo.toml" > "$UNIT_OUT" 2>&1
-_rc=$?
-cat "$UNIT_OUT"
-report_cargo "$UNIT_OUT" "$_rc"
+# (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 # The tree's queue-watch, by name on the suite's PATH (sp-gypjk).
 BIN=queue-watch

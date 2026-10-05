@@ -26,14 +26,9 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 SLAY="$HERE/../spira-world/src/bin/slay.rs"
 
-# T2 below proves slay.sh's release against a real spira-lc, which needs a spira-lc binary
-# built from source and a throwaway dolt server. Checked here, before T1 runs any case, so
+# T2 below proves slay.sh's release against a real spira-lc (the tree's, on PATH) and a
+# throwaway dolt server. Checked here, before T1 runs any case, so
 # a missing dependency is a clean skip (testlib refuses skip once cases have already run).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
@@ -99,10 +94,8 @@ testdb_up slay || { echo "test-slay: could not build a fixture database"; exit 1
 # exists — so the destroy step below only proceeds when this fixture is real.
 #
 # conf.sh (sourced above by testdb.sh) rebuilds PATH from scratch, dropping whatever
-# CARGO_BIN/DOLT_BIN's own directory the top-of-file check found — re-added here, after
-# that reset, or cargo's own build below fails to find `rustc` on a box where neither
-# lives under $HOME.
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+# DOLT_BIN's own directory the top-of-file check found — re-added here, after that reset.
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 unset SPIRA_LC_SOCKET
 
 LCREPO="$(cd "$HERE/.." && pwd)"

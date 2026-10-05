@@ -35,30 +35,10 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    skip "test-reconciler-alert: cargo not found on PATH or at ~/.cargo/bin"
-fi
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-# --- 1. unit tests: the pure alert module, then the CLI's own arg parsing -------------------
-ENGINE_OUT="$T/engine-test.out"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/engine-target" "$CARGO_BIN" test --no-fail-fast \
-    --manifest-path "$ROOT/reconciler-engine/Cargo.toml" alert:: > "$ENGINE_OUT" 2>&1
-_rc=$?
-cat "$ENGINE_OUT"
-report_cargo "$ENGINE_OUT" "$_rc"
-
-ALERT_OUT="$T/alert-test.out"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/alert-target" "$CARGO_BIN" test --no-fail-fast \
-    --manifest-path "$ROOT/reconciler-alert/Cargo.toml" > "$ALERT_OUT" 2>&1
-_rc=$?
-cat "$ALERT_OUT"
-report_cargo "$ALERT_OUT" "$_rc"
+# (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 # The tree under test's own reconciler-alert, on PATH (sp-gypjk).
 command -v reconciler-alert >/dev/null 2>&1 || bail "reconciler-alert is not on PATH"

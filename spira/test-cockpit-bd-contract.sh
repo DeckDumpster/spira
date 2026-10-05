@@ -28,10 +28,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Resolved BEFORE testdb.sh, which sources conf.sh, which rebuilds PATH from SPIRA_PATH +
 # $HOME/.local/bin + /usr/local/bin + /usr/bin + /bin — dropping wherever this box's cargo
 # actually lives (gap #4's row below needs it after that rebuild has already happened).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
 . "$HERE/testdb.sh"
 testdb_require test-cockpit-bd-contract
 TMP="$(mktemp -d)"
@@ -137,14 +133,10 @@ echo
 echo "gap #4: the panel's own Snapshot parsing (store.rs::fetch_beads) against a real"
 echo "bd list --all --json, not the hand-shaped literal store.rs's own unit test stubs:"
 # ======================================================================================
-PANEL_MANIFEST="$(dirname "$HERE")/cockpit/panel/Cargo.toml"
-if [ -z "$CARGO_BIN" ]; then
-    printf '  skip  gap #4: cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/\n'
-elif ! PATH="$(dirname "$CARGO_BIN"):$PATH" "$CARGO_BIN" build --manifest-path "$PANEL_MANIFEST" --quiet 2>"$TMP/panel-build.err"; then
-    bad "panel binary builds for the real-bd contract row" "cargo build failed: $(tail -5 "$TMP/panel-build.err")"
+PANEL_BIN="$(command -v panel 2>/dev/null || true)"
+if [ -z "$PANEL_BIN" ]; then
+    bad "the panel binary is on PATH (the tree's build provides it)" "panel not found"
 else
-    PANEL_TARGET="${CARGO_TARGET_DIR:-$(dirname "$PANEL_MANIFEST")/target}"
-    PANEL_BIN="$PANEL_TARGET/debug/panel"
     testdb_reset
     testdb_seed <<'JSONL'
 {"id":"sp-cbdump1","title":"real bd through the panel's own Snapshot parsing","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-08T00:00:00Z"}

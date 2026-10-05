@@ -33,16 +33,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 unset SPIRA_LC_SOCKET
 
 . "$HERE/testdb.sh"
@@ -91,15 +86,8 @@ done
 
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build-lc.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build-lc.log")"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-config/Cargo.toml" --quiet 2>"$TMP/build-cfg.log" \
-    || bail "spira-config failed to build: $(cat "$TMP/build-cfg.log")"
-LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
-CFG_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-config"
+LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
+CFG_BIN="$(command -v spira-config 2>/dev/null)"; [ -n "$CFG_BIN" ] || { echo "spira-config is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 echo "test-cutover-deploy.sh"
 
@@ -122,7 +110,7 @@ RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
 
 run_deploy() {
     env -i HOME="$HOME" \
-        PATH="$CARGO_TARGET_DIR_FOR_BUILD/debug:$PATH" SPIRA_REPO="$REPO" \
+        PATH="$PATH" SPIRA_REPO="$REPO" \
         SPIRA_HOME="$FIX" SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
         SPIRA_CONF="$CONF" SPIRA_CONFIG_HOME="${CFGHOME_OVERRIDE:-$CFGHOME}" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
@@ -184,10 +172,7 @@ wantrc "cutover-deploy.sh exits 0 again" 0 "$rc2"
 
 echo
 echo "a unit-rendered environment alone authenticates as spira_lc:"
-INSTALL_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/install/Cargo.toml" --bin render-unit --bin spira-install --quiet 2>"$TMP/build-install.log" \
-    || bail "render-unit failed to build: $(cat "$TMP/build-install.log")"
+INSTALL_BIN="$(dirname "$(command -v render-unit)")"
 rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --home "$FIX" --repo "$REPO" --run "$FIX/run" \
     --db "$SPIRA_DB" --cockpit "$FIX/cockpit" --dolt /bin/true --prod "$FIX/spira" --instance prod \
     --testdb-port 3308 --snap-stale-s 60 --lc-password-file "$CRED")"

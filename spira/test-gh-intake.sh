@@ -28,27 +28,11 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-gh-intake.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-gh-intake: cargo not found — gh-intake binary cannot be built"
-    exit 77
-fi
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"; [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null || true' EXIT INT TERM
 
-CRATE_ROOT="$HERE/../gh-intake"
-BUILD_LOG="$T/cargo-build.log"
-if ! CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/target" \
-    "$CARGO_BIN" build --manifest-path "$CRATE_ROOT/Cargo.toml" -p gh-intake >"$BUILD_LOG" 2>&1
-then
-    bad "cargo build -p gh-intake" "see $BUILD_LOG"
-    tail -60 "$BUILD_LOG" >&2
-    tl_summary
-fi
-ok "cargo build -p gh-intake"
-BIN="$T/target/debug/gh-intake"
-[ -x "$BIN" ] || bail "gh-intake binary not found at $BIN"
+BIN="$(command -v gh-intake 2>/dev/null || true)"
+[ -n "$BIN" ] || bail "gh-intake is not on PATH (the tree's build provides it)"
 
 # ---- stub HTTP server: serves canned JSON by exact path, logs every request ---------------
 STUB_DIR="$T/stub"; mkdir -p "$STUB_DIR"

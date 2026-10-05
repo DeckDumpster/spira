@@ -52,11 +52,7 @@ echo "test-round-vm-e2e.sh"
 for _bin in podman ssh rsync git openssl python3; do
     command -v "$_bin" >/dev/null 2>&1 || skip "$_bin not found on PATH"
 done
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -z "$CARGO_BIN" ] && [ -x "/usr/local/cargo/bin/cargo" ] && CARGO_BIN="/usr/local/cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — the round-vm binary cannot be built"
-PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
+PATH="$PATH"; export PATH
 
 TMP="$(mktemp -d)"
 VM_NAME="rvm-e2e-$$"
@@ -82,15 +78,10 @@ except Exception:
 }
 trap cleanup EXIT INT TERM
 
-# ── build the round-vm binary into a scratch target dir (law-absence-needs-a-positive-
-# control: no binary, no suite) — never $ROOT/target, which testenv-batch.sh's own podman
-# exec may have redirected via its own CARGO_TARGET_DIR.
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/round-vm"
-printf '  (building round-vm into %s)\n' "$BIN"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p round-vm 2>&1 | tail -10
-[ -x "$BIN" ] || bail "round-vm binary did not build"
+# ── the tree's round-vm, by name on PATH (law-absence-needs-a-positive-control: no binary,
+# no suite).
+BIN="$(command -v round-vm 2>/dev/null || true)"
+[ -n "$BIN" ] || bail "round-vm is not on PATH (the tree's build provides it)"
 
 # ── the "VM": a fresh container with none of round-vm's tooling — sshd is installed INSIDE
 # it, the same preparation a real VM's provisioning would already have done, not baked into

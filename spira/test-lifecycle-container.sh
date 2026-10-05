@@ -38,16 +38,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # own tool directories — the testenv image puts cargo at /usr/local/cargo/bin, not under
 # $HOME, so a lookup done after conf.sh runs finds neither (see test-spira-config.sh's own
 # note; this suite hit exactly that skip once, `command -v cargo` empty post-conf.sh).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
 # Never let an ambient SPIRA_LC_SOCKET (or a stray real one at the hardcoded default path)
 # make a direct-connection assertion silently go through a socket instead. Set back only
@@ -108,11 +103,7 @@ as_user() {
 # suites that build Rust under test. Trusting $REPO/target here builds into that redirected
 # directory instead, and this suite's own binary lookup finds nothing there — SEEN RED
 # without this pin, as "cargo build" reporting success while the lookup path stayed empty.
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build.log")"
-BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"

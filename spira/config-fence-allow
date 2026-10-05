@@ -197,8 +197,6 @@ spira/test-skew-foreign.sh
 spira/test-skew-refresh.sh
 spira/test-slay.sh
 spira/test-spike.sh
-spira/test-spira-config.sh
-spira/test-spira-lc-crate.sh
 spira/test-strand-truncated.sh
 spira/test-submitted-lands.sh
 spira/test-superseded.sh

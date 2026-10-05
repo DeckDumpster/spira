@@ -195,12 +195,24 @@ setup_secs=$(( $(date +%s) - t_start ))
 export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 set +e
+# THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
+# They run beside the suites, on the build above; a red here makes the round red.
+cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
+unit_pid=$!
 if [ -n "$suites" ]; then
     testenv --mode parallel --profile release --suites "$suites" round
 else
     testenv --mode parallel --profile release round
 fi
 rc=$?
+wait "$unit_pid"; unit_rc=$?
+if [ "$unit_rc" -eq 0 ]; then
+    echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
+else
+    echo "round-vm: UNIT-TESTS: FAIL (cargo test rc=$unit_rc):" >&2
+    grep -E '^(test .* FAILED|failures:|---- |error(\[|:))' ~/round-unit-tests.log | head -40 >&2
+    [ "$rc" -eq 0 ] && rc=1
+fi
 suites_secs=$(( $(date +%s) - t_start - setup_secs ))
 echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
 if [ "$setup_secs" -gt "$setup_alarm" ]; then

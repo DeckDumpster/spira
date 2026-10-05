@@ -141,15 +141,30 @@ id = "UC-cockpit-observability-27"
 tier = "T1"
 statement = "panel frame: exactly `h` rows and at most `w` columns at every geometry/view/mode, two bands, content never dim, the reply editor wraps losslessly with exactly one caret, ages are coarse durations from an exact epoch/iso pair"
 
+[use_case.uncovered]
+reason = "test-cockpit-rust.sh deleted (per Ryan 2026-10-05: no suite invokes cargo). These are the panel and loom crates' own #[test]s, which the round now runs once as the workspace unit-test step (round-vm run: UNIT-TESTS). The --ignored real-bd contract (loom/tests/endpoint.rs) is not run by that step."
+date = "2026-10-05"
+bead = "sp-v62vn"
+
 [[use_case]]
 id = "UC-cockpit-observability-28"
 tier = "T1"
 statement = "panel views: events go only to NOTIFICATIONS; alerts are selected by label, sorted oldest-first, self-clear to history; silences expire at their deadline (unparseable deadline silences nothing); acking does not hide an alert; a dismissed insight returns only when the operator spoke last; an optimistic hide ends only when the write is visible; an empty or errored read is never an all-clear"
 
+[use_case.uncovered]
+reason = "test-cockpit-rust.sh deleted (per Ryan 2026-10-05: no suite invokes cargo). These are the panel and loom crates' own #[test]s, which the round now runs once as the workspace unit-test step (round-vm run: UNIT-TESTS). The --ignored real-bd contract (loom/tests/endpoint.rs) is not run by that step."
+date = "2026-10-05"
+bead = "sp-v62vn"
+
 [[use_case]]
 id = "UC-cockpit-observability-29"
 tier = "T1"
 statement = "panel affordances: FYI never offers a verdict, ALERTS offers ack/silence/history but never decide, `p reject` appears only on DECISIONS, only `ask-*` beads close on reply while `ask-law`/`ask-suit` parse as law; the enact line splits on the first colon without doubling the `law-` prefix"
+
+[use_case.uncovered]
+reason = "test-cockpit-rust.sh deleted (per Ryan 2026-10-05: no suite invokes cargo). These are the panel and loom crates' own #[test]s, which the round now runs once as the workspace unit-test step (round-vm run: UNIT-TESTS). The --ignored real-bd contract (loom/tests/endpoint.rs) is not run by that step."
+date = "2026-10-05"
+bead = "sp-v62vn"
 
 [[use_case]]
 id = "UC-cockpit-observability-30"
@@ -161,10 +176,20 @@ id = "UC-cockpit-observability-31"
 tier = "T1"
 statement = "Loom `/api/beads` serves only live work: typed edges hoisted once, dangling/closed edges dropped and counted, JSON-escaped titles survive, an advisory preamble is tolerated, two requests within the cache window cost one bd call, over budget returns 503, a bd failure returns 502 (never an empty graph), static routes serve and unknown paths 404"
 
+[use_case.uncovered]
+reason = "test-cockpit-rust.sh deleted (per Ryan 2026-10-05: no suite invokes cargo). These are the panel and loom crates' own #[test]s, which the round now runs once as the workspace unit-test step (round-vm run: UNIT-TESTS). The --ignored real-bd contract (loom/tests/endpoint.rs) is not run by that step."
+date = "2026-10-05"
+bead = "sp-v62vn"
+
 [[use_case]]
 id = "UC-cockpit-observability-32"
 tier = "T1"
 statement = "Loom `/api/ops` decodes `cockpit.env` shell quoting exactly, exposes only `SP_` keys, leaves absent keys absent, errors on an unreadable file, and reports `halted` and `cockpit_env_age_s`"
+
+[use_case.uncovered]
+reason = "test-cockpit-rust.sh deleted (per Ryan 2026-10-05: no suite invokes cargo). These are the panel and loom crates' own #[test]s, which the round now runs once as the workspace unit-test step (round-vm run: UNIT-TESTS). The --ignored real-bd contract (loom/tests/endpoint.rs) is not run by that step."
+date = "2026-10-05"
+bead = "sp-v62vn"
 
 [[use_case]]
 id = "UC-cockpit-observability-33"
