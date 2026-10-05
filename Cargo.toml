@@ -67,6 +67,7 @@ members = [
     "maechen-trigger",
     "rule",
     "bead",
+    "sim",
 ]
 resolver = "2"
 
