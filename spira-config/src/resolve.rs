@@ -111,7 +111,29 @@ pub fn default_conf_d(home: &Path) -> std::path::PathBuf {
 /// race a `std::env::set_var`-based version of this test caused: another thread's own
 /// unrelated `git` spawn, running concurrently with the lock this test held, inherited
 /// the poison anyway, because inheritance does not consult any Rust-level lock).
+///
+/// MEMOIZED PER PROCESS on (home, the exact environment the git subprocess would get): the
+/// answer cannot change inside one process, and one `sentinel --summon` asked it ~100 times
+/// through chamber lookups (fayth_get, fayth_predicate, per fayth per label key) — ~100 git
+/// spawns, 5 s of a pass, 218 s of test-czar-pass. A different environment is a different key,
+/// so the scrub test's poisoned map still reaches git.
 pub fn derive_repo_filesystem(home: &Path, env: &BTreeMap<String, String>) -> std::path::PathBuf {
+    use std::sync::{Mutex, OnceLock};
+    type Key = (std::path::PathBuf, Vec<(String, String)>);
+    static MEMO: OnceLock<Mutex<std::collections::HashMap<Key, std::path::PathBuf>>> = OnceLock::new();
+    let key: Key = (home.to_path_buf(), env.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+    let memo = MEMO.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Some(hit) = memo.lock().ok().and_then(|m| m.get(&key).cloned()) {
+        return hit;
+    }
+    let answer = derive_repo_filesystem_uncached(home, env);
+    if let Ok(mut m) = memo.lock() {
+        m.insert(key, answer.clone());
+    }
+    answer
+}
+
+fn derive_repo_filesystem_uncached(home: &Path, env: &BTreeMap<String, String>) -> std::path::PathBuf {
     let scrubbed = env
         .iter()
         .filter(|(k, _)| !matches!(k.as_str(), "GIT_DIR" | "GIT_WORK_TREE" | "GIT_INDEX_FILE" | "GIT_PREFIX"));
