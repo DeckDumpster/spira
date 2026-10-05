@@ -286,7 +286,13 @@ impl Run<'_> {
                 self.note("Submitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged.");
                 self.log(&format!("{f}: {id} submitted — no attempt charged"));
                 self.release();
-                return self.finish(rc, &status);
+                // The aeon exits with its own rc (0: the bead was handed on, so the unit never
+                // goes FAILED), but the ledger's `done` line records the MODEL's real exit code
+                // (UC-aeon-execution-18) — a session that submitted and then exited 1 is a fact
+                // the ledger keeps, not one the aeon's success erases.
+                self.remove_identity();
+                self.ledger_done(self.s.session_rc, &status);
+                return rc;
             }
             NoteKey::YieldHeadless => {
                 self.note("Yield-headless: the session ended its turn waiting for a background task notification. This session runs headless — there is no notification channel, so the session terminated and its background tasks were killed. Attempt charged; commit before any long step rather than backgrounding and yielding.");

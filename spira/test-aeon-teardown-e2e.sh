@@ -387,9 +387,11 @@ printf 1 > "$FA_TMP/shim-rc"
 rc="$(fa_run_aeon)"
 # Since sp-v62vn the session is restricted, and its hand-on (the shim's close, which the
 # lifecycle stand-in reads as `work submit`) is the submitted disposition, not teardown's
-# closed branch: the bd-close conversion to open+spira-submitted and that branch's
-# ledger-the-claude-rc line are gone with the branch, so neither is asserted any more.
+# closed branch: the bd-close conversion to open+spira-submitted is gone with the branch.
+# The ledger's real rc is NOT (UC-aeon-execution-18): the submitted exit recorded the
+# aeon's own 0 until the submitted branch ledgered the model's rc itself.
 is "aeon exits 0 despite claude rc=1 (the fix)" "0" "$rc"
+want "ledger still records the real rc" "rc=1" "$(fa_ledger_line sp-ex-2)"
 want "and records the submitted status" "status=submitted" "$(fa_ledger_line sp-ex-2)"
 # The positive control for this UC (bead not closed, claude rc=1, aeon exits non-zero) is
 # the "session did not close" row above (sp-rq-2) — the same discrimination, one fewer run.

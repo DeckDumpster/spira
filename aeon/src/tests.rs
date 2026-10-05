@@ -787,6 +787,26 @@ fn unmapped_repo_is_parked_and_the_world_restarted() {
     assert_eq!(world, vec!["stop", "start"], "stop precedes start (DESIGN.md §8.2)");
 }
 
+/// UC-aeon-execution-18: a session that submitted its bead and then exited non-zero — the
+/// aeon still exits 0 (the bead was handed on; the unit never goes FAILED), but the ledger's
+/// `done` line carries the model's real rc, not the aeon's 0.
+#[test]
+fn a_submitted_session_that_exits_nonzero_ledgers_the_models_rc() {
+    let f = fx("sub-rc");
+    seed(&f, "sp-q");
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _w, _| {
+        std::fs::write(spec.cwd.join("f"), "work\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-q — the work"]);
+        1
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, act);
+    assert_eq!(o.code, 0, "the aeon exits 0 despite the model's rc=1: {}", o.log);
+    let done = ledger_lines(&o).into_iter().find(|l| l.starts_with("done ")).unwrap_or_default();
+    assert!(done.starts_with("done builder sp-q rc=1 status=submitted"), "{done}");
+}
+
 // ---- the whole run --------------------------------------------------------------------
 
 #[test]

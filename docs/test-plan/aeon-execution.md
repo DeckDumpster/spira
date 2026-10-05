@@ -9,6 +9,12 @@
 > classified it `red-green (flake)`, distinct from `test-governor-deleted.sh`'s `red-red` on
 > the same run (a real defect, not a flake). Root cause not yet isolated.
 >
+> **Coverage re-added — UC-aeon-execution-18** (sp-v62vn). The submitted exit ledgered the
+> aeon's own rc (0) instead of the model's; teardown's submitted branch now records the
+> model's rc in the `done` line while the aeon still exits 0. Covered by
+> `test-aeon-teardown-e2e.sh`'s exit-code row (`rc=1` on sp-ex-2's ledger line, re-added)
+> and `aeon/src/tests.rs::a_submitted_session_that_exits_nonzero_ledgers_the_models_rc`.
+>
 > **Coverage re-added — UC-aeon-execution-13 / -07** (sp-jupa4). The close verdict and
 > submitted conversion are covered in `aeon/src/tests.rs` (whole runs over an in-memory bd
 > world with real git: commit → submitted, empty branch → stays closed, superseded and
