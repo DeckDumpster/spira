@@ -356,6 +356,42 @@ impl Run<'_> {
         }
     }
 
+    /// A stub builder's handoff through the release's own fast tier (`aeon fast-tier`, the
+    /// code the aeon's teardown runs before it hands a branch on). The tier only exists in a
+    /// harness tree, so the scratch repo cannot host it — a tree carrying `gate.steps` takes
+    /// over that repository's landing gate — and the release's own tree, minus what a release
+    /// adds, is committed as the base of a temporary repository instead.
+    fn fast_tier_handoff(&mut self, label: &str) {
+        let cur = self.o.releases().join("current");
+        let dir = self.o.tmp.join(format!("fast-tier-{}", label.replace(' ', "-")));
+        let (cur_s, dir_s) = (Self::s(&cur), Self::s(&dir));
+        let seed = self.h.run(
+            &Cmd::new("bash")
+                .arg("-c")
+                .arg(FAST_TIER_SEED)
+                .arg("_")
+                .arg(&cur_s)
+                .arg(&dir_s)
+                .env("GIT_AUTHOR_NAME", "Spira Acceptance")
+                .env("GIT_AUTHOR_EMAIL", "acceptance@spira.local")
+                .env("GIT_COMMITTER_NAME", "Spira Acceptance")
+                .env("GIT_COMMITTER_EMAIL", "acceptance@spira.local"),
+        );
+        let name = format!("{label}: stub builder's probe committed on a branch of the release's own tree");
+        self.check(&name, seed.rc == 0, || format!("exit {}\n{}", seed.rc, tail(&seed.text, 8)));
+        if seed.rc != 0 {
+            return;
+        }
+        // The check must be able to fail: without a base, spira-lint's diff rules refuse.
+        let bare = self.h.run(&self.tool("bash").arg("-c").arg(FAST_TIER_BARE_LINT).arg("_").arg(&dir_s));
+        let name = format!("{label}: positive control: spira-lint with no base refuses");
+        self.check(&name, bare.rc != 0, || format!("exit 0 — a bare spira-lint passed:\n{}", tail(&bare.text, 8)));
+        let c = self.tool("aeon").args(["fast-tier", &dir_s, &dir_s, FAST_TIER_BRANCH, "main"]);
+        let out = self.h.run(&c);
+        let name = format!("{label}: stub builder's handoff passes the fast tier (rebase check, spira-lint against the base, build fence)");
+        self.check(&name, out.rc == 0, || format!("exit {}\n{}", out.rc, tail(&out.text, 12)));
+    }
+
     fn rev(&self, r: &str) -> Option<String> {
         let o = self.h.run(&self.git(&["rev-parse", r]));
         (o.rc == 0).then(|| o.out.trim().to_string()).filter(|s| !s.is_empty())
@@ -374,6 +410,28 @@ impl Run<'_> {
         (o.rc == 0).then(|| o.out.lines().filter(|l| !l.is_empty()).count())
     }
 }
+
+const FAST_TIER_BRANCH: &str = "spira/acceptance-fast-tier";
+
+/// `$1` the release, `$2` the new repository: the release's tree without `bin/`, `model-bin/`,
+/// MANIFEST or the compat links into `bin/` (all added by a release build, none tracked) is the
+/// base on `main`; the stub builder's probe is one commit on its branch.
+const FAST_TIER_SEED: &str = r#"set -e
+rel="$1"; dir="$2"
+rm -rf "$dir"; mkdir -p "$dir"
+git init -q -b main "$dir"
+(cd "$rel" && find . \( -path ./bin -o -path ./model-bin -o -path ./MANIFEST \) -prune -o ! \( -type l -lname '../bin/*' \) -print0 \
+    | tar --null --no-recursion -T - -cf -) | tar --no-same-permissions -xf - -C "$dir"
+chmod -R u+w "$dir"
+git -C "$dir" add -A
+git -C "$dir" commit -q -m "base: the release's own tree"
+git -C "$dir" checkout -q -b spira/acceptance-fast-tier
+printf 'acceptance-fast-tier\n' > "$dir/acceptance-probe-fast-tier.txt"
+git -C "$dir" add acceptance-probe-fast-tier.txt
+git -C "$dir" commit -q -m "acceptance-fast-tier: acceptance probe"
+"#;
+
+const FAST_TIER_BARE_LINT: &str = r#"cd "$1" && exec env -u SPIRA_GATE_BASE spira-lint --only plan-matrix"#;
 
 /// The builder partition labels the probe bead must carry.
 struct Labels {
@@ -571,6 +629,11 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         r.check(&name, hist.rc == 0 && missing_in_order(&want, &got).is_none(), || {
             format!("spira-lc history {id} rc={} — saw [{}], missing {}", hist.rc, got.join(", "), missing_in_order(&want, &got).unwrap_or("history"))
         });
+    }
+
+    if releases.join("current").is_dir() {
+        println!("\nphase A — a builder's handoff passes the fast tier");
+        r.fast_tier_handoff("phase A");
     }
 
     println!("\nphase A — uninstall and clean state");
@@ -790,6 +853,10 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
             }
             None => r.bad("phase D: post-upgrade bead filed", &format!("output: {}", out.trim_end())),
         }
+    }
+
+    if drc == 0 {
+        r.fast_tier_handoff("phase D");
     }
 
     if drc == 0 {

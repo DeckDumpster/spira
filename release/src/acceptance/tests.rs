@@ -189,6 +189,8 @@ struct Fake {
     no_cutover_script: bool,
     cutover_rc: i32,
     land_modes: Vec<(&'static str, &'static str)>,
+    fast_tier_rc: i32,
+    bare_lint_rc: i32,
 }
 
 impl Fake {
@@ -212,6 +214,8 @@ impl Fake {
             no_cutover_script: false,
             cutover_rc: 0,
             land_modes: vec![("scratch-repo", "push"), ("scratch-q", "queue.local"), ("scratch-pr", "pr")],
+            fast_tier_rc: 0,
+            bare_lint_rc: 3,
         }
     }
 
@@ -256,6 +260,8 @@ impl Fake {
                 self.activate(Path::new(tb).file_name().unwrap().to_string_lossy().trim_end_matches(".tar.gz"));
                 ok("")
             }
+            ("bash", ["-c", script, "_", _]) if script.contains("spira-lint") => Out { rc: self.bare_lint_rc, text: "plan-matrix: error: no base to compare against\n".into(), out: String::new() },
+            ("aeon", ["fast-tier", ..]) => Out { rc: self.fast_tier_rc, text: if self.fast_tier_rc == 0 { "fast tier green\n".into() } else { "spira-lint failed (rc=3):\nplan-matrix: no base to compare against\n".into() }, out: String::new() },
             ("bash", ["-c", script, "_", _]) => {
                 let key = script.split("${").nth(1).and_then(|k| k.split(':').next()).unwrap_or("");
                 match key {
@@ -746,4 +752,47 @@ fn every_deploy_carries_the_forge_repository_this_run_resolved() {
     for c in deploys {
         assert_eq!(c.env_of("SPIRA_FORGE_REPO"), Some("Owner/spira"), "{}", c.line());
     }
+}
+
+#[test]
+fn a_builders_handoff_goes_through_the_fast_tier_in_phases_a_and_d() {
+    let b = Box_::new();
+    let f = b.fake();
+    assert_eq!(phases::run(&f, with_prev(&b, &[])), 0);
+    let names: Vec<String> = b.checks().iter().map(|c| c["check"].as_str().unwrap().to_string()).collect();
+    for label in ["phase A", "phase D"] {
+        for what in ["positive control: spira-lint with no base refuses", "stub builder's handoff passes the fast tier"] {
+            assert!(names.iter().any(|n| n.starts_with(&format!("{label}: {what}"))), "{label}: {what} in {names:#?}");
+        }
+    }
+    let log = f.log.borrow();
+    let tiers: Vec<&Cmd> = log.iter().filter(|c| c.prog == "aeon").collect();
+    assert_eq!(tiers.len(), 2);
+    let cur = b.root.join("tmp/releases/current");
+    for c in tiers {
+        assert_eq!(c.args[0], "fast-tier");
+        assert_eq!(c.args[3], "spira/acceptance-fast-tier");
+        assert_eq!(c.env_of("PATH").map(|p| p.starts_with(&cur.join("bin").display().to_string())), Some(true), "{}", c.line());
+    }
+}
+
+/// The release this bead was filed against: the fast tier refused every handoff.
+#[test]
+fn a_release_whose_fast_tier_refuses_the_handoff_fails_acceptance() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.fast_tier_rc = 1;
+    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
+    let fails = b.fails();
+    assert!(fails.iter().any(|x| x.starts_with("phase A: stub builder's handoff passes the fast tier") && x.contains("no base to compare against")), "{fails:#?}");
+    assert!(fails.iter().any(|x| x.starts_with("phase D: stub builder's handoff passes the fast tier")), "{fails:#?}");
+}
+
+#[test]
+fn a_fast_tier_check_that_cannot_fail_is_itself_a_failure() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.bare_lint_rc = 0;
+    assert_eq!(phases::run(&f, b.opts(&[])), 1);
+    assert!(b.fails().iter().any(|x| x.starts_with("phase A: positive control: spira-lint with no base refuses")), "{:#?}", b.fails());
 }

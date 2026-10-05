@@ -107,6 +107,29 @@ fn run_capacity(args: &[String]) -> i32 {
     aeon::capacity_cli::run(&conf, &exec, util::now_epoch(), args)
 }
 
+/// `aeon fast-tier <repo> <work> <branch> <base>`: the handoff's fast tier (`fast_tier::red`)
+/// against a checkout, with an absent tool or a tree without the fence refused rather than
+/// skipped. Exit 0 green, 1 red (the text on stdout), 2 usage.
+fn run_fast_tier(args: &[String]) -> i32 {
+    let [repo, work, branch, base] = args else {
+        eprintln!("usage: aeon fast-tier <repo> <work> <branch> <base>");
+        return 2;
+    };
+    let original: BTreeMap<String, String> = std::env::vars().collect();
+    let env = Env::new(original.clone(), original);
+    let (git, exec) = (RealGit { env: &env }, RealExec { env: &env, timeout: None });
+    match aeon::fast_tier::red(&git, &exec, Path::new(repo), Path::new(work), branch, base, true) {
+        Some(red) => {
+            println!("{red}");
+            1
+        }
+        None => {
+            println!("fast tier green: {branch} against {base}");
+            0
+        }
+    }
+}
+
 fn main() {
     let t0 = util::now_epoch();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -120,6 +143,9 @@ fn main() {
         };
         print!("{}", aeon::naming::aeon_named(Path::new(pf)));
         std::process::exit(0);
+    }
+    if args.first().map(String::as_str) == Some("fast-tier") {
+        std::process::exit(run_fast_tier(&args[1..]));
     }
     if args.first().map(String::as_str) == Some("capacity") {
         std::process::exit(run_capacity(&args[1..]));
