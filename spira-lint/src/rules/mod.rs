@@ -16,6 +16,7 @@ pub mod lib_sh_shims;
 pub mod literal_lint;
 pub mod lockfile_lint;
 pub mod gate_workflow;
+pub mod hash_iter_output;
 pub mod payload_argv;
 pub mod plan_lint;
 pub mod plan_matrix;

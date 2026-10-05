@@ -91,12 +91,12 @@ fn trimmed(b: &[u8]) -> &[u8] {
     &b[s..]
 }
 
-struct FnSpan {
-    start: usize,
-    end: usize,
+pub(crate) struct FnSpan {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
-fn fn_spans(code: &[u8]) -> Vec<FnSpan> {
+pub(crate) fn fn_spans(code: &[u8]) -> Vec<FnSpan> {
     static R: OnceLock<Regex> = OnceLock::new();
     let mut out = Vec::new();
     for m in re(&R, r"\bfn\s+[A-Za-z_]\w*").find_iter(code) {
@@ -137,11 +137,11 @@ fn fn_spans(code: &[u8]) -> Vec<FnSpan> {
     out
 }
 
-fn enclosing(spans: &[FnSpan], at: usize) -> Option<&FnSpan> {
+pub(crate) fn enclosing(spans: &[FnSpan], at: usize) -> Option<&FnSpan> {
     spans.iter().filter(|s| s.start <= at && at < s.end).min_by_key(|s| s.end - s.start)
 }
 
-fn statement(code: &[u8], at: usize) -> &[u8] {
+pub(crate) fn statement(code: &[u8], at: usize) -> &[u8] {
     let from = code[..at].iter().rposition(|b| matches!(b, b';' | b'{' | b'}')).map_or(0, |p| p + 1);
     let to = code[at..].iter().position(|b| *b == b';').map_or(code.len(), |p| at + p);
     &code[from..to]
@@ -405,13 +405,17 @@ fn shell_comment_marked(line: &[u8]) -> bool {
 }
 
 fn parse_allow(text: &str) -> Result<BTreeMap<String, (usize, usize)>, LintError> {
+    parse_count_allow(ALLOW_FILE, text)
+}
+
+pub(crate) fn parse_count_allow(file: &str, text: &str) -> Result<BTreeMap<String, (usize, usize)>, LintError> {
     let mut out = BTreeMap::new();
     for (i, l) in text.lines().enumerate() {
         let t = l.trim();
         if t.is_empty() || t.starts_with('#') {
             continue;
         }
-        let bad = |reason: &str| LintError::BadAllow { file: ALLOW_FILE.to_string(), line: i + 1, reason: reason.to_string() };
+        let bad = |reason: &str| LintError::BadAllow { file: file.to_string(), line: i + 1, reason: reason.to_string() };
         let (count, path) = t.split_once(char::is_whitespace).ok_or_else(|| bad("want `<count> <path>`"))?;
         let n: usize = count.parse().map_err(|_| bad("the count is not a number"))?;
         if n == 0 {
