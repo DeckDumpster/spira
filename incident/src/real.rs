@@ -236,6 +236,9 @@ impl Bd for RealBd {
     fn reopen(&self, db: &str, id: &str) -> bool {
         self.run(db, &["reopen", id]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
+    fn relate(&self, db: &str, a: &str, b: &str) -> bool {
+        self.run(db, &["dep", "relate", a, b]).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    }
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String> {
         let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
         if rc != 0 {

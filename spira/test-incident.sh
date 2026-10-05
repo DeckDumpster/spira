@@ -158,7 +158,7 @@ mkdir -p "$RUN"
 
 # ======================================================================================
 echo
-echo "close-then-refile dedup — a closed bead within the lookback is reopened (sp-srgr6):"
+echo "close-then-refile dedup — a handed-on (SUBMITTED) bead within the lookback is reopened (sp-srgr6):"
 # ======================================================================================
 # THE DEFECT REPRODUCED. open_incident formerly filtered --status open,in_progress only.
 # Closing a bead for a still-failing ref made it invisible: the next invocation found no
@@ -183,8 +183,11 @@ for i in (d if isinstance(d, list) else [d]):
     if i.get("external_ref") == target:
         print(i["id"]); break
 ' 'incident:the-test-sweep')"
-# Its closed row is fixture state, declared as data (sp-voip5), not a bd close.
+# Its closed row is fixture state, declared as data (sp-voip5), not a bd close. Its lifecycle
+# row is pinned SUBMITTED — handed on, not terminal — so the bead can still absorb the
+# recurrence; a terminal (LANDED) one files a fresh bead instead (sp-nmlna, the next case).
 testdb_restate "${_ctr_id:-}" closed || true
+printf '%s SUBMITTED\n' "${_ctr_id:-}" > "$TMP/lc/states"
 > "$ILOG"
 # File the same ref again — should reopen, not create a second bead.
 printf 'second payload\n' | inc >/dev/null
@@ -194,6 +197,56 @@ n_open="$(count_open 'incident:the-test-sweep')"
 is "the original bead was reopened (now open)" "1" "$n_open"
 log_reopen="$(grep -c 'reopened from closed' "$ILOG" 2>/dev/null || true)"
 is "reopen path was logged, not a new filing" "1" "$log_reopen"
+
+rm -f "$TMP/lc/states"
+testdb_reset
+mkdir -p "$RUN"
+> "$ILOG"
+
+# ======================================================================================
+echo
+echo "a recurrence of a LANDED incident files a fresh bead citing its predecessor (sp-nmlna):"
+# ======================================================================================
+# A LANDED row is terminal — the machine never leaves it — so reopening the bead in bd would
+# only pile recurrence notes under a row that stays LANDED, every event inside the lookback.
+# The recurrence is a new incident: a fresh bead (with its own row), its body citing the
+# closed one, linked to it by a relates-to dep; the closed bead is left as it was.
+# SEEN TO FAIL against the unfixed tree: count_all stayed 1 and the log said "reopened from
+# closed" (the regression is run::tests::a_recurrence_of_a_landed_incident_files_a_fresh_
+# bead_citing_its_predecessor; this is its end-to-end twin against a real bd).
+printf 'landed first payload\n' | inc >/dev/null
+_ld_id="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+  | python3 -c '
+import sys, json
+target = sys.argv[1]
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if i.get("external_ref") == target:
+        print(i["id"]); break
+' 'incident:the-test-sweep')"
+want "the first LANDED-case bead was filed" "sp-" "${_ld_id:-none found}"
+testdb_restate "${_ld_id:-}" closed || true      # fixture data; the mirror's closed is LANDED
+> "$ILOG"
+_ld_out="$(printf 'landed second payload\n' | inc 2>/dev/null)"
+_ld_new="$(printf '%s\n' "$_ld_out" | awk 'NF{l=$0} END{print l}')"
+is "a LANDED incident's recurrence leaves two beads (the closed one and a fresh one)" "2" "$(count_all 'incident:the-test-sweep')"
+is "exactly one of them is open" "1" "$(count_open 'incident:the-test-sweep')"
+is "the fresh bead is a different bead" "yes" "$([ -n "$_ld_new" ] && [ "$_ld_new" != "${_ld_id:-}" ] && echo yes || echo no)"
+is "the closed bead stays closed in bd (never reopened)" "closed" \
+    "$(timeout 5 bd -C "$SPIRA_DB" show "${_ld_id:-none}" --json 2>/dev/null | python3 -c '
+import sys, json
+lines = sys.stdin.read().splitlines()
+at = next((i for i, l in enumerate(lines) if l[:1] in "[{"), None)
+d = json.loads("\n".join(lines[at:])) if at is not None else {}
+d = d[0] if isinstance(d, list) and d else d
+print(d.get("status", "") if isinstance(d, dict) else "")')"
+is "no reopen was logged" "0" "$(grep -c 'reopened from closed' "$ILOG" 2>/dev/null || true)"
+want "the fresh bead's body cites its predecessor" "Recurrence of ${_ld_id:-none} (predecessor)" \
+    "$(timeout 5 bd -C "$SPIRA_DB" show "${_ld_new:-none}" --json 2>/dev/null)"
+want "the fresh bead is related to its predecessor" "\"id\": \"${_ld_id:-none}\"" \
+    "$(timeout 5 bd -C "$SPIRA_DB" dep list "${_ld_new:-none}" --type relates-to --json 2>/dev/null)"
+want "the filing was logged as a recurrence of the closed bead" "recurrence of ${_ld_id:-none}" "$(cat "$ILOG")"
 
 testdb_reset
 mkdir -p "$RUN"
@@ -253,12 +306,14 @@ for i in (d if isinstance(d, list) else [d]):
         print(i["id"]); break
 ' 'incident:the-test-sweep')"
 testdb_restate "${_bd_id:-}" closed || true     # fixture data, not a bd close (sp-voip5)
+printf '%s SUBMITTED\n' "${_bd_id:-}" > "$TMP/lc/states"   # handed on, not terminal
 > "$ILOG"
 printf 'bsd-date second payload\n' | PATH="$DATEDIR:$PATH" inc >/dev/null
 n_bsd_all="$(count_all 'incident:the-test-sweep')"
 is "with no GNU date -d, the BSD fallback still finds the closed bead within lookback" "1" "$n_bsd_all"
 log_bsd_reopen="$(grep -c 'reopened from closed' "$ILOG" 2>/dev/null || true)"
 is "and reopens it rather than filing fresh" "1" "$log_bsd_reopen"
+rm -f "$TMP/lc/states"
 
 testdb_reset
 mkdir -p "$RUN"

@@ -16,7 +16,10 @@ with an identity that survives across recurrences. Three properties are load-bea
    arrives exactly once and cannot be re-asked for.
 2. **Dedupe on `external_ref`, not on wording.** A flapping unit is one incident, not one
    bead per failure. A second filing of the same ref bumps a recurrence on the existing bead
-   (reopening it first if it had been closed) rather than filing a duplicate.
+   (reopening it first if it had been handed on) rather than filing a duplicate — unless
+   that bead's lifecycle row is terminal (LANDED/DONE/SUPERSEDED/DROPPED): then the
+   recurrence is a new incident, filed fresh and citing the closed one as its predecessor
+   (sp-nmlna).
 3. **A Sin escalates exactly once.** Past `SIN_AT` recurrences with no fix holding, the
    operator is paged once — a second page would bury the first.
 
@@ -167,7 +170,23 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   supplying only content (labels, `external_ref`, and `closed_at` for the lookback window).
   A bead with no row is in neither pass. A pass that cannot read bd **or** the machine is
   not "nothing found": the event stays spooled (law-a-control-that-cannot-check-must-refuse),
-  where the bash skipped a failed pass and filed a fresh bead. Open: a recurrence of a
-  handed-on incident still only reopens it in bd; the machine has no move out of a terminal
-  state, so until recurrence files a fresh bead (or the machine gains one), every event
-  inside the lookback window finds the bead handed on and reopens it again.
+  where the bash skipped a failed pass and filed a fresh bead.
+- **A recurrence of a terminal incident files a fresh bead (sp-nmlna).** The machine has no
+  move out of LANDED/DONE/SUPERSEDED/DROPPED, so the old "reopen in bd" left the row LANDED
+  and every event inside the lookback reopened the bead again, piling notes under a row
+  that would never move. `decide::status_of_lc` now reads a terminal row as
+  `BeadStatus::Terminal` (distinct from `Closed`, handed on but still movable), and
+  `dedup_scan` returns `DedupHit::Terminal` for it — preferring any movable handed-on hit,
+  then the most recently closed terminal one. `run::file_one` sends that hit through the
+  ordinary `file_new` path (same guards, same labels, a fresh lifecycle row via
+  `Bd::create`), with a body that opens "Recurrence of <id> (predecessor)" above the
+  payload, then links the two with `Bd::relate` (`bd dep relate`, a non-blocking
+  relates-to). The closed bead gets no reopen, note, label or recurrence count, and its row
+  is untouched. The next event finds the fresh bead in the unfinished pass and bumps it as
+  usual. Kept: a handed-on but non-terminal incident (SUBMITTED/CERTIFIED/IN_DELIVERY) is
+  still reopened, since its row can still move. Rejected: giving the machine a move out of
+  a terminal state, which would break "terminal" for every other consumer; and keeping
+  the recurrence count on the old bead, since its Sin escalation can never be worked under
+  a LANDED row (the fresh bead counts from zero and its body names the history). A failed
+  `relate` is logged, not fatal: the bead exists and its body still cites the
+  predecessor.

@@ -40,6 +40,9 @@ pub trait Bd {
     fn set_state(&self, db: &str, id: &str, kv: &str) -> bool;
     /// `bd -C db reopen <id>`.
     fn reopen(&self, db: &str, id: &str) -> bool;
+    /// `bd -C db dep relate <a> <b>`: a bidirectional see-also link (sp-nmlna: a fresh
+    /// incident to the terminal one it recurs).
+    fn relate(&self, db: &str, a: &str, b: &str) -> bool;
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String>;
     fn show_created_at(&self, db: &str, id: &str) -> Option<String>;
     /// A cheap reachability probe (`bd list --limit 1`) — used to distinguish "no open
