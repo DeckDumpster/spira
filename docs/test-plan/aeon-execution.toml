@@ -141,10 +141,20 @@ id = "UC-aeon-execution-22"
 tier = "T1"
 statement = "the poison ask is sent once per (bead, attempt count); a label clear does not re-arm it"
 
+[use_case.uncovered]
+reason = "test-poison.sh deleted (per Ryan 2026-10-05): a 386 s end-to-end CHECK 4 pass guarding a two-predicate disagreement the lifecycle machine removed (poison is a hold on the row; claimability is one predicate). No remaining suite drives the poison ask/cap mail end to end."
+date = "2026-10-05"
+bead = "sp-v62vn"
+
 [[use_case]]
 id = "UC-aeon-execution-23"
 tier = "T1"
 statement = "the requeue cap and reclaim cap each send one deduplicated mail at their threshold and never add poison"
+
+[use_case.uncovered]
+reason = "test-poison.sh deleted (per Ryan 2026-10-05): a 386 s end-to-end CHECK 4 pass guarding a two-predicate disagreement the lifecycle machine removed (poison is a hold on the row; claimability is one predicate). No remaining suite drives the poison ask/cap mail end to end."
+date = "2026-10-05"
+bead = "sp-v62vn"
 
 [[use_case]]
 id = "UC-aeon-execution-24"

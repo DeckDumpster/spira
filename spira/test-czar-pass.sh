@@ -3,8 +3,8 @@
 # test-czar-pass.sh — czar fast pass: budget, flock, and acceptance detectors
 #
 # WHAT THIS SUITE CHECKS.
-#   0. cargo test -p czar-pass: every detect_* function's fire/silent boundary against a
-#      scratch Config, run as Rust #[test]s rather than through the binary.
+#   (the detectors' fire/silent boundaries are czar-pass's own #[test]s — `cargo test -p
+#   czar-pass`; this suite no longer compiles them in a scratch target on every run.)
 #   1. czar-pass is found on PATH and accepts --pass.
 #   2. Pass with an empty environment completes in under 5 s (budget).
 #   3. A concurrent pass is skipped (flock prevents overlap).
@@ -62,35 +62,6 @@ CZAR="$(command -v czar-pass 2>/dev/null || true)"
 [ -n "$CZAR" ] && [ -x "$CZAR" ] || { printf 'czar-pass not found on PATH\n' >&2; exit 2; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
-
-# Find or build the czar-pass binary (law-absence-needs-a-positive-control).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-czar-pass: cargo not found — czar-pass binary cannot be built"
-    exit 77
-fi
-CZAR_PASS_ROOT="$HERE/../czar-pass"
-
-# ==========================================================================================
-printf '\n%s\n' "0. cargo test -p czar-pass: every detector's fire/silent boundary (UC-ops-detection-remediation-23)"
-# ==========================================================================================
-# A separate, scratch CARGO_TARGET_DIR: this must never share the release build below (a
-# debug-profile test build and a release build of the same crate under one target dir just
-# means two full compiles instead of one, not a correctness problem, but there is no reason
-# to pay for the first one twice across runs).
-CARGO_TEST_LOG="$T/cargo-test-czar-pass.log"
-if CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/czar-pass-test-target" \
-    "$CARGO_BIN" test --manifest-path "$CZAR_PASS_ROOT/Cargo.toml" -p czar-pass \
-    >"$CARGO_TEST_LOG" 2>&1
-then
-    ok "cargo test -p czar-pass ($(grep -c '^test ' "$CARGO_TEST_LOG" 2>/dev/null || echo ?) tests)"
-else
-    bad "cargo test -p czar-pass (see $CARGO_TEST_LOG)"
-    tail -60 "$CARGO_TEST_LOG" >&2
-fi
 
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 

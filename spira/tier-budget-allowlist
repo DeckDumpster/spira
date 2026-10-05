@@ -276,7 +276,6 @@ test-orphan-test.sh	T1	2.0
 test-plan-lint.sh	T1	2.0
 test-poison-ask.sh	T1	37.5
 test-poison-edge.sh	T1	77.5
-test-poison.sh	T1	78.0
 test-pr-notify.sh	T1	3.0
 test-pr-stall.sh	T1	4.0
 test-pre-activate.sh	T1	4.0

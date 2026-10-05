@@ -91,7 +91,11 @@ STUB
 chmod +x "$T/mail"
 export SPIRA_MAIL_SH="$T/mail"
 
-run_pass() { reconciler-flow --pass >"$T/pass-out.log" 2>&1; }
+# THE CLOCK. Grace periods are judged against reconciler-flow's own clock, which honours
+# SPIRA_NOW: `advance N` moves it N seconds ahead of the wall instead of sleeping N seconds.
+NOW_OFFSET=0
+advance() { NOW_OFFSET=$((NOW_OFFSET + $1)); }
+run_pass() { SPIRA_NOW=$(( $(date +%s) + NOW_OFFSET )) reconciler-flow --pass >"$T/pass-out.log" 2>&1; }
 status_of() {
     # Last reconciler-status.jsonl line for key $1, field $2 ("status" or "is_gap").
     # Under run/tsd/ (design reconciler-time-series-2026-09-27 §2, sp-69m85).
@@ -255,7 +259,7 @@ is  "no concierge alert while inside grace" "0" "$(mail_count)"
 echo
 echo "3. The same gap, past its grace period, is confirmed and alerts the Concierge"
 # ============================================================================
-sleep 3
+advance 3
 run_pass
 is  "the gap is confirmed on the next pass past grace" True "$(status_of flow:velocity:queue is_gap)"
 is  "exactly one alert fired for the first confirmed pass" "1" "$(mail_count)"
@@ -395,7 +399,7 @@ echo "    confirm an unobservable invariant against its own, longer grace"
 reset_env
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999 run_pass
 is "unobservable, first pass, inside its own long grace" unobservable "$(status_of flow:velocity:queue status)"
-sleep 3
+advance 3
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999 run_pass
 is "still unobservable past the gap's own 2s grace" unobservable "$(status_of flow:velocity:queue status)"
 is "not confirmed — inside its own (999s) grace" False "$(status_of flow:velocity:queue is_gap)"
@@ -410,7 +414,7 @@ reset_env
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
 is "unobservable, first pass, inside grace" unobservable "$(status_of flow:velocity:queue status)"
 is "no alert yet" "0" "$(mail_count_for flow:velocity:queue)"
-sleep 3
+advance 3
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
 is "confirmed past its own grace" True "$(status_of flow:velocity:queue is_gap)"
 is "exactly one alert fired for the first confirmed pass" "1" "$(mail_count_for flow:velocity:queue)"
@@ -461,7 +465,7 @@ run_pass
 is "idle capacity across two consecutive samples is a gap" gap "$(status_of flow:idle-capacity status)"
 is "but not yet confirmed — inside its grace period" False "$(status_of flow:idle-capacity is_gap)"
 is "no concierge alert while inside grace" "0" "$(mail_count_for flow:idle-capacity)"
-sleep 3
+advance 3
 run_pass
 is "the gap is confirmed on the next pass past grace" True "$(status_of flow:idle-capacity is_gap)"
 is "exactly one alert fired" "1" "$(mail_count_for flow:idle-capacity)"
@@ -495,7 +499,7 @@ emit_sentinel_phase pass-2 CHECK2 150 30   # pass-2 total: 300s, over 2x100=200 
 SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
 is "a pass past twice the period is a gap" gap "$(status_of flow:sentinel-overrun status)"
 is "but not yet confirmed — inside its grace period" False "$(status_of flow:sentinel-overrun is_gap)"
-sleep 3
+advance 3
 SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
 is "the gap is confirmed on the next pass past grace" True "$(status_of flow:sentinel-overrun is_gap)"
 is "exactly one alert fired" "1" "$(mail_count_for flow:sentinel-overrun)"
@@ -531,7 +535,7 @@ SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
 is "warm history, ratio over threshold, is a gap" gap "$(status_of flow:rework status)"
 is "but not yet confirmed — inside its grace period" False "$(status_of flow:rework is_gap)"
 is "no alert while inside grace" "0" "$(mail_count_for flow:rework)"
-sleep 3
+advance 3
 SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
 is "the gap is confirmed on the next pass past grace" True "$(status_of flow:rework is_gap)"
 is "exactly one alert fired" "1" "$(mail_count_for flow:rework)"
@@ -544,7 +548,7 @@ emit_bead_stage rcf-r6 REWORK 3000 3
 SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
 is "still recorded as a gap even before the warm-up ends (report-only, not hidden)" gap "$(status_of flow:rework status)"
 is "no alert before 24h of history exist, even with a ratio this far over" "0" "$(mail_count_for flow:rework)"
-sleep 3
+advance 3
 SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
 is "confirmed past its gap grace, but still report-only" True "$(status_of flow:rework is_gap)"
 is "still no alert — report-only until 24h of history exist" "0" "$(mail_count_for flow:rework)"
@@ -598,7 +602,7 @@ run_pass
 is "current dwell past 3x the baseline is a gap" gap "$(status_of flow:dwell-regression:working status)"
 is "but not yet confirmed — inside its grace period" False "$(status_of flow:dwell-regression:working is_gap)"
 is "no alert while inside grace" "0" "$(mail_count_for flow:dwell-regression:working)"
-sleep 3
+advance 3
 run_pass
 is "the gap is confirmed on the next pass past grace" True "$(status_of flow:dwell-regression:working is_gap)"
 is "exactly one alert fired" "1" "$(mail_count_for flow:dwell-regression:working)"

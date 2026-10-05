@@ -243,7 +243,6 @@
 1 spira/test-overrides.sh
 3 spira/test-persona-model.sh
 3 spira/test-pilgrimage.sh
-6 spira/test-poison.sh
 4 spira/test-pr-notify.sh
 4 spira/test-publish-backlog.sh
 1 spira/test-queue-land-local.sh
