@@ -387,7 +387,8 @@ pub fn sweep_dismissed(bd: &dyn Bd, db_configured: bool, mail_root: &Path, index
             Some(s) => s,
             None => continue,
         };
-        if status == "closed" {
+        // The index's beads are asks: bd's status is their state (spira_config::nonwork, sp-mve9i).
+        if spira_config::nonwork::is_closed(spira_config::nonwork::Kind::Ask, &status) {
             continue;
         }
         if find_message_by_id(mail_root, msgid).is_some() {
@@ -427,5 +428,25 @@ mod class_tests {
         assert!(class_refusal("architecture", BASIS).is_some());
         assert!(class_refusal("policy", "## Question\nq\n").is_some());
         assert!(class_refusal("policy", "## Class basis\n\n").is_some());
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use crate::bead::fake::FakeBd;
+    use crate::bead::BdOut;
+
+    /// An ask already closed in bd is skipped outright: no reply probe, no close (sp-mve9i:
+    /// the ask is a non-work bead, so its bd status is the state read here).
+    #[test]
+    fn a_closed_ask_is_neither_kept_nor_dismissed() {
+        let t = testkit::TempDir::new("mail-sweep-closed");
+        let idx = t.path().join("index");
+        std::fs::write(&idx, "ops\t<m1@x>\tsp-ask1\task\tgo\n").unwrap();
+        let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-ask1","status":"closed"}]"#)]);
+        let Ok(SweepOutcome::Report(r)) = sweep_dismissed(&bd, true, t.path(), &idx, "ops", "ryan") else { panic!("no report") };
+        assert_eq!((r.dismissed, r.kept), (0, 0));
+        assert_eq!(bd.calls().len(), 1, "{:?}", bd.calls());
     }
 }

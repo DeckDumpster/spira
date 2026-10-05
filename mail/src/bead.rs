@@ -373,10 +373,9 @@ pub fn bd_failure_detail(out: &BdOut) -> String {
 /// The open ask-labelled bead ids `tidy` keeps mail for. `Err` on a query the store could
 /// not answer (law-a-control-that-cannot-check-must-refuse) — distinct from a real `[]`.
 pub fn open_ask_ids(bd: &dyn Bd, ask_label: &str) -> Result<Vec<String>, String> {
-    let out = bd.run(
-        &a(&["list", "--status", "open,in_progress,blocked,deferred", "--label", ask_label, "--limit", "0", "--brief", "--json"]),
-        None,
-    );
+    // An ask is not a work bead: bd's status is its whole state (spira_config::nonwork, sp-mve9i).
+    let [flag, live] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Live);
+    let out = bd.run(&a(&["list", &flag, &live, "--label", ask_label, "--limit", "0", "--brief", "--json"]), None);
     match serde_json::from_str::<Value>(&out.stdout) {
         Ok(v) => {
             let arr = match v {
@@ -551,6 +550,8 @@ mod tests {
     fn open_ask_ids_parses_a_real_list() {
         let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-open1"}]"#)]);
         assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), vec!["sp-open1".to_string()]); // literal-ok: test fixture
+        // Every status but closed: an ask's bd status is its state (sp-mve9i, nonwork::Which::Live).
+        assert_eq!(bd.calls()[0].0[..3], ["list", "--status", "open,in_progress,blocked,deferred"]);
     }
 
     #[test]

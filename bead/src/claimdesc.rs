@@ -66,25 +66,33 @@ pub fn parse_update_args(args: &[String]) -> UpdateArgs {
     UpdateArgs { passthrough, force, touches_description, id }
 }
 
-/// An in_progress bead with an assignee and a lease that has not provably lapsed. An
-/// unparseable lease counts as live: refusing wrongly costs a flag, missing an edit costs a
-/// wasted session.
-pub fn live_claim(show_json: &str, now_epoch: i64) -> Option<LiveClaim> {
-    let row = first_row(show_json)?;
-    if row.get("status").and_then(|s| s.as_str()) != Some("in_progress") {
+/// A bead an aeon holds: the lifecycle row WORKING, with a holder and a lease that has not
+/// provably lapsed (sp-mve9i: the claim is the machine's row, never bd's `in_progress` and
+/// `assignee`). A row with no lease counts as live: refusing wrongly costs a flag, missing an
+/// edit costs a wasted session.
+pub fn live_claim(row: Option<&spira_config::lc_state::Row>, now_epoch: i64) -> Option<LiveClaim> {
+    let row = row.filter(|r| r.working())?;
+    let holder = row.holder.as_deref().map(str::trim).filter(|h| !h.is_empty())?.to_string();
+    if row.lease_until.is_some_and(|e| e <= now_epoch) {
         return None;
     }
-    let assignee = row.get("assignee").and_then(|a| a.as_str()).unwrap_or("").trim().to_string();
-    if assignee.is_empty() {
-        return None;
-    }
-    let lease = row.get("lease_expires_at").and_then(|l| l.as_str()).filter(|l| !l.is_empty());
-    if let Some(l) = lease {
-        if parse_iso(l).is_some_and(|e| e <= now_epoch) {
-            return None;
-        }
-    }
-    Some(LiveClaim { assignee, lease: lease.unwrap_or("unknown").to_string() })
+    let lease = row.lease_until.map(iso_of).unwrap_or_else(|| "unknown".to_string());
+    Some(LiveClaim { assignee: holder, lease })
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for an epoch second (the inverse of [`parse_iso`]'s UTC case).
+pub fn iso_of(epoch: i64) -> String {
+    let (days, secs) = (epoch.div_euclid(86_400), epoch.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs % 3600 / 60, secs % 60)
 }
 
 pub fn refusal(id: &str, c: &LiveClaim) -> String {
@@ -191,9 +199,6 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
-    fn show(status: &str, assignee: &str, lease: &str) -> String {
-        format!(r#"[{{"id":"x","status":"{status}","assignee":"{assignee}","lease_expires_at":"{lease}","description":"d"}}]"#)
-    }
 
     #[test]
     fn hash_follows_the_description_only() {
@@ -222,19 +227,32 @@ mod tests {
         assert_eq!(u.force, None);
     }
 
+    /// sp-mve9i: the claim is the lifecycle row's — WORKING, its holder, its lease — and bd's
+    /// status and assignee play no part.
     #[test]
-    fn live_claim_needs_in_progress_assignee_and_unlapsed_lease() {
+    fn live_claim_is_the_lifecycle_rows_working_holder_and_lease() {
+        use spira_config::lc_state::Row;
         let now = parse_iso("2026-10-02T12:00:00Z").unwrap();
-        let live = live_claim(&show("in_progress", "aeon-x", "2026-10-02T13:00:00Z"), now).unwrap();
-        assert_eq!(live.assignee, "aeon-x");
-        assert!(live_claim(&show("in_progress", "aeon-x", "2026-10-02T11:00:00Z"), now).is_none());
-        assert!(live_claim(&show("open", "aeon-x", "2026-10-02T13:00:00Z"), now).is_none());
-        assert!(live_claim(&show("in_progress", "", "2026-10-02T13:00:00Z"), now).is_none());
-        assert!(live_claim(&show("in_progress", "aeon-x", "garbage"), now).is_some());
+        let row = |st: &str, holder: &str, lease: Option<i64>| Row {
+            bead_id: "x".into(),
+            state: st.into(),
+            holder: Some(holder.to_string()).filter(|h| !h.is_empty()),
+            lease_until: lease,
+            holds: vec![],
+        };
+        let live = live_claim(Some(&row("WORKING", "aeon-x", Some(now + 3600))), now).unwrap();
+        assert_eq!((live.assignee.as_str(), live.lease.as_str()), ("aeon-x", "2026-10-02T13:00:00Z"));
+        assert!(live_claim(Some(&row("WORKING", "aeon-x", Some(now - 3600))), now).is_none());
+        assert!(live_claim(Some(&row("READY", "aeon-x", Some(now + 3600))), now).is_none());
+        assert!(live_claim(Some(&row("WORKING", "", Some(now + 3600))), now).is_none());
+        assert_eq!(live_claim(Some(&row("WORKING", "aeon-x", None)), now).unwrap().lease, "unknown");
+        assert!(live_claim(None, now).is_none());
     }
 
     #[test]
     fn iso_parses_offsets_and_fractions() {
+        assert_eq!(iso_of(951_868_800), "2000-03-01T00:00:00Z");
+        assert_eq!(parse_iso(&iso_of(1_790_000_123)), Some(1_790_000_123));
         assert_eq!(parse_iso("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(parse_iso("1970-01-01T01:00:00+01:00"), Some(0));
         assert_eq!(parse_iso("1970-01-01T00:00:01.250Z"), Some(1));

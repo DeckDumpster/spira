@@ -115,27 +115,29 @@ fn find_blocking_id(desc: &str) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
-/// True when `bd list --json` already carries an `open`/`in_progress` bead with this exact
-/// title (the flaky-suite dedup: "a suite stays quiet once a bead is open").
-pub fn has_open_bead(list_json: &str, title: &str) -> bool {
-    let Ok(v) = serde_json::from_str::<Value>(list_json) else { return false };
-    let beads: &[Value] = match &v {
-        Value::Array(a) => a,
-        _ => return false,
-    };
-    beads.iter().any(|b| {
-        matches!(b.get("status").and_then(Value::as_str), Some("open") | Some("in_progress")) && b.get("title").and_then(Value::as_str) == Some(title)
-    })
+/// The lifecycle rows by bead id (`spira_config::lc_state`).
+pub type Lc = std::collections::HashMap<String, spira_config::lc_state::Row>;
+
+/// A filed bead is still open while its lifecycle row is not terminal (sp-mve9i: a work
+/// bead's state is spira-lc's, never bd's `status`). A bead with no row can never be worked,
+/// so it holds nothing open.
+fn still_open(b: &Value, lc: &Lc) -> bool {
+    b.get("id").and_then(Value::as_str).and_then(|id| lc.get(id)).is_some_and(|r| !r.terminal())
 }
 
-/// The first open/in_progress bead carrying this exact title, and its priority (default 2
-/// when absent, matching the bash's `.get('priority', 2)`).
-pub fn find_open_bead(list_json: &str, title: &str) -> Option<(String, i64)> {
+/// True when `bd list --all --json` carries a still-open bead (by `lc`) with this exact
+/// title (the flaky-suite dedup: "a suite stays quiet once a bead is open").
+pub fn has_open_bead(list_json: &str, title: &str, lc: &Lc) -> bool {
+    find_open_bead(list_json, title, lc).is_some()
+}
+
+/// The first still-open bead carrying this exact title, and its priority (default 2 when
+/// absent, matching the bash's `.get('priority', 2)`).
+pub fn find_open_bead(list_json: &str, title: &str, lc: &Lc) -> Option<(String, i64)> {
     let v: Value = serde_json::from_str(list_json).ok()?;
     let beads = v.as_array()?;
     for b in beads {
-        let status_ok = matches!(b.get("status").and_then(Value::as_str), Some("open") | Some("in_progress"));
-        if status_ok && b.get("title").and_then(Value::as_str) == Some(title) {
+        if still_open(b, lc) && b.get("title").and_then(Value::as_str) == Some(title) {
             let id = b.get("id").and_then(Value::as_str)?.to_string();
             let pri = b.get("priority").and_then(Value::as_i64).unwrap_or(2);
             return Some((id, pri));

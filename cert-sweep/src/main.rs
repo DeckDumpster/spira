@@ -18,7 +18,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cert_sweep::{
-    bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, parse_members, parse_result_file,
+    bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, still_open, parse_members, parse_result_file,
     parse_testenv_stdout, pick_subset, runner_verdict, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
 };
 use serde_json::Value;
@@ -320,7 +320,7 @@ impl Rt<'_> {
         let db = std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()).ok_or("SPIRA_DB is required to look for an open duplicate")?;
         let bd = std::env::var("SPIRA_BD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "bd".into());
         let out = Command::new(&bd)
-            .args(["-C", &db, "list", "--status", "open,in_progress,blocked,deferred", "--limit", "0", "--brief", "--json"])
+            .args(["-C", &db, "list", "--all", "--limit", "0", "--brief", "--json"])
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("{bd}: {e}"))?;
@@ -329,10 +329,13 @@ impl Rt<'_> {
         }
         let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{bd} list: {e}"))?;
         let rows = v.as_array().ok_or_else(|| format!("{bd} list: not a JSON array"))?;
-        Ok(rows
+        let all = rows
             .iter()
             .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string())))
-            .collect())
+            .collect();
+        // Which of them are still open is the lifecycle machine's answer (sp-mve9i).
+        let lc = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        Ok(still_open(all, &spira_config::lc_state::index(lc)))
     }
 
     /// A red is rerun on its own commit: a green among the reruns is a flip. A red that

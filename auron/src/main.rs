@@ -284,7 +284,7 @@ fn main() {
                 }
             },
             Trigger::Refresh => {
-                let closed_by_hand = existing.map(|r| r.status == "closed").unwrap_or(false);
+                let closed_by_hand = existing.map(|r| r.closed()).unwrap_or(false);
                 if closed_by_hand {
                     state.keys.insert(key.clone(), step.on_refresh_skip_closed(now));
                 } else {

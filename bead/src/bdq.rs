@@ -264,9 +264,17 @@ pub fn is_create(args: &[String]) -> bool {
 }
 
 /// A bead created already closed (`--status closed`) is never claimed, so it needs no
-/// lifecycle row.
+/// lifecycle row. Such a bead is an insight — a non-work record, filed closed — so the value
+/// is read as one (`spira_config::nonwork`, sp-mve9i).
 pub fn creates_closed(args: &[String]) -> bool {
-    args.windows(2).any(|w| w[0] == "--status" && w[1] == "closed") || args.iter().any(|a| a == "--status=closed")
+    use spira_config::nonwork::{is_closed, Kind};
+    let flag = "--status";
+    let value = args
+        .windows(2)
+        .find(|w| w[0] == flag)
+        .map(|w| w[1].as_str())
+        .or_else(|| args.iter().find_map(|a| a.strip_prefix(flag).and_then(|v| v.strip_prefix('='))));
+    value.is_some_and(|v| is_closed(Kind::Insight, v))
 }
 
 // =========================================================================================

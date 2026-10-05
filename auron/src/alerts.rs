@@ -44,7 +44,7 @@ pub fn alert_write(ops: &dyn BdOps, key: &str, title: &str, body: &str, flaps: i
         let id = ops.create(title, &format!("alert,overseer,alert:{key},flaps:{flaps}"), body)?;
         return Ok(id);
     };
-    if row.status == "closed" {
+    if row.closed() {
         // A REOPEN MEANS THE CONDITION RETURNED — not an acknowledgement argued with; see
         // reconcile.rs's own Refresh-path guard for the case this does NOT apply to (a
         // hand-closed bead while still firing: that path never calls alert_write at all).
@@ -73,7 +73,7 @@ pub fn alert_write(ops: &dyn BdOps, key: &str, title: &str, body: &str, flaps: i
 /// is already closed — auron.sh's own `[ -n "$id" ] || return 0` / status guard.
 pub fn alert_clear(ops: &dyn BdOps, existing: Option<&BeadRow>, first: i64, flaps: i64, clear_n: i64, tz: &str) -> Result<(), Failure> {
     let Some(row) = existing else { return Ok(()) };
-    if row.status == "closed" {
+    if row.closed() {
         return Ok(());
     }
     ops.close(&row.id, &clear_reason(first, flaps, clear_n, tz))

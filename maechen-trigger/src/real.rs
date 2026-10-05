@@ -82,16 +82,25 @@ impl World for Real {
     }
 
     fn open_trigger_count(&self, labels: &str) -> u64 {
+        // bd says which beads carry the labels; whether each is still open is the lifecycle
+        // machine's answer (sp-mve9i), never bd's status.
         let out = Command::new(&self.bd)
             .arg("-C")
             .arg(&self.db)
-            .args(["list", "--status", "open,in_progress", "--label", labels, "--json"])
+            .args(["list", "--all", "--label", labels, "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output();
-        match out {
-            Ok(o) if o.status.success() => json_array_count(&String::from_utf8_lossy(&o.stdout)),
-            _ => 0,
+        let ids = match out {
+            Ok(o) if o.status.success() => json_ids(&String::from_utf8_lossy(&o.stdout)),
+            _ => return 0,
+        };
+        match spira_config::lc_state::list() {
+            Ok(rows) => unfinished_count(&ids, &spira_config::lc_state::index(rows)),
+            Err(e) => {
+                eprintln!("maechen-trigger: lifecycle state unreadable ({e}); counting no open trigger");
+                0
+            }
         }
     }
 
@@ -184,14 +193,19 @@ impl World for Real {
     }
 }
 
-/// `spira_open_trigger_count`'s own counter: `bd list --json`'s array length, 0 for
-/// anything that fails to parse — `bd list --json` always answers an array on success, so
-/// the bash's `len(d)` over whatever `json.load` returned never hit its other branches.
-fn json_array_count(input: &str) -> u64 {
+/// The ids in `bd list --json`'s array; none for anything that fails to parse.
+fn json_ids(input: &str) -> Vec<String> {
     match serde_json::from_str::<serde_json::Value>(input) {
-        Ok(serde_json::Value::Array(a)) => a.len() as u64,
-        _ => 0,
+        Ok(serde_json::Value::Array(a)) => a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect(),
+        _ => Vec::new(),
     }
+}
+
+/// `spira_open_trigger_count`'s own counter: the trigger beads still open — their lifecycle
+/// row READY, WORKING or REWORK (what bd's `open,in_progress` meant). A bead with no row can
+/// never be worked, so it is not open.
+fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
+    ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder())).count() as u64
 }
 
 fn humantime_utc_now() -> String {
@@ -205,4 +219,23 @@ fn humantime_utc_now() -> String {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_config::lc_state::Row;
+
+    /// sp-mve9i: an open trigger is one whose lifecycle row is still before its builder's
+    /// hand-off; bd's status is not read.
+    #[test]
+    fn an_open_trigger_is_one_the_machine_has_not_seen_handed_on() {
+        let ids = json_ids(r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c"},{"id":"d"},{"id":"e"}]"#);
+        let lc = [("a", "READY"), ("b", "SUBMITTED"), ("c", "WORKING"), ("d", "DONE")]
+            .iter()
+            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
+            .collect();
+        assert_eq!(unfinished_count(&ids, &lc), 2);
+        assert!(json_ids("not json").is_empty());
+    }
 }

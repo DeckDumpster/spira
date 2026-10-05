@@ -6,6 +6,7 @@
 
 use crate::decide::{self, DedupHit};
 use crate::ports::{self, Bd, Clock, Mailer};
+use spira_config::nonwork::Which;
 
 pub struct FileConfig<'a> {
     pub db: &'a str,
@@ -72,23 +73,23 @@ pub fn epoch_to_date(epoch: i64) -> String {
 fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, now: i64) -> Result<Option<DedupHit>, ()> {
     let ref_label = format!("ref:{}", decide::ref_hash(reference));
 
-    if let Ok(rows) = bd.list(db, &["open", "in_progress"], Some(&ref_label), None) {
+    if let Ok(rows) = bd.list(db, Which::Active, Some(&ref_label), None) {
         if let Some(hit) = decide::dedup_scan(&rows, true, false, reference) {
             return Ok(Some(hit));
         }
     }
-    if let Ok(rows) = bd.list(db, &["open", "in_progress"], None, None) {
+    if let Ok(rows) = bd.list(db, Which::Active, None, None) {
         if let Some(hit) = decide::dedup_scan(&rows, true, true, reference) {
             return Ok(Some(hit));
         }
     }
     let since = since_date(now, lookback_days);
-    if let Ok(rows) = bd.list(db, &["closed"], Some(&ref_label), Some(&since)) {
+    if let Ok(rows) = bd.list(db, Which::Closed, Some(&ref_label), Some(&since)) {
         if let Some(hit) = decide::dedup_scan(&rows, false, false, reference) {
             return Ok(Some(hit));
         }
     }
-    if let Ok(rows) = bd.list(db, &["closed"], None, Some(&since)) {
+    if let Ok(rows) = bd.list(db, Which::Closed, None, Some(&since)) {
         if let Some(hit) = decide::dedup_scan(&rows, false, true, reference) {
             return Ok(Some(hit));
         }
@@ -364,17 +365,16 @@ mod tests {
     }
 
     impl Bd for FakeBd {
-        fn list(&self, _db: &str, statuses: &[&str], label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        fn list(&self, _db: &str, which: Which, label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
             let rows = self.rows.borrow();
             Ok(rows
                 .iter()
                 .filter(|r| {
-                    let status_ok = statuses.iter().any(|s| match *s {
-                        "open" => r.status == BeadStatus::Open,
-                        "in_progress" => r.status == BeadStatus::InProgress,
-                        "closed" => r.status == BeadStatus::Closed,
+                    let status_ok = match which {
+                        Which::Active => matches!(r.status, BeadStatus::Open | BeadStatus::InProgress),
+                        Which::Closed => r.status == BeadStatus::Closed,
                         _ => false,
-                    });
+                    };
                     let label_ok = label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true);
                     status_ok && label_ok
                 })

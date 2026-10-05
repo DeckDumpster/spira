@@ -19,6 +19,7 @@
 //! built from a commit sha/subject (already public) or a fixed sentence.
 
 use crate::ports::{Bd, Gh, Git, LcBead, Lifecycle, Mail, Repo};
+use spira_config::nonwork::Which;
 use std::path::{Path, PathBuf};
 
 // ────────────────────────────────────────────────────────────────────────────────────────
@@ -217,13 +218,13 @@ pub struct ClosedGhRow {
     pub closed_at: String,
 }
 
-fn closed_github_rows(v: &serde_json::Value) -> Vec<ClosedGhRow> {
+/// Every GitHub-mirrored bead in the store, whatever bd says of its status: these are work
+/// beads, so whether the builder has handed one on is the lifecycle machine's answer
+/// ([`handed_on`]), never bd's `status` (design §3.4, sp-mve9i).
+fn github_rows(v: &serde_json::Value) -> Vec<ClosedGhRow> {
     list_rows(v)
         .into_iter()
         .filter_map(|r| {
-            if r.get("status").and_then(|s| s.as_str()) != Some("closed") {
-                return None;
-            }
             let ext = r.get("external_ref").and_then(|x| x.as_str()).unwrap_or("").to_string();
             if !ext.starts_with("github:") {
                 return None;
@@ -295,7 +296,7 @@ pub fn gh_issue_closeout(d: &Deps, ctx: &Ctx, id: &str, sha: &str, repo_path: &P
 /// lib.sh `_gh_close_ask_unblock <subject> <work-bead-id>`.
 pub fn gh_close_ask_unblock(d: &Deps, ctx: &Ctx, subj: &str, work_id: &str) -> Vec<String> {
     let mut log = Vec::new();
-    let Some(open) = d.bd.list_by_label("open", &ctx.ask_label) else { return log };
+    let Some(open) = d.bd.list_asks(Which::Open, &ctx.ask_label) else { return log };
     let Some(ask_id) = find_exact_open_ask(&titles(&open), subj) else { return log };
     let Some(row) = d.bd.show_json(work_id) else { return log };
     if !blocks(&row, &ask_id) {
@@ -325,13 +326,13 @@ pub fn gh_issue_ask_unlanded(d: &Deps, ctx: &Ctx, id: &str, ext_ref: &str, draft
     let subj = close_issue_subject(ext_ref, id);
     log.extend(gh_close_ask_unblock(d, ctx, &subj, id));
 
-    let open = d.bd.list_by_label("open", &ctx.ask_label);
+    let open = d.bd.list_asks(Which::Open, &ctx.ask_label);
     let open_titles: Vec<String> = open.as_ref().map(titles).unwrap_or_default().into_iter().map(|(_, t)| t).collect();
     if ask_already_open(&open_titles, &subj) {
         return log;
     }
 
-    let closed = d.bd.list_by_label("closed", &ctx.ask_label);
+    let closed = d.bd.list_asks(Which::Closed, &ctx.ask_label);
     if let Some(answered) = closed.as_ref().and_then(|v| ask_closed_subject(&titles(v), &subj)) {
         run_state::mark_write(&ctx.run, id);
         log.push(format!("gh-closeout {id}: ask {answered} already answered — marker written, no re-ask"));
@@ -351,7 +352,7 @@ pub fn gh_issue_ask_unlanded(d: &Deps, ctx: &Ctx, id: &str, ext_ref: &str, draft
 /// lib.sh `_gh_resolve_stale_asks`.
 pub fn gh_resolve_stale_asks(d: &Deps, ctx: &Ctx) -> Vec<String> {
     let mut log = Vec::new();
-    let Some(open) = d.bd.list_by_label("open", &ctx.ask_label) else { return log };
+    let Some(open) = d.bd.list_asks(Which::Open, &ctx.ask_label) else { return log };
     for (ask_id, title) in titles(&open) {
         let Some((ext, bid)) = parse_close_issue_title(&title) else { continue };
         let Some((gh_repo, issue_n)) = parse_gh_ref(&ext) else { continue };
@@ -366,15 +367,31 @@ pub fn gh_resolve_stale_asks(d: &Deps, ctx: &Ctx) -> Vec<String> {
     log
 }
 
+/// The machine's row for a GitHub-mirrored work bead whose builder has handed it on
+/// (`lc_state::past_builder`): what bd `closed` used to mean here. `Ok(None)` for a bead
+/// still READY/WORKING/REWORK, and for one with no row — no row is no evidence the work is
+/// done, so it is neither closed out nor asked about.
+fn handed_on(d: &Deps, id: &str) -> Result<Option<LcBead>, String> {
+    Ok(d.lc.bead(id)?.filter(|b| spira_config::lc_state::past_builder(&b.state)))
+}
+
 /// lib.sh `_gh_unlanded_scan`.
 pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
     let mut log = gh_resolve_stale_asks(d, ctx);
 
     let Some(all) = d.bd.list_all_json() else { return log };
-    for row in closed_github_rows(&all) {
+    for row in github_rows(&all) {
         if run_state::mark_exists(&ctx.run, &row.id) {
             continue;
         }
+        let ls = match handed_on(d, &row.id) {
+            Ok(Some(b)) => Some(b),
+            Ok(None) => continue,
+            Err(e) => {
+                log.push(format!("gh-closeout {}: lifecycle machine unreachable ({e}) — skipped", row.id));
+                continue;
+            }
+        };
 
         if let Some(rp) = d.repo.root_with_git(&row.repo_label) {
             let refs = d.repo.landrefs(&rp);
@@ -390,13 +407,6 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
             }
         }
 
-        let ls = match d.lc.bead(&row.id) {
-            Ok(b) => b,
-            Err(e) => {
-                log.push(format!("gh-closeout {}: lifecycle machine unreachable ({e}) — skipped", row.id));
-                continue;
-            }
-        };
         if ls.as_ref().map(|b| b.state.as_str()) == Some("LANDED") {
             continue;
         }
@@ -443,7 +453,8 @@ pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u
         return (out, 0, 0, 0, 0);
     };
 
-    for row in closed_github_rows(&all) {
+    for row in github_rows(&all) {
+        let Ok(Some(lsb)) = handed_on(d, &row.id) else { continue };
         n_found += 1;
 
         if run_state::mark_exists(&ctx.run, &row.id) {
@@ -452,7 +463,7 @@ pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u
             continue;
         }
 
-        let ls_sha = d.lc.bead(&row.id).ok().flatten().map(|b| b.sha).unwrap_or_default();
+        let ls_sha = lsb.sha;
 
         let mut found: Option<(String, String)> = None; // (sha, repo_path)
         for name in d.repo.all_names() {
@@ -638,10 +649,10 @@ mod tests {
         fn show_json(&self, id: &str) -> Option<serde_json::Value> {
             self.show.borrow().get(id).cloned()
         }
-        fn list_by_label(&self, status: &str, _label: &str) -> Option<serde_json::Value> {
-            let rows = match status {
-                "open" => self.open.borrow().clone(),
-                "closed" => self.closed.borrow().clone(),
+        fn list_asks(&self, which: Which, _label: &str) -> Option<serde_json::Value> {
+            let rows = match which {
+                Which::Open => self.open.borrow().clone(),
+                Which::Closed => self.closed.borrow().clone(),
                 _ => Vec::new(),
             };
             Some(serde_json::Value::Array(rows.into_iter().map(|(id, title)| serde_json::json!({"id": id, "title": title})).collect()))
@@ -698,6 +709,10 @@ mod tests {
             let mut lc = FakeLc::default();
             lc.beads.insert(id.to_string(), LcBead { state: state.to_string(), sha: sha.to_string() });
             lc
+        }
+        fn and(mut self, id: &str, state: &str, sha: &str) -> FakeLc {
+            self.beads.insert(id.to_string(), LcBead { state: state.to_string(), sha: sha.to_string() });
+            self
         }
     }
 
@@ -1036,7 +1051,8 @@ mod tests {
         let repo = FakeRepo::default();
         repo.add("fixture", "/r", "origin/main");
         let mail = FakeMail::default();
-        let lc = FakeLc::default();
+        // Both handed on by their builders (sp-mve9i: the machine's answer, not bd's status).
+        let lc = FakeLc::with("sp-landed", "SUBMITTED", "").and("sp-unlanded", "DROPPED", "");
         let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let now = 2_000_000_000; // long after both fixture timestamps
 
@@ -1083,11 +1099,12 @@ mod tests {
         assert!(log.iter().any(|l| l.contains("lifecycle machine unreachable")), "{log:?}");
         assert!(mail.sent.borrow().is_empty(), "no ask sent on no answer");
 
-        // POSITIVE CONTROL: the same bead with the machine up and no row is asked about.
-        let lc = FakeLc::default();
+        // POSITIVE CONTROL: the same bead with the machine up and its builder done is asked about.
+        let lc = FakeLc::with("sp-scan2", "DROPPED", "");
         let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
         assert!(!log.iter().any(|l| l.contains("unreachable")), "{log:?}");
+        assert!(log.iter().any(|l| l.contains("#92")), "{log:?}");
     }
 
     #[test]
@@ -1118,7 +1135,7 @@ mod tests {
         seed_closed_github(&bd, vec![serde_json::json!({"id":"sp-fresh","status":"closed","external_ref":"github:fixture/testrepo#99","labels":[],"closed_at":closed_at})]);
         let (gh, git, repo) = (FakeGh::default(), FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
-        let lc = FakeLc::default();
+        let lc = FakeLc::with("sp-fresh", "DROPPED", "");
         let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let mut c = ctx(&run);
         c.grace_secs = age + 10_000; // still inside the grace window
@@ -1142,7 +1159,7 @@ mod tests {
         let repo = FakeRepo::default();
         repo.add("fixture", "/r", "origin/main");
         let mail = FakeMail::default();
-        let lc = FakeLc::default();
+        let lc = FakeLc::with("sp-fix", "DONE", "");
         let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let c = ctx(&run);
 
@@ -1157,5 +1174,54 @@ mod tests {
         assert_eq!(closed2, 1);
         assert!(out.iter().any(|l| l.contains("closed github:fixture/testrepo#7")), "{out:?}");
         assert!(run_state::mark_exists(&run, "sp-fix"));
+    }
+
+    /// sp-mve9i: which GitHub-mirrored work beads the scan considers is the lifecycle
+    /// machine's answer, not bd's status — a bead bd shows closed while the machine still has
+    /// it READY is not done, and one bd shows open that the machine has DROPPED is.
+    #[test]
+    fn unlanded_scan_takes_the_builders_hand_off_from_the_machine_not_bd_status() {
+        let tmp = testkit::TempDir::new("gh-intake-scan-lc-not-bd");
+        let run = tmp.path().join("run");
+        let bd = FakeBd::default();
+        seed_closed_github(
+            &bd,
+            vec![
+                serde_json::json!({"id":"sp-bdclosed","status":"closed","external_ref":"github:fixture/testrepo#61","labels":[],"closed_at":"2000-01-01T00:00:00Z"}),
+                serde_json::json!({"id":"sp-bdopen","status":"open","external_ref":"github:fixture/testrepo#62","labels":[],"closed_at":""}),
+            ],
+        );
+        let gh = FakeGh::default();
+        gh.set_state("fixture/testrepo", "61", "OPEN");
+        gh.set_state("fixture/testrepo", "62", "OPEN");
+        let (git, repo) = (FakeGit::default(), FakeRepo::default());
+        let mail = FakeMail::default();
+        let lc = FakeLc::with("sp-bdclosed", "READY", "").and("sp-bdopen", "DROPPED", "");
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
+        assert!(!log.iter().any(|l| l.contains("#61")), "a READY bead is not done, whatever bd says: {log:?}");
+        assert!(log.iter().any(|l| l.contains("asked operator about github:fixture/testrepo#62")), "{log:?}");
+    }
+
+    /// sp-mve9i: backfill counts what the machine says the builder handed on.
+    #[test]
+    fn backfill_finds_beads_by_lifecycle_state_not_bd_status() {
+        let tmp = testkit::TempDir::new("gh-intake-backfill-lc");
+        let run = tmp.path().join("run");
+        let bd = FakeBd::default();
+        seed_closed_github(
+            &bd,
+            vec![
+                serde_json::json!({"id":"sp-a","status":"closed","external_ref":"github:fixture/testrepo#71","labels":[]}),
+                serde_json::json!({"id":"sp-b","status":"open","external_ref":"github:fixture/testrepo#72","labels":[]}),
+            ],
+        );
+        let (gh, git, repo) = (FakeGh::default(), FakeGit::default(), FakeRepo::default());
+        let mail = FakeMail::default();
+        let lc = FakeLc::with("sp-a", "WORKING", "").and("sp-b", "LANDED", "");
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let (out, found, ..) = backfill(&d, &ctx(&run), true);
+        assert_eq!(found, 1);
+        assert!(out.iter().any(|l| l.contains("sp-b")) && !out.iter().any(|l| l.contains("sp-a")), "{out:?}");
     }
 }

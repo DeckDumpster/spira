@@ -170,10 +170,13 @@ impl Bd for RealBd {
         serde_json::from_slice(&out.stdout).ok()
     }
 
-    fn list_by_label(&self, status: &str, label: &str) -> Option<serde_json::Value> {
+    fn list_asks(&self, which: spira_config::nonwork::Which, label: &str) -> Option<serde_json::Value> {
+        use spira_config::nonwork::{status_args, Kind};
         let out = self
             .cmd()
-            .args(["list", "--status", status, "--label", label, "--limit", "0", "--json"])
+            .arg("list")
+            .args(status_args(Kind::Ask, which))
+            .args(["--label", label, "--limit", "0", "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
