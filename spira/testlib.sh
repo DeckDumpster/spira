@@ -489,17 +489,32 @@ tl_summary() {
 # `work submit`. TMP, SPIRA_DB, SPIRA_BD and PATH are captured when this is called — call it
 # once the suite's PATH and database are set. The restricted environment itself is
 # asserted where it is the subject (test-aeon-lifecycle-cutover.sh, aeon's restrict tests).
+# Any further variable names after the shim are captured the same way, for a shim that
+# reads more of the suite's world (a wiki path, a groom log).
 aeon_fixture_agent() {
     local shim="${1:?aeon_fixture_agent needs the shim path}" outer="${1}.fixture-env" k
+    shift
     {
         printf '#!/usr/bin/env bash\n'
-        for k in TMP SPIRA_DB SPIRA_BD PATH; do
+        for k in TMP SPIRA_DB SPIRA_BD PATH "$@"; do
             [ -n "${!k:-}" ] && printf 'export %s=%q\n' "$k" "${!k}"
         done
         printf 'exec %q "$@"\n' "$shim"
     } > "$outer"
     chmod +x "$outer"
     export SPIRA_AGENT="$outer"
+}
+
+# lc_row_state <id> — the STATE the lifecycle machine on PATH (lc_aeon_mirror, for the aeon
+# suites) answers for <id>, "" when it has no row. Since sp-v62vn every model session is
+# restricted, so the teardown's old conversion of a builder's bd close into open +
+# spira-submitted (sp-qsona) never runs: "the session finished its bead" is this row reading
+# SUBMITTED, never a bd label.
+lc_row_state() {
+    spira-lc show "$1" 2>/dev/null | python3 -c '
+import sys, json
+try: print(json.load(sys.stdin)["bead"]["state"])
+except Exception: print("")' 2>/dev/null
 }
 
 # lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the

@@ -5,8 +5,15 @@
 #   ./test-ops-closing.sh
 #
 # Driven through the REAL aeon against a real bd on a throwaway fixture, with a shim
-# standing in for the model: the submitted conversion, the close-reason fence, and the
-# retired SOP closing rule's key being ignored with a warning.
+# standing in for the model: a builder's hand-on standing as SUBMITTED, and the retired SOP
+# closing rule's key being ignored with a warning.
+#
+# THE CLOSE-REASON FENCE'S AEON ROWS ARE GONE (sp-v62vn). The fence lives in the verdict's
+# closed branch (aeon verdict.rs), and every session is restricted now and hands its bead on
+# only through the work verbs, so decide::builder_closed is false for every session and the
+# fence is reached by none. Its T3 rows asserted that unreachable path and are deleted, not
+# rewritten; UC-aeon-execution-16 is marked uncovered in docs/test-plan/aeon-execution.toml.
+# The T1 table over close-reason-flags.py stays: lib.sh's detect_invalid_closed shares it.
 #
 # WHAT "SILENCE" MEANS, EXACTLY, and why the distinction is the entire suite. A session may
 # end three honest ways, and each is one command:
@@ -115,16 +122,14 @@ cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
-case "$(cat "$TMP/act")" in
-    bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
-    bad-reason-admit) bd -C "$SPIRA_DB" close "$id" --reason "TEMPORARY WORKAROUND: x is set until y lands" >/dev/null 2>&1 ;;
-    bad-reason-mention) bd -C "$SPIRA_DB" close "$id" --reason 'pair added — bad-reason ("TEMPORARY WORKAROUND") is reopened; clean reason stays closed' >/dev/null 2>&1 ;;
-    *)          bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1 ;;
-esac
+bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
 chmod +x "$BIN/claude"
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib
+# aeon_fixture_agent (SPIRA_AGENT below names the wrapper it writes).
+aeon_fixture_agent "$BIN/claude"
 
 # THE ENVIRONMENT IS NAMED, NOT INHERITED. Two keys make this mandatory rather than tidy: an
 # inherited SPIRA_CONF would let a real box decide these verdicts, and an inherited
@@ -136,7 +141,7 @@ run_aeon() {             # run_aeon <fayth> <act>
     env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_PATH="${SPIRA_PATH:-}" TMP="$TMP" \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_WIKI="" \
         SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$BIN/claude" \
+        SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         BEADS_NO_AUTO_IMPORT=1 \
         timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
@@ -150,9 +155,6 @@ field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' |
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
-# THE NOTES AS THEY WERE WRITTEN. `bd show` wraps prose to a width, so an assertion against
-# the rendered form passes or fails on where the wrap fell rather than on what was recorded.
-notes()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | tr -s '[:space:]' ' '; }
 
 fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead
     testdb_reset
@@ -164,10 +166,9 @@ fresh_incident() { fresh "$1" delivers:action; }
 echo
 echo "a BUILDER that closed — its close stands as submitted:"
 fresh sp-oc-8; run_aeon builder none
-# A builder's plain work bead: its close is converted to open + spira-submitted at teardown
-# (sp-qsona).
-is     "the bead's close stands as submitted, not undone" open "$(field sp-oc-8 status)"
-want   "carrying the submitted label" "spira-submitted" "$(labels sp-oc-8)"
+# A builder's plain work bead: the session's bd close reads, in the lifecycle stand-in, as the
+# builder's submit (sp-v62vn: the restricted session never reaches sp-qsona's bd conversion).
+is     "the bead's hand-on stands as SUBMITTED, not undone" SUBMITTED "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-8)"
 nowant "it is not poisoned"        "spira-poison" "$(labels sp-oc-8)"
 nowant "and a fayth without the key draws no retirement warning" "is retired" "$(cat "$TMP/out")"
 nowant "it is not poisoned"        "spira-poison" "$(labels sp-oc-8)"
@@ -224,17 +225,5 @@ wantrc "temporarily fixed matches" 0 "$CRF_RC"
 
 crf "a TEMPORARY workaround was used, in lowercase"
 wantrc "matching is case-insensitive" 0 "$CRF_RC"
-
-# ===========================================================================================
-echo
-echo "T3: a close reason with a statute phrase is refused — the fence is wired to aeon.sh:"
-# ===========================================================================================
-# THE FENCE IS UNIVERSAL. It applies to every aeon, and is bound to the close reason text,
-# not to the persona's contract.
-fresh sp-oc-13; run_aeon builder bad-reason
-is   "a statute phrase reopens the bead"        open   "$(field sp-oc-13 status)"
-nowant "reopened by the fence, so NOT converted to submitted" "spira-submitted" "$(labels sp-oc-13)"
-want "the note names the matched phrase"        "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
-want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
 
 tl_summary

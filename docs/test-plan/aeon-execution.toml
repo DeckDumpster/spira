@@ -106,6 +106,11 @@ id = "UC-aeon-execution-16"
 tier = "T1"
 statement = "the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name"
 
+[use_case.uncovered]
+reason = "test-groom-escalation-check.sh's aeon rows, test-ops-closing.sh's close-reason-fence rows and test-aeon-prod-dirty.sh's own-dirty and override cases are deleted: the close guards run in the aeon verdict's closed branch (aeon verdict.rs, gated on decide::builder_closed), and sp-v62vn made every aeon session restricted, handing its bead on only through the work verbs, so that branch is reached by no session. The subject is unreachable, not regressed; the guards' code is still in aeon/src/verdict.rs."
+date = "2026-10-05"
+bead = "sp-v62vn"
+
 [[use_case]]
 id = "UC-aeon-execution-17"
 tier = "T1"
