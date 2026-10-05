@@ -289,7 +289,7 @@ esac
 GHEOF
 chmod +x "$STUB_GH"
 
-# sp-otherpr: a batch commit named this bead on the base (landed()=true), but the base has
+# sp-otherpr: its lifecycle row is LANDED (a batch commit also names it on the base), but the base has
 # since diverged so spira-lc content-landed is false; every commit on the branch is already
 # patch-equivalent upstream (git cherry finds nothing unapplied). SEND other-pr.
 git -C "$REPO" checkout -q -b spira/sp-otherpr main
@@ -301,8 +301,9 @@ git -C "$REPO" add shared-otherpr.txt && git -C "$REPO" commit -q -m "spira: lan
 printf 'v2\n' > "$REPO/shared-otherpr.txt"
 git -C "$REPO" add shared-otherpr.txt && git -C "$REPO" commit -q -m "unrelated: advance further"
 bead sp-otherpr closed
+seed_lc sp-otherpr LANDED   # the lifecycle record has it LANDED (sp-2c1n0): that, not the subject, is landed-ness
 
-# sp-cherry: landed() is true from an OLD naming commit, but a commit was added to the
+# sp-cherry: its lifecycle row is LANDED from an OLD landing, but a commit was added to the
 # branch AFTER that landing — git cherry finds it unapplied ('+'). KEEP cherry-unapplied.
 git -C "$REPO" checkout -q -b spira/sp-cherry main
 printf 'v1\n' > "$REPO/shared-cherry.txt"
@@ -317,6 +318,7 @@ printf 'a new, never-landed change\n' > "$REPO/sp-cherry-extra.txt"
 git -C "$REPO" add sp-cherry-extra.txt && git -C "$REPO" commit -q -m "sp-cherry: one more commit, after landing"
 git -C "$REPO" checkout -q main
 bead sp-cherry closed
+seed_lc sp-cherry LANDED
 
 # sp-unlanded: real, unique content; no landing record. KEEP unlanded.
 git -C "$REPO" checkout -q -b spira/sp-unlanded main
