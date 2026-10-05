@@ -319,15 +319,20 @@ testdb_seed() {          # testdb_seed  < JSONL on stdin
 # a fixture up (sp-voip5, lifecycle-guard); this is the data it would otherwise have written.
 testdb_restate() {
     local _row
-    _row="$(timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null)" || return 1
-    printf '%s' "$_row" | python3 -c '
+    _row="$(timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null)" \
+        || { echo "testdb_restate: bd show $1 failed" >&2; return 1; }
+    _row="$(printf '%s' "$_row" | python3 -c '
 import json, sys, datetime
-raw = sys.stdin.read()
-at = min([i for i in (raw.find("["), raw.find("{")) if i >= 0] or [0])
-d = json.loads(raw[at:])
+lines = sys.stdin.read().splitlines()
+at = next((i for i, l in enumerate(lines) if l[:1] in ("[", "{")), None)
+if at is None:
+    sys.exit("testdb_restate: no JSON from bd show " + sys.argv[1])
+d = json.loads("\n".join(lines[at:]))
 d = d[0] if isinstance(d, list) else d
 bid, status = sys.argv[1], sys.argv[2]
-now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# A second ahead: the import is an upsert that keeps a row whose updated_at is not older than
+# the incoming one, and a row the flow under test made this same second would win the tie.
+now = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 keep = ("id", "title", "description", "design", "acceptance_criteria", "notes", "issue_type",
         "priority", "labels", "assignee", "created_at", "external_ref")
 row = {k: d[k] for k in keep if d.get(k) not in (None, "")}
@@ -343,7 +348,8 @@ deps = [{"issue_id": bid, "depends_on_id": x["id"], "type": x.get("dependency_ty
         for x in (d.get("dependencies") or []) if isinstance(x, dict) and x.get("id")]
 if deps:
     row["dependencies"] = deps
-print(json.dumps(row))' "$@" | testdb_seed
+print(json.dumps(row))' "$@")" || return 1
+    printf '%s\n' "$_row" | testdb_seed || { echo "testdb_restate: import failed for $1" >&2; return 1; }
 }
 
 # Borrowers remove only their own private copy; shared dirs belong to the owner.

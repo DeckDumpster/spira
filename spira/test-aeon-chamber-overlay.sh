@@ -91,12 +91,7 @@ make_bead() {
 # aeon() call below is provably claiming and rendering the bead this test just made. Its
 # closed row is FIXTURE STATE, declared as data (an upsert of the same row), never a bd
 # close driven around the lifecycle machine (sp-voip5).
-close_bead() {
-    local _now; _now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    testdb_seed <<JSONL
-{"id":"$1","title":"chamber overlay test bead","status":"closed","closed_at":"$_now","updated_at":"$_now","issue_type":"task","labels":["$T_LABEL","repo:fixture"]}
-JSONL
-}
+close_bead() { testdb_restate "$1" closed; }
 
 # ==========================================================================================
 echo "test-aeon-chamber-overlay.sh"
