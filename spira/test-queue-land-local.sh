@@ -18,10 +18,12 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-queue-land-local
 TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up qlandlocal || { echo "test-queue-land-local: could not build a fixture database"; exit 1; }
+lcfix_up || { echo "test-queue-land-local: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-queue-land-local.sh"
@@ -100,7 +102,6 @@ run_lockheld() {
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
-landstate() { cat "$RUN/landstate/${1:-}" 2>/dev/null; }
 roundseq()  { cat "$QDIR/fixq/round-seq" 2>/dev/null; }
 
 # ============================================================================
@@ -115,6 +116,7 @@ printf 'one\n' > "$REPO/one.txt"
 git -C "$REPO" add one.txt
 git -C "$REPO" commit -q -m "sp-lloc1: the work"
 HEAD1="$(git -C "$REPO" rev-parse round-1)"
+lcfix_seed sp-lloc1 CERTIFIED "$HEAD1"
 git -C "$REPO" checkout -q trunk
 git -C "$REPO" branch -D round-1 >/dev/null 2>&1
 mk_bins "$HEAD1" round-1-bin
@@ -129,10 +131,7 @@ out="$(run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktre
 want "1: the override is loud" "UNGATED LANDING of $HEAD1" "$out"
 [ "$rc" -eq 0 ] && ok "1: exit 0 on a real fast-forward" || bad "1: exit 0 on a real fast-forward" "got rc=$rc out=$out"
 is "1: local/main equals the round head" "$HEAD1" "$(localmain)"
-case "$(landstate sp-lloc1)" in
-    "LANDED $HEAD1 "*"ungated: fixture"*) ok "1: member landstate is LANDED at the round head, the override recorded" ;;
-    *) bad "1: member landstate is LANDED at the round head" "got: [$(landstate sp-lloc1)]" ;;
-esac
+is "1: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc1)"
 is "1: the bead is closed"                closed "$(field sp-lloc1 status)"
 want "1: close reason declares landed"    "OUTCOME: landed" "$(field sp-lloc1 close_reason)"
 want "1: close reason cites the round head" "$HEAD1"           "$(field sp-lloc1 close_reason)"
@@ -156,6 +155,7 @@ printf 'stray\n' > "$REPO/stray.txt"
 git -C "$REPO" add stray.txt
 git -C "$REPO" commit -q -m "sp-lloc2: stray work"
 STRAY="$(git -C "$REPO" rev-parse stray-round)"
+lcfix_seed sp-lloc2 CERTIFIED "$STRAY"
 git -C "$REPO" checkout -q trunk
 git -C "$REPO" branch -D stray-round >/dev/null 2>&1
 
@@ -165,8 +165,7 @@ want "2: names the refusal"               "does not fast-forward" "$out"
 nowant "2: never claims success"          "fast-forwarded to"     "$out"
 is "2: local/main is unchanged"           "$PRE_MAIN" "$(localmain)"
 is "2: round-seq is unchanged"            "$PRE_SEQ"  "$(roundseq)"
-[ ! -e "$RUN/landstate/sp-lloc2" ] && ok "2: no landstate written for the refused member" \
-    || bad "2: no landstate written for the refused member" "got: [$(landstate sp-lloc2)]"
+is "2: the refused member's lifecycle row is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-lloc2)"
 is "2: the bead is left open"             open "$(field sp-lloc2 status)"
 
 # ============================================================================
@@ -192,6 +191,7 @@ printf 'four\n' > "$REPO/four.txt"
 git -C "$REPO" add four.txt
 git -C "$REPO" commit -q -m "sp-lloc4: the work"
 HEAD4="$(git -C "$REPO" rev-parse round-4)"
+lcfix_seed sp-lloc4 CERTIFIED "$HEAD4"
 git -C "$REPO" checkout -q trunk
 git -C "$REPO" branch -D round-4 >/dev/null 2>&1
 mk_bins "$HEAD4" round-4-bin
@@ -214,6 +214,7 @@ out="$(run_lockheld land-local fixq --head "$HEAD4" --members "sp-lloc4:$HEAD4" 
 [ "$rc" -eq 0 ] && ok "5: SPIRA_QUEUE_LOCK_HELD=1 proceeds despite the outside lock" \
     || bad "5: SPIRA_QUEUE_LOCK_HELD=1 proceeds despite the outside lock" "got rc=$rc out=$out"
 is "5: local/main advances to the round head" "$HEAD4" "$(localmain)"
+is "5: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc4)"
 is "5: the bead is closed"                    closed "$(field sp-lloc4 status)"
 is "5: round-seq advances to 2"               "2" "$(roundseq)"
 is "5: round head 4 is archived"              "$HEAD4" "$(git -C "$REPO" rev-parse -q --verify refs/archive/rounds/2 2>/dev/null)"
