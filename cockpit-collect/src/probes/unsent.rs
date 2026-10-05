@@ -487,13 +487,6 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let branch_lines: Vec<&str> = branches.iter().flat_map(|s| s.lines()).collect();
 
     let cert_win: i64 = std::env::var("SPIRA_CERT_WINDOW_MINS").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
-    let Some(lc_rows) = super::lc::list(None) else {
-        for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
-            push(out, k, "?");
-        }
-        return;
-    };
-    let lc_ids: HashSet<&str> = lc_rows.iter().map(|r| r.id.as_str()).collect();
 
     let mut landed_set: HashSet<&str> = HashSet::new();
     for r in &closed_pairs {
@@ -518,7 +511,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         if !has_br {
             continue;
         }
-        if lc_ids.contains(r.id.as_str()) {
+        if !awaits_certification(lc_index.get(r.id.as_str())) {
             continue;
         }
         anomaly += 1;
@@ -649,6 +642,14 @@ fn gate_section(out: &mut Kv, run: &Path) {
     push(out, "SP_LANDPROG_N", n.to_string());
 }
 
+/// An unlanded, branch-carrying finished bead the funnel counts (split by age into stranded
+/// and awaiting): one the machine holds handed on and not yet certified. Before sp-mve9i the
+/// test was "no lifecycle row at all" — a bd-closed bead the machine never took — which can
+/// no longer happen once "finished" is the row's own answer, so it left the counters at zero.
+fn awaits_certification(row: Option<&super::lc::Row>) -> bool {
+    row.is_some_and(|r| r.state == "SUBMITTED")
+}
+
 /// When a plan bead's builder finished it, for the 24h funnel: only a bead the machine has
 /// past the builder counts; the time is bd's `closed_at`/`updated_at` (content), else the
 /// lifecycle row's lease/state time is unknown and the bead is skipped.
@@ -687,6 +688,17 @@ mod tests {
         let closed: Value = serde_json::json!({"id": "sp-a", "status": "closed", "closed_at": "2026-10-01T00:00:00Z"});
         assert!(finished_at(&closed, Some(&row("REWORK"))).is_none());
         assert!(finished_at(&closed, None).is_none());
+    }
+
+    /// sp-mve9i: the unlanded/stranded funnel counts finished beads still waiting on their
+    /// certification — a SUBMITTED row — never "no row", which a finished bead cannot have.
+    #[test]
+    fn the_unlanded_funnel_counts_beads_awaiting_certification() {
+        assert!(awaits_certification(Some(&row("SUBMITTED"))));
+        assert!(!awaits_certification(Some(&row("CERTIFIED"))), "certified: the round's to deliver");
+        assert!(!awaits_certification(Some(&row("IN_DELIVERY"))), "judged by its batch");
+        assert!(!awaits_certification(Some(&row("LANDED"))));
+        assert!(!awaits_certification(None), "not finished");
     }
 
     /// sp-mve9i: a branch whose bead the machine has IN_DELIVERY is past the builder, so it
