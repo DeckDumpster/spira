@@ -7,22 +7,18 @@
 #
 # MOST CASES USE A RECORDING BD STUB, not a fixture database: eject and abandon's own
 # code paths call bd only to comment/assign, plus reopen for the CERTIFIED-but-unbatched
-# case only — an in-batch eject releases the bead through a spira-lc Returned event
-# instead (sp-rlyl0; see bead_reopen/release_claim in lib.sh) — so a stub that logs argv
-# and exits 0 exercises the same code as a real one, without paying a database build. One
-# case near the end uses a real bd (testdb.sh) to verify what the stub cannot: that the
-# certified-unbatched reopen actually lands (status, assignee, comment body) and — gap
-# G7 — that abandon's return-to-CERTIFIED path makes NO bd call at all (queue.sh
-# abandon's bead side effects were previously unread and unverified; nothing here would
-# have caught an accidental bdq call added to that path).
+# case. Delivery state is read and written only through spira-lc, which is real here: a
+# private lifecycle database (testlib/lc-fixture.sh) whose rows the cases seed and read
+# back. One case near the end uses a real bd (testdb.sh) to verify what the stub cannot:
+# that the certified-unbatched reopen actually lands (status, assignee, comment body) and
+# that abandon's return-to-CERTIFIED path makes NO bd call at all.
 #
 # tier: T3
 # covers: queue/src/* forge/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
+. "$HERE/testlib/lc-fixture.sh"
 
 echo "test-queue-ops.sh"
 
@@ -30,14 +26,14 @@ echo "test-queue-ops.sh"
 . "$HERE/testdb.sh"
 testdb_require test-queue-ops
 
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+lcfix_up || { echo "test-queue-ops: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"
 RUN="$TMP/run"
 SH="$TMP/spira"
 REPONAME=fixq
-LANDSTATE="$RUN/landstate"
 QUEUEDIR="$RUN/queue"
 FORGE_LOG="$TMP/forge.log"
 RUNS_FILE="$TMP/runs-for-branch"
@@ -46,7 +42,7 @@ BD_LOG="$TMP/bd-calls.log"
 
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m init
-mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
+mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
@@ -81,31 +77,12 @@ esac
 BDSTUB
 chmod +x "$SH/bd-stub.sh"
 
-# Recording spira-lc stub, for the cases whose subject is the lifecycle machine (an
-# in-batch eject is a Returned event there, sp-rlyl0). Those cases run with
-# LC_ENFORCE=1 (SPIRA_LIFECYCLE_ENFORCE); every other case runs the default OFF, where
-# the queue never reaches spira-lc. `list` answers the reachability probe; `show` answers
-# a row in IN_DELIVERY. The queue calls the caller verb `spira-lc returned <id> <reason>`
-# (lc.sh's lc_returned until sp-arpjt), which is what the stub records.
-LCSTUB_LOG="$TMP/lc-calls.log"; : > "$LCSTUB_LOG"
-STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"   # stubs named as the tools they stand in for, first on PATH
-cat > "$SH/lc-stub.sh" <<'LCSTUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${LCSTUB_LOG:?}"
-case "${1:-}" in
-    list) printf '[]\n' ;;
-    show) printf '{"bead":{"bead_id":"%s","state":"IN_DELIVERY","version":"3","holds":"[]"}}\n' "${2:-}" ;;
-esac
-exit 0
-LCSTUB
-chmod +x "$SH/lc-stub.sh"
-ln -sf "$SH/lc-stub.sh" "$STUBBIN/spira-lc"
-
+LC_DOWN="SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT=1 SPIRA_LC_DB=spira_lifecycle SPIRA_LC_USER=root SPIRA_LIFECYCLE_ENFORCE=1"
 RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 run() {
-    env -i PATH="$SH:$STUBBIN:$PATH" HOME="$TMP" \
+    env -i ${LCENV:-$(lcfix_env)} PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
         SPIRA_RUN="$RUN" \
@@ -121,8 +98,6 @@ run() {
         CANCEL_FAIL="$CANCEL_FAIL" \
         BEADS_ACTOR="aeon-abandontest" \
         SPIRA_EVENT_COOLDOWN=0 \
-        SPIRA_LIFECYCLE_ENFORCE="${LC_ENFORCE:-0}" \
-        LCSTUB_LOG="$LCSTUB_LOG" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
@@ -141,7 +116,35 @@ write_eject_batch() {
     } > "$OPEN_FILE"
 }
 
+BATCH_SEQ=0
+BATCH_ID=""
+lc_reset() { local t; for t in event delivery batch_member batch bead; do lcfix_sql -q "DELETE FROM $t" >/dev/null 2>&1; done; }
+batch_state() { lcfix_sql -q "SELECT state FROM batch WHERE batch_id='$1'" -r csv 2>/dev/null | sed -n 2p; }
+seed_eject() {
+    lcfix_seed sp-ej01 IN_DELIVERY "$TIP01"
+    lcfix_seed sp-ej02 IN_DELIVERY "$TIP02"
+}
+seed_abandon() {
+    lcfix_seed sp-ab01 IN_DELIVERY "$TIP01"
+    lcfix_seed sp-ab02 IN_DELIVERY "$TIP02"
+    lcfix_seed sp-ab03 IN_DELIVERY "$TIP03"
+}
+
+# write_abandon_batch [cut] — the open record; with "cut" the three members are CERTIFIED
+# rows cut into a real batch on spira-lc and the record names it.
 write_abandon_batch() {
+    local extra=""
+    if [ "${1:-}" = cut ]; then
+        BATCH_SEQ=$((BATCH_SEQ + 1)); BATCH_ID="$REPONAME-20260917T13000${BATCH_SEQ}Z"
+        lc_reset
+        lcfix_seed sp-ab01 CERTIFIED "$TIP01"
+        lcfix_seed sp-ab02 CERTIFIED "$TIP02"
+        lcfix_seed sp-ab03 CERTIFIED "$TIP03"
+        spira-lc cut "$BATCH_ID" --repo "$REPONAME" --head ffff0000000000000000000000000000000000ff \
+            --base 0000000000000000000000000000000000000000 \
+            --members "sp-ab01:$TIP01,sp-ab02:$TIP02,sp-ab03:$TIP03" --actor fixture >/dev/null 2>&1
+        extra="batch_id=$BATCH_ID"
+    fi
     {
         printf 'pr=58\n'
         printf 'head=ffff0000000000000000000000000000000000ff\n'
@@ -149,49 +152,32 @@ write_abandon_batch() {
         printf 'members=sp-ab01:%s sp-ab02:%s sp-ab03:%s\n' "$TIP01" "$TIP02" "$TIP03"
         printf 'opened=%s\n' "$(date +%s)"
         printf 'branch=spira/queue/20260917T130000Z\n'
+        [ -n "$extra" ] && printf '%s\n' "$extra"
     } > "$OPEN_FILE"
 }
 
 OPEN_FILE="$QUEUEDIR/$REPONAME/open"
 
 # =============================================================================
-# EJECT — recording-bd stub (UC-29).
+# EJECT — recording-bd stub, real spira-lc (UC-29).
 # =============================================================================
 
 echo
 echo "eject: positive control — eject finds a real member (guard is live):"
 write_eject_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
-> "$FORGE_LOG"; > "$BD_LOG"; : > "$LCSTUB_LOG"
-out="$(LC_ENFORCE=1 run eject sp-ej01 --reason 'test-foo.sh RED')"; rc=$?
+seed_eject
+> "$FORGE_LOG"; > "$BD_LOG"
+out="$(run eject sp-ej01 --reason 'test-foo.sh RED')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 for valid member" || bad "exit 0 for valid member" "rc=$rc out=$out"
 want "reports ejection" "ejected sp-ej01" "$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
-[ "$st" = "RED" ] && ok "landstate RED after eject" || bad "landstate RED" "got $st"
-# NOT bd reopen ANY MORE (sp-rlyl0): a batch member's eject is a lifecycle Returned event
-# now, not a bd write — the stub records no bd argv for it at all.
-nowant "bd reopen is no longer called for an in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
-want   "lifecycle on: the eject is a spira-lc Returned event (the caller verb, sp-arpjt)" "returned sp-ej01" "$(cat "$LCSTUB_LOG")"
+is   "the ejected bead is returned to REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej01)"
+is   "the other member is untouched" "IN_DELIVERY" "$(lcfix_state sp-ej02)"
+nowant "bd reopen is not called for an in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
 
 echo
-echo "eject: lifecycle_enforce OFF (the default) — an in-batch eject hands the bead back through bd:"
+echo "eject: non-member is refused; batch and lifecycle unchanged:"
 write_eject_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
-> "$FORGE_LOG"; > "$BD_LOG"; : > "$LCSTUB_LOG"
-out="$(run eject sp-ej01 --reason 'test-foo.sh RED')"; rc=$?
-[ "$rc" -eq 0 ] && ok "off: exit 0 for valid member" || bad "off: exit 0 for valid member" "rc=$rc out=$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
-[ "$st" = "RED" ] && ok "off: landstate RED after eject" || bad "off: landstate RED" "got $st"
-want "off: bd reopen called for the in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
-is   "off: spira-lc never called"                   ""               "$(cat "$LCSTUB_LOG")"
-
-echo
-echo "eject: non-member is refused; batch and landstate unchanged:"
-write_eject_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
+seed_eject
 out="$(run eject sp-nonexist)"; rc=$?
 [ "$rc" -ne 0 ] && ok "exits non-zero for non-member" || bad "exits non-zero" "rc=$rc"
 want "names the id" "sp-nonexist is not a member" "$out"
@@ -199,76 +185,53 @@ want "lists batch members" "members:" "$out"
 members_now="$(grep '^members=' "$OPEN_FILE" | head -1)"
 [[ "$members_now" == *"sp-ej01:"* ]] && ok "sp-ej01 still in batch" || bad "batch unchanged" "$members_now"
 [[ "$members_now" == *"sp-ej02:"* ]] && ok "sp-ej02 still in batch" || bad "batch unchanged" "$members_now"
-[ ! -f "$LANDSTATE/sp-nonexist" ] && ok "no landstate written for non-member" || bad "no landstate" "file exists"
+is "no lifecycle row written for the non-member" "" "$(lcfix_state sp-nonexist)"
+is "sp-ej01 is still IN_DELIVERY" "IN_DELIVERY" "$(lcfix_state sp-ej01)"
 
 echo
 echo "eject: CERTIFIED, unbatched bead is withdrawn — no open batch exists at all:"
 rm -f "$OPEN_FILE"
-printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert"
+lcfix_seed sp-ej-cert CERTIFIED "$TIP03"
 > "$BD_LOG"
 out="$(run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 for certified, unbatched bead" || bad "exit 0" "rc=$rc out=$out"
 want "reports the certified-unbatched case" "certified, not yet batched" "$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert" 2>/dev/null || true)"
-[ "$st" = "WITHDRAWN" ] && ok "landstate WITHDRAWN after eject" || bad "landstate WITHDRAWN" "got $st"
-tp="$(awk '{print $2}' "$LANDSTATE/sp-ej-cert" 2>/dev/null || true)"
-[ "$tp" = "$TIP03" ] && ok "tip preserved across withdrawal" || bad "tip preserved" "got $tp"
+is   "the withdrawn bead is returned to REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej-cert)"
 want "bd reopen called" "reopen sp-ej-cert" "$(cat "$BD_LOG")"
-rm -f "$LANDSTATE/sp-ej-cert"
 
 echo
-echo "eject: --suites records the suites in the WITHDRAWN reason and the .ejected sidecar (sp-hkfdp):"
-printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-suites"
+echo "eject: --suites reaches the bead's comment, and the bead is returned to REWORK:"
+lcfix_seed sp-ej-suites CERTIFIED "$TIP03"
 > "$BD_LOG"
 out="$(run eject sp-ej-suites --reason 'suite reds' --suites 'test-x.sh,test-y.sh')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with --suites" || bad "exit 0 with --suites" "rc=$rc out=$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej-suites" 2>/dev/null || true)"
-[ "$st" = "WITHDRAWN" ] && ok "landstate WITHDRAWN with --suites" || bad "landstate WITHDRAWN" "got $st"
-want "reason names the suites" "suites=test-x.sh,test-y.sh" "$(cat "$LANDSTATE/sp-ej-suites")"
-[ "$(cat "$LANDSTATE/sp-ej-suites.ejected" 2>/dev/null)" = "test-x.sh,test-y.sh" ] \
-    && ok "sidecar .ejected carries the suites" \
-    || bad "sidecar .ejected carries the suites" "got [$(cat "$LANDSTATE/sp-ej-suites.ejected" 2>/dev/null)]"
-rm -f "$LANDSTATE/sp-ej-suites" "$LANDSTATE/sp-ej-suites.ejected"
+is   "REWORK on spira-lc with --suites" "REWORK" "$(lcfix_state sp-ej-suites)"
+want "the suites are named for recertification" "test-x.sh,test-y.sh" "$(cat "$BD_LOG")"
 
 echo
 echo "eject: CERTIFIED, unbatched bead — an unrelated open batch does not block it:"
 write_eject_batch
-printf 'BATCHED %s %s\n'   "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n'   "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
-printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert2"
+seed_eject
+lcfix_seed sp-ej-cert2 CERTIFIED "$TIP03"
 out="$(run eject sp-ej-cert2)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 while an unrelated batch is open" || bad "exit 0" "rc=$rc out=$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert2" 2>/dev/null || true)"
-[ "$st" = "WITHDRAWN" ] && ok "landstate WITHDRAWN, unrelated batch untouched" || bad "landstate WITHDRAWN" "got $st"
+is "the withdrawn bead is REWORK, the unrelated batch's members untouched" \
+    "REWORK IN_DELIVERY IN_DELIVERY" "$(lcfix_state sp-ej-cert2) $(lcfix_state sp-ej01) $(lcfix_state sp-ej02)"
 members_now="$(grep '^members=' "$OPEN_FILE" | head -1)"
 [[ "$members_now" == *"sp-ej01:"* && "$members_now" == *"sp-ej02:"* ]] \
     && ok "unrelated open batch members unchanged" || bad "unrelated batch unchanged" "$members_now"
-rm -f "$LANDSTATE/sp-ej-cert2"
 
 echo
 echo "eject: dry-run for a CERTIFIED, unbatched bead prints plan and changes nothing:"
 rm -f "$OPEN_FILE"
-printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert3"
+lcfix_seed sp-ej-cert3 CERTIFIED "$TIP03"
 > "$BD_LOG"
 out="$(run eject sp-ej-cert3 --dry-run)"; rc=$?
 [ "$rc" -eq 0 ] && ok "dry-run exits 0 for certified, unbatched bead" || bad "dry-run exit 0" "rc=$rc"
-want "dry-run mentions WITHDRAWN write" "would write WITHDRAWN" "$out"
+want "dry-run mentions the lifecycle return" "return it to REWORK on spira-lc" "$out"
 want "dry-run mentions bead reopen"     "would reopen bead sp-ej-cert3" "$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert3" 2>/dev/null || true)"
-[ "$st" = "CERTIFIED" ] && ok "dry-run did not change landstate" || bad "dry-run no change" "got $st"
+is "dry-run did not change the lifecycle row" "CERTIFIED" "$(lcfix_state sp-ej-cert3)"
 nowant "dry-run: bd reopen not called" "reopen sp-ej-cert3" "$(cat "$BD_LOG")"
-rm -f "$LANDSTATE/sp-ej-cert3"
-
-echo
-echo "eject: landstate round-trips through the reader (format check):"
-write_eject_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
-run eject sp-ej01 >/dev/null 2>&1 || true
-_st=""; _tip=""
-{ read -r _st _tip _ < "$LANDSTATE/sp-ej01"; } 2>/dev/null || true
-[ "$_st" = "RED" ] && ok "round-trip: state field is RED" || bad "round-trip state" "got $_st"
-[ "$_tip" = "$TIP01" ] && ok "round-trip: tip field preserved" || bad "round-trip tip" "got $_tip"
 
 echo
 echo "eject: dry-run prints plan; non-member exits non-zero:"
@@ -279,8 +242,7 @@ out="$(run eject sp-nonexist --dry-run)"; rc=$?
 echo
 echo "eject: lock held: refuses and changes nothing:"
 write_eject_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
+seed_eject
 lockfile="$QUEUEDIR/$REPONAME/lock"
 exec 8>"$lockfile"
 flock 8
@@ -289,8 +251,7 @@ exec 8>&-
 [ "$rc" -ne 0 ] && ok "exit non-zero when lock held" || bad "exit non-zero" "rc=$rc"
 want "mentions lock" "holds the lock" "$out"
 [ -f "$OPEN_FILE" ] && ok "open file unchanged" || bad "open file unchanged" "file gone"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
-[ "$st" = "BATCHED" ] && ok "landstate unchanged when lock held" || bad "landstate unchanged" "got $st"
+is "lifecycle row unchanged when lock held" "IN_DELIVERY" "$(lcfix_state sp-ej01)"
 
 echo
 echo "eject: single-member batch closes PR and removes batch:"
@@ -302,51 +263,54 @@ echo "eject: single-member batch closes PR and removes batch:"
     printf 'opened=%s\n' "$(date +%s)"
     printf 'branch=spira/queue/20260917T130000Z\n'
 } > "$OPEN_FILE"
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
+seed_eject
 > "$FORGE_LOG"
 out="$(run eject sp-ej01)"; rc=$?
 [ "$rc" -eq 0 ] && ok "single-member: exit 0" || bad "single-member: exit 0" "rc=$rc out=$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
-[ "$st" = "RED" ] && ok "single-member: landstate RED" || bad "single-member: RED" "got $st"
+is "single-member: REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej01)"
 want "single-member: forge pr-close called" "pr-close" "$(cat "$FORGE_LOG")"
 [ ! -f "$OPEN_FILE" ] && ok "single-member: batch removed" || bad "single-member: batch removed" "file exists"
 
 echo
 echo "eject: dry-run for a member prints plan and changes nothing:"
 write_eject_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
+seed_eject
 > "$FORGE_LOG"
-out="$(LC_ENFORCE=1 run eject sp-ej01 --dry-run)"; rc=$?
+out="$(run eject sp-ej01 --dry-run)"; rc=$?
 [ "$rc" -eq 0 ] && ok "dry-run exits 0 for member" || bad "dry-run exits 0" "rc=$rc"
-want "dry-run mentions RED write"          "would write RED"           "$out"
+want "dry-run mentions the cause"          "would record cause"        "$out"
 want "dry-run mentions the lifecycle return" "would return bead sp-ej01 to spira-lc" "$out"
 want "dry-run mentions PR close"           "would close PR 42"         "$out"
 want "dry-run mentions survivor CERTIFIED" "would return survivors"    "$out"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
-[ "$st" = "BATCHED" ] && ok "dry-run did not change landstate" || bad "dry-run no change" "got $st"
+is "dry-run did not change the lifecycle row" "IN_DELIVERY" "$(lcfix_state sp-ej01)"
 [ -f "$OPEN_FILE" ] && ok "dry-run did not remove batch" || bad "dry-run no change" "batch gone"
 [ -z "$(cat "$FORGE_LOG")" ] && ok "dry-run: forge not called" || bad "dry-run no forge" "got $(cat "$FORGE_LOG")"
 
+echo
+echo "eject: spira-lc unreachable refuses before anything changes:"
+write_eject_batch
+seed_eject
+out="$(LCENV="$LC_DOWN" run eject sp-ej01)"; rc=$?
+[ "$rc" -ne 0 ] && ok "eject refuses when spira-lc is unreachable" || bad "eject refuses when spira-lc is unreachable" "rc=$rc out=$out"
+want "names spira-lc" "spira-lc is unreachable" "$out"
+[ -f "$OPEN_FILE" ] && ok "unreachable: open record left in place" || bad "unreachable: open record left in place" "file gone"
+is "unreachable: the lifecycle row is unchanged" "IN_DELIVERY" "$(lcfix_state sp-ej01)"
+
 # =============================================================================
-# ABANDON — recording-bd stub (UC-30).
+# ABANDON — recording-bd stub, real spira-lc (UC-30).
 # =============================================================================
 
 echo
-echo "abandon: --reason is required — refuses, changes no landstate, leaves the open record in place:"
+echo "abandon: --reason is required — refuses, changes no lifecycle row, leaves the open record in place:"
 write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'BATCHED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+seed_abandon
 > "$FORGE_LOG"
 : > "$RUN/landing.log"
 out="$(run abandon $REPONAME)"; rc=$?
 [ "$rc" -ne 0 ] && ok "refuses without --reason" || bad "refuses without --reason" "rc=$rc out=$out"
 want "the refusal names the flag" "--reason" "$out"
 [ -f "$OPEN_FILE" ] && ok "no --reason: open record left in place" || bad "open record left in place" "file gone"
-st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
-[ "$st01" = "BATCHED" ] && ok "no --reason: sp-ab01 still BATCHED (positive control)" \
-    || bad "sp-ab01 still BATCHED" "got $st01"
+is "no --reason: sp-ab01 still IN_DELIVERY (positive control)" "IN_DELIVERY" "$(lcfix_state sp-ab01)"
 [ -z "$(cat "$FORGE_LOG")" ] && ok "no --reason: forge not called" || bad "no --reason: forge untouched" "got $(cat "$FORGE_LOG")"
 nowant "no --reason: no audit line written" "QUEUE ABANDON" "$(cat "$RUN/landing.log" 2>/dev/null || true)"
 
@@ -359,10 +323,7 @@ want "message says no open batch" "no open batch for $REPONAME" "$out"
 
 echo
 echo "abandon: lock held: refuses and changes nothing:"
-write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'BATCHED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+write_abandon_batch cut
 lockfile="$QUEUEDIR/$REPONAME/lock"
 exec 8>"$lockfile"
 flock 8
@@ -371,13 +332,12 @@ exec 8>&-
 [ "$rc" -ne 0 ] && ok "exit non-zero when lock held" || bad "exit non-zero" "rc=$rc"
 want "mentions lock" "holds the lock" "$out"
 [ -f "$OPEN_FILE" ] && ok "open file unchanged" || bad "open file unchanged" "file gone"
+is "lock held: the batch is still not abandoned on spira-lc" "OPEN" "$(batch_state "$BATCH_ID")"
 
 echo
-echo "abandon: PR closed, innocent members CERTIFIED, RED/EJECTED left alone:"
-write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'EJECTED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+echo "abandon: PR closed, innocent members back to CERTIFIED on spira-lc, a REWORK member left alone:"
+write_abandon_batch cut
+lcfix_seed sp-ab03 REWORK "$TIP03"
 > "$FORGE_LOG"
 printf '55501 in_progress\n' > "$RUNS_FILE"
 : > "$RUN/landing.log"
@@ -404,14 +364,11 @@ want "the cancel is recorded in landing.log" \
     "RUN_CANCEL " "$(cat "$RUN/landing.log" 2>/dev/null || true)"
 rm -f "$RUNS_FILE"
 
-st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
-tp01="$(awk '{print $2}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
-[ "$st01" = "CERTIFIED" ] && ok "sp-ab01 landstate is CERTIFIED" || bad "sp-ab01 CERTIFIED" "got $st01"
-[ "$tp01" = "$TIP01"    ] && ok "sp-ab01 tip preserved"          || bad "sp-ab01 tip"       "got $tp01"
-st02="$(awk '{print $1}' "$LANDSTATE/sp-ab02" 2>/dev/null || true)"
-[ "$st02" = "CERTIFIED" ] && ok "sp-ab02 landstate is CERTIFIED" || bad "sp-ab02 CERTIFIED" "got $st02"
-st03="$(awk '{print $1}' "$LANDSTATE/sp-ab03" 2>/dev/null || true)"
-[ "$st03" = "EJECTED"   ] && ok "sp-ab03 left as EJECTED"        || bad "sp-ab03 untouched"  "got $st03"
+is "the batch is ABANDONED on spira-lc" "ABANDONED" "$(batch_state "$BATCH_ID")"
+is "sp-ab01 is CERTIFIED on spira-lc" "CERTIFIED" "$(lcfix_state sp-ab01)"
+is "sp-ab01 tip preserved" "$TIP01" "$(lcfix_tip sp-ab01)"
+is "sp-ab02 is CERTIFIED on spira-lc" "CERTIFIED" "$(lcfix_state sp-ab02)"
+is "sp-ab03 left as REWORK" "REWORK" "$(lcfix_state sp-ab03)"
 
 [ ! -f "$OPEN_FILE" ] && ok "open record archived (not open)" || bad "open record gone" "still exists"
 archive="$(ls "$QUEUEDIR/$REPONAME/closed-pr58-"* 2>/dev/null | head -1)"
@@ -419,8 +376,6 @@ archive="$(ls "$QUEUEDIR/$REPONAME/closed-pr58-"* 2>/dev/null | head -1)"
 [[ "$archive" == *Z ]] && ok "archive name ends with Z" || bad "archive name Z suffix" "got $archive"
 want "reason in forge call" "guilty branch found" "$forge_calls"
 
-# The durable audit line: one row in landing.log naming who ran it, on what PR, with
-# every member's disposition — a positive control (sp-ab01 present), not just quiet.
 audit_count="$(grep -c '^QUEUE ABANDON ' "$RUN/landing.log" 2>/dev/null || echo 0)"
 [ "${audit_count:-0}" -eq 1 ] && ok "exactly one QUEUE ABANDON audit line" \
     || bad "exactly one audit line" "count=$audit_count"
@@ -428,7 +383,7 @@ audit_line="$(grep '^QUEUE ABANDON ' "$RUN/landing.log" | head -1)"
 want "audit line names the actor"                            "actor=aeon-abandontest"  "$audit_line"
 want "audit line names the PR"                                "pr=58"                   "$audit_line"
 want "audit line names a present member (positive control)"   "sp-ab01:CERTIFIED"       "$audit_line"
-want "audit line names the ejected member's disposition"      "sp-ab03:EJECTED"         "$audit_line"
+want "audit line names the REWORK member's disposition"       "sp-ab03:REWORK"          "$audit_line"
 want "audit line names the reason"                            "guilty branch found"     "$audit_line"
 
 events_out="$(cat "$RUN/events.log" 2>/dev/null || true)"
@@ -443,24 +398,9 @@ want "the archived record keeps the actor"  "actor=aeon-abandontest"     "$archi
 rm -f "$archive"
 
 echo
-echo "abandon: RED member also left untouched:"
-write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'RED %s %s\n'     "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
-> "$FORGE_LOG"
-out="$(run abandon $REPONAME --reason 'checking RED survives abandon')"; rc=$?
-[ "$rc" -eq 0 ] && ok "exit 0 with RED member" || bad "exit 0 RED" "rc=$rc out=$out"
-st03="$(awk '{print $1}' "$LANDSTATE/sp-ab03" 2>/dev/null || true)"
-[ "$st03" = "RED" ] && ok "RED member left as RED" || bad "RED untouched" "got $st03"
-rm -f "$QUEUEDIR/$REPONAME/closed-pr58-"*
-
-echo
 echo "abandon: dry-run prints plan and changes nothing:"
-write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'EJECTED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+write_abandon_batch cut
+lcfix_seed sp-ab03 REWORK "$TIP03"
 > "$FORGE_LOG"
 : > "$RUN/landing.log"
 : > "$RUN/events.log"
@@ -468,7 +408,7 @@ out="$(run abandon $REPONAME --dry-run --reason 'dry-run preview check')"; rc=$?
 [ "$rc" -eq 0 ] && ok "dry-run exits 0" || bad "dry-run exits 0" "rc=$rc"
 want "dry-run mentions PR"             "would close PR 58"   "$out"
 want "dry-run innocent member"         "return to CERTIFIED" "$out"
-want "dry-run ejected member"          "leave alone"          "$out"
+want "dry-run REWORK member"           "leave alone"          "$out"
 want "dry-run mentions the run cancel" "would cancel"         "$out"
 want "dry-run shows archive path"      "archive path"         "$out"
 want "dry-run prints the audit line it would write" \
@@ -478,17 +418,14 @@ want "dry-run audit preview names a member"   "sp-ab01:CERTIFIED"          "$out
 want "dry-run audit preview names the reason" "dry-run preview check"      "$out"
 [ -f "$OPEN_FILE" ] && ok "dry-run: open file unchanged" || bad "dry-run no change" "open file gone"
 [ -z "$(cat "$FORGE_LOG")" ] && ok "dry-run: forge not called" || bad "dry-run no forge" "got $(cat "$FORGE_LOG")"
-st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
-[ "$st01" = "BATCHED" ] && ok "dry-run: landstate unchanged" || bad "dry-run landstate" "got $st01"
+is "dry-run: sp-ab01 still IN_DELIVERY" "IN_DELIVERY" "$(lcfix_state sp-ab01)"
+is "dry-run: the batch is still not abandoned" "OPEN" "$(batch_state "$BATCH_ID")"
 nowant "dry-run: no audit line written to landing.log" "QUEUE ABANDON" "$(cat "$RUN/landing.log" 2>/dev/null || true)"
 nowant "dry-run: no event written to events.log" "queue.abandoned" "$(cat "$RUN/events.log" 2>/dev/null || true)"
 
 echo
 echo "abandon: run cancel fails: logged loudly, not swallowed, abandon still proceeds:"
-write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'EJECTED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+write_abandon_batch cut
 printf '55502 in_progress\n' > "$RUNS_FILE"
 : > "$CANCEL_FAIL"
 > "$FORGE_LOG"
@@ -502,19 +439,26 @@ want "the failure is recorded in landing.log" \
     "RUN_CANCEL_FAILED " "$(cat "$RUN/landing.log" 2>/dev/null || true)"
 [ ! -f "$OPEN_FILE" ] && ok "batch still abandoned despite the cancel failure" \
     || bad "batch abandoned" "open file still present"
+is "the batch is ABANDONED on spira-lc despite the cancel failure" "ABANDONED" "$(batch_state "$BATCH_ID")"
 rm -f "$RUNS_FILE" "$CANCEL_FAIL"
-rm -f "$QUEUEDIR/$REPONAME/closed-pr58-"*
+rm -f "${QUEUEDIR:?}/${REPONAME:?}/closed-pr58-"*
 
 echo
 echo "abandon: archive name consistency — always ends with Z:"
-write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'BATCHED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+write_abandon_batch cut
 run abandon $REPONAME --reason 'checking archive name format' >/dev/null 2>&1 || true
 archive="$(ls "$QUEUEDIR/$REPONAME/closed-pr58-"* 2>/dev/null | tail -1)"
 [[ "$archive" == *Z ]] && ok "consistent archive name ends with Z" || bad "archive Z suffix" "got $archive"
-rm -f "$QUEUEDIR/$REPONAME/closed-pr58-"*
+rm -f "${QUEUEDIR:?}/${REPONAME:?}/closed-pr58-"*
+
+echo
+echo "abandon: spira-lc unreachable refuses before anything changes:"
+write_abandon_batch
+out="$(LCENV="$LC_DOWN" run abandon $REPONAME --reason 'unreachable probe')"; rc=$?
+[ "$rc" -ne 0 ] && ok "abandon refuses when spira-lc is unreachable" || bad "abandon refuses when spira-lc is unreachable" "rc=$rc out=$out"
+want "names spira-lc" "spira-lc is unreachable" "$out"
+[ -f "$OPEN_FILE" ] && ok "unreachable: open record left in place" || bad "unreachable: open record left in place" "file gone"
+rm -f "$OPEN_FILE"
 
 # =============================================================================
 # REAL BD — one fixture database, two things a stub cannot verify:
@@ -525,7 +469,7 @@ rm -f "$QUEUEDIR/$REPONAME/closed-pr58-"*
 # =============================================================================
 
 echo
-echo "real bd: eject reopens the bead, clears assignee, posts a comment:"
+echo "real bd: eject clears assignee, posts a comment, leaves bd status unmoved:"
 testdb_up queueops || { echo "test-queue-ops: could not build fixture database"; exit 1; }
 B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -533,13 +477,11 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 
 real_run() {
-    env -i PATH="$SH:$STUBBIN:$PATH" HOME="$TMP" \
+    env -i $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh" FORGE_LOG="$FORGE_LOG" \
-        SPIRA_LIFECYCLE_ENFORCE="${LC_ENFORCE:-0}" \
-        LCSTUB_LOG="$LCSTUB_LOG" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
@@ -552,18 +494,15 @@ testdb_seed <<'JSONL'
 JSONL
 
 write_eject_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
+seed_eject
 > "$FORGE_LOG"
 
-out="$(LC_ENFORCE=1 real_run eject sp-ej01 --reason 'test-suite-x.sh RED: assertion mismatch at line 42')"; rc=$?
+out="$(real_run eject sp-ej01 --reason 'test-suite-x.sh RED: assertion mismatch at line 42')"; rc=$?
 [ "$rc" -eq 0 ] && ok "real bd: eject exit 0" || bad "real bd: eject exit 0" "rc=$rc out=$out"
+is "real bd: the ejected bead is REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej01)"
 
-# NOT reopened via bd ANY MORE (sp-rlyl0): an in-batch eject is a lifecycle Returned event
-# now — bd's own status field is left exactly as it was, since it is no longer the write
-# this tool makes for the bead's state.
 bead_st="$(field sp-ej01 status)"
-[ "$bead_st" = "closed" ] && ok "real bd: bd status is left unmoved by eject now" || bad "real bd: bd status unmoved" "status=$bead_st"
+[ "$bead_st" = "closed" ] && ok "real bd: bd status is left unmoved by eject" || bad "real bd: bd status unmoved" "status=$bead_st"
 assignee="$(field sp-ej01 assignee)"
 [ -z "$assignee" ] && ok "real bd: assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
 comment_out="$(B comments sp-ej01 2>/dev/null || true)"
@@ -575,7 +514,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-ej-cert","title":"ej-cert","status":"closed","issue_type":"task","labels":[],"assignee":"aeon-someone-else","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
 JSONL
 rm -f "$OPEN_FILE"
-printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert"
+lcfix_seed sp-ej-cert CERTIFIED "$TIP03"
 
 out="$(real_run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
 [ "$rc" -eq 0 ] && ok "real bd: eject exit 0 for certified, unbatched bead" || bad "real bd: eject exit 0" "rc=$rc out=$out"
@@ -585,12 +524,11 @@ assignee="$(field sp-ej-cert assignee)"
 [ -z "$assignee" ] && ok "real bd: certified-unbatched assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
 comment_out2="$(B comments sp-ej-cert 2>/dev/null || true)"
 [ -n "$comment_out2" ] && ok "real bd: comment posted to certified-unbatched bead" || bad "real bd: comment posted" "no output"
-st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert" 2>/dev/null || true)"
-[ "$st" = "WITHDRAWN" ] && ok "real bd: landstate WITHDRAWN" || bad "real bd: landstate WITHDRAWN" "got $st"
-rm -f "$LANDSTATE/sp-ej-cert"
+is "real bd: the withdrawn bead is REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej-cert)"
 
 echo
 echo "real bd — gap G7: abandon's return-to-CERTIFIED path makes no bd call at all:"
+write_abandon_batch cut
 {
     printf 'pr=91\n'
     printf 'head=ffff0000000000000000000000000000000000ff\n'
@@ -598,16 +536,15 @@ echo "real bd — gap G7: abandon's return-to-CERTIFIED path makes no bd call at
     printf 'members=sp-ab01:%s sp-ab02:%s\n' "$TIP01" "$TIP02"
     printf 'opened=%s\n' "$(date +%s)"
     printf 'branch=spira/queue/20260917T140000Z\n'
+    printf 'batch_id=%s\n' "$BATCH_ID"
 } > "$OPEN_FILE"
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
 > "$FORGE_LOG"
 
 out="$(real_run abandon $REPONAME --reason 'gap G7 probe')"; rc=$?
 [ "$rc" -eq 0 ] && ok "real bd: abandon exit 0" || bad "real bd: abandon exit 0" "rc=$rc out=$out"
 
-st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
-[ "$st01" = "CERTIFIED" ] && ok "real bd: sp-ab01 returned to CERTIFIED" || bad "real bd: sp-ab01 CERTIFIED" "got $st01"
+is "real bd: sp-ab01 returned to CERTIFIED" "CERTIFIED" "$(lcfix_state sp-ab01)"
+is "real bd: the batch is ABANDONED" "ABANDONED" "$(batch_state "$BATCH_ID")"
 
 ab01_st="$(field sp-ab01 status)"
 [ "$ab01_st" = "closed" ] && ok "G7: sp-ab01 bead status untouched by abandon (still closed)" \
