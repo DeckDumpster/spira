@@ -9,7 +9,8 @@
 //!
 //! THE ONE THING THAT IS FAKE IS THE MODEL. `SPIRA_SUMMON` points to `fake-summon.sh`,
 //! which execs `release canary-worker` instead of `aeon.sh` — a scripted worker that
-//! claims, commits and closes the bead without invoking Claude. `SPIRA_LAUNCH` records the
+//! claims, commits and submits the bead through the stage's own lifecycle machine
+//! (`crate::stage_lc`) without invoking Claude. `SPIRA_LAUNCH` records the
 //! landing dispatch and exits 0; `release canary` drives `landing-pass land` directly so it
 //! controls the timing.
 //!
@@ -21,6 +22,33 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// Every key `release stage up` exports — the lifecycle store's included, so an external
+/// stage's `spira-lc` calls reach the stage's machine and never the operator's (sp-880u4).
+const STAGE_KEYS: &[&str] = &[
+    "SPIRA_HOME",
+    "SPIRA_RUN",
+    "SPIRA_DB",
+    "SPIRA_BD",
+    "SPIRA_REPO",
+    "SPIRA_REPO_MAP",
+    "SPIRA_FAYTHS",
+    "SPIRA_MAX_AEONS",
+    "SPIRA_NOTIFY",
+    "SPIRA_SUMMON",
+    "SPIRA_LAUNCH",
+    "PATH",
+    "SPIRA_PATH",
+    "SPIRA_SCOPE_LABEL",
+    "SPIRA_LC_HOST",
+    "SPIRA_LC_PORT",
+    "SPIRA_LC_DB",
+    "SPIRA_LC_DATA_DIR",
+    "SPIRA_LC_USER",
+    "SPIRA_LC_PASSWORD_FILE",
+    "SPIRA_LC_PASSWORD",
+    "SPIRA_LC_SOCKET",
+];
 
 pub struct CanaryOpts {
     /// Use an already-running stage (its env, read from the caller's own process
@@ -131,7 +159,7 @@ pub fn canary(o: &CanaryOpts) -> Result<CanaryResult, String> {
             // Honour the caller's own environment for the rest (mirrors `eval "$(stage.sh
             // up)"` already having run in the calling shell).
             let mut env = Vec::new();
-            for k in ["SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_REPO", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS", "SPIRA_NOTIFY", "SPIRA_SUMMON", "SPIRA_LAUNCH", "PATH", "SPIRA_SCOPE_LABEL"] {
+            for k in STAGE_KEYS {
                 if let Ok(v) = std::env::var(k) {
                     env.push((k.to_string(), v));
                 }
@@ -161,8 +189,9 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     let e = envmap(env);
     let get = |k: &str| e.get(k).cloned().unwrap_or_default();
 
-    // Isolation check: every stage path resolves under STAGE_ROOT.
-    for k in ["SPIRA_DB", "SPIRA_RUN", "SPIRA_HOME"] {
+    // Isolation check: every stage path resolves under STAGE_ROOT — the lifecycle credential
+    // and socket too, or a spira-lc call would reach the operator's machine.
+    for k in ["SPIRA_DB", "SPIRA_RUN", "SPIRA_HOME", "SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET"] {
         let v = get(k);
         if !Path::new(&v).starts_with(stage_root) {
             return Err(format!("isolation check failed: {v} is outside STAGE_ROOT={}", stage_root.display()));
@@ -186,31 +215,30 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     }
     log(&format!("bead: {bead_id}"));
 
-    // Run the real sentinel (one pass). SPIRA_SUMMON's fake-summon.sh runs `release
-    // canary-worker` synchronously, claiming, committing and closing the bead.
-    log("running sentinel (one pass)");
-    let mut sentinel_cmd = Command::new("sentinel");
-    for (k, v) in env {
-        sentinel_cmd.env(k, v);
+    // Its lifecycle row, READY, in the stage's machine: a work bead is the machine's to move.
+    let created = run(staged(Command::new("timeout").args(LC_DEADLINE).args(["spira-lc", "create-bead", &bead_id]), env), "spira-lc create-bead")?;
+    if !created.status.success() {
+        return Err(format!("spira-lc create-bead {bead_id} failed ({}): {}", created.status, String::from_utf8_lossy(&created.stderr).trim()));
     }
-    let _ = sentinel_cmd.status();
 
-    let bead_status = bd_status(&bd, &db, &bead_id);
-    if !spira_config::nonwork::is_closed(spira_config::nonwork::Kind::Canary, bead_status.as_deref().unwrap_or("")) {
-        let msg = format!("sentinel pass did not close the bead: status={}", bead_status.as_deref().unwrap_or(""));
+    // Run the real sentinel (one pass). SPIRA_SUMMON's fake-summon.sh runs `release
+    // canary-worker` synchronously: it claims the bead through the machine, commits, and
+    // submits the branch's tip.
+    log("running sentinel (one pass)");
+    let _ = staged(&mut Command::new("sentinel"), env).status();
+
+    let state = lc_state(env, &bead_id);
+    if !spira_config::lc_state::past_builder(state.as_deref().unwrap_or("")) {
+        let msg = format!("sentinel pass did not hand the bead on: lifecycle state={}", state.as_deref().unwrap_or("(unreadable)"));
         log(&format!("FAIL: {msg}"));
-        file_incident(prod, "canary: pipeline bead not closed", &format!("The sentinel pass completed but the bead {bead_id} is {}.\n\nStage: {}", bead_status.as_deref().unwrap_or("?"), stage_root.display()));
+        file_incident(prod, "canary: pipeline bead not submitted", &format!("The sentinel pass completed but the bead {bead_id}'s lifecycle row is {}.\n\nStage: {}", state.as_deref().unwrap_or("unreadable"), stage_root.display()));
         return Err(msg);
     }
-    log(&format!("bead closed: {bead_id}"));
+    log(&format!("bead submitted: {bead_id} ({})", state.as_deref().unwrap_or("")));
 
     // Run the real landing pass.
     log("running landing pass");
-    let mut land_cmd = Command::new("landing-pass");
-    for (k, v) in env {
-        land_cmd.env(k, v);
-    }
-    let _ = land_cmd.arg("land").status();
+    let _ = staged(Command::new("landing-pass").arg("land"), env).status();
 
     // Assert a commit naming the bead id on origin/main — read from the bare remote
     // directly, no fetch needed, no stale tracking ref.
@@ -235,17 +263,33 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     }
 }
 
-fn bd_status(bd: &str, db: &str, id: &str) -> Option<String> {
-    let out = Command::new(bd).arg("-C").arg(db).args(["show", id, "--json"]).output().ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    let obj = if v.is_array() { v.get(0)?.clone() } else { v };
-    obj.get("status")?.as_str().map(str::to_string)
+/// Every spira-lc call's bound (`timeout` argv): one row read or one event against the
+/// stage's own server.
+const LC_DEADLINE: &[&str] = &["10"];
+
+/// `cmd` with the stage's env laid over the caller's.
+fn staged<'c>(cmd: &'c mut Command, env: &[(String, String)]) -> &'c mut Command {
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd
+}
+
+/// The bead's lifecycle state in the stage's machine (`spira-lc show`); `None` when there
+/// is no row or the machine cannot be read.
+fn lc_state(env: &[(String, String)], id: &str) -> Option<String> {
+    let out = staged(Command::new("timeout").args(LC_DEADLINE).args(["spira-lc", "show", id]), env).stdin(Stdio::null()).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    spira_config::lc_state::parse_show(&String::from_utf8_lossy(&out.stdout)).ok()?.map(|r| r.state)
 }
 
 /// `release canary-worker` (was `spira/canary-worker.sh`): the synthetic aeon. Invoked by
 /// `fake-summon.sh`, synchronously, inheriting the full stage env (`SPIRA_HOME`,
-/// `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_REPO`). Claims the first ready bead in the canary
-/// partition, commits to its branch, pushes, and closes it.
+/// `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_REPO`, `SPIRA_LC_*`). Claims the first ready bead in the
+/// canary partition through the stage's lifecycle machine, commits to its branch, pushes, and
+/// submits the branch's tip.
 pub fn canary_worker() -> Result<(), String> {
     let log = |s: &str| eprintln!("{} canary-worker: {s}", crate::fsutil::now_rfc3339());
     let bd = std::env::var("SPIRA_BD").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "bd".into());
@@ -304,18 +348,24 @@ pub fn canary_worker() -> Result<(), String> {
     set_state.args(["set-state", &id, &format!("branch={branch}")]);
     let _ = set_state.output();
 
-    let mut close = Command::new(&bd);
-    if !db.is_empty() {
-        close.arg("-C").arg(&db);
+    // Hand the bead on the way an aeon does: the machine's Submit event with the branch's
+    // tip (WORKING -> SUBMITTED), never a bd close — bd status is inert for a work bead.
+    let tip = Command::new("git").current_dir(&repo).args(["rev-parse", "HEAD"]).output().map_err(|e| format!("cannot run git rev-parse: {e}"))?;
+    let tip = String::from_utf8_lossy(&tip.stdout).trim().to_string();
+    let (rc, out) = tools("timeout", &submit_args(&id, &tip, &holder));
+    if rc != 0 {
+        log(&format!("submit refused for {id} (rc={rc}): {}", out.trim()));
+        release_bead(&id, &holder);
+        return Err(format!("spira-lc work {id} submit failed (rc={rc})"));
     }
-    close.args(["close", &id, "--reason", &format!("canary-worker: committed on {branch}")]);
-    let out = close.output().map_err(|e| format!("cannot run bd close: {e}"))?;
-    if !out.status.success() {
-        log(&format!("close failed for {id}"));
-        return Err(format!("close failed for {id}"));
-    }
-    log(&format!("closed {id}"));
+    log(&format!("submitted {id} at {tip}"));
     Ok(())
+}
+
+/// `timeout`'s argv for the worker's Submit: `spira-lc work <id> submit --tip <tip> --actor
+/// <holder>`, the verb `work submit` sends for an aeon.
+pub(crate) fn submit_args(id: &str, tip: &str, holder: &str) -> Vec<String> {
+    ["10", "spira-lc", "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect()
 }
 
 /// The stage's one fayth (stage.rs `fayth_content`): the worker's ready set is this fayth's.
