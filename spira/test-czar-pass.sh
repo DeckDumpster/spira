@@ -198,6 +198,16 @@ _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "act: incident filed with cause=deadlock" "cause=deadlock" "$_inc_log"
 
 # ==========================================================================================
+# THE SUMMON FROM HERE ON IS A RECORDING STUB. czar-pass execs the real `sentinel --summon
+# czar` on every act-mode fire (sp-gzmd2, so DRAIN/halt gating is the real one); section 7 above
+# keeps that real call. Every later fire only needs to prove the summon was asked for — a real
+# summon is ~6 s on testenv's build, and 14 of them were most of this suite's wall.
+SUMMON_STUB_DIR="$T/summon-stub"; mkdir -p "$SUMMON_STUB_DIR"
+SUMMON_LOG="$T/summon-calls.log"; export SUMMON_LOG
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SUMMON_LOG"\n' > "$SUMMON_STUB_DIR/sentinel"
+chmod +x "$SUMMON_STUB_DIR/sentinel"
+export PATH="$SUMMON_STUB_DIR:$PATH"
+
 printf '\n%s\n' "8. world halted: pass exits without acting"
 # ==========================================================================================
 touch "$SPIRA_RUN/world.halted"
@@ -407,9 +417,11 @@ FEOF17
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+rm -f "$SUMMON_LOG"
 SPIRA_CZAR_STAGE_BASE_RED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "base-red: the fire summons the czar (sentinel --summon czar)" "--summon czar" "$(cat "$SUMMON_LOG" 2>/dev/null || true)"
 want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
 want "base-red: bead filed with cause=base-red" "cause=base-red" "$_inc_log"
 want "base-red: filed at priority 0 (P0)" "priority=0" "$_inc_log"
