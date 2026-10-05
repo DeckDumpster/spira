@@ -74,6 +74,32 @@ impl Queue for FQueue {
     }
 }
 
+/// The change bead: filings and lifecycle claims, in the order they happened.
+#[derive(Default)]
+struct FChange {
+    file_fail: Cell<bool>,
+    claim_fail: Cell<bool>,
+    /// "file <title> <repo> <db>" / "claim <id> <holder> <lease>"
+    calls: RefCell<Vec<String>>,
+}
+impl Change for FChange {
+    fn file(&self, title: &str, repo: &str, db: &str) -> Result<String, String> {
+        self.calls.borrow_mut().push(format!("file {title} {repo} {db}"));
+        if self.file_fail.get() {
+            return Err("bead.sh file exited 2: bead: no such persona: ops".into());
+        }
+        let n = self.calls.borrow().iter().filter(|c| c.starts_with("file ")).count();
+        Ok(format!("sp-chg{n}"))
+    }
+    fn claim(&self, id: &str, holder: &str, lease_until: u64) -> Result<(), String> {
+        self.calls.borrow_mut().push(format!("claim {id} {holder} {lease_until}"));
+        if self.claim_fail.get() {
+            return Err("refused (rc=3)".into());
+        }
+        Ok(())
+    }
+}
+
 /// A repository of commits keyed by name: commit id → (tree: path → content).
 #[derive(Default)]
 struct FGit {
@@ -85,6 +111,7 @@ struct FGit {
 }
 impl Git for FGit {
     fn commit_of(&self, _: &Path, rev: &str) -> Option<String> {
+        let rev = rev.strip_prefix("refs/heads/").unwrap_or(rev);
         let refs = self.refs.borrow();
         refs.get(rev).cloned().or_else(|| self.trees.borrow().contains_key(rev).then(|| rev.to_string()))
     }
@@ -143,6 +170,7 @@ struct T {
     mail: FMail,
     host: FHost,
     queue: FQueue,
+    change: FChange,
     git: FGit,
     io: Cap,
     input: RefCell<BTreeMap<String, String>>,
@@ -185,6 +213,7 @@ impl T {
             mail: FMail::default(),
             host: FHost::default(),
             queue: FQueue::default(),
+            change: FChange::default(),
             git,
             io: Cap::default(),
             input: RefCell::default(),
@@ -228,6 +257,7 @@ impl T {
             mail: &self.mail,
             host: &self.host,
             queue: &self.queue,
+            change: &self.change,
             git: &self.git,
             io: &self.io,
             read_input: &read,
@@ -256,13 +286,21 @@ fn parse_every_subcommand_and_refuse_the_retired_run() {
     assert_eq!(p(&["observe-flake", "test-a.sh", "r1"]), Ok(Cmd::ObserveFlake { suite: "test-a.sh".into(), run_id: "r1".into() }));
     assert_eq!(
         p(&["quarantine", "test-a.sh", "sp-1", "slow", "--base=main"]),
-        Ok(Cmd::Quarantine { suite: "test-a.sh".into(), bead: "sp-1".into(), reason: Some(Reason::Arg("slow".into())), base: Some("main".into()), until: None })
+        Ok(Cmd::Quarantine { suite: "test-a.sh".into(), bead: "sp-1".into(), reason: Some(Reason::Arg("slow".into())), base: Some("main".into()), until: None, change: None })
     );
     assert_eq!(
         p(&["disable", "test-a.sh", "--reason-file", "-"]),
-        Ok(Cmd::Disable { suite: "test-a.sh".into(), reason: Some(Reason::File("-".into())), base: None })
+        Ok(Cmd::Disable { suite: "test-a.sh".into(), reason: Some(Reason::File("-".into())), base: None, change: None })
     );
-    assert_eq!(p(&["activate", "test-a.sh"]), Ok(Cmd::Activate { suite: "test-a.sh".into(), base: None }));
+    assert_eq!(p(&["activate", "test-a.sh"]), Ok(Cmd::Activate { suite: "test-a.sh".into(), base: None, change: None }));
+    assert_eq!(
+        p(&["activate", "test-a.sh", "--change-bead=sp-c1"]),
+        Ok(Cmd::Activate { suite: "test-a.sh".into(), base: None, change: Some("sp-c1".into()) })
+    );
+    assert_eq!(
+        p(&["quarantine", "test-a.sh", "sp-1", "slow", "--change-bead", "sp-c2"]),
+        Ok(Cmd::Quarantine { suite: "test-a.sh".into(), bead: "sp-1".into(), reason: Some(Reason::Arg("slow".into())), base: None, until: None, change: Some("sp-c2".into()) })
+    );
     assert_eq!(p(&["run"]), Err(Usage(USAGE.into())), "sp-b99nj retired it; it stays retired");
     assert_eq!(p(&["activate", "x", "--frob"]), Err(Usage("suites activate: unknown option: --frob".into())));
     assert_eq!(p(&["disable", "x", "--base"]), Err(Usage("suites disable: --base requires an argument".into())));
@@ -468,16 +506,21 @@ fn quarantine_commits_on_the_landing_ref_creates_the_branch_and_submits_it() {
     let t = T::new("quarantine");
     t.suite("test-q.sh", "");
     assert_eq!(t.run(&["quarantine", "test-q.sh", "sp-xyz", "flaky test"]), 0);
-    let branch = "spira-suite-state/test-q-20260921T141320Z";
+    // sp-lck63: the edit is a bead — filed, claimed on the lifecycle machine, on spira/<id>.
+    let branch = "spira/sp-chg1";
     assert_eq!(t.out(), vec![branch]);
     assert_eq!(*t.queue.submitted.borrow(), vec![branch.to_string()]);
+    assert_eq!(
+        *t.change.calls.borrow(),
+        vec!["file suite-state: test-q.sh -> quarantined spira /db".to_string(), format!("claim sp-chg1 suites {}", NOW + 3600)]
+    );
     let c = t.git.refs.borrow().get(branch).cloned().unwrap();
     assert_eq!(
         t.git.show(Path::new("/repo"), &c, "spira/suite-state").unwrap(),
         "# lifecycle\ntest-q.sh | quarantined | 2026-09-21T14:13:20Z | sp-xyz | flaky test\n"
     );
     let (msg, who, parent) = t.git.messages.borrow().get(&c).cloned().unwrap();
-    assert_eq!((msg.as_str(), who.as_str(), parent.as_str()), ("suite-state: test-q.sh -> quarantined  sp-emvlk\n", "spira", "base0"));
+    assert_eq!((msg.as_str(), who.as_str(), parent.as_str()), ("sp-chg1: suite-state: test-q.sh -> quarantined\n", "spira", "base0"));
 }
 
 #[test]
@@ -485,7 +528,7 @@ fn quarantine_until_is_written_and_a_past_or_malformed_until_is_refused() {
     let t = T::new("quarantine-until");
     t.suite("test-q.sh", "");
     assert_eq!(t.run(&["quarantine", "test-q.sh", "sp-xyz", "flaky", "--until", "2026-10-01T00:00:00Z"]), 0);
-    let c = t.git.refs.borrow().get("spira-suite-state/test-q-20260921T141320Z").cloned().unwrap();
+    let c = t.git.refs.borrow().get("spira/sp-chg1").cloned().unwrap();
     assert_eq!(
         t.git.show(Path::new("/repo"), &c, "spira/suite-state").unwrap(),
         "# lifecycle\ntest-q.sh | quarantined | 2026-09-21T14:13:20Z | sp-xyz until=2026-10-01T00:00:00Z | flaky\n"
@@ -500,7 +543,7 @@ fn unquarantine_removes_the_row() {
     t.suite("test-q.sh", "");
     t.git.trees.borrow_mut().get_mut("base0").unwrap().insert("spira/suite-state".into(), "# h\ntest-q.sh | quarantined | old | sp-1 | slow\n".into());
     assert_eq!(t.run(&["unquarantine", "test-q.sh"]), 0);
-    let c = t.git.refs.borrow().get("spira-suite-state/test-q-20260921T141320Z").cloned().unwrap();
+    let c = t.git.refs.borrow().get("spira/sp-chg1").cloned().unwrap();
     assert_eq!(t.git.show(Path::new("/repo"), &c, "spira/suite-state").unwrap(), "# h\n");
 }
 
@@ -531,6 +574,7 @@ fn transitions_refuse_under_an_aeon_before_anything_else() {
     assert_eq!(t.run(&["quarantine", "nonexistent-suite.sh", "bead-id", "reason"]), 1);
     assert_eq!(t.err(), "suites quarantined: aeons may not write suite-state transitions; submit a branch from an operator or Ops session");
     assert!(t.queue.submitted.borrow().is_empty());
+    assert!(t.change.calls.borrow().is_empty(), "no bead filed or claimed");
     assert_eq!(t.lib.1.get(), 0);
 }
 
@@ -554,7 +598,8 @@ fn transition_usage_refusals() {
         assert_eq!(t.err(), *want, "{args:?}");
     }
     assert!(t.queue.submitted.borrow().is_empty());
-    assert!(t.git.refs.borrow().keys().all(|k| !k.starts_with("spira-suite-state/")));
+    assert!(t.change.calls.borrow().is_empty(), "a refused transition files no bead");
+    assert!(t.git.refs.borrow().keys().all(|k| !k.starts_with("spira/")));
 }
 
 #[test]
@@ -587,16 +632,62 @@ fn transition_failures_are_exit_one_and_named() {
 
     let t = T::new("tfail4");
     t.suite("test-a.sh", "");
-    t.git.refs.borrow_mut().insert("spira-suite-state/test-a-20260921T141320Z".into(), "x".into());
+    t.git.refs.borrow_mut().insert("spira/sp-chg1".into(), "x".into());
     assert_eq!(t.run(&["activate", "test-a.sh"]), 1);
-    assert_eq!(t.err(), "suites active: cannot create branch spira-suite-state/test-a-20260921T141320Z");
+    assert_eq!(t.err(), "suites active: spira/sp-chg1 already exists — the change bead sp-chg1 already carries a branch");
+    assert!(!t.change.calls.borrow().iter().any(|c| c.starts_with("claim")), "no claim for a bead whose branch exists");
 
     let t = T::new("tfail5");
     t.suite("test-a.sh", "");
     t.queue.fail.set(true);
     assert_eq!(t.run(&["activate", "test-a.sh"]), 1);
-    assert_eq!(t.err(), "suites active: queue submit failed for spira-suite-state/test-a-20260921T141320Z — branch exists but is not certified");
+    assert_eq!(t.err(), "suites active: queue submit failed for spira/sp-chg1 — branch exists but is not certified");
     assert!(t.out().is_empty());
+}
+
+#[test]
+fn a_handed_change_bead_is_claimed_and_named_by_the_branch_and_none_is_filed() {
+    let t = T::new("handed");
+    t.suite("test-d.sh", "");
+    assert_eq!(t.run(&["disable", "test-d.sh", "unsafe", "--change-bead", "sp-hand1"]), 0);
+    assert_eq!(t.out(), vec!["spira/sp-hand1"]);
+    assert_eq!(*t.change.calls.borrow(), vec![format!("claim sp-hand1 suites {}", NOW + 3600)]);
+    assert_eq!(*t.queue.submitted.borrow(), vec!["spira/sp-hand1".to_string()]);
+    let c = t.git.refs.borrow().get("spira/sp-hand1").cloned().unwrap();
+    assert_eq!(t.git.messages.borrow().get(&c).unwrap().0, "sp-hand1: suite-state: test-d.sh -> disabled\n");
+    assert!(t.git.refs.borrow().keys().all(|k| !k.starts_with("spira-suite-state/")), "no bead-less branch");
+}
+
+#[test]
+fn a_change_bead_that_is_no_ref_component_is_refused_before_anything_is_written() {
+    let t = T::new("badchange");
+    t.suite("test-a.sh", "");
+    for bad in ["", "-x", "a/b", "a..b", ".x", "a b"] {
+        t.clear();
+        assert_eq!(t.run(&["activate", "test-a.sh", "--change-bead", bad]), 2, "{bad:?}");
+        assert!(t.err().contains("is not a bead id"), "{bad:?}: {}", t.err());
+    }
+    assert!(t.change.calls.borrow().is_empty());
+    assert!(t.queue.submitted.borrow().is_empty());
+}
+
+#[test]
+fn a_filing_or_claim_failure_refuses_and_nothing_is_submitted() {
+    let t = T::new("filefail");
+    t.suite("test-a.sh", "");
+    t.change.file_fail.set(true);
+    assert_eq!(t.run(&["activate", "test-a.sh"]), 1);
+    assert_eq!(t.err(), "suites active: cannot file the change bead: bead.sh file exited 2: bead: no such persona: ops");
+    assert!(t.queue.submitted.borrow().is_empty());
+    assert!(!t.git.refs.borrow().contains_key("spira/sp-chg1"));
+
+    let t = T::new("claimfail");
+    t.suite("test-a.sh", "");
+    t.change.claim_fail.set(true);
+    assert_eq!(t.run(&["activate", "test-a.sh"]), 1);
+    assert_eq!(t.err(), "suites active: cannot claim the change bead sp-chg1 on the lifecycle machine: refused (rc=3)");
+    assert!(t.queue.submitted.borrow().is_empty());
+    assert!(!t.git.refs.borrow().contains_key("spira/sp-chg1"), "an unclaimed bead gets no branch");
 }
 
 // ------------------------------------------------------------------------------- hygiene
@@ -739,9 +830,9 @@ fn lint_counts_every_violation_on_one_line_and_still_reports_the_others() {
 // ------------------------------------------------------------------- lifecycle_enforce
 
 /// The operator's switch (lifecycle_enforce, 2026-09-28) decides whether spira-lc may be
-/// touched. `testenv suites` touches it in NEITHER mode: no subcommand runs spira-lc, reads
-/// SPIRA_LC_BIN or the switch, and the one lifecycle fact it reads (LANDED, for hygiene) is
-/// `$LANDSTATE/<id>`, which lib.sh land_mark writes whichever way the switch is set.
+/// touched. `testenv suites` never runs spira-lc, reads SPIRA_LC_BIN or the switch itself:
+/// a transition's change bead (sp-lck63) reaches the lifecycle machine only through
+/// lib.sh's `lc_claim_bead` (the harness's one claim path) and `queue submit`'s certify.
 #[test]
 fn suites_never_touches_spira_lc_in_either_lifecycle_mode() {
     for (name, src) in [

@@ -285,6 +285,103 @@ impl Queue for Real {
     }
 }
 
+// ------------------------------------------------------------------------ the change bead
+
+/// S2 `claim`: lib.sh's `lc_claim_bead`, the harness's one claim path (it creates the READY
+/// row first when the bead has none). Same shape as S1: a fixed script on stdin, then the
+/// lib.sh directory, the id, the holder and the lease, each NUL-terminated — nothing in argv
+/// or the environment (law-payloads-go-on-stdin).
+pub const CLAIM_SCRIPT: &str = r#"{
+set -uo pipefail
+IFS= read -r -d '' __home
+IFS= read -r -d '' __id
+IFS= read -r -d '' __holder
+IFS= read -r -d '' __lease
+exec </dev/null
+. "$__home/lib.sh" || exit 96
+lc_claim_bead "$__id" "$__holder" "$__lease"
+exit $?
+}
+"#;
+
+/// The wall on the filing and on the claim (spira-lint call-deadline's cap): both are a
+/// handful of beads-store / lifecycle round trips, never a batch job.
+pub const CHANGE_WALL_SECS: &str = "5";
+
+/// lc_claim_bead's exit codes, as the transition reports them.
+pub fn claim_refusal(rc: i32) -> String {
+    match rc {
+        124 => format!("timed out after {CHANGE_WALL_SECS}s (rc=124)"),
+        3 => "refused (rc=3: the row is in no state a claim may take, or another holder has it)".into(),
+        2 => "cannot tell (rc=2: the lifecycle machine was unreachable)".into(),
+        96 => "lib.sh could not be sourced (rc=96)".into(),
+        rc => format!("failed (rc={rc})"),
+    }
+}
+
+/// The id `bead.sh file --json` printed: the first JSON object (or one-element array) on
+/// stdout, never an id-shaped token scanned out of human output
+/// (law-never-derive-an-id-from-output).
+pub fn filed_id(out: &str) -> Result<String, String> {
+    let start = out.find(['{', '[']).ok_or_else(|| format!("no JSON in bead.sh file's output: {out:?}"))?;
+    let v: serde_json::Value = serde_json::from_str(out[start..].trim()).map_err(|e| format!("bead.sh file's output is not JSON: {e}"))?;
+    let v = match v {
+        serde_json::Value::Array(a) => a.into_iter().next().ok_or("bead.sh file printed an empty JSON array")?,
+        o => o,
+    };
+    v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("no id in bead.sh file's output: {out:?}"))
+}
+
+impl Change for Real {
+    fn file(&self, title: &str, repo: &str, db: &str) -> Result<String, String> {
+        // bead.sh, by name on the launcher's PATH (sp-gypjk), under the call-deadline wall.
+        let mut c = Command::new("timeout");
+        c.args([CHANGE_WALL_SECS, "bead.sh", "file", title, "--for", "ops", "--repo", repo, "--submitted", "--priority", "1", "--json"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if !db.is_empty() {
+            c.env("SPIRA_DB", db);
+        }
+        let out = c.output().map_err(|e| format!("bead.sh: {e}"))?;
+        if !out.status.success() {
+            let code = out.status.code();
+            return Err(format!(
+                "bead.sh file exited {}{}: {}",
+                code.map_or("on a signal".into(), |c| c.to_string()),
+                if code == Some(124) { " (timed out — it may still have filed the bead; look before retrying)" } else { "" },
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        filed_id(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    fn claim(&self, id: &str, holder: &str, lease_until: u64) -> Result<(), String> {
+        let mut child = Command::new("timeout")
+            .args([CHANGE_WALL_SECS, "bash"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .envs(spira_config::release_env::child_path_env_for_process())
+            .spawn()
+            .map_err(|e| format!("bash: {e}"))?;
+        let lease = lease_until.to_string();
+        let mut input = CLAIM_SCRIPT.as_bytes().to_vec();
+        for v in [self.suite_dir.as_os_str().as_encoded_bytes(), id.as_bytes(), holder.as_bytes(), lease.as_bytes()] {
+            input.extend_from_slice(v);
+            input.push(0);
+        }
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(&input);
+        }
+        match child.wait().ok().and_then(|s| s.code()) {
+            Some(0) => Ok(()),
+            Some(rc) => Err(claim_refusal(rc)),
+            None => Err("the claim was killed by a signal".into()),
+        }
+    }
+}
+
 // --------------------------------------------------------------------------------- git
 
 fn git(repo: &Path) -> Command {
@@ -417,6 +514,42 @@ mod tests {
         fs::write(d.join("lib.sh"), "exit 3\n").unwrap();
         assert!(run_conf_seam(&d).is_err());
         let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_claim_seam_hands_lc_claim_bead_its_arguments_on_stdin_and_maps_its_exit() {
+        let d = tmp("claim");
+        let log = d.join("calls");
+        fs::write(
+            d.join("lib.sh"),
+            format!(
+                "lc_claim_bead() {{ printf '%s|%s|%s\\n' \"$1\" \"$2\" \"$3\" >> '{}'; return \"${{CLAIM_RC:-0}}\"; }}\n\
+                 if [ -f '{}/rc' ]; then CLAIM_RC=\"$(cat '{}/rc')\"; fi\n",
+                log.display(),
+                d.display(),
+                d.display()
+            ),
+        )
+        .unwrap();
+        let real = Real { suite_dir: d.to_path_buf(), incident: None, mail: None, path: String::new() };
+        assert_eq!(real.claim("sp-a1", "suites", 1_790_003_600), Ok(()));
+        assert_eq!(fs::read_to_string(&log).unwrap(), "sp-a1|suites|1790003600\n");
+        fs::write(d.join("rc"), "3").unwrap();
+        assert!(real.claim("sp-a1", "suites", 1).unwrap_err().contains("refused (rc=3"));
+        fs::write(d.join("rc"), "2").unwrap();
+        assert!(real.claim("sp-a1", "suites", 1).unwrap_err().contains("cannot tell"));
+        fs::write(d.join("lib.sh"), "return 7\n").unwrap();
+        assert!(real.claim("sp-a1", "suites", 1).unwrap_err().contains("rc=96"), "an unsourceable lib.sh is no claim");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn filed_id_reads_the_json_never_a_token_from_the_noise() {
+        assert_eq!(filed_id("advisory: sp-fake1 looks similar\n{\"id\":\"sp-new9\",\"title\":\"t\"}\n").as_deref(), Ok("sp-new9"));
+        assert_eq!(filed_id("[{\"id\":\"sp-arr1\"}]").as_deref(), Ok("sp-arr1"));
+        assert!(filed_id("sp-bare1\n").is_err());
+        assert!(filed_id("[]").is_err());
+        assert!(filed_id("{\"title\":\"no id\"}").is_err());
     }
 
     #[test]

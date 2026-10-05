@@ -681,8 +681,23 @@ impl T {
 fn submit_queue_mode_refuses_a_branch_outside_spira() {
     let t = T::new(LandMode::QueueLocal);
     assert_eq!(t.run(&["submit", "feature/x"]), 1);
-    assert!(t.err().contains("queue mode requires a branch under spira/ or spira-suite-state/"));
+    assert!(t.err().contains("queue mode requires a branch under spira/"));
     assert!(t.scripts.calls.borrow().is_empty());
+}
+
+/// sp-lck63: a suite-state edit is a bead on spira/<id> like any other change; the old
+/// bead-less `spira-suite-state/*` route, certified only in a queue record, is refused.
+#[test]
+fn submit_refuses_a_bead_less_suite_state_branch() {
+    for mode in [LandMode::Queue, LandMode::QueueLocal] {
+        let t = T::new(mode);
+        t.git.set("refs/heads/spira-suite-state/test-a-20260101T000000Z", "t1");
+        assert_eq!(t.run(&["submit", "spira-suite-state/test-a-20260101T000000Z"]), 1);
+        assert!(t.err().contains("queue mode requires a branch under spira/"), "{}", t.err());
+        assert!(t.scripts.calls.borrow().is_empty(), "no gate ran");
+        assert!(!t.lc.has("certify"));
+        assert!(!t.s().queue_dir.join("spira-suite-state").exists(), "no queue record");
+    }
 }
 
 #[test]
@@ -1980,14 +1995,14 @@ fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
 }
 
 #[test]
-fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_writes_the_entry() {
+fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its_own() {
     let t = T::new(LandMode::Queue);
     t.git.set("refs/heads/spira/sp-a", "t1");
     t.var("SPIRA_CERTIFY_SUITES", "off");
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0);
     assert_eq!(t.scripts.calls.borrow()[0], "gate spira/sp-a spira bead=sp-a suites=off");
     assert!(t.lc.has("certify sp-a t1"));
-    assert_eq!(fs::read_to_string(t.s().queue_dir.join("sp-a")).unwrap(), "CERTIFIED t1 1000\n");
+    assert!(!t.s().queue_dir.join("sp-a").exists(), "the lifecycle row is the only certification record");
     assert!(t.landing_log().contains("QUEUE GATE_COST 1000 branch=sp-a seconds=0"));
     assert!(t.out().contains("queue.sh submit: certified spira/sp-a"));
 }

@@ -29,21 +29,29 @@ pub enum Cmd {
     Hygiene,
     Lint,
     ObserveFlake { suite: String, run_id: String },
-    Quarantine { suite: String, bead: String, reason: Option<Reason>, base: Option<String>, until: Option<String> },
-    Disable { suite: String, reason: Option<Reason>, base: Option<String> },
-    Activate { suite: String, base: Option<String> },
+    Quarantine { suite: String, bead: String, reason: Option<Reason>, base: Option<String>, until: Option<String>, change: Option<String> },
+    Disable { suite: String, reason: Option<Reason>, base: Option<String>, change: Option<String> },
+    Activate { suite: String, base: Option<String>, change: Option<String> },
 }
 
 /// A usage error: the line for stderr; exit 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Usage(pub String);
 
-/// (positionals, `--reason-file`, `--base`, `--until`).
-type TransitionArgs = (Vec<String>, Option<String>, Option<String>, Option<String>);
+/// A transition's arguments: positionals, `--reason-file`, `--base`, `--until`, and
+/// `--change-bead` — the bead the edit lands as, when the caller hands one (sp-lck63).
+#[derive(Default)]
+struct TransitionArgs {
+    pos: Vec<String>,
+    rfile: Option<String>,
+    base: Option<String>,
+    until: Option<String>,
+    change: Option<String>,
+}
 
-/// Positionals plus `--reason-file` / `--base` (`--k v` or `--k=v`).
+/// Positionals plus `--reason-file` / `--base` / `--until` / `--change-bead` (`--k v` or `--k=v`).
 fn transition_args(cmd: &str, args: &[String]) -> Result<TransitionArgs, Usage> {
-    let (mut pos, mut rfile, mut base, mut until) = (Vec::new(), None, None, None);
+    let mut t = TransitionArgs::default();
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -52,7 +60,7 @@ fn transition_args(cmd: &str, args: &[String]) -> Result<TransitionArgs, Usage> 
             _ => (a.as_str(), None),
         };
         match k {
-            "--reason-file" | "--base" | "--until" => {
+            "--reason-file" | "--base" | "--until" | "--change-bead" => {
                 let v = match inline {
                     Some(v) => v,
                     None => {
@@ -63,21 +71,22 @@ fn transition_args(cmd: &str, args: &[String]) -> Result<TransitionArgs, Usage> 
                     }
                 };
                 match k {
-                    "--base" => base = Some(v),
-                    "--until" => until = Some(v),
-                    _ => rfile = Some(v),
+                    "--base" => t.base = Some(v),
+                    "--until" => t.until = Some(v),
+                    "--change-bead" => t.change = Some(v),
+                    _ => t.rfile = Some(v),
                 }
             }
             "--" => {
-                pos.extend(args[i + 1..].iter().cloned());
+                t.pos.extend(args[i + 1..].iter().cloned());
                 break;
             }
             _ if k.starts_with("--") => return Err(Usage(format!("suites {cmd}: unknown option: {a}"))),
-            _ => pos.push(a.clone()),
+            _ => t.pos.push(a.clone()),
         }
         i += 1;
     }
-    Ok((pos, rfile, base, until))
+    Ok(t)
 }
 
 pub fn parse(args: &[String]) -> Result<Cmd, Usage> {
@@ -100,22 +109,23 @@ pub fn parse(args: &[String]) -> Result<Cmd, Usage> {
         "lint" => Cmd::Lint,
         "observe-flake" => Cmd::ObserveFlake { suite: pos(0), run_id: pos(1) },
         "quarantine" => {
-            let (p, f, base, until) = transition_args("quarantine", rest)?;
+            let t = transition_args("quarantine", rest)?;
             Cmd::Quarantine {
-                suite: p.first().cloned().unwrap_or_default(),
-                bead: p.get(1).cloned().unwrap_or_default(),
-                reason: reason(&p, 2, f),
-                base,
-                until,
+                suite: t.pos.first().cloned().unwrap_or_default(),
+                bead: t.pos.get(1).cloned().unwrap_or_default(),
+                reason: reason(&t.pos, 2, t.rfile),
+                base: t.base,
+                until: t.until,
+                change: t.change,
             }
         }
         "disable" => {
-            let (p, f, base, _) = transition_args("disable", rest)?;
-            Cmd::Disable { suite: p.first().cloned().unwrap_or_default(), reason: reason(&p, 1, f), base }
+            let t = transition_args("disable", rest)?;
+            Cmd::Disable { suite: t.pos.first().cloned().unwrap_or_default(), reason: reason(&t.pos, 1, t.rfile), base: t.base, change: t.change }
         }
         "activate" | "unquarantine" => {
-            let (p, _, base, _) = transition_args(sub, rest)?;
-            Cmd::Activate { suite: p.first().cloned().unwrap_or_default(), base }
+            let t = transition_args(sub, rest)?;
+            Cmd::Activate { suite: t.pos.first().cloned().unwrap_or_default(), base: t.base, change: t.change }
         }
         _ => return Err(Usage(USAGE.into())),
     })
@@ -146,14 +156,16 @@ pub fn dispatch(w: &World, c: &Cmd) -> i32 {
         Cmd::Hygiene => cmd::hygiene(w),
         Cmd::Lint => cmd::lint(w),
         Cmd::ObserveFlake { suite, run_id } => cmd::observe_flake(w, suite, run_id),
-        Cmd::Quarantine { suite, bead, reason, base, until } => with_reason("quarantined", reason, &|r| {
+        Cmd::Quarantine { suite, bead, reason, base, until, change } => with_reason("quarantined", reason, &|r| {
             let t = Transition::Quarantine { bead: bead.clone(), reason: r, until: until.clone() };
-            cmd::run_transition(w, &t, suite, base.as_deref())
+            cmd::run_transition(w, &t, suite, base.as_deref(), change.as_deref())
         }),
-        Cmd::Disable { suite, reason, base } => with_reason("disabled", reason, &|r| {
-            cmd::run_transition(w, &Transition::Disable { reason: r }, suite, base.as_deref())
+        Cmd::Disable { suite, reason, base, change } => with_reason("disabled", reason, &|r| {
+            cmd::run_transition(w, &Transition::Disable { reason: r }, suite, base.as_deref(), change.as_deref())
         }),
-        Cmd::Activate { suite, base } => cmd::run_transition(w, &Transition::Activate, suite, base.as_deref()),
+        Cmd::Activate { suite, base, change } => {
+            cmd::run_transition(w, &Transition::Activate, suite, base.as_deref(), change.as_deref())
+        }
     }
 }
 
@@ -184,6 +196,7 @@ pub fn main(args: &[String]) -> i32 {
         mail: &r,
         host: &r,
         queue: &r,
+        change: &r,
         git: &r,
         io: &r,
         read_input: &read_input,

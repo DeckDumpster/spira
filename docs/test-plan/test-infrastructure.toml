@@ -175,7 +175,7 @@ statement = "The per-suite watchdog kills a hung suite at its limit. The runner 
 [[use_case]]
 id = "UC-test-infrastructure-31"
 tier = "T1"
-statement = "Quarantine lifecycle. Two distinct flake runs inside the window, with a run_id counted once, quarantine the suite on a `spira-suite-state/auto-*` branch submitted to the queue, never in the checkout. Reactivation needs both bead LANDED and N clean runs. The max-age mail is sent once per period. A nonexistent suite is refused."
+statement = "Quarantine lifecycle. Two distinct flake runs inside the window, with a run_id counted once, quarantine the suite on a change bead's `spira/<bead>` branch submitted to the queue, never in the checkout. Reactivation needs both bead LANDED and N clean runs. The max-age mail is sent once per period. A nonexistent suite is refused."
 
 [[use_case]]
 id = "UC-test-infrastructure-32"

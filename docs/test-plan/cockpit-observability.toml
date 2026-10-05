@@ -59,7 +59,7 @@ statement = "`SP_QUEUE_DEPTH` counts CERTIFIED beads; the open batch yields PR, 
 [[use_case]]
 id = "UC-cockpit-observability-12"
 tier = "T2"
-statement = "`SP_BRANCH_DONE`/`SP_UNSENT` count only bead-backed branches; a no-bead branch ahead of base is `SP_ORPHAN_WORK`, one with tip on base is `SP_UNADOPTED` (named); `spira/queue/*` and `spira-suite-state/*` are protected; a failed bead lookup counts in `SP_PROBE_FAIL`, never `SP_UNADOPTED`"
+statement = "`SP_BRANCH_DONE`/`SP_UNSENT` count only bead-backed branches; a no-bead branch ahead of base is `SP_ORPHAN_WORK`, one with tip on base is `SP_UNADOPTED` (named); `spira/queue/*` is protected; a failed bead lookup counts in `SP_PROBE_FAIL`, never `SP_UNADOPTED`"
 
 [[use_case]]
 id = "UC-cockpit-observability-13"

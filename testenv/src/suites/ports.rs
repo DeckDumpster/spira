@@ -1,7 +1,8 @@
 //! Every effect `testenv suites` has outside its own state directory, as a trait
 //! (DESIGN-suites.md §5): git, the lib.sh seam, incident.sh, mail, host-check.sh, the
-//! queue, the clock and the two output streams. `real.rs` implements them against the
-//! host; the unit tests implement them as fakes.
+//! queue, the change bead (bead.sh and lib.sh's claim), the clock and the two output
+//! streams. `real.rs` implements them against the host; the unit tests implement them as
+//! fakes.
 
 use std::path::{Path, PathBuf};
 
@@ -156,6 +157,18 @@ pub trait Queue {
     fn submit(&self, branch: &str) -> bool;
 }
 
+/// The bead a suite-state edit lands as (sp-lck63): the edit is a change like any other, so
+/// it rides spira/<bead> through the lifecycle machine — READY, claimed by the writer,
+/// SUBMITTED and CERTIFIED by `queue submit`, LANDED by a round.
+pub trait Change {
+    /// `bead.sh file <title> --for ops --repo <repo> --submitted --priority 1 --json`
+    /// (`SPIRA_DB=<db>` when set); Ok(the filed id, parsed from the JSON) or Err(why).
+    fn file(&self, title: &str, repo: &str, db: &str) -> Result<String, String>;
+    /// lib.sh's `lc_claim_bead <id> <holder> <lease-until>` — the harness's one claim path,
+    /// which creates the READY row first when the bead has none. Err(why) on any refusal.
+    fn claim(&self, id: &str, holder: &str, lease_until: u64) -> Result<(), String>;
+}
+
 pub trait Git {
     /// `rev-parse --verify -q <rev>^{commit}`.
     fn commit_of(&self, repo: &Path, rev: &str) -> Option<String>;
@@ -192,6 +205,7 @@ pub struct World<'a> {
     pub mail: &'a dyn Mail,
     pub host: &'a dyn HostCheck,
     pub queue: &'a dyn Queue,
+    pub change: &'a dyn Change,
     pub git: &'a dyn Git,
     pub io: &'a dyn Emit,
     /// Reads a `--reason-file` (a path, or `-` for stdin).
