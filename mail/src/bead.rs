@@ -231,11 +231,19 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
 /// Creates the tracking decision bead a question/decision send wires itself to. `None` if
 /// the store is unconfigured or the create failed (mail.sh: `dec_bead=""` either way — the
 /// send still succeeds, just without a tracking bead).
-pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str) -> Option<String> {
+///
+/// `work_bead` (empty for none) is the bead the question is about; it rides the tracking bead
+/// as a `work-bead:<id>` label, so a path that answers or closes the ASK BEAD rather than
+/// replying to the mail — the cockpit pane's verdict, `resolve`, `verify-asks` — can still
+/// find the work bead whose `ask` hold the answer lifts (sp-v62vn follow-up).
+pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str, work_bead: &str) -> Option<String> {
     if !db_configured {
         return None;
     }
-    let labels = format!("{ask_label},overseer");
+    let mut labels = format!("{ask_label},overseer");
+    if !work_bead.is_empty() {
+        labels.push_str(&format!(",{WORK_BEAD_LABEL}{work_bead}"));
+    }
     let out = bd.run(&a(&["create", subject, "-l", &labels, "--type", "decision", "--body-file", "-", "--silent"]), Some(body));
     let id = out.stdout.trim();
     if out.code == 0 && !id.is_empty() {
@@ -247,6 +255,9 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
         None
     }
 }
+
+/// The label prefix naming an ask bead's work bead (`work-bead:sp-xxxx`).
+pub const WORK_BEAD_LABEL: &str = "work-bead:";
 
 pub fn dep_add(bd: &dyn Bd, from: &str, to: &str, dep_type: &str) -> bool {
     bd.run(&a(&["dep", "add", from, to, "--type", dep_type]), None).code == 0
@@ -498,17 +509,26 @@ mod tests {
     #[test]
     fn create_tracking_bead_returns_none_when_store_unconfigured() {
         let bd = FakeBd::new(vec![]);
-        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator"), None); // literal-ok: test fixture
+        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator", ""), None); // literal-ok: test fixture
     }
 
     #[test]
     fn create_tracking_bead_returns_the_new_id() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
-        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator").unwrap(); // literal-ok: test fixture
+        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "").unwrap(); // literal-ok: test fixture
         assert_eq!(id, "sp-newid1");
         let calls = bd.calls();
         assert_eq!(calls[0].1.as_deref(), Some("body"));
         assert!(calls[0].0.contains(&"needs-operator,overseer".to_string())); // literal-ok: test fixture
+    }
+
+    /// The ask bead names the work bead it is about, so a path that closes the ask bead
+    /// itself (the pane's verdict, `resolve`) can lift that bead's `ask` hold.
+    #[test]
+    fn a_tracking_bead_for_a_work_bead_carries_its_work_bead_label() {
+        let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
+        create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "sp-work1").unwrap(); // literal-ok: test fixture
+        assert!(bd.calls()[0].0.contains(&"needs-operator,overseer,work-bead:sp-work1".to_string()), "{:?}", bd.calls()); // literal-ok: test fixture
     }
 
     #[test]

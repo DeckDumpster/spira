@@ -27,7 +27,7 @@
 #
 # defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd sp-wnsks
 # tier: T3
-# covers: aeon/src/* spira/lib.sh mail/src/* spira-lc/src/work.rs work/* UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-18
+# covers: aeon/src/* spira/lib.sh mail/src/* spira-lc/src/work.rs work/* cockpit/ops/src/resolve.rs cockpit/ops/src/resolve_main.rs UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-18
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -469,21 +469,70 @@ lcfix_seed sp-ow2 READY || bail "could not seed sp-ow2's lifecycle row"
 fa_run_aeon >/dev/null
 is   "the model's work ask was applied by the broker" "0" "$(cat "$FA_TMP/ask.rc" 2>/dev/null || echo missing)"
 [ "$(cat "$FA_TMP/ask.rc" 2>/dev/null)" = 0 ] || sed 's/^/# /' "$FA_TMP/ask.out" 2>/dev/null
-ow_row="$(spira-lc show sp-ow2 2>/dev/null | python3 -c '
+ow_row() {   # ow_row <id> -> "<STATE> <holds,...|->"
+    spira-lc show "$1" 2>/dev/null | python3 -c '
 import sys, json
 b = json.load(sys.stdin)["bead"]
 h = b.get("holds") or []
 h = json.loads(h) if isinstance(h, str) else h   # the row stores holds as a JSON text column
-print(b["state"], ",".join(h))' 2>/dev/null)"
-is   "the row: released to READY, still carrying the ask hold until the operator answers" "READY ask" "$ow_row"
+print(b["state"], ",".join(h) or "-")' 2>/dev/null
+}
+hdr_of() {   # hdr_of <file> <header> -> the header's value
+    awk -v h="$2" '/^[[:space:]]*$/ { exit } tolower($0) ~ "^" tolower(h) ":" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$1"
+}
+is   "the row: released to READY, still carrying the ask hold until the operator answers" "READY ask" "$(ow_row sp-ow2)"
 notes_ow="$(fa_notes sp-ow2)"
 want   "note says the session asked the operator" "asked the operator" "$notes_ow"
 want   "note says No attempt charged"             "No attempt charged" "$notes_ow"
 nowant "note does not say Unlanded"               "Unlanded"           "$notes_ow"
 want   "ledger says operator-wait" "operator-wait" "$(fa_ledger_line sp-ow2)"
 is     "no attempt charged" "0" "$(count_of sp-ow2)"
-ow_mail="$(grep -l '^Subject: fixture question' "$SPIRA_MAIL"/operator/new/* "$SPIRA_MAIL"/operator/cur/* 2>/dev/null | head -1)"
-is   "the question reached the operator's mailbox" "yes" "$([ -n "$ow_mail" ] && echo yes || echo no)"
+# THE BROKER'S ASK IS CLASSIFIED (sp-v62vn follow-up): the question declares no escalation
+# class, so mail routes it to the concierge, never the operator. Before, the broker called
+# mail without BEAD_ID, mail's class check never ran, and this landed in operator/.
+ow_mail="$(grep -l '^Subject: fixture question' "$SPIRA_MAIL"/concierge/new/* "$SPIRA_MAIL"/concierge/cur/* 2>/dev/null | head -1)"
+is   "the unclassed question reached the concierge's mailbox" "yes" "$([ -n "$ow_mail" ] && echo yes || echo no)"
+is   "and not the operator's" "" "$(grep -l '^Subject: fixture question' "$SPIRA_MAIL"/operator/new/* "$SPIRA_MAIL"/operator/cur/* 2>/dev/null)"
+is   "the ask mail names the work bead it is about" "sp-ow2" "$([ -n "$ow_mail" ] && hdr_of "$ow_mail" X-Spira-Work-Bead)"
 is   "and no marker file was involved" "no" "$([ -e "$SPIRA_RUN/sp-ow2.operator-wait" ] && echo yes || echo no)"
+
+# ==========================================================================================
+echo
+echo "ROW: the answer lifts the ask hold — a reply to the ask mail through mail sendmail"
+# ==========================================================================================
+# THE DEFECT THIS GUARDS (sp-v62vn follow-up): only `spira-lc reply` / `withdraw-ask` lift an
+# ask hold, and nothing that carries an answer emitted one — so a bead whose question was
+# answered stayed held, unclaimable, forever. The concierge answers the routed question the
+# way any answer arrives: a reply with In-Reply-To, through `mail sendmail`.
+ow_qid="$([ -n "$ow_mail" ] && hdr_of "$ow_mail" Message-ID)"
+printf 'From: Concierge <concierge@spira>\nSubject: Re: fixture question\nIn-Reply-To: %s\nMessage-ID: <ow-answer-1@spira>\n\nProceed without waiting.\n' "$ow_qid" \
+    | mail sendmail > "$FA_TMP/sendmail.out" 2>&1
+is   "the reply was delivered" "0" "$?"
+is   "the row: READY with no hold — claimable again" "READY -" "$(ow_row sp-ow2)"
+if spira-lc held sp-ow2 ask >/dev/null 2>&1; then bad "spira-lc held sp-ow2 ask: no longer held" "still held"; else ok "spira-lc held sp-ow2 ask: no longer held"; fi
+want "the answer is on the work bead for the next session" "Proceed without waiting." "$(fa_notes sp-ow2)"
+is   "the routed question's reply closed no bead (the work bead is still open in bd)" "open" "$(fa_field sp-ow2 status)"
+
+# ==========================================================================================
+echo
+echo "ROW: a question closed without an answer withdraws the ask — resolve on the ask bead"
+# ==========================================================================================
+# A CLASSED question goes to the operator and files a tracking (ask) bead naming the work
+# bead (work-bead:<id>). The concierge resolving that ask bead itself — moot, or established
+# without him — is the question closed with no answer: withdraw-ask, not reply.
+printf '## Question\nMay the fixture rotate its deploy key?\n\n## Default\nno\n\n## Class basis\nthe deploy key is a credential only the operator holds\n' \
+    | SPIRA_WORK_BEAD_ID=sp-ow2 SPIRA_FAYTH=builder work ask --subject "rotate the fixture deploy key" --kind question --default no --class permissions --body-file - \
+    > "$FA_TMP/ask2.out" 2>&1
+is   "a classed work ask is applied" "0" "$?"
+is   "the row is held again" "READY ask" "$(ow_row sp-ow2)"
+ow_mail2="$(grep -l '^Subject: rotate the fixture deploy key' "$SPIRA_MAIL"/operator/new/* 2>/dev/null | head -1)"
+is   "the classed question reached the operator" "yes" "$([ -n "$ow_mail2" ] && echo yes || echo no)"
+ow_ask="$([ -n "$ow_mail2" ] && hdr_of "$ow_mail2" X-Spira-Bead)"
+want "its ask bead carries the work bead's label" "work-bead:sp-ow2" "$(fa_labels "$ow_ask")"
+COCKPIT_DB="$SPIRA_DB" resolve "$ow_ask" "moot: the fixture's key never needed rotating" > "$FA_TMP/resolve.out" 2>&1
+is   "resolve closed the ask bead" "0" "$?"
+want "resolve says it withdrew the hold" "withdrew the ask hold on sp-ow2" "$(cat "$FA_TMP/resolve.out")"
+is   "the row: READY with no hold" "READY -" "$(ow_row sp-ow2)"
+want "and the lift was a withdraw, not a reply" "AskWithdrawn" "$(spira-lc history sp-ow2 2>/dev/null)"
 
 tl_summary

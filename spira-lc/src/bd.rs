@@ -127,8 +127,16 @@ pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String>
 /// the broker's own identity is never the persona that asked. Returns the tool's own exit code
 /// (stdout; stdout plus stderr when it failed).
 pub fn tool(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64) -> (i32, String) {
+    tool_env(program, args, stdin, actor, secs, &[])
+}
+
+/// [`tool`], with `env` set on the child as well.
+pub fn tool_env(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64, env: &[(&str, &str)]) -> (i32, String) {
     let mut cmd = Command::new("timeout");
     cmd.arg(secs.to_string()).arg(program).args(args).env("SPIRA_FAYTH", actor);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     spawn(cmd, stdin, program)
 }
 

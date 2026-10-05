@@ -382,6 +382,13 @@ pub enum Step {
     /// release the session operator-wait, uncharged (sp-v62vn follow-up: it replaced the
     /// `<bead>.operator-wait` marker `mail` wrote, which a restricted model cannot run).
     AskHold { bead: String, question: String },
+    /// `mail send operator ...` for `work ask`, run with `BEAD_ID=<classify_as>`: mail's
+    /// escalation-class check (`mail::cmds::class_refusal`) engages only when BEAD_ID is set —
+    /// the old direct-mail path had it from the aeon's own environment, the broker's process
+    /// does not — so without it an unclassed question went straight to the operator. With it,
+    /// an ask lacking a PERMISSIONS/POLICY/DESTRUCTIVE `--class` and a `## Class basis` is
+    /// routed to the concierge mailbox (law-escalate-decisions-not-problems).
+    Ask { args: Vec<String>, stdin: String, classify_as: String },
 }
 
 fn s(x: &str) -> String {
@@ -613,10 +620,13 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                 args.extend([s("--class"), c.to_string()]);
             }
             let own = cited.as_deref() == Some(bound) && is_bead_id(bound);
+            // mail reads BEAD_ID only as "an aeon is asking"; a caller bound to nothing and
+            // citing nothing is still a persona asking, so it is classified too.
+            let classify_as = cited.clone().unwrap_or_else(|| bound.to_string());
             if let Some(b) = cited {
                 args.extend([s("--bead"), b]);
             }
-            let mut steps = vec![Step::Tool { program: "mail", args, stdin: Some(body) }];
+            let mut steps = vec![Step::Ask { args, stdin: body, classify_as }];
             // A bound session's question about its OWN bead is a wait on the operator: that
             // bead is held once the question is delivered (the mail goes first, so a hold
             // never stands without a question behind it). A question citing another bead —
@@ -712,6 +722,10 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
                 crate::bd::tool(&prog, &args, stdin.as_deref(), actor, TOOL_SECS)
+            }
+            Step::Ask { args, stdin, classify_as } => {
+                let prog = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail"));
+                crate::bd::tool_env(&prog, &args, Some(&stdin), actor, TOOL_SECS, &[("BEAD_ID", &classify_as)])
             }
             Step::AskHold { bead, question } => {
                 let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question) };
@@ -915,11 +929,11 @@ mod tests {
     #[test]
     fn ask_builds_the_mail_with_the_persona_as_sender() {
         let p = plan("ask", "sp-me1", &call(&["--subject", "Close sp-a1?", "--kind", "question", "--default", "yes"], "groomer")).unwrap();
-        let Step::Tool { program, args, stdin, .. } = &p[0] else { panic!() };
-        assert_eq!(*program, "mail");
+        let Step::Ask { args, stdin, classify_as } = &p[0] else { panic!() };
         assert_eq!(args[..4], v(&["send", "operator", "--from", "Groomer <groomer@spira>"])[..]);
         assert!(args.ends_with(&v(&["--bead", "sp-me1"])), "cites the bound bead by default: {args:?}");
-        assert!(stdin.as_deref().unwrap().contains("## Question\nClose sp-a1?") && stdin.as_deref().unwrap().contains("## Default\nyes"));
+        assert!(stdin.contains("## Question\nClose sp-a1?") && stdin.contains("## Default\nyes"));
+        assert_eq!(classify_as, "sp-me1");
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "question"], "ops")).is_err(), "no default");
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "note", "--default", "d"], "ops")).is_err());
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "fyi", "--default", "d", "--from", "Ryan"], "ops")).is_err(), "the sender is the broker's");
@@ -933,7 +947,7 @@ mod tests {
     fn a_bound_question_holds_the_bound_bead_after_the_mail() {
         let p = plan("ask", "sp-me1", &call(&["--subject", "May I?", "--kind", "question", "--default", "no"], "builder")).unwrap();
         assert_eq!(p.len(), 2, "{p:?}");
-        assert!(matches!(&p[0], Step::Tool { program: "mail", .. }), "the question is delivered first: {p:?}");
+        assert!(matches!(&p[0], Step::Ask { .. }), "the question is delivered first: {p:?}");
         assert_eq!(p[1], Step::AskHold { bead: s("sp-me1"), question: s("May I?") });
         let p = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--bead", "sp-me1"], "builder")).unwrap();
         assert_eq!(p.last(), Some(&Step::AskHold { bead: s("sp-me1"), question: s("q") }), "citing its own bead explicitly");
@@ -945,6 +959,28 @@ mod tests {
         assert!(!fyi.iter().any(|x| matches!(x, Step::AskHold { .. })), "{fyi:?}");
         let unbound = plan("ask", "-", &call(&["--subject", "q", "--kind", "question", "--default", "d"], "archivist")).unwrap();
         assert!(!unbound.iter().any(|x| matches!(x, Step::AskHold { .. })), "{unbound:?}");
+    }
+
+    /// sp-v62vn follow-up: the broker's `mail` ran without BEAD_ID, which mail reads as "not
+    /// an aeon", so its escalation-class check never ran and an unclassed question went
+    /// straight to the operator. Every ask step now carries the id mail classifies by —
+    /// bound, citing another bead, or bound to nothing at all.
+    #[test]
+    fn every_ask_is_sent_for_classification() {
+        let classify = |bound: &str, extra: &[&str]| {
+            let args = [&["--subject", "q", "--kind", "question", "--default", "d"][..], extra].concat();
+            match &plan("ask", bound, &call(&args, "builder")).unwrap()[0] {
+                Step::Ask { classify_as, .. } => classify_as.clone(),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(classify("sp-me1", &[]), "sp-me1");
+        assert_eq!(classify("sp-me1", &["--bead", "sp-other"]), "sp-other");
+        assert_eq!(classify("-", &[]), "-", "an unbound caller is a persona asking too");
+        // and --class rides through for mail to judge, never decided here
+        let p = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--class", "policy"], "builder")).unwrap();
+        let Step::Ask { args, .. } = &p[0] else { panic!() };
+        assert!(args.windows(2).any(|w| w == v(&["--class", "policy"])), "{args:?}");
     }
 
     // ---- tools ----
