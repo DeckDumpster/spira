@@ -190,13 +190,12 @@ fi
 if [ -z "$reason" ] && [ -n "${SPIRA_RUN:-}" ]; then
     # Refuse write shapes only, mirroring the \$SPIRA_PROD rule below: reads, script
     # execution and mentions of the path in prose (a heredoc body, a quoted string) are
-    # permitted (sp-ozym9; law-a-matcher-reads-code-not-prose).
+    # permitted (sp-ozym9; law-a-matcher-reads-code-not-prose). \$SPIRA_RUN/landstate is
+    # no longer fenced: the lifecycle cutover deletes the ledger (sp-2c1n0, sp-j7l3q).
     case "$cmd" in
-        *">${SPIRA_RUN}/landstate"*|*"> ${SPIRA_RUN}/landstate"*|\
-        *">>${SPIRA_RUN}/landstate"*|*">> ${SPIRA_RUN}/landstate"*|\
         *">${SPIRA_RUN}/queue"*|*"> ${SPIRA_RUN}/queue"*|\
         *">>${SPIRA_RUN}/queue"*|*">> ${SPIRA_RUN}/queue"*)
-            reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+            reason="aeons may not write to \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
     esac
     if [ -z "$reason" ]; then
         _run_write="$(printf '%s' "$cmd" | python3 -c '
@@ -224,8 +223,8 @@ for seg in re.split(r"&&|\|\||;|\||\n", cmd):
         for t in toks[1:]:
             if t == "-i" or (t.startswith("-") and not t.startswith("--") and "i" in t[1:]):
                 print("1"); sys.exit(0)
-' "${SPIRA_RUN}/landstate" "${SPIRA_RUN}/queue" 2>/dev/null)"
-        [ "$_run_write" = "1" ] && reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"
+' "${SPIRA_RUN}/queue" 2>/dev/null)"
+        [ "$_run_write" = "1" ] && reason="aeons may not write to \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"
     fi
 fi
 
@@ -324,7 +323,11 @@ fi
 # Refuse bd create against the production store when bd's own test-data heuristic fires
 # or when a repo: label is not in the repo-map (detect_livelocked's unmapped-repo predicate).
 # Refuses, not warns — the aeon has a testdb for throwaway creates. sp-mvg44.
-if [ -z "$reason" ] && [ -n "${SPIRA_DB:-}" ]; then
+# NOT on the builder's path (sp-j7l3q; Ryan 2026-10-04, sp-nkr42): the builder works through
+# the lifecycle verbs with no bd on its PATH, so a bd rule there guards nothing. The grooming
+# personas (groomer, czar, ops, maechen, spike, ...) file and groom with bd by design and keep
+# this fence.
+if [ -z "$reason" ] && [ -n "${SPIRA_DB:-}" ] && [ "${SPIRA_FAYTH:-}" != "builder" ]; then
     case "$cmd" in *bd*create*)
         _bd_check="$(printf '%s' "$cmd" | \
             SPIRA_DB="$SPIRA_DB" \

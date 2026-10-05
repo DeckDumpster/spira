@@ -220,10 +220,14 @@ nowant "sp-4o925/override-bypasses-run-in-background-block" '"decision":"block"'
 
 # ===========================================================================
 echo
-echo "UC-safety-fences-02 — aeon session: writes under \$SPIRA_PROD / \$SPIRA_RUN/landstate refused:"
+echo "UC-safety-fences-02 — aeon session: writes under \$SPIRA_PROD / \$SPIRA_RUN/queue refused:"
 # ===========================================================================
+out="$(fence_run "printf x > ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+want "UC-safety-fences-02/write-to-queue-blocked" '"decision":"block"' "$out"
+
+# sp-j7l3q: the lifecycle cutover deletes the landstate ledger (sp-2c1n0); its write fence went with it.
 out="$(fence_run "printf x > ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
-want "UC-safety-fences-02/write-to-landstate-blocked" '"decision":"block"' "$out"
+nowant "sp-j7l3q/landstate-no-longer-fenced" '"decision":"block"' "$out"
 
 out="$(fence_run "echo x > ${FAKE_PROD}/f" SPIRA_AEON=test-aeon)"
 want "UC-safety-fences-02/redirect-write-to-prod-blocked" '"decision":"block"' "$out"
@@ -278,39 +282,39 @@ nowant "UC-safety-fences-02/prose-tee-not-mistaken-for-tee" '"decision":"block"'
 
 # ===========================================================================
 echo
-echo "sp-ozym9 — \$SPIRA_RUN/landstate and /queue: write shapes refused, reads and prose allowed:"
+echo "sp-ozym9 — \$SPIRA_RUN/queue: write shapes refused, reads and prose allowed:"
 # ===========================================================================
-out="$(fence_run "rm ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
-want "sp-ozym9/rm-landstate-blocked" '"decision":"block"' "$out"
+out="$(fence_run "rm ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+want "sp-ozym9/rm-queue-blocked" '"decision":"block"' "$out"
 
 out="$(fence_run "mv a ${FAKE_RUN}/queue/b" SPIRA_AEON=test-aeon)"
 want "sp-ozym9/mv-queue-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "echo x | tee ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
-want "sp-ozym9/tee-landstate-blocked" '"decision":"block"' "$out"
+out="$(fence_run "echo x | tee ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+want "sp-ozym9/tee-queue-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "sed -i s/a/b/ ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
-want "sp-ozym9/sed-i-landstate-blocked" '"decision":"block"' "$out"
+out="$(fence_run "sed -i s/a/b/ ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+want "sp-ozym9/sed-i-queue-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "cat ${FAKE_RUN}/landstate/sp-7youp" SPIRA_AEON=test-aeon)"
-nowant "sp-ozym9/cat-landstate-allowed" '"decision":"block"' "$out"
+out="$(fence_run "cat ${FAKE_RUN}/queue/sp-7youp" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/cat-queue-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "ls ${FAKE_RUN}/landstate | wc -l" SPIRA_AEON=test-aeon)"
-nowant "sp-ozym9/ls-landstate-allowed" '"decision":"block"' "$out"
+out="$(fence_run "ls ${FAKE_RUN}/queue | wc -l" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/ls-queue-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "grep -l '^LANDED' ${FAKE_RUN}/landstate/*" SPIRA_AEON=test-aeon)"
-nowant "sp-ozym9/grep-landstate-allowed" '"decision":"block"' "$out"
+out="$(fence_run "grep -l '^LANDED' ${FAKE_RUN}/queue/*" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/grep-queue-allowed" '"decision":"block"' "$out"
 
 _ldflag="--description"
-_ld_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nsee %s/landstate/sp-7youp for evidence\nDESC" "$_ldflag" "${FAKE_RUN}")"
+_ld_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nsee %s/queue/sp-7youp for evidence\nDESC" "$_ldflag" "${FAKE_RUN}")"
 out="$(fence_run "$_ld_cmd" SPIRA_AEON=test-aeon)"
-nowant "sp-ozym9/landstate-path-in-heredoc-allowed" '"decision":"block"' "$out"
+nowant "sp-ozym9/queue-path-in-heredoc-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "echo '${FAKE_RUN}/landstate/x needs no write'" SPIRA_AEON=test-aeon)"
-nowant "sp-ozym9/landstate-path-in-single-quoted-prose-allowed" '"decision":"block"' "$out"
+out="$(fence_run "echo '${FAKE_RUN}/queue/x needs no write'" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/queue-path-in-single-quoted-prose-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "rm ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
-nowant "sp-ozym9/override-bypasses-landstate-write-block" '"decision":"block"' "$out"
+out="$(fence_run "rm ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+nowant "sp-ozym9/override-bypasses-queue-write-block" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
@@ -335,6 +339,13 @@ want "UC-safety-fences-03/test-data-title-names-override" "SPIRA_BD_CREATE_OVERR
 
 out="$(fence_bd "SPIRA_DB=/tmp/some-testdb bd -C $BDCREATE_DB create \"test bead\" -l \"plan,repo:fixture-repo\"")"
 want "UC-safety-fences-03/inline-SPIRA_DB-does-not-bypass" '"decision":"block"' "$out"
+
+# sp-j7l3q (Ryan 2026-10-04, sp-nkr42): the bd rules are off the builder's path — it has no bd —
+# and stay on for the grooming personas, which file with bd by design.
+out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_FAYTH=builder)"
+nowant "sp-j7l3q/builder-bd-rules-removed" '"decision":"block"' "$out"
+out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_FAYTH=groomer)"
+want "sp-j7l3q/groomer-keeps-bd-create-fence" '"decision":"block"' "$out"
 
 out="$(fence_bd "bd -C $BDCREATE_DB create \"Implement config reload\" -l \"plan,repo:spira\"")"
 nowant "UC-safety-fences-03/real-title-mapped-repo-allowed" '"decision":"block"' "$out"
