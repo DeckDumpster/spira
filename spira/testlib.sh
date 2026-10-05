@@ -105,6 +105,18 @@ export SPIRA_SUMMON_JITTER="${SPIRA_SUMMON_JITTER:-0}"
 # This library never touches PATH — which is also why `suite-select` below (wave 4.36,
 # sp-bobsp: suite-covers.sh retired onto `suite-select header ...`) resolves by bare name
 # rather than a path built from this file's own location.
+# THE STAGED RELEASE CARRIES model-bin/ (sp-jq4wq). An enforced aeon refuses to start the
+# model in a release with no executable model-bin/work (sp-zf4q3). testenv's stage script is
+# compiled into the INSTALLED testenv, and one older than sp-zf4q3 stages no model-bin/, so
+# every aeon session in a suite was refused. The tree's own spira-config makes it with the
+# release builder's helper, idempotent and safe for a batch's suites to race; only a testenv
+# staged release (/tmp/spira-release-*) is ever touched, and only when model-bin/ is absent.
+case "${SPIRA_RELEASE:-}" in
+    /tmp/spira-release-*)
+        [ -e "$SPIRA_RELEASE/model-bin" ] || [ ! -x "$SPIRA_RELEASE/bin/spira-config" ] \
+            || "$SPIRA_RELEASE/bin/spira-config" link-model-bin "$SPIRA_RELEASE" >/dev/null || true
+        ;;
+esac
 _TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 

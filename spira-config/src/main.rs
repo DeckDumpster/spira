@@ -256,6 +256,26 @@ fn cmd_path_tail() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `link-model-bin <release>` — [`spira_config::release_env::link_model_bin`], the function
+/// `release build` calls, for a release layout staged anywhere else (sp-jq4wq): testenv's
+/// stage script and the suite library run the tree under test's OWN spira-config, so the
+/// staged `model-bin/` is that tree's `MODEL_BINS`, never a list baked into the installed
+/// testenv. Prints each name linked.
+fn cmd_link_model_bin(release: &str) -> ExitCode {
+    match spira_config::release_env::link_model_bin(Path::new(release)) {
+        Ok(names) => {
+            for n in names {
+                println!("{n}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("spira-config link-model-bin: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `resolve --sh [file]` / `resolve --sh-all [file]` — `spira_config::resolve()`'s result as
 /// `KEY='value'` lines (sp-eekjm, "wave 4.4: spira-config resolve"; the `--sh-all` form is
 /// sp-ubcgo, "wave 4.5: conf.sh becomes an eval of resolve"). `SPIRA_HOME`/`SPIRA_REPO` come
@@ -1264,6 +1284,13 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("link-model-bin") => match args.get(1) {
+            Some(release) => cmd_link_model_bin(release),
+            None => {
+                eprintln!("usage: spira-config link-model-bin <release>");
+                ExitCode::FAILURE
+            }
+        },
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
         Some("fayth") => cmd_fayth(&args[1..]),
@@ -1294,6 +1321,7 @@ fn main() -> ExitCode {
                  \x20 set <dotted.path> <value> <file>\n\
                  \x20 unset <dotted.path> <file>\n\
                  \x20 writeback <candidate>\n\
+                 \x20 link-model-bin <release>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
                  \x20 fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\

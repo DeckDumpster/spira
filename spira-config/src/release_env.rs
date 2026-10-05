@@ -84,7 +84,9 @@ pub fn model_bin_problems(release: &Path) -> Vec<String> {
 
 /// Links `<release>/model-bin/<name> -> ../bin/<name>` for every [`MODEL_BINS`] entry
 /// present in `<release>/bin`. Creates nothing when none is (a non-harness repository).
-/// Returns the names linked.
+/// Returns the names linked. Idempotent, and safe to race: a link another caller made first
+/// (every suite of a testenv batch may call this on the one staged release, sp-jq4wq) is
+/// accepted when it already points at `../bin/<name>`.
 pub fn link_model_bin(release: &Path) -> Result<Vec<String>, String> {
     let bin = release.join("bin");
     let present: Vec<&str> = MODEL_BINS.iter().copied().filter(|b| bin.join(b).is_file()).collect();
@@ -95,8 +97,13 @@ pub fn link_model_bin(release: &Path) -> Result<Vec<String>, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     for b in &present {
         let link = dir.join(b);
+        let target = format!("../bin/{b}");
         if std::fs::symlink_metadata(&link).is_err() {
-            std::os::unix::fs::symlink(format!("../bin/{b}"), &link).map_err(|e| format!("cannot symlink {MODEL_BIN_DIR}/{b} -> ../bin/{b}: {e}"))?;
+            match std::os::unix::fs::symlink(&target, &link) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && std::fs::read_link(&link).is_ok_and(|t| t == Path::new(&target)) => {}
+                Err(e) => return Err(format!("cannot symlink {MODEL_BIN_DIR}/{b} -> {target}: {e}")),
+            }
         }
     }
     Ok(present.iter().map(|s| s.to_string()).collect())
