@@ -10,9 +10,7 @@
 //! needs git (`deliver pr-merged`'s merge-tree proof) runs as the caller, in the caller's
 //! checkout — never as the service user.
 //!
-//! THE SWITCH IS READ BEFORE ANYTHING ELSE (sp-gypjk): with `lifecycle_enforce` off every
-//! verb answers from [`off`] without opening a socket, a connection or a repository — the
-//! same answer the shell library gave with the switch off, byte for byte.
+//! There is no off mode (sp-v62vn): every verb reaches the machine.
 
 use lifecycle::bead::{BeadEventKind, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
@@ -81,37 +79,7 @@ pub fn is_verb(v: &str) -> bool {
     VERBS.contains(&v)
 }
 
-/// The answer with `lifecycle_enforce` off. Nothing is read: not the machine, not git.
-/// Each is what the retired shell function returned with the switch off.
-pub fn off(verb: &str, args: &[String]) -> Answer {
-    match verb {
-        // lc_holds / lc_list_*: an empty listing, success.
-        "holds" | "list-held" | "list-state" | "list-all" => Answer::code(0),
-        // lc_held: "not held".
-        "held" => Answer::code(1),
-        // _lc_deliver: no delivery row, logged and skipped, rc 1.
-        "deliver" => {
-            let sub = args.first().map(String::as_str).unwrap_or("");
-            let id = match sub {
-                "pr-merged" => args.get(2),
-                _ => args.get(1),
-            }
-            .cloned()
-            .unwrap_or_default();
-            let actor = deliver_actor(sub);
-            Answer::out(
-                NO_ROW,
-                log_line(&format!(
-                    "lc: no delivery row for {id} — not recording {actor}'s event (inert until the delivery round lands)"
-                )),
-            )
-        }
-        // Every event verb, `state`, certify and resubmit: cannot tell, having touched nothing.
-        _ => Answer::code(CANNOT_TELL),
-    }
-}
-
-/// Run one caller verb with the switch on.
+/// Run one caller verb.
 pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
     let a = |i: usize| args.get(i).cloned().unwrap_or_default();
     let need = |n: usize| args.len() >= n && args[..n].iter().all(|s| !s.is_empty());
@@ -597,11 +565,9 @@ fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
     }
 }
 
-/// The bd half a verb needs: the switch-off claim mutex and an epic's own close. Behind a
-/// trait so the compositions below are unit-testable without bd.
+/// The bd half a verb needs: an epic's own close. Behind a trait so the compositions below
+/// are unit-testable without bd.
 pub trait Bd {
-    /// `bd unclaim <id> --if-assignee <actor>` — Ok when the claim was released.
-    fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String>;
     /// The bead's bd `issue_type` (`task`, `epic`, ...).
     fn issue_type(&mut self, id: &str) -> Result<String, String>;
     /// `bd close <id> --reason <reason>`.
@@ -611,24 +577,17 @@ pub trait Bd {
 /// `unclaim <id> <actor>` — an aeon hands back a bead it still holds (lib.sh
 /// `release_own_claim`).
 ///
-/// Switch on, the lifecycle row IS the claim and the only record touched: a row WORKING
-/// under `actor` gets `Release`; a row WORKING under anyone else is refused, because a sweep
-/// that reaped this aeon may already have handed the bead on; a row past WORKING means the
-/// claim is already over. bd is not written — nothing reads its assignee. Switch off, bd's
-/// claim is the claim, released with its own compare-and-swap (`--if-assignee`).
+/// The lifecycle row IS the claim and the only record touched: a row WORKING under `actor`
+/// gets `Release`; a row WORKING under anyone else is refused, because a sweep that reaped
+/// this aeon may already have handed the bead on; a row past WORKING means the claim is
+/// already over. bd is not written — nothing reads its assignee.
 ///
 /// Exit: 0 released, or nothing held · 1 not this actor's claim, or no such bead · 2 cannot
 /// tell, or usage.
-pub fn unclaim(args: &[String], enforce: bool, m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+pub fn unclaim(args: &[String], m: &mut dyn Machine) -> Answer {
     let (Some(id), Some(actor)) = (args.first().filter(|s| !s.is_empty()), args.get(1).filter(|s| !s.is_empty())) else {
         return usage("unclaim <bead-id> <actor>");
     };
-    if !enforce {
-        return match bd.unclaim(id, actor) {
-            Ok(()) => Answer::code(APPLIED),
-            Err(e) => Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: bd kept the claim on {id}: {}\n", e.trim()), ..Default::default() },
-        };
-    }
     let refuse = |why: String| Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: {id}: {why}\n"), ..Default::default() };
     let v = match show(m, id) {
         Ok(v) => v,

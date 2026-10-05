@@ -14,31 +14,21 @@
 use std::collections::HashMap;
 
 use crate::events::{self, EventRow};
-use crate::rank::{self, LifecycleRow, ReadyRow};
+use crate::rank::{LifecycleRow, ReadyRow};
 
-pub struct Opts {
-    pub enforce: bool,
-}
-
-fn poisoned(id: &str, row: Option<&ReadyRow>, lc: Option<&HashMap<String, LifecycleRow>>) -> bool {
-    match lc {
-        Some(m) => m
-            .get(id)
-            .is_some_and(|r| r.holds.contains(&lifecycle::bead::HoldKind::Poison)),
-        None => row.is_some_and(rank::poisoned_by_label),
-    }
+fn poisoned(id: &str, lc: &HashMap<String, LifecycleRow>) -> bool {
+    lc.get(id).is_some_and(|r| r.holds.contains(&lifecycle::bead::HoldKind::Poison))
 }
 
 /// `candidates`: every bead a persona's partition could claim (attempts.sh's own
 /// `uniq_candidates` — exclusions dropped on purpose, so a poisoned or asked-about bead,
 /// exactly the one whose count most needs reading, is never filtered out before this runs).
-/// `events_by`: every folded row for those ids. `lc`: a lifecycle snapshot, only read when
-/// `enforce` is on.
+/// `events_by`: every folded row for those ids. `lc`: the lifecycle snapshot — the poison is
+/// the machine's `poison` hold, never a bd label.
 pub fn run(
-    o: &Opts,
     candidates: &[ReadyRow],
     events_by: &HashMap<String, Vec<EventRow>>,
-    lc: Option<&HashMap<String, LifecycleRow>>,
+    lc: &HashMap<String, LifecycleRow>,
 ) -> String {
     let mut out = String::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -55,7 +45,7 @@ pub fn run(
             continue;
         }
         n += 1;
-        let is_poisoned = poisoned(&row.id, Some(row), if o.enforce { lc } else { None });
+        let is_poisoned = poisoned(&row.id, lc);
         out.push_str(&format!(
             "{:<20} attempts={:<3} reclaims={:<3} requeues={:<3} {}\n",
             row.id,

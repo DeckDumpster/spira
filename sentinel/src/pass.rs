@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::cfg::{Cfg, Context, Lifecycle};
+use crate::cfg::{Cfg, Context};
 use crate::host::{Host, Io, Out, Spec};
 use crate::seams;
 use crate::store::{self, Bd, Snapshot};
@@ -116,11 +116,9 @@ pub struct Sentinel<'a> {
     pub pass_id: String,
     phase: RefCell<Option<(String, i64)>>,
     pub started: i64,
-    /// The one switch for everything that touches the lifecycle machine (DESIGN.md §2.9).
-    pub lc: Lifecycle,
-    /// ON mode only: the machine could not be read or written this pass → exit 1.
+    /// The machine could not be read or written this pass → exit 1.
     pub lc_failed: Cell<bool>,
-    /// ON: the pass's one `spira-lc list` (lc_rows), shared by CHECK 7's ready cache and
+    /// The pass's one `spira-lc list` (lc_rows), shared by CHECK 7's ready cache and
     /// CHECK 2/2c — one lifecycle read per pass.
     pub lc_memo: RefCell<Option<Option<Vec<crate::model::LcRow>>>>,
 }
@@ -133,15 +131,8 @@ impl<'a> Sentinel<'a> {
         mode: Mode,
         exe: String,
         pass_id: String,
-        lc: Lifecycle,
     ) -> Sentinel<'a> {
         let cfg = Cfg::from_context(&ctx, home);
-        // Every child sees the same switch this process resolved; OFF is
-        // SPIRA_LIFECYCLE_ENFORCE=0 and nothing else (sp-gypjk: no poisoned tool path).
-        h.set_env(
-            "SPIRA_LIFECYCLE_ENFORCE",
-            if lc == Lifecycle::On { "1" } else { "0" },
-        );
         let tally_file = cfg
             .run
             .join(format!(".sentinel-tally.{}", std::process::id()));
@@ -160,7 +151,6 @@ impl<'a> Sentinel<'a> {
             pass_id,
             phase: RefCell::new(None),
             started,
-            lc,
             lc_failed: Cell::new(false),
             lc_memo: RefCell::new(None),
         }
@@ -459,7 +449,7 @@ impl<'a> Sentinel<'a> {
         };
         // Every state decision over this snapshot reads the bead's lifecycle row, never bd
         // status (design §3.4, sp-mve9i): the pass's one `spira-lc list`, read whatever
-        // lifecycle_enforce says — quietly when it is off (`state_rows`).
+        // fail-closed (`state_rows`).
         Ok(Snapshot::new(list_raw, list, ready).with_lc(self.state_rows().as_deref()))
     }
 
@@ -495,9 +485,9 @@ impl<'a> Sentinel<'a> {
         let (open_plan, plan_ready, plan_inprog) = if self.cfg.skip_reclaim {
             (Vec::new(), Some(0), 0)
         } else {
-            // plan_ready under lifecycle_enforce is spira-claim's ready set (sp-7g5q6); open
-            // and in_progress read the snapshot's lifecycle rows in either mode (sp-mve9i).
-            let ready = if self.lc == Lifecycle::On { self.plan_ready_live() } else { snap.plan_ready(&self.cfg) };
+            // plan_ready is spira-claim's ready set (sp-7g5q6); open and in_progress read the
+            // snapshot's lifecycle rows (sp-mve9i).
+            let ready = self.plan_ready_live();
             (snap.plan_open(&self.cfg), ready, snap.plan_inprog(&self.cfg))
         };
         let n_open = open_plan.len();
@@ -527,10 +517,7 @@ impl<'a> Sentinel<'a> {
         self.check1();
 
         self.phase("CHECK2");
-        let lc_rows = match (self.cfg.skip_reclaim, self.lc) {
-            (false, Lifecycle::On) => self.lc_rows(),
-            _ => None,
-        };
+        let lc_rows = if self.cfg.skip_reclaim { None } else { self.lc_rows() };
         if let Some(rows) = &lc_rows {
             self.check2(&snap, rows);
         }
@@ -572,7 +559,7 @@ impl<'a> Sentinel<'a> {
         self.exit_code()
     }
 
-    /// ON mode: a machine that could not be read or written fails the unit, every pass,
+    /// A machine that could not be read or written fails the unit, every pass,
     /// until it is fixed — after the rest of the pass (landing, summoning) has run.
     fn exit_code(&self) -> i32 {
         i32::from(self.lc_failed.get())
@@ -580,10 +567,8 @@ impl<'a> Sentinel<'a> {
 
     fn audit(&self, snap: &Snapshot) -> i32 {
         self.check4(snap);
-        if self.lc == Lifecycle::On {
-            if let Some(rows) = self.lc_rows() {
-                self.check_rowless(snap, &rows);
-            }
+        if let Some(rows) = self.lc_rows() {
+            self.check_rowless(snap, &rows);
         }
         self.check6b();
         if !self.cfg.skip_reclaim {
@@ -671,30 +656,20 @@ impl<'a> Sentinel<'a> {
         Some(now)
     }
 
-    /// `ready_count "<scope,>plan" "spira-poison,<ask>"`, asked live. lifecycle_enforce on:
-    /// spira-claim's `ready-count`, the one ready set (the machine's READY/REWORK rows) the
-    /// summoner counts and an aeon claims from — never `bd ready`, whose status and assignee
-    /// no claim writes (sp-7g5q6). A refusal is `None` (unknown), never 0.
+    /// `ready_count "<scope,>plan" "spira-poison,<ask>"`, asked live: spira-claim's
+    /// `ready-count`, the one ready set (the machine's READY/REWORK rows) the summoner counts
+    /// and an aeon claims from — never `bd ready`, whose status and assignee no claim writes
+    /// (sp-7g5q6). A refusal is `None` (unknown), never 0.
     pub fn plan_ready_live(&self) -> Option<usize> {
-        if self.lc == Lifecycle::On {
-            let o = self.h.run(Spec::args_owned(
-                self.cfg.claim_bin.clone(),
-                vec![
-                    "ready-count".into(),
-                    self.cfg.plan_labels().join(","),
-                    format!("spira-poison,{}", self.cfg.ask),
-                ],
-            ));
-            return if o.ok() { o.stdout.trim().parse().ok() } else { None };
-        }
-        let mut a = store::ready_args(&self.cfg);
-        a.push("--label".into());
-        a.push(self.cfg.plan_labels().join(","));
-        a.push("--exclude-label".into());
-        a.push(format!("spira-poison,{}", self.cfg.ask));
-        store::read_json(&self.bd(), self.h, &a)
-            .ok()
-            .map(|(_, v)| v.len())
+        let o = self.h.run(Spec::args_owned(
+            self.cfg.claim_bin.clone(),
+            vec![
+                "ready-count".into(),
+                self.cfg.plan_labels().join(","),
+                format!("spira-poison,{}", self.cfg.ask),
+            ],
+        ));
+        if o.ok() { o.stdout.trim().parse().ok() } else { None }
     }
 
     /// The fleet: `aeon_count` summed over the roster, from one unit listing.

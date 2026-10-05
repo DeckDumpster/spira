@@ -45,7 +45,7 @@ impl<'a> PrPass<'a> {
 
     fn lifecycle_loud(&self, id: &str, why: &str) {
         let line = format!(
-            "landing-pass: {id}: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen ({why}) — the delivery row stays PR_OPEN"
+            "landing-pass: {id}: LIFECYCLE: the Delivered event did not happen ({why}) — the delivery row stays PR_OPEN"
         );
         self.loud.borrow_mut().push(line.clone());
         eprintln!("{line}");
@@ -128,14 +128,11 @@ impl<'a> PrPass<'a> {
             }
             if self.git.content_on_base(&r.path, br, &base_fq) {
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
-                // OFF (production): the CONTENT record and nothing else — spira-lc is never run
-                // (f031f6dee). ON: the Delivered event, best-effort additive; a machine that
-                // cannot be asked or refuses is a loud LIFECYCLE: line and the pass goes on.
-                if self.s.lifecycle_enforce {
-                    if let Some(sha) = self.git.rev_parse(&r.path, &base_fq) {
-                        if let Err(why) = self.tools.deliver_by_content(id, &sha) {
-                            self.lifecycle_loud(id, &why);
-                        }
+                // The Delivered event, best-effort additive; a machine that cannot be asked or
+                // refuses is a loud LIFECYCLE: line and the pass goes on.
+                if let Some(sha) = self.git.rev_parse(&r.path, &base_fq) {
+                    if let Err(why) = self.tools.deliver_by_content(id, &sha) {
+                        self.lifecycle_loud(id, &why);
                     }
                 }
                 continue;

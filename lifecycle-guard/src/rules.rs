@@ -70,8 +70,8 @@ pub const ORACLE_SUBCOMMANDS: &[&str] = &["mark", "state", "landed", "cited-comm
 /// findings — spira-claim's select, epic and holder paths (sp-mve9i) and the incident
 /// family's dedup (sp-jgjvh). Every Rust decision on a work bead reads
 /// `spira_config::lc_state`; a bead that is not a work bead names its kind through
-/// `spira_config::nonwork`; the rule's named exceptions (the rowless controls and the off
-/// claim record) are argued in DESIGN.md. The rest — the credential rule (over-broad: it
+/// `spira_config::nonwork`; the rule's named exceptions (the rowless controls) are argued
+/// in DESIGN.md. The rest — the credential rule (over-broad: it
 /// flags every `spira-lc` CLI call and comment) and bd named in a brief — are still reported
 /// by a plain run, counted on the gate's one summary line, and join this list in the commit
 /// that clears them.

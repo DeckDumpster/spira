@@ -401,7 +401,6 @@ fn main() {
             conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {
-                enforce: spira_config::lifecycle_enforce(None),
                 bd: "bd".to_string(),
                 db: db.clone(),
                 lc_bin: spira_config::lifecycle_row::lc_bin(),

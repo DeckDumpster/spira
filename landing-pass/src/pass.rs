@@ -101,9 +101,8 @@ impl<'a> Pass<'a> {
         });
     }
 
-    /// With the switch ON, is spira-lc reachable? Probed once per pass, never with it OFF.
+    /// Is spira-lc reachable? Probed once per pass.
     pub(crate) fn lc_ready(&self) -> Result<(), String> {
-        debug_assert!(self.s.lifecycle_enforce);
         self.lc_state.get_or_init(|| self.lc.probe()).clone()
     }
 
@@ -126,12 +125,9 @@ impl<'a> Pass<'a> {
         })
     }
 
-    /// Record a gate outcome as a lifecycle event (enforce only); a refusal is loud, and the
+    /// Record a gate outcome as a lifecycle event; a refusal is loud, and the
     /// caller of a "pass" must not mark CERTIFIED when this returns false.
     fn lc_certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> bool {
-        if !self.s.lifecycle_enforce {
-            return true;
-        }
         match self.lc.certify(id, tip, outcome, detail) {
             Ok(a) => {
                 self.log(&format!("CHECK6 {id}: lifecycle certify {outcome} at {tip}: {a}"));

@@ -439,7 +439,7 @@ pub struct OpenBatch {
     pub owner: String,
     /// spira-lc's own key for this batch and its current CAS version (sp-o7nbr.4, same
     /// field names as sp-o7nbr.2's `_lc_cut_batch` writes for batch.sh) — present only
-    /// when `lifecycle_enforce` is on and `spira-lc cut`/`stack` actually succeeded. queue verdict's lifecycle land walk
+    /// when `spira-lc cut`/`stack` actually succeeded. queue verdict's lifecycle land walk
     /// (queue/DESIGN-verdict.md D3) reads these generically off this same open-batch file
     /// regardless of which cutter wrote it; absent means skip, not CAS against nothing.
     pub batch_id: String,
@@ -2096,8 +2096,8 @@ mod result_path_tests {
 
 #[cfg(test)]
 mod lifecycle_tests {
-    //! The lifecycle switch (DESIGN.md "Lifecycle switch"): off never runs spira-lc; on
-    //! runs it, and an unreachable machine fails the probe.
+    //! The lifecycle machine (DESIGN.md §3): spira-lc runs, and an unreachable machine
+    //! fails the probe.
     use super::*;
 
     fn scratch(tag: &str) -> testkit::TempDir {

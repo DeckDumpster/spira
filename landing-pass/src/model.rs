@@ -100,10 +100,8 @@ pub struct Settings {
     /// `SPIRA_PR_REFRESH_MAX` (default 5): how many times the pr pass rebases and re-pushes
     /// an open pull request before escalating (sp-t4y60, `needs_refresh`).
     pub pr_refresh_max: u32,
-    /// The config document conf.sh resolved (`SPIRA_TOML_FILE`), for the lifecycle switch.
+    /// The config document conf.sh resolved (`SPIRA_TOML_FILE`).
     pub toml: Option<PathBuf>,
-    /// Always true in a real invocation: spira-lc is the only record. Tests may set it false.
-    pub lifecycle_enforce: bool,
     /// `SPIRA_ASK_LABEL` (sp-31hjr): the label an operator ask carries — `ask_already_open`'s
     /// own query, native now (family C).
     pub ask_label: String,
@@ -162,7 +160,6 @@ impl Settings {
             bdjson_fixture: None,
             pr_refresh_max: 5,
             toml: None,
-            lifecycle_enforce: false,
             ask_label: String::new(),
             noverdict_max: 3,
             noverdict_class_window: 86_400,

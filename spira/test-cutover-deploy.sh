@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
 # test-cutover-deploy.sh — container-tier acceptance for sp-sa8pn's own deliverable: the
-# cutover deploy step (schema, grants, classify, flip) against a throwaway `dolt sql-server`
+# cutover deploy step (schema, grants, classify, config) against a throwaway `dolt sql-server`
 # this suite starts and tears down itself, standing in for acceptance criterion D ("runs the
 # cutover deploy on an aged install, and afterwards a manual write to spira_lifecycle as the
 # operator user is refused").
 #
 # classify's own correctness (every precedence tier) is test-lifecycle-classify.sh's job;
 # this suite proves the ORCHESTRATION — that cutover-deploy.sh calls schema, grants,
-# classify and the config flip in the right order, against the real grant set, and that the
+# classify and the config step in the right order, against the real grant set, and that the
 # result is what the grants are for.
 #
 # WHAT THIS PROVES:
 #   - a single run against a fixture with no spira.toml yet, an empty-of-matching-beads bd
 #     database (the degenerate "aged install with nothing to classify" case) and one
-#     repo-map row leaves: spira_lifecycle's schema in place, spira.lifecycle_enforce = true
-#     in a freshly created spira.toml, and classify's own event log non-empty (it ran);
+#     repo-map row leaves: spira_lifecycle's schema in place, a freshly created spira.toml
+#     carrying no spira.lifecycle_enforce (the switch is retired, sp-v62vn), and classify's own event log non-empty (it ran);
 #   - afterwards, a fresh 'operator'@'%' user this suite creates AFTER the grants — never
 #     named by grants.sql, so it holds no privilege on spira_lifecycle at all — is REFUSED
 #     an INSERT (SEEN RED as a positive control: the same INSERT succeeds as spira_lc,
@@ -144,16 +144,15 @@ echo "the deploy step runs end to end on an aged install:"
 out="$(run_deploy 2>&1)"; rc=$?
 [ "$rc" = 0 ] || printf '%s\n' "$out" >&2
 wantrc "cutover-deploy.sh exits 0" 0 "$rc"
-want "it reports the flip" "flipping lifecycle_enforce" "$out"
+want "it reports the retired switch's removal" "retiring lifecycle_enforce" "$out"
 want "it ran the classifier" "classifying the quiesced store" "$out"
 
 out_flag="$(run_deploy --remove-dropin /nonexistent 2>&1)"; wantrc "the retired --remove-dropin flag is refused" 2 $?
 
 echo
-echo "the flip landed in a freshly created spira.toml:"
+echo "the config step left a freshly created spira.toml with no lifecycle switch in it:"
 [ -f "$TOML" ] || bail "spira.toml was not created"
-got="$("$CFG_BIN" get spira.lifecycle_enforce "$TOML" 2>&1)"
-is "spira.lifecycle_enforce reads true" "true" "$got"
+nowant "spira.toml carries no lifecycle_enforce key" "lifecycle_enforce" "$(cat "$TOML")"
 
 echo
 echo "the classifier actually ran (its own event log is non-empty, or it had nothing to classify):"

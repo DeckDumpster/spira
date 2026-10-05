@@ -67,11 +67,10 @@ pub enum Throttle {
     Unreadable(String),
 }
 
-/// Everything about the world outside the store that the starved and ghost rules read.
+/// Everything about the world outside the store that the starved rule reads.
 #[derive(Debug, Clone)]
 pub struct Facts {
     pub now: i64,
-    pub ghost_grace: i64,
     /// Live aeons of the personas that work this partition.
     pub live: u32,
     /// Live aeons across the fleet, and the configured cap (0 = unconfigured).
@@ -84,21 +83,12 @@ pub struct Facts {
     pub world: Option<&'static str>,
     pub pass_truncated: bool,
     pub throttle: Throttle,
-    /// in_progress bead id -> a live process holds it.
-    pub holders: HashMap<String, bool>,
-    /// Beads legitimately waiting (probe::wait_held: the legacy label off, the spira-lc
-    /// `wait` hold on).
-    pub wait_held: HashSet<String>,
-    /// The lifecycle switch: on, there is no ghost rule (bd's in_progress is nobody's claim;
-    /// the sentinel's CHECK 2 reaps a WORKING row whose lease expired past its grace).
-    pub lifecycle_enforce: bool,
 }
 
 impl Default for Facts {
     fn default() -> Self {
         Facts {
             now: 0,
-            ghost_grace: 300,
             live: 0,
             total_live: 0,
             max_aeons: 0,
@@ -107,9 +97,6 @@ impl Default for Facts {
             world: None,
             pass_truncated: false,
             throttle: Throttle::Open,
-            holders: HashMap::new(),
-            wait_held: HashSet::new(),
-            lifecycle_enforce: false,
         }
     }
 }
@@ -183,7 +170,6 @@ impl<'a> Partition<'a> {
         let mut rows = Vec::new();
         let members: Vec<&Bead> =
             self.store.beads.iter().filter(|b| !b.is_closed() && self.member(b)).collect();
-        self.ghosts(&members, &mut rows);
         self.deferred(&members, &mut rows);
         self.starved(&mut rows);
         let mut memo = HashMap::new();
@@ -192,46 +178,6 @@ impl<'a> Partition<'a> {
         }
         self.cycles(&members, &mut rows);
         rows
-    }
-
-    // -- ghost: in_progress, lease expired past the grace window, no live holder. Exempt:
-    // escalated (ask label) and wait-held beads. lifecycle_enforce off only: on, bd's
-    // in_progress and lease are written by no claim, and the stranded claim this rule hunts —
-    // a WORKING row whose lease expired, not wait-held — is CHECK 2's stale-lease reaper's
-    // (sentinel/src/lifecycle.rs `stale_leases`), which HolderDead-s it (sp-7g5q6).
-    fn ghosts(&self, members: &[&Bead], rows: &mut Vec<Row>) {
-        if self.facts.lifecycle_enforce {
-            return;
-        }
-        for b in members {
-            if b.status != Status::InProgress {
-                continue;
-            }
-            if self.facts.holders.get(&b.id).copied().unwrap_or(false) {
-                continue;
-            }
-            if b.has(&self.vocab.ask) || self.facts.wait_held.contains(&b.id) {
-                continue;
-            }
-            let Some(exp) = b.lease_expires_at.as_deref().and_then(crate::timefmt::parse_rfc3339) else {
-                continue;
-            };
-            if self.facts.now - exp < self.facts.ghost_grace {
-                continue;
-            }
-            let mins = (self.facts.now - exp) / 60;
-            rows.push(Row::new(
-                "ghost",
-                &b.id,
-                Disposition::Act,
-                format!(
-                    "in_progress, lease expired {}m ago, holder {} is not running",
-                    mins,
-                    b.assignee.as_deref().filter(|s| !s.is_empty()).unwrap_or("?")
-                ),
-                format!("bd reclaim --id {}", b.id),
-            ));
-        }
     }
 
     // -- deferred without an escalation (law-filed-bead-queued-xor-escalated). Exempt when a
@@ -944,31 +890,6 @@ mod tests {
         for stranded in [held(None), held(Some("2026-10-02T08:00:00Z")), held(Some("garbage"))] {
             assert_eq!(kinds(&stranded), vec![("deferred-unescalated".into(), "d".into())]);
         }
-    }
-
-    #[test]
-    fn ghost_needs_an_expired_lease_and_no_holder() {
-        let mut v = bead("g", "in_progress", PLAN, None, &[]);
-        v["lease_expires_at"] = json!("2026-09-29T00:00:00Z");
-        v["assignee"] = json!("aeon-x");
-        let s = store(vec![v]);
-        let exp = crate::timefmt::parse_rfc3339("2026-09-29T00:00:00Z").unwrap();
-        let mut f = Facts { live: 1, now: exp + 600, ..Facts::default() };
-        let rows = run_with(&s, &[], &f);
-        assert_eq!(kinds(&rows), vec![("ghost".into(), "g".into())]);
-        assert_eq!(rows[0].detail, "in_progress, lease expired 10m ago, holder aeon-x is not running");
-        assert_eq!(rows[0].action, "bd reclaim --id g", "lifecycle_enforce off: the legacy reclaim");
-        f.lifecycle_enforce = true;
-        assert!(run_with(&s, &[], &f).is_empty(), "on: bd in_progress is no claim; CHECK 2 reaps the WORKING row");
-        f.lifecycle_enforce = false;
-        f.now = exp + 100; // inside the grace window
-        assert!(run_with(&s, &[], &f).is_empty());
-        f.now = exp + 600;
-        f.holders.insert("g".into(), true);
-        assert!(run_with(&s, &[], &f).is_empty());
-        f.holders.clear();
-        f.wait_held.insert("g".into());
-        assert!(run_with(&s, &[], &f).is_empty());
     }
 
     #[test]

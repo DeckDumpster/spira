@@ -354,8 +354,8 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
 # READY_ARGS and ready_raw_args stay bash: drain.sh and aeon's seam read the array directly,
 # and computing them through a subprocess at source time corrupted the aeon's seam snapshot.
-# On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. With lifecycle_enforce
-# on, neither decides what is ready: spira-claim's counts and an aeon's ready set come from
+# On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. Neither decides what
+# is ready (the lifecycle machine is the only mode, sp-v62vn): spira-claim's counts and an aeon's ready set come from
 # the lifecycle machine's rows (spira-claim `ready-count`, `fayth-ready [--json]`).
 
 ready_raw_args() {
@@ -367,8 +367,7 @@ READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
-# ready_count <labels> [<exclude-labels>] — spira-claim's count, so with lifecycle_enforce on
-# it counts the lifecycle machine's claimable rows, the set an aeon claims from.
+# ready_count <labels> [<exclude-labels>] — spira-claim's count: it counts the lifecycle machine's claimable rows, the set an aeon claims from.
 ready_count() {
     _spira_claim ready-count "$1" "${2:-}"
 }
@@ -589,10 +588,9 @@ lc_bead_verified() {
 
 # release_own_claim <id> — an aeon hands back a bead it is still holding.
 #
-# ONE CALL, THROUGH THE MACHINE: `spira-lc unclaim`. With lifecycle_enforce on it releases the
-# lifecycle row only if <me> still holds it — a bead reaped and handed to another aeon in
-# between keeps its new holder — and writes nothing to bd, whose assignee nobody reads. Off,
-# it is bd's own `unclaim --if-assignee <me>`, the same compare-and-swap.
+# ONE CALL, THROUGH THE MACHINE: `spira-lc unclaim`. It releases the lifecycle row only if
+# <me> still holds it — a bead reaped and handed to another aeon in between keeps its new
+# holder — and writes nothing to bd, whose assignee nobody reads.
 #
 # THE NAME IS THE AEON'S, NOT THE FAYTH'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
 # the per-instance name — `aeon-mindy`, not `aeon-builder`. Release sites that derived the

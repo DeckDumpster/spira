@@ -620,7 +620,7 @@ build or locate the binary — the testenv container already builds the workspac
   certification gate is the repository's own gate string (fences + sp-vq2za's budgeted
   selector + testenv) run by gate.sh — this pass never picks suites. `confine.sh` still gets
   the bead's labels as its fifth argument (its interface; bounded by the bead's label set).
-- **D13 — `lifecycle_enforce` (§9).**
+- **D13 — `lifecycle_enforce` (§9), retired by sp-v62vn.**
 - **D14 — queue certification runs up to `SPIRA_CERTIFY_PAR` gates at once (sp-kg14a).**
   *Evidence (2026-09-29):* one pass ran from 14:46Z past 15:47Z certifying ~50 backlog
   branches one at a time (gate walls 574 s, 704 s, 1732 s, 2574 s) while six freshly
@@ -746,34 +746,18 @@ build or locate the binary — the testenv container already builds the workspac
   subprocess (bare name on PATH), the same program `spira_reap_landed_branch`'s own shim
   already execs — never a second lib.sh seam hop.
 
-## 9. Lifecycle switch
+## 9. Lifecycle switch (retired)
 
-**Finding (operator, 2026-09-29):** the lifecycle machine is not deployed on this host (no
-`spira_lifecycle` database, no `spira_lc` grant, no service or socket). **Decision:**
-`lifecycle_enforce` is THE switch for everything that touches it.
+`lifecycle_enforce` once gave this pass an OFF mode that never invoked spira-lc and pinned
+`SPIRA_LIFECYCLE_ENFORCE=0` for its children. sp-v62vn retired the switch: spira-lc is the
+only record, and a config or environment still saying off is refused by spira-config.
 
-**Resolution:** `spira_config::lifecycle_enforce(<the document conf.sh resolved>)` — the
-one rule the crates share (27000cbf9): the process environment's `SPIRA_LIFECYCLE_ENFORCE`
-wins (`1`/`true` on, anything else off), else the typed `spira.lifecycle_enforce`, else
-**off**. Binary presence is never an input. The document is conf.sh's `SPIRA_TOML_FILE`,
-carried in the context answer.
-
-**OFF (production today):** landing-pass never invokes spira-lc, not even a probe. It also
-pins `SPIRA_LIFECYCLE_ENFORCE=0` into its environment before any child starts, so the bash
-it still runs — pr-pass-branch.sh's `lc_deliver_pr_merged/closed`, the lib.sh seams — reads
-the same switch and does not reach spira-lc either (sp-gypjk: there is no poisoned
-`SPIRA_LC_BIN` path any more; spira-lc is invoked by name).
-Behaviour is the pre-lifecycle contract: landstate and labels only.
-
-| path | OFF | ON |
-|---|---|---|
-| pr: content already on base | the `CONTENT` landstate record, nothing else (f031f6dee's OFF semantics, kept) | the same, plus `Delivered` when the delivery row is `PR_OPEN` — best-effort additive; no row / not PR_OPEN is quiet; a machine that cannot be asked or refuses is a loud `landing-pass: <id>: LIFECYCLE: …` line on stderr and the pass goes on (f031f6dee's ON semantics) |
-| pr: helper exits 7/8 | helper's lc calls see `SPIRA_LIFECYCLE_ENFORCE=0`: no-ops | helper records Delivered/Returned as before |
-| push: landed / lost the race / conflict | no `lc_deliver_push_*` call at all | `lc_deliver_push_delivered / _requeued / _returned`; spira-lc probed once per pass (`list --state IN_DELIVERY`) before the first push landing — **unreachable refuses the landing loudly** (`landing: lifecycle_enforce is on and spira-lc is unreachable (<why>) — not landing <br> this pass; …`), because the landing would be a delivery the authoritative machine never saw |
-| queue / queue.local certification, hold, prune, halt | never touches spira-lc | never touches spira-lc (gate.sh's own certification event is gate.sh's) |
-
-This rewrite **supersedes** f031f6dee's code path (its `main.rs` is replaced), and keeps its
-OFF semantics exactly and its ON semantics for the pr content proof.
+| path | behaviour |
+|---|---|
+| pr: content already on base | the `CONTENT` landstate record, plus `Delivered` when the delivery row is `PR_OPEN` — best-effort additive; no row / not PR_OPEN is quiet; a machine that cannot be asked or refuses is a loud `landing-pass: <id>: LIFECYCLE: …` line on stderr and the pass goes on |
+| pr: helper exits 7/8 | helper records Delivered/Returned |
+| push: landed / lost the race / conflict | `deliver_delivered / _requeued / _returned`; spira-lc probed once per pass (`list --state IN_DELIVERY`) before the first push landing — **unreachable refuses the landing loudly** (`landing: spira-lc is unreachable (<why>) — not landing <br> this pass; fix the lifecycle machine …`), because the landing would be a delivery the authoritative machine never saw |
+| queue / queue.local certification | the gate outcome is a `certify` event on the machine |
 
 ## 10. Tests
 

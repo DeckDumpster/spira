@@ -22,20 +22,13 @@ pub struct Config {
     /// The spira-claim program: `spira-claim`, by name on the launcher's PATH (sp-gypjk). A
     /// field only so a unit test can hand in a recorder.
     pub claim_bin: String,
-    /// THE lifecycle switch (DESIGN.md §9): `SPIRA_LIFECYCLE_ENFORCE`, else
-    /// `spira.lifecycle_enforce`, else off. On, the ready set is spira-claim's and there is no
-    /// ghost rule; strand never runs spira-lc either way.
-    pub lifecycle_enforce: bool,
     pub instance: Option<String>,
     pub labels: Option<String>,
     pub exclude_labels: Option<String>,
-    pub ghost_grace: i64,
     pub strand_grace: i64,
-    pub reclaim_at: i64,
     pub event_cooldown: i64,
     pub bd_timeout: String,
     pub list_snapshot: Option<PathBuf>,
-    pub ready_snapshot: Option<PathBuf>,
     pub systemctl: String,
     pub summon: String,
     pub capacity_pause: Option<PathBuf>,
@@ -124,21 +117,14 @@ impl Config {
             throttle_release_at: nonempty(get("SPIRA_QUEUE_THROTTLE_RELEASE_AT", "queue_throttle_release_at"))
                 .unwrap_or_else(|| "8".into()),
             claim_bin: "spira-claim".into(),
-            lifecycle_enforce: spira_config::resolve_lifecycle_enforce(
-                src.env(spira_config::LIFECYCLE_ENFORCE_ENV).as_deref(),
-                src.toml("lifecycle_enforce").map(|v| v == "true"),
-            ),
             // conf.sh: an unset SPIRA_INSTANCE is identical to SPIRA_INSTANCE=prod.
             instance: Some(nonempty(get("SPIRA_INSTANCE", "instance")).unwrap_or_else(|| "prod".into())),
             labels: nonempty(src.env("SPIRA_LABELS")),
             exclude_labels: nonempty(src.env("SPIRA_EXCLUDE_LABELS")),
-            ghost_grace: num("SPIRA_GHOST_GRACE", 300),
             strand_grace: num("SPIRA_STRAND_GRACE", 900),
-            reclaim_at: num("SPIRA_RECLAIM_AT", 5),
             event_cooldown: num("SPIRA_EVENT_COOLDOWN", 3600),
             bd_timeout: nonempty(src.env("BD_TIMEOUT")).unwrap_or_else(|| "180".into()),
             list_snapshot: path("SPIRA_LIST_SNAPSHOT"),
-            ready_snapshot: path("SPIRA_READY_SNAPSHOT"),
             systemctl: nonempty(src.env("SPIRA_SYSTEMCTL")).unwrap_or_else(|| "systemctl".into()),
             summon: nonempty(src.env("SPIRA_SUMMON")).unwrap_or_else(|| "systemd-run".into()),
             capacity_pause: path("SPIRA_CAPACITY_PAUSE"),
@@ -229,18 +215,6 @@ mod tests {
         assert_eq!(Config::resolve(&f).max_aeons, None);
     }
 
-    #[test]
-    fn lifecycle_switch_env_then_toml_then_off() {
-        let r = |env: &[(&'static str, &'static str)], toml: &[(&'static str, &'static str)]| {
-            Config::resolve(&Fake { env: env.iter().copied().collect(), toml: toml.iter().copied().collect() }).lifecycle_enforce
-        };
-        assert!(!r(&[], &[]), "default off");
-        assert!(r(&[], &[("lifecycle_enforce", "true")]));
-        assert!(!r(&[("SPIRA_LIFECYCLE_ENFORCE", "0")], &[("lifecycle_enforce", "true")]), "the environment wins");
-        assert!(!r(&[("SPIRA_LIFECYCLE_ENFORCE", "")], &[("lifecycle_enforce", "true")]), "set-but-empty is off");
-        assert!(r(&[("SPIRA_LIFECYCLE_ENFORCE", "1")], &[]));
-        assert!(r(&[("SPIRA_LIFECYCLE_ENFORCE", "true")], &[("lifecycle_enforce", "false")]));
-    }
 }
 
 fn resolved_ask_label() -> String {

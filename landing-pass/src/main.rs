@@ -19,7 +19,7 @@ use landing_pass::pr::{PrPass, RealPrTools};
 use landing_pass::real::{load_context, RealBeads, RealClock, RealGit, RealLib, RealProcs, RealTools, SeamRunner};
 use landing_pass::records::Files;
 use landing_pass::report::Reporter;
-use landing_pass::lifecycle::{pin_for_children, RealLc};
+use landing_pass::lifecycle::RealLc;
 use landing_pass::{signals, util};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -105,7 +105,7 @@ fn pr() -> i32 {
             return 1;
         }
     };
-    let (mut s, repos) = match load_context(&home, &out) {
+    let (s, repos) = match load_context(&home, &out) {
         Ok(x) => x,
         Err(e) => {
             eprintln!("landing-pass: {e}");
@@ -119,8 +119,6 @@ fn pr() -> i32 {
         out.log("landing-pass: repository map is not configured or unreadable — refusing to run");
         return 1;
     }
-    s.lifecycle_enforce = true;
-    pin_for_children(true);
     let beads = RealBeads {
         home: s.home.clone(),
         db: s.db.clone(),
@@ -160,7 +158,7 @@ fn land() -> i32 {
         eprintln!("landing-pass: SPIRA_HOME is unset");
         return 1;
     };
-    let (mut s, repos) = match load_context(&home, &boot) {
+    let (s, repos) = match load_context(&home, &boot) {
         Ok(x) => x,
         Err(e) => {
             boot.log(&format!("landing: {e} — no pass ran"));
@@ -170,9 +168,6 @@ fn land() -> i32 {
             return 1;
         }
     };
-    s.lifecycle_enforce = true;
-    // Before the signal thread exists: the environment is only ever set single-threaded.
-    pin_for_children(true);
     let files = Files::new(&s.run);
     let _lock = match try_lock(&files.lock()) {
         Ok(Some(l)) => l,

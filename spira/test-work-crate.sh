@@ -48,16 +48,8 @@ nowant "cargo test -p work: nothing failed" "FAILED" "$out"
 # because a case below runs it under a minimal `env -i PATH`.
 WORK_BIN="$(command -v work)" || bail "work is not on PATH"
 
-# ── lifecycle_enforce OFF (the default): every verb refused before the socket ─────────
-# The cases below are the machine's own behaviour, so they run with the switch ON; this
-# one proves the OFF default refuses (exit 3) and names the legacy path instead.
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_LC_SOCKET="$TMP/no-such-socket" \
-    "$WORK_BIN" show 2>&1)"; rc=$?
-is   "lifecycle_enforce off: refused (exit 3)"      "3"                        "$rc"
-want "lifecycle_enforce off: says the switch is off" "lifecycle_enforce is off" "$out"
-
 # ── no SPIRA_WORK_BEAD_ID: cannot tell, never a guess at which bead ──────────────────
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_LIFECYCLE_ENFORCE=1 "$WORK_BIN" show 2>&1)"; rc=$?
+out="$(env -i PATH="/usr/bin:/bin" "$WORK_BIN" show 2>&1)"; rc=$?
 is   "no bound bead: exits 2 (cannot tell)" "2"                    "$rc"
 want "no bound bead: names the missing var" "SPIRA_WORK_BEAD_ID"   "$out"
 
@@ -65,22 +57,22 @@ want "no bound bead: names the missing var" "SPIRA_WORK_BEAD_ID"   "$out"
 # POSITIVE CONTROL: the same call with the bound bead named instead reaches the (absent)
 # socket and fails with "cannot tell", not "refused" — proving the refusal case below is
 # a real, distinguishing decision and not just "everything fails without a socket".
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_LC_SOCKET="$TMP/no-such-socket" \
+out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_LC_SOCKET="$TMP/no-such-socket" \
     "$WORK_BIN" note "an ordinary note" 2>&1)"; rc=$?
 is "POSITIVE CONTROL: bound bead, unreachable socket: exits 2 (cannot tell)" "2" "$rc"
 
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_LC_SOCKET="$TMP/no-such-socket" \
+out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_LC_SOCKET="$TMP/no-such-socket" \
     "$WORK_BIN" note "sp-other2" 2>&1)"; rc=$?
 is   "foreign bead in note: refused (exit 3), never reaches the socket" "3"        "$rc"
 want "foreign bead in note: names the offending id"                     "sp-other2" "$out"
 want "foreign bead in note: names the bound bead"                       "sp-bound1" "$out"
 
 # superseded-by names a different bead by design — must NOT be refused.
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_LC_SOCKET="$TMP/no-such-socket" \
+out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_LC_SOCKET="$TMP/no-such-socket" \
     "$WORK_BIN" superseded-by sp-other2 2>&1)"; rc=$?
 is "superseded-by names a different bead: NOT refused (exits 2, cannot tell — reached for the socket)" "2" "$rc"
 
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_WORK_BEAD_ID="sp-bound1" \
+out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" \
     "$WORK_BIN" close 2>&1)"; rc=$?
 is "unknown verb: refused (exit 3)" "3" "$rc"
 

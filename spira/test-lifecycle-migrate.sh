@@ -62,10 +62,8 @@ done
 
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture SQL against the suite's private server
 
-# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk);
-# lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
+# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk).
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-export SPIRA_LIFECYCLE_ENFORCE=1
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -105,14 +103,6 @@ want "since now exists" "since" "$(columns)"
 out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "a second run succeeds: the non-idempotent 0002 is not replayed" 0 $rc
 want "and says why" "0002-since.sql: bead.since present" "$out"
-
-echo
-echo "where lifecycle is not enforced, --if-enforced migrates nothing"
-pre_since_db
-out="$(SPIRA_LIFECYCLE_ENFORCE=0 spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
-wantrc "exit 0" 0 $rc
-want "says so" "lifecycle_enforce is off" "$out"
-nowant "and changed nothing" "since" "$(columns)"
 
 echo
 echo "a failing migration exits non-zero and stops the run, so pre-activate refuses the flip"

@@ -15,10 +15,9 @@ fn row(id: &str, labels: &[&str]) -> ReadyRow {
 #[test]
 fn a_bead_with_nothing_charged_is_not_printed() {
     let out = run(
-        &Opts { enforce: false },
         &[row("sp-a", &[])],
         &HashMap::new(),
-        None,
+        &HashMap::new(),
     );
     assert!(!out.contains("sp-a"), "{out}");
     assert!(
@@ -30,10 +29,9 @@ fn a_bead_with_nothing_charged_is_not_printed() {
 #[test]
 fn zero_is_a_claim_and_the_denominator_proves_it() {
     let out = run(
-        &Opts { enforce: false },
         &[row("sp-a", &[]), row("sp-b", &[])],
         &HashMap::new(),
-        None,
+        &HashMap::new(),
     );
     assert!(
         out.contains("--- 0 bead(s) carrying counters, of 2 claimable"),
@@ -44,10 +42,9 @@ fn zero_is_a_claim_and_the_denominator_proves_it() {
 #[test]
 fn duplicate_candidates_are_counted_once() {
     let out = run(
-        &Opts { enforce: false },
         &[row("sp-a", &[]), row("sp-a", &[])],
         &HashMap::new(),
-        None,
+        &HashMap::new(),
     );
     assert!(out.contains("of 1 claimable"), "{out}");
 }
@@ -62,7 +59,7 @@ fn attempts_and_requeue_causes_come_from_the_fold_not_a_label() {
             EventRow::new("sp-c", "reopen", "gate-red", "2026-09-01T01:00:00Z"),
         ],
     );
-    let out = run(&Opts { enforce: false }, &[row("sp-c", &[])], &ev, None);
+    let out = run(&[row("sp-c", &[])], &ev, &HashMap::new());
     assert!(out.contains("sp-c"), "{out}");
     assert!(out.contains("attempts=1"), "{out}");
     assert!(out.contains("attempt charged: still open"), "{out}");
@@ -80,36 +77,20 @@ fn reclaim_causes_come_from_the_raw_reclaimed_rows() {
             EventRow::new("sp-r", "reclaimed", "ghost", "2026-09-01T00:05:00Z"),
         ],
     );
-    let out = run(&Opts { enforce: false }, &[row("sp-r", &[])], &ev, None);
+    let out = run(&[row("sp-r", &[])], &ev, &HashMap::new());
     assert!(out.contains("reclaims=1"), "{out}");
     assert!(out.contains("reclaim ghost"), "{out}");
 }
 
 #[test]
-fn off_mode_poisoned_reads_the_label() {
-    let mut ev: HashMap<String, Vec<EventRow>> = HashMap::new();
-    ev.insert(
-        "sp-p".into(),
-        vec![EventRow::new("sp-p", "claimed", "", "2026-09-01T00:00:00Z")],
-    );
-    let out = run(
-        &Opts { enforce: false },
-        &[row("sp-p", &["spira-poison"])],
-        &ev,
-        None,
-    );
-    assert!(out.contains("sp-p") && out.contains("POISONED"), "{out}");
-}
-
-#[test]
-fn on_mode_poisoned_reads_the_lifecycle_snapshot_never_the_label() {
+fn poisoned_reads_the_lifecycle_snapshot_never_the_label() {
     use lifecycle::bead::{BeadState, HoldKind};
     let mut ev: HashMap<String, Vec<EventRow>> = HashMap::new();
     ev.insert(
         "sp-p".into(),
         vec![EventRow::new("sp-p", "claimed", "", "2026-09-01T00:00:00Z")],
     );
-    // Carries the legacy label, but lifecycle_enforce is on: the label must not be read.
+    // Carries the legacy label: the label must not be read.
     let mut lc = HashMap::new();
     lc.insert(
         "sp-p".to_string(),
@@ -122,10 +103,9 @@ fn on_mode_poisoned_reads_the_lifecycle_snapshot_never_the_label() {
         },
     );
     let out = run(
-        &Opts { enforce: true },
         &[row("sp-p", &["spira-poison"])],
         &ev,
-        Some(&lc),
+        &lc,
     );
     assert!(out.contains("POISONED"), "{out}");
     let mut lc_clear = HashMap::new();
@@ -140,13 +120,12 @@ fn on_mode_poisoned_reads_the_lifecycle_snapshot_never_the_label() {
         },
     );
     let out2 = run(
-        &Opts { enforce: true },
         &[row("sp-p", &["spira-poison"])],
         &ev,
-        Some(&lc_clear),
+        &lc_clear,
     );
     assert!(
         !out2.contains("POISONED"),
-        "the label is not the poison when lifecycle_enforce is on: {out2}"
+        "the label is not the poison: {out2}"
     );
 }

@@ -36,10 +36,6 @@
 # covers: spira/lib.sh UC-landed-audit-reaping-15
 # scar: spira_destroy_branch called git branch -D unconditionally; a branch reclaimed before its commits reached origin/main was silently garbage-collected with no error.
 set -uo pipefail
-# This suite exercises the legacy landstate fence; an installed instance now turns
-# lifecycle_enforce on (sp-6ka75), under which sending consults a lifecycle store this fixture
-# never builds and answers 2 ("cannot tell") for every destroy. Pin it off, as other legacy suites do.
-export SPIRA_LIFECYCLE_ENFORCE=0
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
@@ -61,13 +57,37 @@ git -C "$REPO" remote set-head origin main
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
-# Use the status seam so no beads database is needed. The bead is "open" (not
-# in_progress), so spira_holder_witnesses finds no database holder.
+# Use the status seam so no beads database is needed.
 spira_status_seam - <<'SEAM'
 sp-db1	open
 sp-db2	open
 sp-db3	open
 SEAM
+
+# THE LIFECYCLE STATE IS SEEDED, NOT SWITCHED OFF (sp-v62vn: the machine is the only mode).
+# sending reads each bead's claim from its lifecycle row (`spira-lc show`) and its queue
+# state (`spira-lc state`); this stand-in answers both from one file per bead under
+# $LCSTATE, holding the bead's state, and hands every other verb (content-landed, the
+# fence's own diff check) to the tree's real spira-lc. A bead with no file has no row.
+REAL_LC="$(command -v spira-lc)" || bail "spira-lc is not on PATH"
+LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lc-bin"
+cat > "$TMP/lc-bin/spira-lc" <<LCSTUB
+#!/bin/sh
+case "\$1" in
+    show)  [ -f "$LCSTATE/\$2" ] || exit 1
+           printf '{"bead":{"bead_id":"%s","state":"%s","holder":null,"lease_until":null,"holds":[]},"delivery":null}\n' "\$2" "\$(cat "$LCSTATE/\$2")" ;;
+    state) [ -f "$LCSTATE/\$2" ] && cat "$LCSTATE/\$2" ;;
+    list)  printf '[' ; sep=''
+           for f in "$LCSTATE"/*; do [ -f "\$f" ] || continue
+               printf '%s{"bead_id":"%s","state":"%s","holds":[]}' "\$sep" "\$(basename "\$f")" "\$(cat "\$f")"; sep=','
+           done
+           printf ']\n' ;;
+    *)     exec "$REAL_LC" "\$@" ;;
+esac
+LCSTUB
+chmod +x "$TMP/lc-bin/spira-lc"
+PATH="$TMP/lc-bin:$PATH"
+for id in sp-db1 sp-db2 sp-db3 sp-db6 sp-db8; do printf 'READY\n' > "$LCSTATE/$id"; done
 
 # ---- helpers -----------------------------------------------------------------------
 
@@ -183,11 +203,6 @@ fi
 echo
 echo "queued lifecycle state (fence must refuse, no bypass possible):"
 
-LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lc-bin"
-printf '#!/bin/sh\n[ "$1" = state ] && [ -f "%s/$2" ] && cat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/lc-bin/spira-lc"
-chmod +x "$TMP/lc-bin/spira-lc"
-PATH="$TMP/lc-bin:$PATH"
-
 make_branch sp-db4
 printf 'CERTIFIED\n' > "$LCSTATE/sp-db4"
 out4="$(spira_destroy_branch sp-db4 spira/sp-db4 "$REPO" "test: certified" caller-bypass 2>&1)"
@@ -204,8 +219,7 @@ is "IN_DELIVERY refuses even with a caller bypass" 1 "$rc5"
 if branch_exists spira/sp-db5; then ok "IN_DELIVERY branch still exists"; else bad "IN_DELIVERY branch still exists" "spira/sp-db5 was deleted"; fi
 
 # ======================================================================================
-# LIVE HOLDER WITNESS — a live process (a hold, or an in_progress lease via the status
-# seam) refuses the destroy regardless of content. Gap: UC-landed-audit-reaping-15.
+# LIVE HOLDER WITNESS — a live process (a hold, or a WORKING lifecycle row) refuses the destroy regardless of content. Gap: UC-landed-audit-reaping-15.
 # ======================================================================================
 echo
 echo "live holder witness (fence must refuse):"
@@ -220,12 +234,8 @@ want "reaplog records the holder" "a live process holds it" "$(cat "$SPIRA_REAPL
 rm -f "$SPIRA_RUN/hold-sp-db6.pid"
 
 make_branch sp-db7
-spira_status_seam - <<'SEAM'
-sp-db1	open
-sp-db2	open
-sp-db3	open
-sp-db7	in_progress
-SEAM
+# The lease is the lifecycle row's WORKING holder, never bd's in_progress (sp-mve9i).
+printf 'WORKING\n' > "$LCSTATE/sp-db7"
 out7="$(spira_destroy_branch sp-db7 spira/sp-db7 "$REPO" "test: in_progress" 2>&1)"
 rc7=$?
 is "an in_progress lease refuses the destroy" 1 "$rc7"

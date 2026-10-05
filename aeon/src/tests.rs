@@ -159,6 +159,11 @@ impl Seam for FakeSeam {
                 let rows: Vec<serde_json::Value> = w.ready.iter().map(|id| serde_json::from_str::<serde_json::Value>(&row_json(&w, id)).unwrap()[0].clone()).collect();
                 Out::ok(serde_json::Value::Array(rows).to_string())
             }
+            // The Claim event: the row is WORKING under this aeon from here on.
+            "lc_claim_bead" => {
+                w.status.insert(args[0].clone(), "in_progress".into());
+                Out::ok("")
+            }
             "aeon_count" => Out::ok("0"),
             "fayth_free" => Out::ok("1"),
             "_aeon_rebase" => Out::ok(""),
@@ -247,7 +252,7 @@ struct Fx {
     repo: PathBuf,
     /// A directory holding a stub `work` binary, so the restricted-env resolution
     /// (`restrict::work_bin_dir`, sp-zpaq0) finds one exactly as the real release's
-    /// `bin/` does — without it, every `enforce=true` test would exercise the "work is
+    /// `bin/` does — without it, every test would exercise the "work is
     /// not on PATH" refusal instead of the restriction itself.
     bin: PathBuf,
     w: W,
@@ -309,8 +314,8 @@ struct Outcome {
     slept: usize,
 }
 
-fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
-    go_as("builder", f, labels, extra, enforce, mode, seam_answers, act)
+fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
+    go_as("builder", f, labels, extra, mode, seam_answers, act)
 }
 
 /// `go`, with the fayth NAME parameterized (sp-1zxru-2: the no-progress fix is a property
@@ -319,7 +324,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
 /// it must have already written `chamber/<fayth_name>.md`/`.fayth` into `f.home`, same as
 /// `fx()` does for "builder").
 #[allow(clippy::too_many_arguments)]
-fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
+fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
     let mut vars: BTreeMap<String, String> = [
         ("SPIRA_RUN", f.run.display().to_string()),
         ("SPIRA_DB", "/db".to_string()),
@@ -383,7 +388,6 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], enforce
             pid: 4242,
             own_unit: String::new(),
             t0: crate::util::now_epoch(),
-            enforce,
             // path-ok: a fake binary path in a unit-test fixture, never resolved
             claim_bin: "spira-claim".into(),
             stop: Arc::new(Stop::default()),
@@ -431,7 +435,7 @@ fn ledger_lines(o: &Outcome) -> Vec<String> {
 #[test]
 fn unfenced_predicate_refuses_before_any_ledger_line() {
     let f = fx("fence");
-    let o = go(&f, "plan", &[("SPIRA_SCOPE_LABEL", "spira")], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "plan", &[("SPIRA_SCOPE_LABEL", "spira")], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1);
     assert!(o.log.contains("FATAL builder: refusing to claim behind an unfenced predicate"));
     assert_eq!(o.ledger, "");
@@ -442,7 +446,7 @@ fn at_capacity_lives_and_declines() {
     let f = fx("cap");
     let mut a = BTreeMap::new();
     a.insert("fayth_free", Out::ok("0"));
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, no_session());
     assert_eq!(o.code, 0);
     assert_eq!(ledger_lines(&o), vec!["born builder 4242", "awake builder capacity"]);
     assert!(o.log.contains("builder: at capacity (0/1), not summoning"));
@@ -452,17 +456,17 @@ fn at_capacity_lives_and_declines() {
 fn halted_draining_and_paused_decline_in_order() {
     let f = fx("gates");
     std::fs::write(f.run.join("world.draining"), "").unwrap();
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(ledger_lines(&o)[1], "awake builder draining");
     std::fs::write(f.run.join("world.halted"), "").unwrap();
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(ledger_lines(&o)[3], "awake builder halted", "halted is checked before draining");
     let f2 = fx("paused");
     // In-process now (wave 4.26): a real pause file replaces the old FakeSeam stub for
     // `_aeon_capacity_paused`.
     let now = crate::util::now_epoch();
     std::fs::write(f2.run.join("capacity-pause"), format!("{} iso why\n", now + 321)).unwrap();
-    let o = go(&f2, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f2, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(ledger_lines(&o)[1], "awake builder paused");
     assert!(o.log.contains("out of capacity for another 32") && o.log.contains("s — claiming nothing"), "{}", o.log);
 }
@@ -471,10 +475,10 @@ fn halted_draining_and_paused_decline_in_order() {
 fn dry_run_writes_no_ledger_and_prints_candidates() {
     let f = fx("dry");
     seed(&f, "sp-dry");
-    let o = go(&f, "spira,plan", &[], false, Mode::DryRun, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::DryRun, BTreeMap::new(), no_session());
     assert_eq!(o.code, 0);
     assert_eq!(o.ledger, "", "a dry run inspects; it does not summon");
-    assert!(o.log.contains("dry run — candidates:") && o.log.contains("sp-dry · title") && !o.log.contains("💡"));
+    assert!(o.log.contains("dry run — candidates:") && o.log.contains("sp-dry"), "{}", o.log);
     assert!(!f.w.lock().unwrap().claim_taken.contains("sp-dry"));
 }
 
@@ -482,15 +486,15 @@ fn dry_run_writes_no_ledger_and_prints_candidates() {
 fn a_failed_ready_query_is_claim_error_not_idle() {
     let f = fx("claimerr");
     f.w.lock().unwrap().ready_fails = true;
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1);
-    assert_eq!(ledger_lines(&o)[1], "awake builder claim-error claim_retry: query failed after 1 attempt(s): dolt: connection refused");
+    assert_eq!(ledger_lines(&o)[1], "awake builder claim-error fayth-ready: query failed after 1 attempt(s): spira-claim: fayth_ready: cannot tell");
 }
 
 #[test]
 fn nothing_ready_is_idle() {
     let f = fx("idle");
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!((o.code, ledger_lines(&o)[1].as_str()), (0, "awake builder idle"));
     // The ready set reached spira-claim on stdin, never argv.
     let w = o.w.lock().unwrap();
@@ -498,33 +502,7 @@ fn nothing_ready_is_idle() {
     assert!(!sel.is_empty() && sel.iter().all(|c| c.2.as_deref() == Some("[]")));
 }
 
-#[test]
-fn poison_raced_releases_and_records() {
-    let f = fx("poison");
-    seed(&f, "sp-p");
-    f.w.lock().unwrap().labels.get_mut("sp-p").unwrap().insert("spira-poison".into());
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
-    assert_eq!(o.code, 0);
-    let l = ledger_lines(&o);
-    assert_eq!(l[1], "awake builder sp-p");
-    assert!(l[2].starts_with("done builder sp-p rc=0 status=poison-raced wall_s=?"));
-    assert!(o.w.lock().unwrap().seam_calls.iter().any(|c| c.0 == "release_own_claim"));
-}
-
-// ---- lifecycle_enforce ---------------------------------------------------------------
-
-#[test]
-fn binary_presence_alone_never_selects_the_restricted_path() {
-    let f = fx("enf-off");
-    seed(&f, "sp-l");
-    let extra: Vec<(&str, &str)> = Vec::new();
-    let o = go(&f, "spira,plan", &extra, false, Mode::Claim, BTreeMap::new(), commits_and_closes());
-    let w = o.w.lock().unwrap();
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "lc_claim_bead"), "enforce off: no lifecycle CAS");
-    assert!(!o.seen[0].env.contains_key("SPIRA_WORK_BEAD_ID"), "enforce off: the model is not run under the restricted environment");
-    let task = std::fs::read_to_string(f.run.join("sp-l.task.md")).unwrap();
-    assert!(!task.contains("You have no `bd`") && task.contains("bd -C /db close sp-l --reason-file -"));
-}
+// ---- the lifecycle machine ---------------------------------------------------------------
 
 #[test]
 fn enforce_claims_through_the_machine_and_restricts_the_model() {
@@ -539,7 +517,7 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
         git(&spec.cwd, &["commit", "-qam", "sp-r — the work"]);
         0
     });
-    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, act);
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, a, act);
     assert_eq!(o.code, 0);
     let w = o.w.lock().unwrap();
     let cas = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").expect("lifecycle CAS claim");
@@ -562,7 +540,7 @@ fn the_restricted_path_names_model_bin_and_never_the_full_bin_dir() {
     let extra: Vec<(&str, &str)> = Vec::new();
     let mut a = BTreeMap::new();
     a.insert("lc_bead_verified", Out::ok(""));
-    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, commits_and_closes());
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, a, commits_and_closes());
     let path = o.seen[0].env.get("PATH").cloned().unwrap_or_default();
     let model_bin = f.bin.parent().unwrap().join(spira_config::release_env::MODEL_BIN_DIR);
     let dirs: Vec<&str> = path.split(':').collect();
@@ -580,7 +558,7 @@ fn a_release_without_model_bin_refuses_the_session() {
     let extra: Vec<(&str, &str)> = Vec::new();
     let mut a = BTreeMap::new();
     a.insert("lc_bead_verified", Out::ok(""));
-    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, commits_and_closes());
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, a, commits_and_closes());
     assert!(o.seen.is_empty(), "no session may start without model-bin");
     assert!(o.log.contains(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV), "the refusal names its override: {}", o.log);
 }
@@ -592,7 +570,7 @@ fn a_refused_lifecycle_claim_is_another_aeons_bead_and_is_left_alone() {
     let extra: Vec<(&str, &str)> = Vec::new();
     let mut a = BTreeMap::new();
     a.insert("lc_claim_bead", Out::fail(3, ""));
-    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, no_session());
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, a, no_session());
     assert_eq!(o.code, 0);
     assert_eq!(ledger_lines(&o)[1], "awake builder idle", "{:?}", ledger_lines(&o));
     assert!(o.log.contains("refused ranked candidate sp-z"), "{}", o.log);
@@ -610,7 +588,7 @@ fn enforce_claims_with_the_lifecycle_row_alone_and_never_bds_claim() {
     f.w.lock().unwrap().status.insert("sp-ip".into(), "in_progress".into());
     let mut a = BTreeMap::new();
     a.insert("lc_bead_verified", Out::ok(""));
-    let o = go(&f, "spira,plan", &[], true, Mode::Claim, a, commits_and_closes());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, commits_and_closes());
     assert_eq!(ledger_lines(&o)[1], "awake builder sp-ip", "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(w.seam_calls.iter().any(|c| c.0 == "_aeon_ready_set"), "the ready set is the machine's");
@@ -641,7 +619,7 @@ fn enforce_renews_the_lifecycle_lease_on_every_heartbeat_while_the_session_runs(
         }
         commits_and_closes()(spec, w, stop)
     });
-    let o = go(&f, "spira,plan", &[("FAYTH_HEARTBEAT_SECONDS", "1")], true, Mode::Claim, a, act);
+    let o = go(&f, "spira,plan", &[("FAYTH_HEARTBEAT_SECONDS", "1")], Mode::Claim, a, act);
     assert_eq!(ledger_lines(&o)[1], "awake builder sp-lr", "{}", o.log);
     let w = o.w.clone();
     let r = renews(&w);
@@ -665,7 +643,7 @@ fn enforce_with_an_unreachable_machine_is_claim_error_not_idle() {
     seed(&f, "sp-d");
     let mut a = BTreeMap::new();
     a.insert("lc_claim_bead", Out::fail(2, ""));
-    let o = go(&f, "spira,plan", &[], true, Mode::Claim, a, no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, no_session());
     assert_eq!(o.code, 1);
     assert_eq!(ledger_lines(&o)[1], "awake builder claim-error lifecycle machine unreachable");
 }
@@ -675,7 +653,7 @@ fn enforce_releases_a_bead_held_between_the_ready_read_and_the_claim() {
     let f = fx("enf-hold");
     seed(&f, "sp-h");
     f.w.lock().unwrap().holds.insert("sp-h".into(), "poison".into());
-    let o = go(&f, "spira,plan", &[], true, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 0);
     assert!(ledger_lines(&o)[2].contains("status=hold-raced"), "{:?}", ledger_lines(&o));
     assert!(o.w.lock().unwrap().seam_calls.iter().any(|c| c.0 == "release_own_claim"));
@@ -717,7 +695,7 @@ fn a_stacked_claim_merges_the_certified_prerequisites_tip_into_the_worktrees_bas
             git(&spec.cwd, &["commit", "-qm", "sp-b work"]);
             0
         });
-    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 0, "{}", o.log);
     assert_eq!(o.seen.len(), 1, "the session must have started — the merge must not have conflicted");
 
@@ -759,7 +737,7 @@ fn a_stack_conflict_refuses_the_claim_and_notes_both_prerequisites() {
 
     let extra = lc_bin_extra(&f);
     let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 0, "{}", o.log);
     assert!(ledger_lines(&o).last().unwrap().contains("status=stack-conflict"), "{:?}", ledger_lines(&o));
     let w = o.w.lock().unwrap();
@@ -779,7 +757,7 @@ fn world_stop_bead_with_live_peers_is_released() {
     f.w.lock().unwrap().labels.get_mut("sp-w").unwrap().insert("world-stop".into()); // literal-ok: test fixture
     std::fs::write(f.run.join("aeon-builder-sp-other.pid"), format!("{}\n", std::process::id())).unwrap();
     std::fs::write(f.run.join("aeon-builder-sp-dead.pid"), "999999999\n").unwrap();
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 0);
     assert!(ledger_lines(&o)[2].contains("status=world-stop-fence")); // literal-ok: asserts the ledger status name
     assert!(o.log.contains("live aeons present (aeon-builder-sp-other)"));
@@ -798,7 +776,7 @@ fn unmapped_repo_is_parked_and_the_world_restarted() {
     // to the map lookup — absent here — and repo_root refuses, same as the old FakeSeam's
     // `"repo_root" => Out::fail(1, "")` answer.
     let repo_derived = f.repo.display().to_string();
-    let o = go(&f, "spira,plan", &[("SPIRA_REPO_DERIVED", repo_derived.as_str())], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[("SPIRA_REPO_DERIVED", repo_derived.as_str())], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1);
     assert!(ledger_lines(&o)[2].contains("done builder sp-u rc=1 status=unmapped-repo"));
     let w = o.w.lock().unwrap();
@@ -810,18 +788,19 @@ fn unmapped_repo_is_parked_and_the_world_restarted() {
 // ---- the whole run --------------------------------------------------------------------
 
 #[test]
-fn happy_path_legacy_close_is_converted_to_submitted() {
+fn happy_path_submits_through_the_machine() {
     let f = fx("happy");
     seed(&f, "sp-h");
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, commits_and_closes());
     assert_eq!(o.code, 0, "{}", o.log);
     let l = ledger_lines(&o);
     assert_eq!(l[0], "born builder 4242");
     assert_eq!(l[1], "awake builder sp-h");
     assert_eq!(l[2], "done builder sp-h rc=0 status=submitted wall_s=3 api_s=? turns=3 in_tok=? cache_read_tok=? out_tok=? think_tok=? cost_usd=0.5000");
     let w = o.w.lock().unwrap();
-    assert_eq!(w.status["sp-h"], "open");
-    assert!(w.labels["sp-h"].contains("spira-submitted"));
+    assert!(!w.labels["sp-h"].contains("spira-submitted"), "no bd-close reinterpretation: the row is the submit");
     assert_eq!(w.states["sp-h"], "spira/sp-h");
     // One aeon, one worktree, under the sanctioned root.
     assert!(f.run.join("worktree/sp-h/.git").exists());
@@ -833,30 +812,28 @@ fn happy_path_legacy_close_is_converted_to_submitted() {
     assert_eq!(spec.cwd, f.run.join("worktree/sp-h"));
     assert_eq!(spec.env.get("BEADS_ACTOR").map(|s| s.as_str()), Some("aeon-ifrit"));
     assert_eq!(spec.env.get("BEAD_ID").map(|s| s.as_str()), Some("sp-h"));
-    assert_eq!(spec.env.get("SPIRA_WORK").map(|p| PathBuf::from(p)), Some(f.run.join("worktree/sp-h")));
-    assert_eq!(spec.env.get("SPIRA_MAIL_FROM").map(|s| s.as_str()), Some("Builder <builder@spira>"));
+    assert_eq!(spec.env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-h"), "the model runs bound to this bead");
     assert!(spec.env.get("GH_TOKEN").is_none(), "no credential-shaped var leaked to the model");
-    assert_eq!(spec.env.get("GIT_TERMINAL_PROMPT").map(|s| s.as_str()), Some("0"));
     let a = spec.args.join(" ");
     assert!(a.starts_with("-p --output-format stream-json --verbose --include-partial-messages --system-prompt-snapshot on --append-system-prompt-file "));
     assert!(a.contains("--model claude-opus-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
     // The brief.
     let sys = std::fs::read_to_string(f.run.join("sp-h.system.md")).unwrap();
     let task = std::fs::read_to_string(f.run.join("sp-h.task.md")).unwrap();
-    assert!(sys.starts_with("# Memories in force\n\n## Statutes in force") && sys.contains("You are a builder. DB /db."));
+    assert!(sys.starts_with("# Memories in force\n\n## Statutes in force") && sys.contains("You are a builder. DB {{DB}}."), "the database path is withheld from the model: {sys}");
     assert!(task.starts_with("## The bead\nsp-h · the title\nNOTES\nsome note\nLABELS: spira"), "{task}");
     assert!(!task.contains("💡"));
     assert!(task.contains(&format!("work sp-h in {} on spira/sp-h (the sentinel merges `spira/sp-h` into `main`", f.run.join("worktree/sp-h").display())));
     assert!(task.contains("## Your lifetime: do the work, then exit") && task.contains("fixture lands by `push`"));
     assert!(task.contains("This repository has no shared test fixture"));
-    assert!(task.contains("bd -C /db close sp-h --reason-file -"));
+    assert!(task.contains("**You have no `bd`.**") && task.contains("    work submit\n"));
     assert!(task.contains("## If you find the work is already done") && task.contains("## Before you close: rebase onto `main`"));
     assert!(!task.contains("{{"), "no unreplaced placeholder reaches the model");
     // The attempt's segment was opened before the session.
     let trace = std::fs::read_to_string(f.run.join("sp-h.log")).unwrap();
     assert!(trace.starts_with("=== spira attempt 1 aeon=ifrit at="));
     assert!(o.log.contains("builder/ifrit: claiming sp-h (epic-first rank)"));
-    assert!(o.log.contains("builder: sp-h closed a work bead directly — converted to submitted"));
+    assert!(!o.log.contains("converted to submitted"));
 }
 
 /// The model's stand-in for a close with nothing committed: closes the bead, optionally
@@ -874,77 +851,6 @@ fn closes_only(supersede: bool) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + 
     })
 }
 
-fn seed_typed(f: &Fx, id: &str, ty: &str, extra_labels: &[&str]) {
-    seed(f, id);
-    let mut w = f.w.lock().unwrap();
-    w.issue_type.insert(id.into(), ty.into());
-    w.labels.get_mut(id).unwrap().extend(extra_labels.iter().map(|l| l.to_string()));
-}
-
-#[test]
-fn a_work_bead_closed_with_an_empty_branch_stays_closed_and_is_not_converted() {
-    let f = fx("emptybranch");
-    seed(&f, "sp-e");
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
-    assert_eq!(o.code, 0, "{}", o.log);
-    assert!(o.log.contains("carries no commit of its own ahead of"), "{}", o.log);
-    assert!(l_done(&o).contains("status=closed"), "{}", o.ledger);
-    let w = o.w.lock().unwrap();
-    assert_eq!(w.status["sp-e"], "closed");
-    assert!(!w.labels["sp-e"].contains("spira-submitted"));
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}", w.seam_calls);
-    assert!(!o.log.contains("REOPENED"), "{}", o.log);
-}
-
-#[test]
-fn a_superseded_work_bead_with_no_commit_stays_closed_and_is_not_converted() {
-    let f = fx("supersedednocommit");
-    seed(&f, "sp-s");
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(true));
-    assert!(o.log.contains("closed with nothing committed and NOT reopened — superseded"), "{}", o.log);
-    assert!(o.log.contains("closed a superseded work bead — not converted"), "{}", o.log);
-    let w = o.w.lock().unwrap();
-    assert_eq!(w.status["sp-s"], "closed");
-    assert!(!w.labels["sp-s"].contains("spira-submitted"));
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"));
-}
-
-#[test]
-fn a_delivers_labelled_work_bead_with_no_commit_stays_closed_and_is_not_converted() {
-    let f = fx("deliversaction");
-    seed_typed(&f, "sp-d", "task", &["delivers:action"]);
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
-    assert!(o.log.contains("closed with nothing committed and NOT reopened"), "{}", o.log);
-    let w = o.w.lock().unwrap();
-    assert_eq!(w.status["sp-d"], "closed");
-    assert!(!w.labels["sp-d"].contains("spira-submitted"));
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"));
-    assert!(!o.log.contains("REOPENED"), "{}", o.log);
-}
-
-#[test]
-fn a_non_work_bead_closed_with_nothing_committed_is_reopened_by_the_verdict() {
-    let f = fx("spike");
-    seed_typed(&f, "sp-k", "spike", &[]);
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
-    assert!(o.log.contains("sp-k REOPENED — closed with nothing committed"), "{}", o.log);
-    let w = o.w.lock().unwrap();
-    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[0] == "sp-k" && c.1[1] == "closed-without-commit"), "{:?}", w.seam_calls);
-    assert_eq!(w.status["sp-k"], "open");
-    assert!(!w.labels["sp-k"].contains("spira-submitted"));
-}
-
-#[test]
-fn a_decision_bead_closed_with_nothing_committed_stands_closed() {
-    let f = fx("decision");
-    seed_typed(&f, "sp-d", "decision", &[]);
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
-    assert!(o.log.contains("decision type, no commit expected, close stands"), "{}", o.log);
-    let w = o.w.lock().unwrap();
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}", w.seam_calls);
-    assert_eq!(w.status["sp-d"], "closed");
-}
-
 /// sp-mve9i: a bd close the lifecycle machine never saw is not the builder's close (design
 /// §3.4: bd status is inert for work beads). bd reads closed, the row is still WORKING: the
 /// aeon releases it through the disposition, never through the closed branch.
@@ -960,31 +866,12 @@ fn a_bd_close_the_machine_never_saw_is_not_the_builders_close() {
         crate::run::append(&spec.log, "{\"type\":\"result\",\"duration_ms\":3000,\"num_turns\":3,\"total_cost_usd\":0.5}\n");
         0
     });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     assert!(!l_done(&o).contains("status=closed"), "{}", o.ledger);
     assert!(l_done(&o).contains("status=in_progress"), "{}", o.ledger);
     assert!(!o.log.contains("closed with nothing committed"), "the verdict fences judge a close, and there was none: {}", o.log);
     let w = o.w.lock().unwrap();
     assert!(w.seam_calls.iter().any(|c| c.0 == "release_own_claim"), "{:?}", w.seam_calls);
-}
-
-/// sp-mve9i: the row past the builder is the close, whatever bd says. bd still reads
-/// in_progress, the row is SUBMITTED: a non-work bead with nothing committed is judged by
-/// the verdict's close fence and reopened.
-#[test]
-fn the_row_past_the_builder_is_the_close_even_with_bd_in_progress() {
-    let f = fx("lcsubmittedbdopen");
-    seed_typed(&f, "sp-k", "spike", &[]);
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, w, _| {
-        let id = spec.env.get("BEAD_ID").unwrap().clone();
-        w.lock().unwrap().lc.insert(id, "SUBMITTED".into());
-        crate::run::append(&spec.log, "{\"type\":\"result\",\"duration_ms\":3000,\"num_turns\":3,\"total_cost_usd\":0.5}\n");
-        0
-    });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
-    assert!(o.log.contains("sp-k REOPENED — closed with nothing committed"), "{}", o.log);
-    let w = o.w.lock().unwrap();
-    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[0] == "sp-k" && c.1[1] == "closed-without-commit"), "{:?}", w.seam_calls);
 }
 
 fn l_done(o: &Outcome) -> String {
@@ -995,7 +882,7 @@ fn brief_fx(name: &str, extra: &[(&str, &str)]) -> String {
     let f = fx(name);
     std::fs::write(f.home.join("chamber/builder.md"), "sys\n<!-- task -->\nwork {{BEAD_ID}}\n{{DEADLINE}}\n{{PARK}}\n").unwrap();
     seed(&f, "sp-b");
-    go(&f, "spira,plan", extra, false, Mode::Claim, BTreeMap::new(), closes_only(false));
+    go(&f, "spira,plan", extra, Mode::Claim, BTreeMap::new(), closes_only(false));
     std::fs::read_to_string(f.run.join("sp-b.task.md")).unwrap()
 }
 
@@ -1023,7 +910,7 @@ fn a_persona_without_a_wall_is_told_it_has_no_clock() {
 #[test]
 fn the_brief_names_supersede_for_already_done_work() {
     let task = brief_fx("alreadydone", &[]);
-    assert!(task.contains("bd -C /db supersede sp-b --with <successor-id>"), "{task}");
+    assert!(task.contains("work superseded-by <successor-id>"), "{task}");
     assert!(task.contains("Verify the successor actually landed"), "{task}");
 }
 
@@ -1052,7 +939,7 @@ fn a_session_that_leaves_the_bead_open_with_no_commit_is_a_no_progress_exit_held
         );
         1
     });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 1, "{}", o.log);
     let l = ledger_lines(&o);
     assert!(l[2].starts_with("done builder sp-o rc=1 status=in_progress"), "{l:?}");
@@ -1099,7 +986,7 @@ fn a_committed_but_still_open_session_still_charges_a_real_attempt() {
         crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
         1
     });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(
@@ -1130,7 +1017,7 @@ fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
     // a canned streak at the cap stands in for the Nth consecutive no-progress exit at the
     // same tip without actually running N sessions.
     let answers = BTreeMap::from([("thrash_streak_bump", Out::ok("2"))]);
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, answers, act);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, answers, act);
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(
@@ -1176,7 +1063,7 @@ fn a_branch_already_ahead_with_no_new_commit_this_session_is_still_held_not_char
         crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
         1
     });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(
@@ -1214,7 +1101,7 @@ fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
         crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
         1
     });
-    let o = go_as("ops", &f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    let o = go_as("ops", &f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 1, "{}", o.log);
     let l = ledger_lines(&o);
     assert!(l[2].starts_with("done ops sp-ao rc=1 status=in_progress"), "{l:?}");
@@ -1238,7 +1125,7 @@ fn slain_mid_session_is_free_and_exits_143() {
         stop.trip(15);
         143
     });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 143);
     let l = ledger_lines(&o);
     assert!(l[2].starts_with("done builder sp-s rc=143 status=slain"), "{l:?}");
@@ -1261,35 +1148,11 @@ fn a_worktree_failure_is_a_pre_session_death() {
     let work = f.run.join("worktree").join("sp-d");
     std::fs::create_dir_all(work.parent().unwrap()).unwrap();
     std::fs::write(&work, "occupied").unwrap();
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1);
     assert!(o.log.contains("FATAL could not create a worktree at"));
     let l = ledger_lines(&o);
     assert!(l[2].starts_with("done builder sp-d rc=1 status=pre-session"), "{l:?}");
-}
-
-#[test]
-fn the_verdict_reopens_a_close_behind_a_rebase_conflict_as_a_free_requeue() {
-    let f = fx("rebase");
-    seed(&f, "sp-c");
-    let mut a = BTreeMap::new();
-    // The session closed with work committed, but its branch does not replay on the base.
-    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
-    let repo = f.repo.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
-        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
-        git(&spec.cwd, &["commit", "-qam", "sp-c — the work"]);
-        std::fs::write(repo.join("f"), "theirs\n").unwrap();
-        git(&repo, &["commit", "-qam", "someone else"]);
-        w.lock().unwrap().status.insert("sp-c".into(), "closed".into());
-        0
-    });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
-    let l = ledger_lines(&o);
-    assert!(l[2].starts_with("done builder sp-c rc=0 status=requeue-rebase-conflict"), "{l:?}\n{}", o.log);
-    let w = o.w.lock().unwrap();
-    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "rebase-conflict"));
-    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Requeue 1 (rebase-conflict):")));
 }
 
 fn close_after_editing_description(stamp: bool) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
@@ -1308,22 +1171,10 @@ fn close_after_editing_description(stamp: bool) -> Box<dyn Fn(&SessionSpec, &W, 
 }
 
 #[test]
-fn a_description_edited_since_claim_reopens_the_close_as_a_free_requeue() {
-    let f = fx("descedit");
-    seed(&f, "sp-e");
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), close_after_editing_description(false));
-    let l = ledger_lines(&o);
-    assert!(l[2].starts_with("done builder sp-e rc=0 status=requeue-desc-changed-since-claim"), "{l:?}\n{}", o.log);
-    let w = o.w.lock().unwrap();
-    assert!(w.metadata["sp-e"].contains_key(bead::claimdesc::HASH_KEY), "the claim stamps its baseline");
-    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "desc-changed-since-claim"));
-}
-
-#[test]
 fn an_acknowledged_description_edit_does_not_reopen_the_close() {
     let f = fx("descack");
     seed(&f, "sp-e");
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), close_after_editing_description(true));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), close_after_editing_description(true));
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "desc-changed-since-claim"), "{}", o.log);
 }
@@ -1348,67 +1199,10 @@ fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
         w.supersedes.insert("sp-s".into());
         0
     });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, act);
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}\n{}", w.seam_calls, o.log);
     assert!(!o.log.contains("REOPENED"), "{}", o.log);
-}
-
-#[test]
-fn a_close_behind_base_with_its_content_already_there_records_content_on_base() {
-    let f = fx("a_close_behind_base_with_its_content_already_there_records_content_on_base");
-    seed(&f, "sp-m");
-    let mut a = BTreeMap::new();
-    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
-    let repo = f.repo.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
-        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
-        git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
-        std::fs::write(repo.join("f"), "mine\n").unwrap();
-        git(&repo, &["commit", "-qam", "someone else, same change"]);
-        let mut w = w.lock().unwrap();
-        w.status.insert("sp-m".into(), "closed".into());
-        0
-    });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
-    let w = o.w.lock().unwrap();
-    assert!(
-        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
-        "{:?}",
-        w.exec_calls
-    );
-    assert!(o.log.contains("its content is already on"), "{}", o.log);
-    assert!(!o.log.contains("FAILED"), "a successful event logs nothing alarming: {}", o.log);
-}
-
-#[test]
-fn a_failed_content_on_base_event_is_logged_loudly_not_discarded() {
-    let f = fx("a_failed_content_on_base_event_is_logged_loudly_not_discarded");
-    seed(&f, "sp-m");
-    let mut a = BTreeMap::new();
-    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
-    let repo = f.repo.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
-        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
-        git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
-        std::fs::write(repo.join("f"), "mine\n").unwrap();
-        git(&repo, &["commit", "-qam", "someone else, same change"]);
-        let mut w = w.lock().unwrap();
-        w.status.insert("sp-m".into(), "closed".into());
-        w.fail_content_on_base = true;
-        0
-    });
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
-    let w = o.w.lock().unwrap();
-    assert!(
-        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
-        "{:?}",
-        w.exec_calls
-    );
-    assert!(o.log.contains("its content is already on"), "{}", o.log);
-    assert!(o.log.contains("spira-lc content-on-base merge-tree:"), "{}", o.log);
-    assert!(o.log.contains("FAILED"), "{}", o.log);
-    assert!(o.log.contains("stub refusal"), "{}", o.log);
 }
 
 #[test]
@@ -1422,7 +1216,7 @@ fn sweep_runs_without_a_bead() {
         crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"num_turns\":1}\n");
         1
     });
-    let o = go(&f, "spira,plan", &[], false, Mode::Sweep { prompt: Some("look at X".into()) }, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[], Mode::Sweep { prompt: Some("look at X".into()) }, BTreeMap::new(), act);
     assert_eq!(o.code, 0, "a sweep that ran exits 0 even when the CLI exited 1");
     let l = ledger_lines(&o);
     assert_eq!(l[1], "awake builder sweep");
@@ -1440,7 +1234,7 @@ fn a_declared_core_statute_that_does_not_exist_refuses_the_start() {
     std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
     let cache_s = cache.display().to_string();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
-    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-slug-that-does-not-exist")], false, Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-slug-that-does-not-exist")], Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
     assert_eq!(o.code, 1);
     assert!(o.log.contains("law-slug-that-does-not-exist"), "{}", o.log);
     assert!(o.seen.is_empty(), "no session may start");
@@ -1452,7 +1246,7 @@ fn a_declared_core_statute_that_does_not_exist_refuses_the_start() {
     std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
     let cache_s = cache.display().to_string();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
-    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real")], false, Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real")], Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
     assert!(!o.seen.is_empty(), "positive control: a resolvable core slug starts the session: {}", o.log);
 }
 
@@ -1472,7 +1266,6 @@ fn spira_statute_core_local_renders_in_full_and_a_missing_one_refuses() {
         &f,
         "spira,plan",
         &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-local")],
-        false,
         Mode::Sweep { prompt: Some("x".into()) },
         BTreeMap::new(),
         act,
@@ -1489,7 +1282,6 @@ fn spira_statute_core_local_renders_in_full_and_a_missing_one_refuses() {
         &f,
         "spira,plan",
         &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-gone-local")],
-        false,
         Mode::Sweep { prompt: Some("x".into()) },
         BTreeMap::new(),
         act,
@@ -1514,7 +1306,7 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
     seed(&f, "sp-adm");
     let admit = stub(&f, "spira-admit");
     let sccache = stub(&f, "sccache");
-    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let env = &o.seen[0].env;
     let get = |k: &str| env.get(k).map(String::as_str);
     assert_eq!(get("RUSTC_WRAPPER"), Some(admit.to_str().unwrap()));
@@ -1532,7 +1324,7 @@ fn an_enforced_sessions_cargo_still_goes_through_spira_admit_and_sccache() {
     seed(&f, "sp-admenf");
     let admit = stub(&f, "spira-admit");
     let sccache = stub(&f, "sccache");
-    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), ("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")], true, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), ("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let env = &o.seen[0].env;
     let get = |k: &str| env.get(k).map(String::as_str);
     assert!(env.contains_key("SPIRA_WORK_BEAD_ID"), "the model must be restricted: {env:?}");
@@ -1553,7 +1345,7 @@ fn a_configured_shared_store_reaches_an_agents_build_as_webdav_vars() {
     seed(&f, "sp-store");
     stub(&f, "spira-admit");
     stub(&f, "sccache");
-    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), ("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), ("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let env = &o.seen[0].env;
     let get = |k: &str| env.get(k).map(String::as_str);
     assert_eq!(get("SCCACHE_WEBDAV_ENDPOINT"), Some("http://192.168.1.56:9431"));
@@ -1568,7 +1360,7 @@ fn no_configured_store_means_no_webdav_vars_on_an_agents_build() {
     seed(&f, "sp-nostore");
     stub(&f, "spira-admit");
     stub(&f, "sccache");
-    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let env = &o.seen[0].env;
     assert!(!env.contains_key("SCCACHE_WEBDAV_ENDPOINT"), "{env:?}");
     assert!(!env.contains_key("SCCACHE_WEBDAV_KEY_PREFIX"), "{env:?}");
@@ -1579,7 +1371,7 @@ fn without_spira_admit_the_session_still_runs_on_the_plain_cache_and_says_so() {
     let f = fx("admit-absent");
     seed(&f, "sp-nadm");
     let sccache = stub(&f, "sccache");
-    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let env = &o.seen[0].env;
     if env.get("PATH").is_some_and(|p| p.split(':').any(|d| std::path::Path::new(d).join("spira-admit").exists())) {
         return; // the host's PATH carries a spira-admit the fixture cannot hide
@@ -1593,7 +1385,7 @@ fn without_spira_admit_the_session_still_runs_on_the_plain_cache_and_says_so() {
 fn the_summon_jitter_sleeps_what_it_logs_and_never_more_than_its_bound() {
     let f = fx("jitter");
     seed(&f, "sp-jit");
-    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "5")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "5")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     assert!(o.slept <= 5, "{}", o.slept);
     if o.slept > 0 {
         assert!(o.log.contains(&format!("summon jitter {}s", o.slept)), "{}", o.log);
@@ -1617,7 +1409,7 @@ fn rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons() {
          2026-09-27T00:00:01Z done builder sp-rr rc=0 status=unlanded wall_s=2 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n",
     )
     .unwrap();
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr")); // literal-ok: fixture/fallback
@@ -1640,7 +1432,7 @@ fn rapid_recur_does_not_park_a_bead_with_real_prior_runs() {
          2026-09-27T00:00:01Z done builder sp-rr2 rc=0 status=unlanded wall_s=90 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n",
     )
     .unwrap();
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2")); // literal-ok: fixture/fallback

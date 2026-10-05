@@ -60,7 +60,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>) {
         if !queue_wait.is_empty() {
             excl = format!("{excl},{queue_wait}");
         }
-        // The one ready set (sp-7g5q6): spira-claim's, which under lifecycle_enforce is the
+        // The one ready set (sp-7g5q6): spira-claim's, which is the
         // machine's READY/REWORK rows — never bd's own `ready`, whose status and assignee
         // nobody claims by any more.
         let raw = io::run_tool("spira-claim", &["ready-count", labels, &excl, "--json"], None);

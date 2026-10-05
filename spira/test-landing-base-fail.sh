@@ -167,7 +167,7 @@ inc="$(incidents)"
 is "one incident is filed for the repository" 1 "$(n_lines "$inc")"
 inc_id="$(printf '%s\n' "$inc" | head -1)"
 # sp-jgjvh: incident's dedup reads the incident bead's lifecycle row (incident beads are work
-# beads). The filing registers that row with the machine when lifecycle_enforce is on
+# beads). The filing registers that row with the machine
 # (lifecycle_row::after_create); this suite's spira-lc is a fixture, so the row the machine
 # would hold is declared here as data. Without it the bead is rowless — not live work — and
 # the second pass below would file a second incident.

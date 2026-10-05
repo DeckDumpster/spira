@@ -20,7 +20,6 @@ pub struct Real {
     status: String,
     settings: BTreeMap<String, String>,
     pub submitted_label: String,
-    enforce: bool,
     beads: RefCell<Option<BTreeMap<String, Value>>>,
     /// The sweep's one `spira-lc list`, keyed by bead id: the claim witness for every bead
     /// the pass judges (sp-mve9i).
@@ -69,7 +68,7 @@ impl Real {
     /// No context seam call at all — just `home`/`status`, for a caller that only needs
     /// the Base/Bead seams (each self-contained) and never the repository registry.
     pub fn minimal(home: PathBuf, status: Option<String>) -> Real {
-        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), enforce: spira_config::lifecycle_enforce(None), beads: RefCell::new(None), claims: RefCell::new(None) }
+        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), beads: RefCell::new(None), claims: RefCell::new(None) }
     }
 
     fn setting(&self, k: &str, default: &str) -> String {
@@ -100,7 +99,7 @@ impl Real {
         reaplog_path()
     }
 
-    /// `bdq label remove <id> <label>` — label_add's own mirror, needed by
+    /// `bdq label remove <id> <label>`, needed by
     /// `reap::reap_landed_branch` (law-branch-affinity-is-recorded) but not part of the
     /// `World` trait since nothing else in this crate calls it standalone.
     pub fn label_remove(&self, id: &str, label: &str) {
@@ -234,9 +233,6 @@ impl World for Real {
     fn prune(&self, repo: &Path) {
         reap::prune_worktrees(&self.reaplog_path(), repo);
     }
-    fn label_add(&self, id: &str, label: &str) {
-        self.seam(Op::LabelAdd, &[id, label]);
-    }
     fn lc_landed(&self, id: &str) -> bool {
         // Bounded like every other subprocess here: a hung record answers "not landed".
         Command::new("timeout")
@@ -266,9 +262,6 @@ impl World for Real {
             .ok()?;
         let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
         (!s.is_empty()).then_some(s)
-    }
-    fn enforce(&self) -> bool {
-        self.enforce
     }
     fn emit(&self, line: &str) {
         println!("{line}");

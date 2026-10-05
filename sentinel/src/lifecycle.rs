@@ -1,7 +1,7 @@
-//! Everything the sentinel reads from or writes to `spira_lifecycle` (DESIGN.md §1, "On
-//! lifecycle_enforce"): CHECK 2's wait hold and stale-lease reap, CHECK 2c's consistency
+//! Everything the sentinel reads from or writes to `spira_lifecycle` (DESIGN.md §1, "The
+//! lifecycle machine"): CHECK 2's wait hold and stale-lease reap, CHECK 2c's consistency
 //! sweep, and CHECK 4's poison hold. sp-i2m7y moved these onto spira-lc unconditionally;
-//! there is no bd-label mode to fall back to, and nothing here reads lifecycle_enforce.
+//! there is no bd-label mode to fall back to, and no off mode (sp-v62vn).
 
 use std::collections::HashSet;
 
@@ -166,16 +166,10 @@ pub fn rowless(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<St
 }
 
 impl<'a> Sentinel<'a> {
-    /// ON mode's one lifecycle read. The machine is authoritative, so an absent binary or a
+    /// The pass's one lifecycle read. The machine is authoritative, so an absent binary or a
     /// failed read is LOUD: one `LIFECYCLE UNREACHABLE` line naming why, no lifecycle
     /// decision this pass, and the unit exits 1 once the rest of the pass has run.
-    /// OFF mode has no machine to read: None, quietly — never a read, never LOUD, never exit
-    /// 1. Its callers then decide nothing, as CHECK 4 does when off (sp-uqrdn made the queue
-    /// waiters lifecycle-only, and an unguarded read failed every OFF pass).
     pub fn lc_rows(&self) -> Option<Vec<LcRow>> {
-        if self.lc == crate::cfg::Lifecycle::Off {
-            return None;
-        }
         if let Some(memo) = self.lc_memo.borrow().as_ref() {
             return memo.clone();
         }
@@ -185,22 +179,10 @@ impl<'a> Sentinel<'a> {
     }
 
     /// The bead states the pass's snapshot carries (design §3.4, sp-mve9i): a work bead's
-    /// state is its lifecycle row in either mode, because bd status is inert and there is no
-    /// other source. ON, this is [`Self::lc_rows`] (fail-closed, LOUD). OFF, the machine is
-    /// read quietly: a stage that runs one gets its states, and one that does not gets none —
-    /// every state decision over the snapshot then decides nothing, never LOUD and never
-    /// exit 1, as sp-uqrdn made the OFF waiters do.
+    /// state is its lifecycle row, because bd status is inert and there is no other source —
+    /// [`Self::lc_rows`] (fail-closed, LOUD).
     pub fn state_rows(&self) -> Option<Vec<LcRow>> {
-        if self.lc != crate::cfg::Lifecycle::Off {
-            return self.lc_rows();
-        }
-        if let Some(memo) = self.lc_memo.borrow().as_ref() {
-            return memo.clone();
-        }
-        let o = self.h.run(Spec::args_owned(self.cfg.lc_bin.clone(), vec!["list".into()]));
-        let rows = if o.ok() { parse_lc_rows(&o.stdout).ok() } else { None };
-        *self.lc_memo.borrow_mut() = Some(rows.clone());
-        rows
+        self.lc_rows()
     }
 
     fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
@@ -227,12 +209,12 @@ impl<'a> Sentinel<'a> {
     pub fn lc_unreachable(&self, why: &str) {
         if !self.lc_failed.replace(true) {
             self.log(&format!(
-                "LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but {why}; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1"
+                "LIFECYCLE UNREACHABLE — {why}; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1"
             ));
         }
     }
 
-    /// ON mode: apply one lifecycle event; a machine that cannot answer (rc 2, or no binary)
+    /// Apply one lifecycle event; a machine that cannot answer (rc 2, or no binary)
     /// is loud, a CAS refusal (rc 3: someone moved the row first) is the normal race.
     pub fn lc_apply(&self, id: &str, kind: &str) -> bool {
         match self.lc_event(id, kind, "sentinel") {

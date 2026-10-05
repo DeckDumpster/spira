@@ -123,24 +123,8 @@ fn go(f: &mut Fake, verb: &str, args: &[&str]) -> Answer {
     run(verb, &v(args), f)
 }
 
-// ---- OFF: identical to the shell library with the switch off -------------------------
-
 #[test]
-fn off_answers_are_the_shell_librarys_and_read_nothing() {
-    for verb in ["hold", "unhold", "release", "holder-dead", "drop", "returned", "content-on-base", "state", "certify", "resubmit"] {
-        let a = off(verb, &v(&["sp-a", "x", "y"]));
-        assert_eq!((a.code, a.stdout.as_str(), a.cert_log.is_none()), (CANNOT_TELL, "", true), "{verb}");
-    }
-    for verb in ["holds", "list-held", "list-state", "list-all"] {
-        assert_eq!(off(verb, &v(&["sp-a"])), Answer::code(0), "{verb}");
-    }
-    assert_eq!(off("held", &v(&["sp-a", "poison"])).code, 1);
-    // _lc_deliver with no row: logged, skipped, rc 1 — with the actor each exit names.
-    let a = off("deliver", &v(&["pr-merged", "/r", "sp-a", "spira/sp-a", "abc"]));
-    assert_eq!(a.code, 1);
-    assert!(a.stdout.ends_with(" spira: lc: no delivery row for sp-a — not recording pr-pass-branch's event (inert until the delivery round lands)\n"), "{}", a.stdout);
-    let a = off("deliver", &v(&["push-returned", "sp-b", "why"]));
-    assert!(a.stdout.contains("no delivery row for sp-b — not recording landing.sh's event"), "{}", a.stdout);
+fn every_verb_is_a_caller_verb_and_no_primitive_is() {
     for verb in VERBS {
         assert!(is_verb(verb));
     }
@@ -467,7 +451,7 @@ fn a_push_landing_with_no_delivery_round_records_landed_on_a_certified_bead() {
     assert_eq!(f.events.len(), n, "no event for a bead that is not CERTIFIED");
 }
 
-// ---- unclaim / close-epic (sp-hyo5e): the bd halves, routed through the machine ---------
+// ---- unclaim / close-epic (sp-hyo5e) ---------------------------------------------------
 
 #[derive(Default)]
 struct FakeBd {
@@ -478,16 +462,6 @@ struct FakeBd {
 }
 
 impl Bd for FakeBd {
-    fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String> {
-        match self.rows.get_mut(id) {
-            Some((_, a)) if a.as_deref() == Some(actor) => {
-                *a = None;
-                Ok(())
-            }
-            Some((_, a)) => Err(format!("held by {a:?}")),
-            None => Err("no such issue".into()),
-        }
-    }
     fn issue_type(&mut self, id: &str) -> Result<String, String> {
         if self.down {
             return Err("bd down".into());
@@ -501,43 +475,35 @@ impl Bd for FakeBd {
 }
 
 #[test]
-fn unclaim_releases_the_row_under_the_holders_name_and_never_writes_bd() {
+fn unclaim_releases_the_row_under_the_holders_name() {
     let mut f = Fake::default();
     f.bead("sp-u", BeadState::Working).holder = Some("aeon-1".into());
-    let mut bd = FakeBd::default();
-    bd.rows.insert("sp-u".into(), ("task".into(), Some("aeon-1".into())));
-    assert_eq!(unclaim(&v(&["sp-u", "aeon-1"]), true, &mut f, &mut bd).code, APPLIED);
+    assert_eq!(unclaim(&v(&["sp-u", "aeon-1"]), &mut f).code, APPLIED);
     assert_eq!(f.state("sp-u"), "READY");
     assert_eq!(f.events.last().unwrap().5, r#""Release""#);
-    assert_eq!(bd.rows["sp-u"].1.as_deref(), Some("aeon-1"), "bd's assignee is content: the row is the claim");
 }
 
 #[test]
 fn unclaim_never_robs_another_holder_and_a_claim_already_over_is_success() {
     let mut f = Fake::default();
-    let mut bd = FakeBd::default();
     f.bead("sp-s", BeadState::Submitted);
-    assert_eq!(unclaim(&v(&["sp-s", "aeon-1"]), true, &mut f, &mut bd).code, APPLIED);
+    assert_eq!(unclaim(&v(&["sp-s", "aeon-1"]), &mut f).code, APPLIED);
     assert!(f.events.is_empty(), "past WORKING: nothing to release, no event");
     // Reaped and handed to another aeon in between: refused, the new holder keeps it.
     f.bead("sp-h", BeadState::Working).holder = Some("aeon-2".into());
-    let a = unclaim(&v(&["sp-h", "aeon-1"]), true, &mut f, &mut bd);
+    let a = unclaim(&v(&["sp-h", "aeon-1"]), &mut f);
     assert_eq!(a.code, NO_ROW, "{}", a.stderr);
     assert_eq!(f.state("sp-h"), "WORKING");
     assert!(f.events.is_empty());
-    assert_eq!(unclaim(&v(&["sp-none", "aeon-1"]), true, &mut f, &mut bd).code, NO_ROW);
+    assert_eq!(unclaim(&v(&["sp-none", "aeon-1"]), &mut f).code, NO_ROW);
 }
 
 #[test]
-fn unclaim_with_the_switch_off_reads_no_machine_but_still_releases_bd() {
-    let mut f = Fake { down: true, ..Default::default() };
-    let mut bd = FakeBd::default();
-    bd.rows.insert("sp-o".into(), ("task".into(), Some("aeon-1".into())));
-    assert_eq!(unclaim(&v(&["sp-o", "aeon-1"]), false, &mut f, &mut bd).code, APPLIED);
-    assert_eq!(f.calls, 0, "switch off: the machine is never asked");
-    assert_eq!(bd.rows["sp-o"].1, None);
-    assert_eq!(unclaim(&v(&["sp-o"]), false, &mut f, &mut bd).code, CANNOT_TELL, "no actor: usage");
-    assert_eq!(unclaim(&v(&["sp-o", ""]), false, &mut f, &mut bd).code, CANNOT_TELL, "empty actor: usage");
+fn unclaim_needs_an_actor() {
+    let mut f = Fake::default();
+    assert_eq!(unclaim(&v(&["sp-o"]), &mut f).code, CANNOT_TELL, "no actor: usage");
+    assert_eq!(unclaim(&v(&["sp-o", ""]), &mut f).code, CANNOT_TELL, "empty actor: usage");
+    assert_eq!(f.calls, 0);
 }
 
 #[test]
@@ -603,7 +569,6 @@ fn renew_needs_a_numeric_deadline_and_reads_nothing_without_one() {
         assert!(a.stderr.starts_with("usage: spira-lc "), "{}", a.stderr);
     }
     assert_eq!(f.calls, 0);
-    assert_eq!(off("renew", &v(&["sp-a", "aeon-1", "5"])).code, CANNOT_TELL, "off: cannot tell, nothing read");
     let mut down = Fake { down: true, ..Default::default() };
     assert_eq!(go(&mut down, "renew", &["sp-a", "aeon-1", "5"]).code, CANNOT_TELL);
 }

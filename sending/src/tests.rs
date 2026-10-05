@@ -47,7 +47,6 @@ struct Fake {
     prs: BTreeMap<String, String>,
     /// Beads the lifecycle record has LANDED (`spira-lc state`).
     lc_landed: BTreeSet<String>,
-    enforce: bool,
     base: Option<Base>,
     wts: PathBuf,
     destroy_fails: bool,
@@ -117,9 +116,6 @@ impl World for Fake {
     fn prune(&self, _repo: &Path) {
         self.call("prune".into());
     }
-    fn label_add(&self, id: &str, label: &str) {
-        self.call(format!("label {id} {label}"));
-    }
     fn lc_landed(&self, id: &str) -> bool {
         self.lc_landed.contains(id)
     }
@@ -129,9 +125,6 @@ impl World for Fake {
     fn pr_merged_tip(&self, _repo: &Path, br: &str) -> Option<String> {
         self.call(format!("gh {br}"));
         self.prs.get(br).cloned()
-    }
-    fn enforce(&self) -> bool {
-        self.enforce
     }
     fn emit(&self, line: &str) {
         self.out.borrow_mut().push(line.to_string());
@@ -355,17 +348,11 @@ fn one_pass_sends_reaps_keeps_archives_and_holds() {
 }
 
 #[test]
-fn content_on_base_evidence_is_a_machine_event_on_and_the_label_off() {
-    // OFF (production today): the `content-landed` label CHECK 5's exemption reads — the
-    // gap this port closes. Only for a branch that carried commits (sp-cl1), never for a
-    // zero-ahead one (sp-cl0), whose own merge commit is the evidence.
+fn content_on_base_evidence_is_a_machine_event() {
+    // A ContentOnBase event whose proof names the base tip — only for a branch that carried
+    // commits (sp-cl1), never for a zero-ahead one (sp-cl0), whose own merge commit is the
+    // evidence.
     let (fx, f) = fixture();
-    sweep(&f, opts(), &[repo(&fx)]);
-    assert!(f.called("label sp-cl1 content-landed") && f.called("label sp-clnoassert content-landed"));
-    assert!(!f.called("label sp-cl0") && !f.called("label sp-stray") && !f.called("lc "));
-    // ON: a ContentOnBase event whose proof names the base tip, and no label.
-    let (fx, mut f) = fixture();
-    f.enforce = true;
     let main = git(&fx.repo, &["rev-parse", "main"]);
     sweep(&f, opts(), &[repo(&fx)]);
     assert!(f.called(&format!("lc sp-cl1 merge-tree:{main}")), "{:?}", f.calls.borrow());
@@ -374,16 +361,13 @@ fn content_on_base_evidence_is_a_machine_event_on_and_the_label_off() {
 
 #[test]
 fn a_branch_with_no_commit_naming_the_bead_is_not_content_on_base_evidence() {
-    for enforce in [true, false] {
-        let (fx, mut f) = fixture();
-        f.enforce = enforce;
-        sweep(&f, opts(), &[repo(&fx)]);
-        let out = f.out();
-        assert!(out.contains("KEEP   sp-vac  1 commit(s) not in main, none naming the bead"), "{out}");
-        assert!(exists(&fx, "spira/sp-vac"));
-        assert!(!f.called("lc sp-vac") && !f.called("label sp-vac") && !f.called("close sp-vac") && !f.called("send sp-vac"), "{:?}", f.calls.borrow());
-        assert!(f.called("close sp-cl1 "), "a branch with its own commit is still applied");
-    }
+    let (fx, f) = fixture();
+    sweep(&f, opts(), &[repo(&fx)]);
+    let out = f.out();
+    assert!(out.contains("KEEP   sp-vac  1 commit(s) not in main, none naming the bead"), "{out}");
+    assert!(exists(&fx, "spira/sp-vac"));
+    assert!(!f.called("lc sp-vac") && !f.called("close sp-vac") && !f.called("send sp-vac"), "{:?}", f.calls.borrow());
+    assert!(f.called("close sp-cl1 "), "a branch with its own commit is still applied");
 }
 
 #[test]

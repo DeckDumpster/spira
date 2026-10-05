@@ -43,47 +43,6 @@ pub struct Context {
     pub repos: Vec<Repo>,
 }
 
-/// Where the lifecycle machine's records are the truth, or the legacy ones are.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Lifecycle {
-    /// `lifecycle_enforce` off (production today): bd status/labels and the bd events trail
-    /// (the landing ledger is deleted, sp-2c1n0). The sentinel never calls spira-lc, and nothing it starts can.
-    Off,
-    /// `lifecycle_enforce` on: spira-lc is authoritative; an unreachable machine is an error.
-    On,
-}
-
-/// `lifecycle_enforce`, resolved as the aeon crate resolves it (concierge/rw-aeon
-/// aeon/src/conf.rs): the unit's own environment wins (`SPIRA_LIFECYCLE_ENFORCE`, 1/true =
-/// on, anything else = off) — read from this process's ORIGINAL environment, because
-/// conf.sh defaults it to 0 and would mask the toml; else `spira.lifecycle_enforce` in the
-/// spira.toml conf.sh resolved (`SPIRA_TOML_FILE`), read through the spira-config library;
-/// else off. Whether spira-lc happens to be installed is never consulted.
-pub fn lifecycle_enforce(original: Option<&str>, toml_file: Option<&Path>) -> Lifecycle {
-    if let Some(v) = original {
-        return if v == "1" || v == "true" {
-            Lifecycle::On
-        } else {
-            Lifecycle::Off
-        };
-    }
-    let Some(p) = toml_file.filter(|p| p.is_file()) else {
-        return Lifecycle::Off;
-    };
-    match spira_config::load(p) {
-        Ok(doc)
-            if doc
-                .spira
-                .as_ref()
-                .and_then(|s| s.lifecycle_enforce)
-                .unwrap_or(false) =>
-        {
-            Lifecycle::On
-        }
-        _ => Lifecycle::Off,
-    }
-}
-
 pub fn csv(s: &str) -> Vec<String> {
     s.split(',')
         .filter(|x| !x.is_empty())
@@ -538,30 +497,6 @@ pub mod tests {
         let mut cut = b.clone();
         cut.truncate(b.len() - 5);
         assert!(Context::parse(&cut).is_err());
-    }
-
-    #[test]
-    fn the_switch_resolves_like_the_aeon_crate() {
-        let dir = testkit::TempDir::new("sentinel-enforce");
-        let toml = dir.join("spira.toml");
-        std::fs::write(&toml, "[spira]\nlifecycle_enforce = true\n").unwrap();
-        assert_eq!(lifecycle_enforce(None, Some(&toml)), Lifecycle::On);
-        assert_eq!(
-            lifecycle_enforce(Some("0"), Some(&toml)),
-            Lifecycle::Off,
-            "the unit env wins"
-        );
-        std::fs::write(&toml, "[spira]\n").unwrap();
-        assert_eq!(lifecycle_enforce(None, Some(&toml)), Lifecycle::Off);
-        assert_eq!(lifecycle_enforce(Some("1"), Some(&toml)), Lifecycle::On);
-        assert_eq!(lifecycle_enforce(Some("true"), None), Lifecycle::On);
-        assert_eq!(lifecycle_enforce(Some("yes"), None), Lifecycle::Off);
-        assert_eq!(lifecycle_enforce(None, None), Lifecycle::Off);
-        assert_eq!(
-            lifecycle_enforce(None, Some(&dir.join("absent.toml"))),
-            Lifecycle::Off
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

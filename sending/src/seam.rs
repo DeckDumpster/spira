@@ -29,12 +29,11 @@ pub enum Op {
     Beads,
     /// `spira-lc close-on-land`: close a submitted bead at the landed sha and reap its branch.
     CloseOnLand,
-    LabelAdd,
     LabelRemove,
 }
 
 #[cfg(test)]
-pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
+pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::CloseOnLand, Op::LabelRemove];
 
 const PRELUDE: &str = r#"{
 set -uo pipefail
@@ -80,7 +79,6 @@ fn body(op: Op) -> &'static str {
         Op::Bead => BEAD,
         Op::Beads => BEADS,
         Op::CloseOnLand => "spira-lc close-on-land \"$1\" \"$2\" || true\nexit 0\n",
-        Op::LabelAdd => "bdq label add \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
         Op::LabelRemove => "bdq label remove \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
     }
 }

@@ -47,7 +47,7 @@ trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 # A TRIGGER BEAD'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): the dedup asks
 # `spira-lc list` whether the trigger bead it filed is still open, never bd status. The
-# trigger files under lifecycle_enforce, so its bd create also runs `spira-lc create-bead`;
+# trigger's bd create also runs `spira-lc create-bead`;
 # this stand-in records that row as READY and lists every row it recorded.
 LCSTUB="$T/spira-lc"; LCROWS="$T/lc-rows"; mkdir -p "$LCROWS"
 cat > "$LCSTUB" <<STUB
@@ -195,7 +195,7 @@ _tr_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-b
 tr_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_LC_BIN="$LCSTUB" SPIRA_LIFECYCLE_ENFORCE=1 \
+    SPIRA_LC_BIN="$LCSTUB" \
     SPIRA_BD="$_tr_bd" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
@@ -228,7 +228,7 @@ echo "TRIGGER: second run files nothing new (dedup)"
 tr_out2="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_LC_BIN="$LCSTUB" SPIRA_LIFECYCLE_ENFORCE=1 \
+    SPIRA_LC_BIN="$LCSTUB" \
     SPIRA_BD="$_tr_bd" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
@@ -271,7 +271,7 @@ _ant_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-
 ant_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_LC_BIN="$LCSTUB" SPIRA_LIFECYCLE_ENFORCE=1 \
+    SPIRA_LC_BIN="$LCSTUB" \
     SPIRA_BD="$_ant_bd" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
@@ -334,7 +334,7 @@ _e2e_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-
 e2e_trig1="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_LC_BIN="$LCSTUB" SPIRA_LIFECYCLE_ENFORCE=1 \
+    SPIRA_LC_BIN="$LCSTUB" \
     SPIRA_BD="$_e2e_bd" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
@@ -364,7 +364,7 @@ want "e2e: sweep bead has bead C row" "sp-cr-e2e-c" "$e2e_desc"
 e2e_trig2="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_LC_BIN="$LCSTUB" SPIRA_LIFECYCLE_ENFORCE=1 \
+    SPIRA_LC_BIN="$LCSTUB" \
     SPIRA_BD="$_e2e_bd" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \

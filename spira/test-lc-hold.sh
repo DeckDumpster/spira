@@ -82,10 +82,8 @@ done
 
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk);
-# lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
+# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk).
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-export SPIRA_LIFECYCLE_ENFORCE=1
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"

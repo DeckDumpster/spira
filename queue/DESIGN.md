@@ -174,9 +174,8 @@ the tests; CAUGHT/GATE_COST/BATCH are read only by `stats`.
   the certified entry. (queue.sh wrote `open` and `publish` in place; §8 D7.)
 - **Payloads never in argv or environment** (§5).
 - **A read failure is not an empty answer.** A bd read that fails where the answer gates an
-  action refuses (open-batch admission, §8 D8). A spira-lc read is made only with
-  `lifecycle_enforce` ON, and there an unreachable machine refuses loudly (§10); with the
-  switch OFF spira-lc is never invoked, so its absence can block nothing.
+  action refuses (open-batch admission, §8 D8). An unreachable spira-lc refuses
+  loudly (§10).
 
 ## 3. Schema
 
@@ -456,10 +455,8 @@ data, not the code; the refusal is the contract).
   commit itself. A landing-pass prune can no longer empty a publish. A range with new
   commits but no land commit still refuses (message now names land commits).
 - **D5 — transitions refuse while the repository has work in delivery**: an open batch
-  record or a BATCHED landstate whose tip is a commit of this repository — and, only with
-  `lifecycle_enforce` ON, an IN_DELIVERY lifecycle row whose tip is (spira-lc unreachable =
-  loud refusal). With the switch OFF spira-lc is never asked, so it can never block a
-  transition. Checked under the lock, after the mode re-read, before the final publish. The lock itself already excludes a round in flight (batcher-cut holds it).
+  record or a BATCHED landstate whose tip is a commit of this repository — and an IN_DELIVERY lifecycle row whose tip is (spira-lc unreachable =
+  loud refusal). Checked under the lock, after the mode re-read, before the final publish. The lock itself already excludes a round in flight (batcher-cut holds it).
 - **D6 — land-mode writes go through spira-config** (law-config-through-the-cli-only):
   spira.toml via the library form of `spira-config set` (`set_paths_in_file`, both keys in
   one validated atomic write — the CLI takes one key per call, which would leave the
@@ -638,47 +635,21 @@ from §2.2/§8:
 | stats, CLI, records, idents | `stats::tests`, `cli::tests`, `records::tests`, `ident::tests`, `model::tests`, `lock::tests` |
 | the seam mechanism itself, for real through bash with a stand-in lib.sh | `seam::tests::values_travel_on_stdin_with_newlines_and_empties_intact`, `real::tests::context_seam_round_trips_through_bash`, `real::tests::answer_seams_ignore_log_lines_and_carry_failures` |
 
-## 10. Lifecycle switch
+## 10. Lifecycle machine
 
-**Finding (operator, 2026-09-29):** the lifecycle machine was never deployed on this host —
-no `spira_lifecycle` database, no `spira_lc` grant (`spira-lc`: "Access denied"), no
-service or socket. **Decision:** `lifecycle_enforce` is THE switch for everything that
-touches the lifecycle machine.
+There is no lifecycle switch: sp-v62vn retired `lifecycle_enforce`, and spira-lc is the
+authority. Every subcommand that would talk to it first probes it (`spira-lc list --state
+IN_DELIVERY`, parsed); unreachable or not executable is a loud refusal, exit 1, before the
+lock and before anything changes, naming the exit (fix the lifecycle machine). A CAS refusal
+from a reachable machine (an illegal transition) stays what it was in queue.sh: reported on
+stderr, the queue-side action proceeds (the machine's own state is the record of it).
 
-**Resolution** (`ops::lifecycle_on`, the aeon crate's rule, `aeon/src/conf.rs`
-`lifecycle_enforce`): the process environment's `SPIRA_LIFECYCLE_ENFORCE` wins (a unit's
-`Environment=` or a fixture pins it; `1`/`true` = on, anything else = off); else the typed
-`spira.lifecycle_enforce` in the document conf.sh resolved (`spira_toml_resolve`, seam R21),
-read through the spira-config library; else **off**. Binary presence is never consulted —
-a `spira-lc` on disk does not turn anything on.
+| subcommand | lifecycle calls |
+|---|---|
+| `eject` (in the open batch) | probe; `land_mark RED`; sidecar; cause row (`_bump_write_event`); `lc_returned`; `release_claim`; `eject-member` CAS when the record carries `batch_id`; comment, survivors CERTIFIED, PR closed, record removed, mail. Dry-run says "would return bead … via a Returned event". |
+| `eject` (CERTIFIED, not batched) | probe; `bead_reopen` (sp-xtk2l has no lifecycle transition for it) |
+| `abandon` | probe; `abandon-batch` CAS when `batch_id`; members returned by landstate, archive, audit, event, mail |
+| `open-batch` | probe; `create-bead` per member, `cut`; `batch_id`/`version` appended on success |
+| `to-forge`, `to-local` (D5) | probe; in delivery = open batch record, BATCHED landstate, or IN_DELIVERY row of this repo; a failed read refuses |
+| `submit`, `protect`, `stats`, `flush`, `step`, `claim`, `release`, `land-local`, `publish`, `rollback-local` | none. queue emits no `stack`, `land` or `settle` events: those belong to batcher-cut (`stack`/`land` of a round) and verdict (`settle`) |
 
-**OFF (production today):** queue never invokes spira-lc — no `show-batch`, `create-bead`,
-`cut`, `abandon-batch`, `eject-member`, `list`, and no `lc_returned` (lc.sh). Nothing that
-depends on spira-lc can block: "cannot tell" does not exist in this mode. Behaviour is the
-pre-lifecycle contract, recovered from history where a subcommand changed.
-
-**ON:** spira-lc is authoritative. Every subcommand that would talk to it first probes it
-(`spira-lc list --state IN_DELIVERY`, parsed); unreachable or not executable is a loud
-refusal, exit 1, before the lock and before anything changes:
-`queue.sh <cmd>: lifecycle_enforce is on and spira-lc is unreachable (<why>) — refused,
-nothing changed; fix the lifecycle machine or turn lifecycle_enforce off`. A CAS refusal
-from a reachable machine (an illegal transition) stays what it was in queue.sh: reported
-on stderr, the queue-side action proceeds (the machine's own state is the record of it).
-
-| subcommand | OFF | ON |
-|---|---|---|
-| `eject` (in the open batch) | pre-sp-rlyl0 (ca5672b3c^): `land_mark RED`, then `bead_reopen <id> <eject\|eject-red> "" <suites>` — reopen, submitted label off, assignee cleared, `.ejected` sidecar, cause row; comment, survivors CERTIFIED, PR closed, record removed, mail. Dry-run says "would reopen bead … and clear assignee". | probe; `land_mark RED`; sidecar; cause row (`_bump_write_event`); `lc_returned`; `release_claim`; `eject-member` CAS when the record carries `batch_id`; the rest as OFF. Dry-run says "would return bead … via a Returned event". |
-| `eject` (CERTIFIED, not batched) | `bead_reopen` (unchanged in every era; sp-xtk2l has no lifecycle transition for it) | probe; same |
-| `abandon` | pre-sp-o7nbr.5 (d6ecf08ca^): no `abandon-batch`; members returned by landstate, archive, audit, event, mail | probe; `abandon-batch` CAS when `batch_id`; the rest as OFF |
-| `open-batch` | pre-sp-o7nbr.5: no `create-bead`/`cut`; the open record carries no `batch_id`/`version` | probe; `create-bead` per member, `cut`; `batch_id`/`version` appended on success |
-| `to-forge`, `to-local` (D5) | in delivery = open batch record or BATCHED landstate of this repo; spira-lc never asked | probe; also every IN_DELIVERY row of this repo; a failed read refuses |
-| `submit`, `protect`, `stats`, `flush`, `step`, `claim`, `release`, `land-local`, `publish`, `rollback-local` | no lifecycle call in any era | same — none. queue emits no `stack`, `land` or `settle` events: those belong to batcher-cut (`stack`/`land` of a round) and verdict.sh (`settle`), which read the same switch in their own rewrites |
-
-`flush`/`step` run `batch.sh` and the batcher, which make their own lifecycle
-calls: those components must honour the same switch (their own cutovers), and pass
-`SPIRA_LIFECYCLE_ENFORCE` through the unit environment unchanged — queue does not set it.
-
-**Cutover addition:** nothing to change in the units for OFF (the default resolution is
-off and conf.sh already defaults `SPIRA_LIFECYCLE_ENFORCE=0`, conf.sh:1087). When the
-lifecycle machine is deployed, turning it on is `spira-config set spira.lifecycle_enforce
-true <doc>` — queue needs no change.

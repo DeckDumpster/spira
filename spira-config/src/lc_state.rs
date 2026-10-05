@@ -2,9 +2,8 @@
 //! §3.4, sp-mve9i): bd holds content, spira-lc holds state. Every Rust decision that used to
 //! read a bd row's `status` or `assignee` — "is it closed", "is it in progress", "who holds
 //! it" — reads the bead's lifecycle row here instead: `spira-lc list` for a pass over many
-//! beads, `spira-lc show <id>` for one. Both are the machine's primitives, which answer
-//! whatever `lifecycle_enforce` says; neither falls back to bd, because a fallback to bd
-//! status would be the very read this module replaces.
+//! beads, `spira-lc show <id>` for one. Both are the machine's primitives; neither falls back
+//! to bd, because a fallback to bd status would be the very read this module replaces.
 //!
 //! The state predicates below are the bd vocabulary's lifecycle equivalents, named for the
 //! decision rather than the word: bd `closed` on a work bead meant "the builder is done with

@@ -141,7 +141,6 @@ pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
     "SPIRA_SPIKE_DIR", "SPIRA_SPIKE_PATHS", "SPIRA_MAECHEN_MAX_BEADS",
     "SPIRA_MAECHEN_REMEDY_LABEL", "SPIRA_STATUTE_CORE", "SPIRA_MEMORIES_CACHE",
     "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_AGENT",
-    "SPIRA_LIFECYCLE_ENFORCE",
     "SPIRA_MAX_AEONS", "SPIRA_VERDICT_WINDOW", "SPIRA_EVICTION_ESCALATE_AT",
     "SPIRA_GH_API", "SPIRA_WORKFLOW_ONLY_PATHS", "SPIRA_CLAIM_RETRIES",
     "SPIRA_CLAIM_RETRY_DELAY_S",
@@ -163,7 +162,8 @@ pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
 pub struct Snapshot {
     pub env: BTreeMap<String, String>,
     pub vars: BTreeMap<String, String>,
-    /// `READY_ARGS` (lib.sh): bd's ready query, read only with `lifecycle_enforce` off.
+    /// `READY_ARGS` (lib.sh): bd's ready query. Parsed because the snapshot still carries it;
+    /// no claim reads it — the ready set is the lifecycle machine's (sp-v62vn).
     pub ready_args: Vec<String>,
     pub claim_exclude: String,
 }

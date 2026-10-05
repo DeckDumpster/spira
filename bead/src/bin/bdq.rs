@@ -317,7 +317,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
-    let lc_row = is_create(args) && !creates_closed(args) && spira_config::lifecycle_enforce(None);
+    let lc_row = is_create(args) && !creates_closed(args);
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
         let (rc, err, out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row);

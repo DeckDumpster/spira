@@ -65,7 +65,7 @@
 1 reconciler-flow/src/main.rs
 8 reconciler/src/main.rs
 2 release/src/build.rs
-14 release/src/canary.rs
+13 release/src/canary.rs
 4 release/src/git.rs
 1 release/src/install.rs
 1 release/src/intake.rs
@@ -233,7 +233,6 @@
 5 spira/test-lifecycle-container.sh
 4 spira/test-lifecycle-cutover.sh
 3 spira/test-lifecycle-delivery-cutover.sh
-3 spira/test-lifecycle-enforce-gate.sh
 5 spira/test-lifecycle-stack-migration.sh
 2 spira/test-loop-readonly.sh
 9 spira/test-maechen-closed-record.sh

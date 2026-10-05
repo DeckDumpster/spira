@@ -1033,7 +1033,7 @@ fn a_merge_conflict_on_already_landed_work_does_not_reopen() {
     h.closed("sp-a", "t1");
     h.git.merge_conflict.borrow_mut().insert("spira/sp-a".into());
     h.run();
-    assert!(!h.lib.has("deliver_returned"), "lifecycle_enforce OFF");
+    assert!(h.lib.has("deliver_returned sp-a"), "a genuine conflict is a Returned delivery");
     assert!(h.lib.has("reopen sp-a rebase-conflict Reopened by sentinel: branch spira/sp-a conflicts with origin/main. The branch carries 2 commit(s)"));
 }
 
@@ -1729,9 +1729,8 @@ fn pr_run(h: &H, tools: &FakePr) -> Vec<String> {
     p.loud.into_inner()
 }
 
-fn push_fixture(on: bool) -> H {
-    let mut h = H::new(LandMode::Push);
-    h.s.lifecycle_enforce = on;
+fn push_fixture() -> H {
+    let h = H::new(LandMode::Push);
     h.git.tree.set(true);
     h.closed("sp-a", "t1");
     h.closed("sp-b", "t2");
@@ -1740,17 +1739,8 @@ fn push_fixture(on: bool) -> H {
 }
 
 #[test]
-fn off_push_mode_never_invokes_spira_lc() {
-    let h = push_fixture(false);
-    h.run();
-    assert!(h.lib.has("reopen sp-b rebase-conflict"));
-    assert_eq!(h.lc.probes.get(), 0);
-    assert!(!h.lib.has("deliver_"), "{:?}", h.lib.calls.borrow());
-}
-
-#[test]
-fn on_push_mode_records_deliveries_through_the_machine() {
-    let h = push_fixture(true);
+fn push_mode_records_deliveries_through_the_machine() {
+    let h = push_fixture();
     h.run();
     assert!(h.lib.has("deliver_delivered sp-a head1"));
     assert!(h.lib.has("deliver_returned sp-b"));
@@ -1758,17 +1748,16 @@ fn on_push_mode_records_deliveries_through_the_machine() {
 }
 
 #[test]
-fn on_with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
-    let h = push_fixture(true);
+fn with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
+    let h = push_fixture();
     *h.lc.down.borrow_mut() = Some("Access denied".into());
     h.run();
-    assert!(h.logged("landing: lifecycle_enforce is on and spira-lc is unreachable (Access denied) — not landing spira/sp-a this pass"));
+    assert!(h.logged("landing: spira-lc is unreachable (Access denied) — not landing spira/sp-a this pass"));
 }
 
 #[test]
-fn on_a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
-    let mut h = H::new(LandMode::QueueLocal);
-    h.s.lifecycle_enforce = true;
+fn a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
+    let h = H::new(LandMode::QueueLocal);
     h.bead("sp-a", "SUBMITTED", &[]);
     h.git.add("spira/sp-a", "t1");
     h.run();
@@ -1777,8 +1766,7 @@ fn on_a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
 
 #[test]
 fn a_refused_gatepass_leaves_the_bead_uncertified() {
-    let mut h = H::new(LandMode::QueueLocal);
-    h.s.lifecycle_enforce = true;
+    let h = H::new(LandMode::QueueLocal);
     h.bead("sp-a", "SUBMITTED", &[]);
     h.git.add("spira/sp-a", "t1");
     h.lc.refuse_pass.set(true);
@@ -1791,8 +1779,7 @@ fn a_refused_gatepass_leaves_the_bead_uncertified() {
 /// here.
 #[test]
 fn a_submitted_bead_is_certified_only_at_its_live_tip() {
-    let mut h = H::new(LandMode::QueueLocal);
-    h.s.lifecycle_enforce = true;
+    let h = H::new(LandMode::QueueLocal);
     h.bead("sp-a", "SUBMITTED", &[]);
     h.git.add("spira/sp-a", "t2");
     h.run();
@@ -1813,17 +1800,8 @@ fn a_bead_the_builder_still_holds_is_never_certified() {
 }
 
 #[test]
-fn off_queue_certification_never_invokes_spira_lc() {
-    let h = H::new(LandMode::QueueLocal);
-    h.closed("sp-a", "t1");
-    h.run();
-    assert_eq!(h.lc.probes.get(), 0);
-}
-
-#[test]
-fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
-    let mut h = H::new(LandMode::Pr);
-    h.s.lifecycle_enforce = true;
+fn the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
+    let h = H::new(LandMode::Pr);
     h.closed("sp-merged", "t3");
     h.git.content.borrow_mut().insert("spira/sp-merged".into());
     h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "M".into());
@@ -1836,7 +1814,7 @@ fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails()
     let loud = pr_run(&h, &tools);
     assert_eq!(
         loud,
-        vec!["landing-pass: sp-merged: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
+        vec!["landing-pass: sp-merged: LIFECYCLE: the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
     );
 }
 

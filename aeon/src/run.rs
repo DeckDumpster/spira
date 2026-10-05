@@ -109,7 +109,6 @@ pub struct Run<'a> {
     pub pid: u32,
     pub own_unit: String,
     pub t0: i64,
-    pub enforce: bool,
     /// `spira-claim`, by name on the launcher's PATH; a field so a test can point it at a fixture.
     pub claim_bin: String,
     pub stop: Arc<Stop>,
@@ -350,20 +349,10 @@ impl<'a> Run<'a> {
         None
     }
 
-    /// `lifecycle_enforce` off: bd's ready query, narrowed to this fayth.
-    fn ready_args(&self) -> Vec<String> {
-        let mut a = self.snap.ready_args.clone();
-        a.extend(s(&["--label", &self.fayth.labels, "--exclude-label", &self.snap.claim_exclude]));
-        a
-    }
-
-    /// The ready set, as JSON. Enforce on: spira-claim's `fayth-ready --json`, the lifecycle
-    /// machine's claimable rows in this fayth's partition — the rows CHECK 7 counted when it
-    /// summoned this aeon; bd supplies only their content. Off: bd's ready query.
+    /// The ready set, as JSON: spira-claim's `fayth-ready --json`, the lifecycle machine's
+    /// claimable rows in this fayth's partition — the rows CHECK 7 counted when it summoned
+    /// this aeon; bd supplies only their content.
     fn ready_set(&self, tries: u32, delay: Duration) -> Result<String, String> {
-        if !self.enforce {
-            return claim::claim_retry(self.d.bd, &self.ready_args(), tries, delay);
-        }
         let tries = tries.max(1);
         let mut last = Out::default();
         for i in 1..=tries {
@@ -396,16 +385,9 @@ impl<'a> Run<'a> {
 
     fn dry_run(&self) -> i32 {
         self.log(&format!("{}: dry run — candidates:", self.f()));
-        if self.enforce {
-            let rows: serde_json::Value = self.ready_set(1, Duration::ZERO).ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
-            for r in rows.as_array().into_iter().flatten().take(10) {
-                self.d.sink.out(r["id"].as_str().unwrap_or("?"));
-            }
-            return 0;
-        }
-        let o = self.d.bd.bd(&self.ready_args());
-        for l in util::strip_bd_hints(&o.stdout).lines().take(10) {
-            self.d.sink.out(l);
+        let rows: serde_json::Value = self.ready_set(1, Duration::ZERO).ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+        for r in rows.as_array().into_iter().flatten().take(10) {
+            self.d.sink.out(r["id"].as_str().unwrap_or("?"));
         }
         0
     }
@@ -476,7 +458,7 @@ impl<'a> Run<'a> {
         let ready = if ready.trim().is_empty() { "[]".to_string() } else { ready };
         let claim_bin = self.claim_bin.clone();
         let who = format!("{}/{}", self.f(), self.s.aeon);
-        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos, machine: self.enforce };
+        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos };
         let (ids, resumable, tier) = match sel.select(&ready) {
             Selection::ClaimError { log, ledger } => {
                 self.log(&log);
@@ -485,15 +467,7 @@ impl<'a> Run<'a> {
             }
             Selection::Ranked { ids, resumable, tier } => (ids, resumable, tier),
         };
-        let claimed = if self.enforce {
-            self.lc_claim(&ids, &resumable, tier.as_deref(), &who)?
-        } else {
-            let (claimed, logs) = claim::claim_loop(self.d.bd, &ids, &resumable, tier.as_deref(), &who, tries, delay);
-            for l in logs {
-                self.log(&l);
-            }
-            claimed
-        };
+        let claimed = self.lc_claim(&ids, &resumable, tier.as_deref(), &who)?;
         let Some(c) = claimed else {
             self.log(&format!("{}: nothing ready to claim", self.f()));
             self.ledger.awake(self.now(), self.f(), "idle");
@@ -512,18 +486,11 @@ impl<'a> Run<'a> {
         }
 
         // Read-after-claim: the predicate and the claim are not atomic.
-        if self.enforce {
-            let held = self.blocking_holds(&c.id);
-            if !held.is_empty() {
-                self.release();
-                self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
-                self.ledger_done(0, "hold-raced");
-                return Err(0);
-            }
-        } else if bd::show(self.d.bd, &c.id).is_some_and(|r| r.has_label("spira-poison")) {
+        let held = self.blocking_holds(&c.id);
+        if !held.is_empty() {
             self.release();
-            self.log(&format!("{who}: {} carries spira-poison — released immediately after claim (race with the label)", c.id));
-            self.ledger_done(0, "poison-raced");
+            self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
+            self.ledger_done(0, "hold-raced");
             return Err(0);
         }
 
@@ -886,7 +853,7 @@ impl<'a> Run<'a> {
         let db = self.conf.db();
         let landing = brief::landing_brief(&self.s.repo_land, &self.s.branch, &self.s.base_branch, &self.s.repo_name, &self.s.base);
         let park = brief::park_brief(&self.s.repo_land, &self.s.branch, &self.s.repo_name, &self.s.base_branch);
-        let finish = brief::finish_brief(self.enforce, &bead, &db);
+        let finish = brief::finish_brief(&bead);
         let fixture = brief::fixture_brief(self.s.fixture.as_ref(), &self.conf.s("SPIRA_TESTDB_LIB"), &self.conf.s("SPIRA_TESTDB_PORT"), fixture_ms);
         let deadline_at = self.fayth.timeout_seconds.map(|t| self.t0 + t as i64);
         let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
@@ -958,8 +925,8 @@ impl<'a> Run<'a> {
             // launcher's PATH, whose first entries are the release's bin/ and spira/.
             ("SUITES", format!("{} suites", brief::TESTENV)),
             ("TESTENV", brief::TESTENV.into()),
-            ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
-            ("NO_BD", brief::no_bd_brief(self.enforce)),
+            ("FOLLOWUP", brief::followup_brief(&bead)),
+            ("NO_BD", brief::no_bd_brief()),
             ("SPIRA_HOME", home.clone()),
             ("RUN", self.run_dir().display().to_string()),
             ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),
@@ -969,11 +936,9 @@ impl<'a> Run<'a> {
         // The tool placeholders (ASK, GROOM, INCIDENT, SOP, DEP): `work` verbs, since the
         // model has no bd-reaching tool (sp-st0mm).
         single.extend(brief::tool_tokens());
-        // Under enforce the model has no bd and no path into the release (sp-st0mm, sp-zf4q3):
-        // no prompt names the database or the harness's home, so neither is handed over.
-        if self.enforce {
-            single.retain(|(k, _)| !brief::WITHHELD_UNDER_ENFORCE.contains(k));
-        }
+        // The model has no bd and no path into the release (sp-st0mm, sp-zf4q3): no prompt
+        // names the database or the harness's home, so neither is handed over.
+        single.retain(|(k, _)| !brief::WITHHELD.contains(k));
         let tokens = Tokens {
             single,
             bead: body,
@@ -988,7 +953,7 @@ impl<'a> Run<'a> {
         task.push_str(&brief::dirty_brief(dirty));
         task.push_str(resume);
         task.push_str(slain);
-        task.push_str(&brief::already_done_brief(self.enforce, &self.s.base, &bead, &wdisp, &db));
+        task.push_str(&brief::already_done_brief(&self.s.base, &bead, &wdisp));
         task.push_str(&brief::close_brief(&self.s.base, &wdisp, &self.s.base_remote));
         task.push_str(rebase);
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);
@@ -1140,7 +1105,7 @@ impl<'a> Run<'a> {
         self.s.session_started = true;
         let agent = self.agent_bin();
         let child = env.child();
-        let (prog, args, spec_env) = if self.enforce {
+        let (prog, args, spec_env) = {
             // The model runs bound to this bead under the restricted environment (design
             // §3.5; replaces the work-env.sh wrapper process, sp-zpaq0): same allow-list,
             // now applied in-process rather than through a subprocess and `env -i`.
@@ -1153,8 +1118,6 @@ impl<'a> Run<'a> {
                 Err(e) => return Err(Abort::Die(format!("work-env: {e}"))),
             };
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
-        } else {
-            (agent, argv, child)
         };
         let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds };
         let rc = self.d.launcher.run(&spec, &self.stop);
@@ -1187,7 +1150,6 @@ impl<'a> Run<'a> {
             seam: self.d.seam,
             git: self.d.git,
             bd: self.d.bd,
-            bd_lease: !self.enforce,
             exec: self.d.exec,
             holder: format!("aeon-{}", self.s.aeon),
             renew_rc: std::sync::Mutex::new(0),
@@ -1216,10 +1178,6 @@ pub struct RealBeat<'a> {
     pub seam: &'a dyn Seam,
     pub git: &'a dyn Git,
     pub bd: &'a dyn Bd,
-    /// Enforce off: bd's claim carries the lease, renewed by `bd heartbeat`. On, there is no
-    /// bd claim (`bd heartbeat` on an unclaimed bead fails, which would end the heartbeat
-    /// loop); the lifecycle row's lease is renewed by `spira-lc renew` instead (sp-2jf0a).
-    pub bd_lease: bool,
     /// `spira-lc renew`'s runner, found by name like every other spira-lc call here.
     pub exec: &'a dyn Exec,
     /// The claim's holder — the name `lc_claim` claimed under (`aeon-<name>`).
@@ -1259,10 +1217,7 @@ impl Beat for RealBeat<'_> {
         String::from_utf8_lossy(&b[..b.len().min(n)]).into_owned()
     }
     fn renew(&self, lease_until: i64) -> bool {
-        if self.bd_lease {
-            return self.bd.bd(&s(&["heartbeat", &self.bead])).success();
-        }
-        // Enforce on: the lifecycle row's lease (sp-2jf0a). Never ends the heartbeat — its
+        // The lifecycle row's lease (sp-2jf0a); there is no bd claim to `bd heartbeat`. Never ends the heartbeat — its
         // lapse and thrash guards must keep watching the session whatever the machine says.
         // A refusal (reaped and handed on, already submitted, the machine unreachable) is
         // logged once per change; a holder that stops renewing simply expires.

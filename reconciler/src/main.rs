@@ -122,7 +122,6 @@ struct Config {
     cockpit_sh: String,
     queue_bin: String,
     lc_bin: String,
-    lifecycle_enforce: bool,
     queue_dir: PathBuf,
     repo_map: Option<PathBuf>,
     releases_dir: PathBuf,
@@ -245,7 +244,6 @@ impl Config {
             // The queue binary, by name on the launcher's PATH (sp-gypjk).
             queue_bin: "queue".into(),
             lc_bin: "spira-lc".into(),
-            lifecycle_enforce: env::var("SPIRA_LIFECYCLE_ENFORCE").map(|v| v == "1").unwrap_or(false),
             queue_dir: env::var("SPIRA_QUEUE_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("queue")),
@@ -1290,7 +1288,6 @@ mod tests {
             cockpit_sh: String::new(),
             queue_bin: String::new(),
             lc_bin: String::new(),
-            lifecycle_enforce: false,
             queue_dir: PathBuf::from("/dev/null"),
             repo_map: None,
             releases_dir: PathBuf::new(),
@@ -1330,7 +1327,6 @@ mod tests {
             cockpit_sh: base.cockpit_sh.clone(),
             queue_bin: base.queue_bin.clone(),
             lc_bin: base.lc_bin.clone(),
-            lifecycle_enforce: base.lifecycle_enforce,
             queue_dir: base.queue_dir.clone(),
             repo_map: base.repo_map.clone(),
             releases_dir: base.releases_dir.clone(),
