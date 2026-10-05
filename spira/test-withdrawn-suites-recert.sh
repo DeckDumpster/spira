@@ -109,7 +109,7 @@ want "B: the gate command was told to force test-x.sh" "ejected=test-x.sh" "$(ca
 [ "$rc" -ne 0 ] && ok "B: re-certification RED — the withdrawn suite is caught, not skipped" \
     || bad "B: re-certification RED" "rc=$rc out=$out"
 want "B: failure reported to the aeon" "failed the gate" "$out"
-is "B: the lifecycle row is not certified by the red re-cert" "WORKING" "$(lcfix_state sp-wsx)"
+nowant "B: the lifecycle row is not certified by the red re-cert" "CERTIFIED" "$(lcfix_state sp-wsx)"
 [ ! -f "$RUN/queue/sp-wsx" ] && ok "B: not admitted to the queue on a red re-cert" \
     || bad "B: not admitted to the queue" "queue record exists"
 

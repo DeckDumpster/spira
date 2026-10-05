@@ -212,6 +212,7 @@ out="$(SPIRA_HOME="$V_SH" SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" \
 is   "verdict: remote MASTER fast-forwards to the batch head" \
      "$V_BATCH_HEAD" "$(git -C "$V_REMOTE" rev-parse master 2>/dev/null)"
 want "verdict: reports a fast-forward landing" "landed by fast-forward" "$out"
+nowant "verdict: spira-lc refused no step of the land walk" "refused" "$out"
 is "verdict: the batch is LANDED on spira-lc" "LANDED" \
     "$(lcfix_sql -q "SELECT state FROM batch WHERE batch_id='vtest-1'" -r csv 2>/dev/null | sed -n 2p)"
 
