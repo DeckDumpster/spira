@@ -163,6 +163,25 @@ pub fn mask_rust(text: &str) -> String {
                 continue;
             }
         }
+        // A char literal (`'"'`, `'\\''`, `b'x'`, `'é'`) is copied whole, so a quote inside one
+        // never opens a string; a lifetime (`'a`) has no closing quote and falls through.
+        if c == b'\'' {
+            let end = if b.get(i + 1) == Some(&b'\\') {
+                (i + 3..b.len().min(i + 12)).find(|&j| b[j] == b'\'')
+            } else {
+                let w = std::str::from_utf8(&b[i + 1..b.len().min(i + 5)])
+                    .or_else(|e| std::str::from_utf8(&b[i + 1..i + 1 + e.valid_up_to()]))
+                    .ok()
+                    .and_then(|t| t.chars().next())
+                    .map(char::len_utf8);
+                w.filter(|n| b.get(i + 1 + n) == Some(&b'\'')).map(|n| i + 1 + n)
+            };
+            if let Some(end) = end {
+                out.extend_from_slice(&b[i..=end]);
+                i = end + 1;
+                continue;
+            }
+        }
         if c == b'"' {
             out.push(b'"');
             i += 1;
@@ -225,6 +244,12 @@ mod tests {
         assert!(!is_call(l[1], "landed"), "{m}");
         assert!(!is_call(l[2], "land_mark"), "{m}");
         assert!(!is_call(l[3], "landed"), "{m}");
+        // A quote in a char literal opens no string: the call after it is still seen, and
+        // a lifetime is not a char literal.
+        let m = mask_rust("let q = b'\"'; let e = '\\''; fn f<'a>(x: &'a str) { landed(x); }\nlet s = \"landed(\";\n");
+        let l: Vec<&str> = m.lines().collect();
+        assert!(is_call(l[0], "landed"), "{m}");
+        assert!(!is_call(l[1], "landed"), "{m}");
     }
 
     #[test]
