@@ -52,6 +52,7 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
         Err(e) => problems.push(e),
     }
     problems.extend(crate::build::clashes(&rel, &o.system_dirs).into_iter().map(|c| format!("name clash: {c}")));
+    problems.extend(spira_config::release_env::model_bin_problems(&rel));
     match crate::units::check_binaries(&rel) {
         Ok(p) => problems.extend(p),
         Err(e) => problems.push(e),

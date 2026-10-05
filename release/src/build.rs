@@ -104,6 +104,9 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
     if fs::symlink_metadata(stage.join("bin")).is_ok() {
         return Err(format!("{sha} tracks bin/, which a release reserves for its binaries"));
     }
+    if fs::symlink_metadata(stage.join(spira_config::release_env::MODEL_BIN_DIR)).is_ok() {
+        return Err(format!("{sha} tracks {}/, which a release reserves for the model's binaries", spira_config::release_env::MODEL_BIN_DIR));
+    }
 
     // GENERATED CONFIG (sp-5fw50): spira/conf.d.*.generated.sh are gitignored — derived from
     // spira/conf.d/, never committed — so `git archive` does not carry them, and a read-only
@@ -157,6 +160,11 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
     // every compat name in bin/ and spira/ — this was the one path (`queue land-local` →
     // `release build --bin-dir`) that never did.
     crate::compat::link(&stage, &bin_dir)?;
+
+    // MODEL-BIN (sp-zf4q3): the one release directory the model's restricted PATH names —
+    // only `work`, linked to ../bin/work — so no tool in bin/ that calls bd is reachable by
+    // name from inside an aeon's session.
+    spira_config::release_env::link_model_bin(&stage).map_err(|e| format!("{sha}: {e}"))?;
 
     let clashes = clashes(&stage, &o.system_dirs);
     if !clashes.is_empty() {

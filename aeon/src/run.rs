@@ -1086,11 +1086,14 @@ impl<'a> Run<'a> {
             // §3.5; replaces the work-env.sh wrapper process, sp-zpaq0): same allow-list,
             // now applied in-process rather than through a subprocess and `env -i`.
             self.s.lc_model_restricted = true;
+            // sp-zf4q3: the model's PATH names the release's model-bin/ (only `work`), never
+            // the bin/ that holds `work` beside ~40 tools that call bd. Fail-closed.
             let path = child.get("PATH").cloned().unwrap_or_default();
-            let Some(work_dir) = restrict::work_bin_dir(&path, |p| is_executable(p)) else {
-                return Err(Abort::Die("work-env: work is not on PATH — the launcher sets PATH to a release".to_string()));
+            let model_bin = match restrict::model_bin_dir(&child, &path, |p| is_executable(p)) {
+                Ok(d) => d,
+                Err(e) => return Err(Abort::Die(format!("work-env: {e}"))),
             };
-            (agent, argv, restrict::restricted_env(&bead, &child, &work_dir))
+            (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         } else {
             (agent, argv, child)
         };
