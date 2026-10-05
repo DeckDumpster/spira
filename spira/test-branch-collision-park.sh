@@ -61,6 +61,10 @@ log()      { : ; }
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 . "$HERE/testlib.sh"
+# sp-mve9i: the collision detector's candidates are the beads the lifecycle machine says wait
+# for a builder (READY/REWORK), never bd's open; the fixture's open beads are told to it in
+# lifecycle terms by a stand-in lifecycle service (testlib.sh lc_socket_mirror).
+lc_socket_mirror "$TMP/lcsock"
 
 echo "test-branch-collision-park.sh"
 
