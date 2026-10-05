@@ -91,7 +91,7 @@ Mechanical fixes, unchanged in effect:
 
 | kind | effect | stdout |
 |---|---|---|
-| `ghost` | `spira-lc show <id>` → `spira-lc event bead <id> --expect <state> --version <v> --actor strand --kind '"HolderDead"'`; one `reclaimed`/`ghost` row into `events` (`bd sql`); `bd note <id> --stdin` (fixed text); `branch.reclaimed` line in `$SPIRA_RUN/events.log` with the per-key cooldown in `$SPIRA_RUN/events/`; at exactly `SPIRA_RECLAIM_AT` (5) reclaims, a `reclaim-ceiling` escalation | `RECLAIMED <id> — <detail>` |
+| `ghost` (lifecycle_enforce off only) | `bd reclaim --id <id> --older-than 1s [--label <partition>]`; one `reclaimed`/`ghost` row into `events` (`bd sql`); `bd note <id> --stdin` (fixed text); `branch.reclaimed` line in `$SPIRA_RUN/events.log` with the per-key cooldown in `$SPIRA_RUN/events/`; at exactly `SPIRA_RECLAIM_AT` (5) reclaims, a `reclaim-ceiling` escalation | `RECLAIMED <id> — <detail>` |
 | `stale-blocked` | `bd recompute-blocked` | `RECOMPUTED is_blocked — <id> stuck with every blocker closed` |
 
 Escalation: `$SPIRA_HOME/mail send operator --from 'Strand check <strand@spira>'
@@ -313,18 +313,14 @@ release always carries it, and it does not turn anything on.
 
 | | **off** (production today) | **on** |
 |---|---|---|
-| spira-lc | **never run** | `list --hold wait`, `show`, `event … HolderDead` |
-| ghost wait exemption | beads labelled `spira-waiting-operator` (pre-sp-i2m7y `SPIRA_RECLAIM_SKIP_LABEL` default), read off the store this pass already loaded | the spira-lc `wait` holds; an unset/non-executable binary, a failed call or an unparseable reply is an `Err` — the pass is "cannot tell" (R7), never an empty set that would reclaim a held bead |
-| ghost fix, first step | `bd reclaim --id <id> --older-than 1s [--label <partition>]` (pre-sp-i2m7y strand.sh; no `--label` for partition `-`); a failure is a `WARN` | `spira-lc HolderDead` (show, then the CAS event). Stays best-effort so the counter/note/event still run, but every miss — unset or non-executable binary, a failed show or event, no row — is a loud `WARN … lifecycle_enforce is on and spira-lc HolderDead did not happen` |
-| ghost row's action text | `bd reclaim --id <id>` | `spira-lc HolderDead <id>` |
-| rest of the ghost fix (reclaim counter, note, event, ceiling escalation) | unchanged | unchanged |
+| spira-lc | **never run** | **never run** (sp-7g5q6) |
+| a partition's ready set | `bd ready` under the partition's predicate (or the sentinel's `SPIRA_READY_SNAPSHOT`) | `spira-claim ready-count <labels> <exclude> --json` — the machine's READY/REWORK rows, the set the summoner counts and an aeon claims from; a refusal is an `Err`, never an empty set |
+| ghost rule | in_progress, holder not alive, lease expired past grace, not ask-labelled, not carrying `spira-waiting-operator`; fixed by `bd reclaim --id <id> --older-than 1s [--label <partition>]` (no `--label` for partition `-`), then the counter/note/event/ceiling escalation | **none.** bd's in_progress and lease are written by no claim; a WORKING row whose lease expired past its grace and is not wait-held is CHECK 2's stale-lease reaper's (`sentinel/src/lifecycle.rs` `stale_leases` → `HolderDead`) |
 
 **Tests:** `config::lifecycle_switch_env_then_toml_then_off`,
-`check::off_ghost_fix_is_bd_reclaim_and_never_runs_spira_lc` and
-`check::off_wait_exemption_is_the_legacy_label_and_never_runs_spira_lc` (an executable
-recorder stands in for spira-lc and must never be called),
-`check::on_runs_spira_lc_and_unreachable_is_an_error_not_an_empty_set`,
-`classify::ghost_needs_an_expired_lease_and_no_holder` (both action texts).
+`check::off_ghost_fix_is_bd_reclaim`, `check::off_wait_exemption_is_the_legacy_label`,
+`check::on_the_ready_set_is_spira_claims_and_bd_is_never_asked`,
+`classify::ghost_needs_an_expired_lease_and_no_holder` (off: the row; on: none).
 
 **Cutover addition:** the sentinel passes `SPIRA_LIFECYCLE_ENFORCE=0|1` to strand; nothing
 else is needed. If strand is ever run outside conf.sh with no environment value, it reads

@@ -89,7 +89,8 @@ pub struct Facts {
     /// Beads legitimately waiting (probe::wait_held: the legacy label off, the spira-lc
     /// `wait` hold on).
     pub wait_held: HashSet<String>,
-    /// The lifecycle switch — only the ghost row's action text reads it.
+    /// The lifecycle switch: on, there is no ghost rule (bd's in_progress is nobody's claim;
+    /// the sentinel's CHECK 2 reaps a WORKING row whose lease expired past its grace).
     pub lifecycle_enforce: bool,
 }
 
@@ -194,8 +195,14 @@ impl<'a> Partition<'a> {
     }
 
     // -- ghost: in_progress, lease expired past the grace window, no live holder. Exempt:
-    // escalated (ask label) and wait-held beads.
+    // escalated (ask label) and wait-held beads. lifecycle_enforce off only: on, bd's
+    // in_progress and lease are written by no claim, and the stranded claim this rule hunts —
+    // a WORKING row whose lease expired, not wait-held — is CHECK 2's stale-lease reaper's
+    // (sentinel/src/lifecycle.rs `stale_leases`), which HolderDead-s it (sp-7g5q6).
     fn ghosts(&self, members: &[&Bead], rows: &mut Vec<Row>) {
+        if self.facts.lifecycle_enforce {
+            return;
+        }
         for b in members {
             if b.status != Status::InProgress {
                 continue;
@@ -222,11 +229,7 @@ impl<'a> Partition<'a> {
                     mins,
                     b.assignee.as_deref().filter(|s| !s.is_empty()).unwrap_or("?")
                 ),
-                if self.facts.lifecycle_enforce {
-                    format!("spira-lc HolderDead {}", b.id)
-                } else {
-                    format!("bd reclaim --id {}", b.id)
-                },
+                format!("bd reclaim --id {}", b.id),
             ));
         }
     }
@@ -956,7 +959,7 @@ mod tests {
         assert_eq!(rows[0].detail, "in_progress, lease expired 10m ago, holder aeon-x is not running");
         assert_eq!(rows[0].action, "bd reclaim --id g", "lifecycle_enforce off: the legacy reclaim");
         f.lifecycle_enforce = true;
-        assert_eq!(run_with(&s, &[], &f)[0].action, "spira-lc HolderDead g");
+        assert!(run_with(&s, &[], &f).is_empty(), "on: bd in_progress is no claim; CHECK 2 reaps the WORKING row");
         f.lifecycle_enforce = false;
         f.now = exp + 100; // inside the grace window
         assert!(run_with(&s, &[], &f).is_empty());

@@ -250,23 +250,17 @@ pub fn canary_worker() -> Result<(), String> {
     let log = |s: &str| eprintln!("{} canary-worker: {s}", crate::fsutil::now_rfc3339());
     let bd = std::env::var("SPIRA_BD").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "bd".into());
     let db = std::env::var("SPIRA_DB").unwrap_or_default();
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
-    let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-
-    let mut cmd = Command::new(&bd);
-    if !db.is_empty() {
-        cmd.arg("-C").arg(&db);
-    }
-    cmd.args(["ready", "--limit", "0", "--exclude-type", "epic,event", "-u", "--claim", "--label", &label, "--json"]);
-    let out = cmd.output().map_err(|e| format!("cannot run bd ready --claim: {e}"))?;
-    let id = serde_json::from_slice::<serde_json::Value>(&out.stdout)
-        .ok()
-        .and_then(|v| {
-            let first = if v.is_array() { v.get(0).cloned() } else { Some(v) };
-            first.and_then(|o| o.get("id").and_then(|i| i.as_str()).map(str::to_string))
-        })
-        .filter(|s| !s.is_empty());
-    let Some(id) = id else {
+    let enforce = spira_config::lifecycle_enforce(None);
+    let holder = std::env::var("BEADS_ACTOR").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| CANARY_HOLDER.into());
+    let lease_until = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + CANARY_LEASE_SECS;
+    // batch-job: the stage's synthetic aeon claiming its bead, bounded by the canary's own --deadline.
+    let mut tools = |prog: &str, args: &[String]| -> (i32, String) {
+        match Command::new(prog).args(args).stdin(Stdio::null()).stderr(Stdio::inherit()).output() {
+            Ok(o) => (o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()),
+            Err(e) => (127, format!("{prog}: {e}")),
+        }
+    };
+    let Some(id) = claim_canary_bead(enforce, &bd, &db, &holder, lease_until, &mut tools)? else {
         log("nothing ready to claim");
         return Ok(());
     };
@@ -276,13 +270,13 @@ pub fn canary_worker() -> Result<(), String> {
     let repo = std::env::var("SPIRA_REPO").unwrap_or_default();
     if repo.is_empty() {
         log("SPIRA_REPO not set");
-        let _ = release_bead(&bd, &db, &id);
+        release_bead(enforce, &bd, &db, &id, &holder);
         return Err("SPIRA_REPO not set".into());
     }
     let checkout = |args: &[&str]| Command::new("git").current_dir(&repo).args(args).status().map(|s| s.success()).unwrap_or(false);
     if !checkout(&["checkout", "-q", "-b", &branch, "origin/main"]) && !checkout(&["checkout", "-q", &branch]) {
         log(&format!("could not create branch {branch}"));
-        let _ = release_bead(&bd, &db, &id);
+        release_bead(enforce, &bd, &db, &id, &holder);
         return Err(format!("could not create branch {branch}"));
     }
 
@@ -325,12 +319,116 @@ pub fn canary_worker() -> Result<(), String> {
     Ok(())
 }
 
-fn release_bead(bd: &str, db: &str, id: &str) -> Result<(), String> {
+/// The stage's one fayth (stage.rs `fayth_content`): the worker's ready set is this fayth's.
+const CANARY_FAYTH: &str = "canary";
+/// The worker's claim holder when the stage sets no `BEADS_ACTOR`.
+const CANARY_HOLDER: &str = "canary-worker";
+const CANARY_LEASE_SECS: u64 = 3600;
+/// lib.sh's `lc_claim_bead`, the aeon's own claim (sp-860zj): the Claim event is the claim.
+const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3""#;
+
+/// The worker's ready set and claim, through the one ready set an aeon claims from (sp-7g5q6):
+/// `spira-claim fayth-ready canary --json` — under lifecycle_enforce the machine's READY/
+/// REWORK rows, off bd's ready query under the fayth's predicate — never a `bd ready --claim`
+/// of its own. Each candidate in order is claimed the way an aeon claims it: on, the
+/// lifecycle Claim event (`lc_claim_bead`; a refusal means another holder won it, so the next
+/// is tried); off, bd's `update --claim`. `Ok(None)` is nothing ready; a ready set that cannot
+/// be read is an `Err`, never "nothing ready".
+/// Runs a program with its argv, answering (exit code, stdout): the worker's real tools, or a
+/// test's script.
+pub(crate) type Tools<'a> = dyn FnMut(&str, &[String]) -> (i32, String) + 'a;
+
+pub(crate) fn claim_canary_bead(
+    enforce: bool,
+    bd: &str,
+    db: &str,
+    holder: &str,
+    lease_until: u64,
+    run: &mut Tools,
+) -> Result<Option<String>, String> {
+    let own = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+    let (rc, out) = run("spira-claim", &own(&["fayth-ready", CANARY_FAYTH, "--json"]));
+    if rc != 0 {
+        return Err(format!("spira-claim fayth-ready {CANARY_FAYTH} --json failed (rc={rc})"));
+    }
+    let rows: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("spira-claim fayth-ready {CANARY_FAYTH}: not JSON: {e}"))?;
+    let ids: Vec<String> = rows.as_array().into_iter().flatten().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
+    for id in ids {
+        let rc = if enforce {
+            run("bash", &own(&["-c", LC_CLAIM, "lc-claim", &id, holder, &lease_until.to_string()])).0
+        } else {
+            let mut a = Vec::new();
+            if !db.is_empty() {
+                a.extend(["-C".to_string(), db.to_string()]);
+            }
+            a.extend(own(&["update", &id, "--claim", "--json"]));
+            run(bd, &a).0
+        };
+        if rc == 0 {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+/// Let go of a claim the worker cannot finish: on, `spira-lc unclaim` (lib.sh
+/// `release_own_claim`); off, bd's `release`. Best-effort, as before.
+fn release_bead(enforce: bool, bd: &str, db: &str, id: &str, holder: &str) {
+    if enforce {
+        let _ = Command::new("timeout").args(["5", "spira-lc", "unclaim", id, holder]).stdin(Stdio::null()).output();
+        return;
+    }
     let mut cmd = Command::new(bd);
     if !db.is_empty() {
         cmd.arg("-C").arg(db);
     }
     cmd.args(["release", id]);
     let _ = cmd.output();
-    Ok(())
+}
+
+#[cfg(test)]
+mod claim_tests {
+    use super::*;
+
+    /// A scripted toolbox: answers by program, records every call.
+    fn tools<'a>(calls: &'a mut Vec<String>, ready: &'a str, claim_rc: &'a dyn Fn(&str) -> i32) -> impl FnMut(&str, &[String]) -> (i32, String) + 'a {
+        move |prog, args| {
+            calls.push(format!("{prog} {}", args.join(" ")));
+            match prog {
+                "spira-claim" => (0, ready.to_string()),
+                "bash" => (claim_rc(&args[3]), String::new()),
+                _ => (claim_rc(args.iter().find(|a| a.starts_with("sp-")).map(String::as_str).unwrap_or("")), String::new()),
+            }
+        }
+    }
+
+    // sp-7g5q6: the canary worker claimed with its own `bd ready --claim`. Under the machine
+    // its ready set is spira-claim's and its claim the lifecycle Claim event; bd is not asked.
+    #[test]
+    fn on_the_worker_claims_the_machines_ready_bead_through_lc_claim_bead() {
+        let mut calls = Vec::new();
+        let refuse_first = |id: &str| if id == "sp-won-elsewhere" { 3 } else { 0 };
+        let mut t = tools(&mut calls, r#"[{"id":"sp-won-elsewhere"},{"id":"sp-canary"}]"#, &refuse_first);
+        let got = claim_canary_bead(true, "bd", "/stage/db", "canary-worker", 99, &mut t).unwrap();
+        drop(t);
+        assert_eq!(got.as_deref(), Some("sp-canary"));
+        assert_eq!(calls[0], "spira-claim fayth-ready canary --json");
+        assert!(calls[1].starts_with("bash -c ") && calls[1].ends_with("lc-claim sp-won-elsewhere canary-worker 99"), "{calls:?}");
+        assert!(calls[2].ends_with("lc-claim sp-canary canary-worker 99"), "{calls:?}");
+        assert!(!calls.iter().any(|c| c.starts_with("bd ") || c.contains(" ready ") || c.contains("--claim")), "{calls:?}");
+    }
+
+    #[test]
+    fn off_the_worker_claims_with_bd_update_and_an_unreadable_set_is_an_error() {
+        let mut calls = Vec::new();
+        let ok = |_: &str| 0;
+        let mut t = tools(&mut calls, r#"[{"id":"sp-canary"}]"#, &ok);
+        assert_eq!(claim_canary_bead(false, "bd", "/stage/db", "canary-worker", 99, &mut t).unwrap().as_deref(), Some("sp-canary"));
+        drop(t);
+        assert_eq!(calls, vec!["spira-claim fayth-ready canary --json", "bd -C /stage/db update sp-canary --claim --json"]);
+        let mut none = |_: &str, _: &[String]| (0, "[]".to_string());
+        assert_eq!(claim_canary_bead(false, "bd", "", "h", 1, &mut none).unwrap(), None, "an empty set is nothing ready");
+        let mut down = |_: &str, _: &[String]| (1, String::new());
+        assert!(claim_canary_bead(true, "bd", "", "h", 1, &mut down).is_err(), "a refused ready set is not nothing ready");
+    }
 }

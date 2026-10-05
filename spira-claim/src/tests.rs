@@ -1106,3 +1106,37 @@ fn a_held_ready_row_is_not_ready_but_a_wait_hold_is_judged_through_its_blockers(
     let set = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, &["fayth-ready", "probe", "--json"]);
     assert_eq!(ids_of(&set.out), vec!["P".to_string()], "{}", set.err);
 }
+
+// ---- ready-count --json: the ready set a display reads (sp-7g5q6) ------------------------
+//
+// The cockpit's NEXT rows asked bd ready itself; under the machine that set is bd's status
+// and assignee, which nobody claims by any more. `ready-count --json` is the same set the
+// count is, so a display and the summoner cannot disagree.
+
+#[test]
+fn ready_count_json_is_the_machine_set_with_titles_under_enforce() {
+    let bd_both = r#"[{"id":"W","title":"held","status":"open","priority":1,"issue_type":"task","labels":["plan"]},
+    {"id":"P","title":"take me","status":"in_progress","assignee":"aeon-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
+    let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, bd_both, &["ready-count", "plan", "spira-poison", "--json"]);
+    assert_eq!(set.code, 0, "{}", set.err);
+    let rows = rank::parse_ready(&set.out).unwrap();
+    assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["P"]);
+    assert_eq!(rows[0].title.as_deref(), Some("take me"));
+    let none = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, bd_both, &["ready-count", "plan", "plan", "--json"]);
+    assert_eq!((none.code, ids_of(&none.out)), (0, Vec::<String>::new()), "{}", none.err);
+    let refused = enforced_count(BD_OPEN_UNASSIGNED, "not json", bd_both, &["ready-count", "plan", "", "--json"]);
+    assert_eq!((refused.code, refused.out.as_str()), (1, ""), "a machine that cannot answer is no empty queue");
+}
+
+#[test]
+fn ready_count_json_off_is_bds_ready_query_and_refuses_a_non_json_reply() {
+    let bd = sh(r#"case "$*" in *"ready"*"--label plan"*) echo '[{"id":"a","title":"A","labels":["plan"]}]';; *) echo '[]';; esac"#);
+    let _env = testkit::env(&[("SPIRA_BD", Some(bd.as_str())), ("SPIRA_DB", None), ("SPIRA_SCOPE_LABEL", None), ("SPIRA_NO_LOOP_LABEL", None)]);
+    let o = run(&["ready-count", "plan", "spira-poison", "--json"], "");
+    assert_eq!((o.code, ids_of(&o.out)), (0, vec!["a".to_string()]), "{}", o.err);
+    drop(_env);
+    let bd = sh("echo 'schema version mismatch'");
+    let _env = testkit::env(&[("SPIRA_BD", Some(bd.as_str())), ("SPIRA_DB", None)]);
+    let o = run(&["ready-count", "plan", "", "--json"], "");
+    assert_eq!((o.code, o.out.as_str()), (1, ""), "{}", o.err);
+}

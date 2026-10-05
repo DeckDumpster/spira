@@ -271,10 +271,6 @@ status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
-assignee_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(d[0].get("assignee") or "")'; }
 # THE POISON HOLD, READ FROM THE REAL SPIRA-LC (sp-i2m7y) — not the bd label, which CHECK 4
 # no longer writes at all.
 poisoned()    { lcheld "$1"; }
@@ -388,9 +384,12 @@ notpoisoned "an epic is never poisoned" sp-epic
 # --------------------------------------------------------------------------------------
 # A POISONED BEAD KEEPS ITS CLAIM, AND STOPS BEING SUMMONED FOR.
 #
-# The lease is a REAL one taken by `bd ready --claim`, because what is under test is that
-# the valve does not cut it: unclaiming here would pull the lease out from under a session
-# still writing, and the aeon releases on its own exit path anyway.
+# The lease is a REAL one taken the way an aeon takes it — lib.sh's lc_claim_bead, the
+# lifecycle Claim event (sp-860zj: the row is the claim; bd's status and assignee are no
+# one's) — because what is under test is that the valve does not cut it: unclaiming here
+# would pull the lease out from under a session still writing, and the aeon releases on its
+# own exit path anyway. (A `bd ready --claim` here held the bead in bd alone, which nothing
+# reads under the machine, so the release below released nothing — sp-7g5q6.)
 # --------------------------------------------------------------------------------------
 seed_held() {
     seed
@@ -399,16 +398,20 @@ seed_held() {
 JSONL
     mklc sp-orphan
     cycle sp-orphan 3
-    BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" >/dev/null 2>&1
+    ( SPIRA_HOME="$SH" SPIRA_RUN="$RUN"; . "$SH/lib.sh" && lc_claim_bead sp-orphan aeon-holder "$(( $(date +%s) + 3600 ))" ) >/dev/null 2>&1
 }
+# lc_row_of <id> -> "<state> <holder>" off the real spira-lc row.
+lc_row_of() { "$LC_BIN" show "$1" 2>/dev/null | python3 -c '
+import json, sys
+try: b = json.load(sys.stdin).get("bead") or {}
+except Exception: b = {}
+print("%s %s" % (b.get("state") or "", b.get("holder") or ""))'; }
 
 seed_held
-is "the fixture starts with the bead held" "in_progress" "$(status_of sp-orphan)"
-is "and by a named holder"                 "aeon-holder" "$(assignee_of sp-orphan)"
+is "the fixture starts with the bead held, by a named holder" "WORKING aeon-holder" "$(lc_row_of sp-orphan)"
 out="$(sentinel)"
 ispoisoned "a held bead at the threshold is still poisoned" sp-orphan
-is   "but it is not unclaimed under its holder" "in_progress" "$(status_of sp-orphan)"
-is   "and the holder is untouched"              "aeon-holder" "$(assignee_of sp-orphan)"
+is   "but it is not unclaimed: the holder is untouched" "WORKING aeon-holder" "$(lc_row_of sp-orphan)"
 flat() { tr -s ' \n\t' ' ' <<<"$1"; }
 want "the note says the holder keeps its claim" "releases on its own exit path" \
      "$(flat "$(B show sp-orphan 2>/dev/null)")"
@@ -416,7 +419,9 @@ want "the note says the holder keeps its claim" "releases on its own exit path" 
 # ...and once the holder lets go, CHECK 7 declines to summon for it.
 # The holder lets go the way an aeon does (release_own_claim -> spira-lc unclaim, sp-hyo5e).
 release() { spira-lc unclaim sp-orphan aeon-holder >/dev/null 2>&1; }
-release; out="$(sentinel)"
+release
+is   "the holder's release puts the row back"   "READY " "$(lc_row_of sp-orphan)"
+out="$(sentinel)"
 want "CHECK 7 declines to summon for a poisoned bead" "t: nothing ready in its partition" "$out"
 rmpoison sp-orphan
 release; out="$(SPIRA_POISON_AT=99 sentinel)"

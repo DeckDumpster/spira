@@ -224,7 +224,6 @@ dependencies = [
  "aeon",
  "bead",
  "serde_json",
- "spira-claim",
  "spira-config",
  "strand",
  "testkit",

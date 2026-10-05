@@ -53,7 +53,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
-       spira-claim ready-count <labels> [<exclude-labels>]                   (ready_count; prints '0' on a failed query too)
+       spira-claim ready-count <labels> [<exclude-labels>] [--json]          (ready_count; prints '0' on a failed query too; --json: the rows)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
        spira-claim fayth-ready <fayth> [--json]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
@@ -735,8 +735,12 @@ fn cmd_ready_args(a: &Args, env: &mut Env) -> Outcome {
 /// `ready-count <labels> [<exclude-labels>]`: `ready_count` (lib.sh:459). A failed query
 /// still prints '0' to stdout (the historic contract — every existing caller reads only
 /// stdout), rc 1, the failure on stderr.
+///
+/// `--json` prints the counted rows instead (empty stdout and rc 1 on a failed query): the
+/// one ready set for a reader that shows beads rather than counts them, so nothing outside
+/// spira-claim asks bd for "ready" itself.
 fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
         return Outcome::usage(e);
     }
     let (labels, exclude) = match a.pos.as_slice() {
@@ -744,6 +748,9 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
         [l] => (l.as_str(), ""),
         _ => return Outcome::usage("ready-count needs <labels> [<exclude-labels>]"),
     };
+    if a.has("--json") {
+        return ready_rows_json(a, env, labels, exclude);
+    }
     if lifecycle_on() {
         return match machine_claimable(a, env) {
             Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
@@ -763,6 +770,40 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
             err: format!("spira-claim: ready_count: query failed: {}", first_line(&e)),
         },
     }
+}
+
+/// `ready-count --json`: under the machine, [`machine_claimable`]'s rows matching the
+/// labels; off, bd's ready query with them. Either way a reply that is not a JSON ready set
+/// is a refusal, never an empty queue.
+fn ready_rows_json(a: &Args, env: &Env, labels: &str, exclude: &str) -> Outcome {
+    let refuse = |e: &str| Outcome { code: 1, out: String::new(), err: format!("spira-claim: ready_count: {}", first_line(e)) };
+    let rows = if lifecycle_on() {
+        match machine_claimable(a, env) {
+            Ok(rows) => rows,
+            Err(e) => return refuse(&e),
+        }
+    } else {
+        let st = match store(a, &env.config) {
+            Ok(s) => s,
+            Err(e) => return Outcome::usage(e),
+        };
+        let mut q = ready_args_for(a, env);
+        q.extend(["--label".to_string(), labels.to_string()]);
+        if !exclude.is_empty() {
+            q.extend(["--exclude-label".to_string(), exclude.to_string()]);
+        }
+        let text = match st.ready_json(&q) {
+            Ok(t) if !t.trim().is_empty() => t,
+            Ok(_) => return refuse("query failed: bd returned no JSON"),
+            Err(e) => return refuse(&format!("query failed: {e}")),
+        };
+        match rank::parse_ready(&text) {
+            Ok(rows) => rows,
+            Err(e) => return refuse(&e),
+        }
+    };
+    let mine = ready::matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude));
+    Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()))
 }
 
 /// bd query argv, retried (lib.sh:609 `claim_retry`). Dispatched from `dispatch()` before

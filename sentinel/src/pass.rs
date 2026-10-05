@@ -488,6 +488,12 @@ impl<'a> Sentinel<'a> {
         // backlog continuously (sp-2f9sa, sp-k6m1m).
         let (open_plan, plan_ready, plan_inprog) = if self.cfg.skip_reclaim {
             (Vec::new(), Some(0), 0)
+        } else if self.lc == Lifecycle::On {
+            (
+                snap.plan_open(&self.cfg),
+                self.plan_ready_live(),
+                self.plan_inprog_lc(&snap),
+            )
         } else {
             (
                 snap.plan_open(&self.cfg),
@@ -667,8 +673,22 @@ impl<'a> Sentinel<'a> {
         Some(now)
     }
 
-    /// `ready_count "<scope,>plan" "spira-poison,<ask>"`, asked live.
+    /// `ready_count "<scope,>plan" "spira-poison,<ask>"`, asked live. lifecycle_enforce on:
+    /// spira-claim's `ready-count`, the one ready set (the machine's READY/REWORK rows) the
+    /// summoner counts and an aeon claims from — never `bd ready`, whose status and assignee
+    /// no claim writes (sp-7g5q6). A refusal is `None` (unknown), never 0.
     pub fn plan_ready_live(&self) -> Option<usize> {
+        if self.lc == Lifecycle::On {
+            let o = self.h.run(Spec::args_owned(
+                self.cfg.claim_bin.clone(),
+                vec![
+                    "ready-count".into(),
+                    self.cfg.plan_labels().join(","),
+                    format!("spira-poison,{}", self.cfg.ask),
+                ],
+            ));
+            return if o.ok() { o.stdout.trim().parse().ok() } else { None };
+        }
         let mut a = store::ready_args(&self.cfg);
         a.push("--label".into());
         a.push(self.cfg.plan_labels().join(","));
@@ -677,6 +697,19 @@ impl<'a> Sentinel<'a> {
         store::read_json(&self.bd(), self.h, &a)
             .ok()
             .map(|(_, v)| v.len())
+    }
+
+    /// lifecycle_enforce on: the plan beads running, as the machine's WORKING rows (the pass's
+    /// one lifecycle read) — bd's in_progress is written by no claim (sp-7g5q6). A machine
+    /// that cannot be read is already loud (`lc_unreachable`) and counts nothing.
+    fn plan_inprog_lc(&self, snap: &Snapshot) -> usize {
+        let need = self.cfg.plan_labels();
+        self.lc_rows().map_or(0, |rows| {
+            rows.iter()
+                .filter(|r| r.state == "WORKING")
+                .filter(|r| snap.get(&r.bead_id).is_some_and(|b| b.status != "closed" && store::has_all(b, &need)))
+                .count()
+        })
     }
 
     /// The fleet: `aeon_count` summed over the roster, from one unit listing.

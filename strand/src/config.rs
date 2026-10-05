@@ -19,12 +19,12 @@ pub struct Config {
     pub max_aeons: Option<u32>,
     pub max_live_aeons: u32,
     pub throttle_release_at: String,
-    /// The spira-lc program: `spira-lc`, by name on the launcher's PATH (sp-gypjk). A field
-    /// only so a unit test can hand in a recorder.
-    pub lc_bin: String,
+    /// The spira-claim program: `spira-claim`, by name on the launcher's PATH (sp-gypjk). A
+    /// field only so a unit test can hand in a recorder.
+    pub claim_bin: String,
     /// THE lifecycle switch (DESIGN.md §9): `SPIRA_LIFECYCLE_ENFORCE`, else
-    /// `spira.lifecycle_enforce`, else off. Off, strand never runs `lc_bin`; `lc_bin`'s
-    /// presence or absence is never consulted to decide this.
+    /// `spira.lifecycle_enforce`, else off. On, the ready set is spira-claim's and there is no
+    /// ghost rule; strand never runs spira-lc either way.
     pub lifecycle_enforce: bool,
     pub instance: Option<String>,
     pub labels: Option<String>,
@@ -79,9 +79,9 @@ impl Source for Live {
 
 #[cfg(test)]
 impl Config {
-    /// A unit test's recorder in place of the spira-lc on PATH.
-    pub fn with_lc(mut self, lc: &str) -> Config {
-        self.lc_bin = lc.into();
+    /// A unit test's recorder in place of the spira-claim on PATH.
+    pub fn with_claim(mut self, claim: &str) -> Config {
+        self.claim_bin = claim.into();
         self
     }
 }
@@ -123,7 +123,7 @@ impl Config {
                 .unwrap_or(0),
             throttle_release_at: nonempty(get("SPIRA_QUEUE_THROTTLE_RELEASE_AT", "queue_throttle_release_at"))
                 .unwrap_or_else(|| "8".into()),
-            lc_bin: "spira-lc".into(),
+            claim_bin: "spira-claim".into(),
             lifecycle_enforce: spira_config::resolve_lifecycle_enforce(
                 src.env(spira_config::LIFECYCLE_ENFORCE_ENV).as_deref(),
                 src.toml("lifecycle_enforce").map(|v| v == "true"),

@@ -1212,6 +1212,76 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
 }
 
 // ---------------------------------------------------------------------------------------
+// CHECK 3 / 8 under lifecycle_enforce (sp-7g5q6): plan_ready is spira-claim's ready set and
+// in_progress is the machine's WORKING rows — never `bd ready` nor bd's in_progress, which
+// no claim writes any more.
+
+#[test]
+fn on_plan_ready_is_spira_claims_and_in_progress_is_the_machines_working_rows() {
+    let (w, r, sink, clock) = setup("on-plan-counts");
+    let lease = NOW + 3_600;
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(&format!(
+                r#"[{{"bead_id":"sp-a","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"2"}},
+                    {{"bead_id":"sp-b","state":"WORKING","holder":"aeon-2","lease_until":"{lease}","holds":"[]","version":"4"}}]"#
+            ));
+        }
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
+            return ok("0\n");
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
+    // bd ready says sp-a is ready and bd's status says one bead is in progress; the machine
+    // says both are WORKING and nothing is claimable.
+    assert!(sink.has("state: open=2 plan_ready=0 in_progress=2"), "{}", sink.text());
+    let q = r
+        .find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count"))
+        .expect("plan_ready asks spira-claim");
+    assert_eq!(q.args, vec!["ready-count", "spira,plan", "spira-poison,needs-operator"]); // literal-ok: asserts argv built from the fixture
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1, "the counts reuse the pass's one lifecycle read");
+    assert_eq!(r.count(|s| is_bd(s, "recompute-blocked")), 0, "work is running: CHECK 3 has nothing to free");
+    assert!(!sink.has("STARVED"), "{}", sink.text());
+}
+
+#[test]
+fn on_a_starved_plan_recounts_through_spira_claim_never_bd_ready() {
+    let (w, r, sink, clock) = setup("on-starved");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
+            return ok("0\n");
+        }
+        None
+    });
+    exe(&w.home.join("reflect.sh"));
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
+    assert!(sink.has("state: open=2 plan_ready=0 in_progress=0"), "{}", sink.text());
+    assert_eq!(r.count(|s| is_bd(s, "recompute-blocked")), 1);
+    assert_eq!(
+        r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count")),
+        2,
+        "the state count and CHECK 3's recount"
+    );
+    assert_eq!(r.count(|s| is_bd(s, "ready") && s.args.iter().any(|a| a == "spira,plan")), 0, "{:#?}", r.lines());
+    assert!(sink.has("STARVED — 2 open, 0 ready, 0 running."), "{}", sink.text());
+}
+
+#[test]
+fn on_a_refused_ready_count_is_unknown_not_zero() {
+    let (w, r, sink, clock) = setup("on-refused");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
+            return Some(crate::host::Out { rc: 1, stdout: "0".into(), stderr: "spira-claim: ready_count: spira-lc list: boom".into() });
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
+    assert!(sink.has("plan_ready=?"), "{}", sink.text());
+    assert!(!sink.has("STARVED"), "an unknown count is never a starved plan: {}", sink.text());
+}
+
+// ---------------------------------------------------------------------------------------
 // CHECK 4 (audit)
 
 const AUDIT_LIST: &str = r#"[
