@@ -24,9 +24,18 @@
 //! `SPIRA_LC_PASSWORD_FILE`, the lifecycle service user lc-serve uses) — see [`Probe`]: a
 //! column in `information_schema.columns`, a guarded UPDATE/DELETE whose own WHERE no longer
 //! matches a row, a table or index in `information_schema`. When nothing is pending the run
-//! succeeds with no admin credential at all (release pre-activate on every flip). Only a
-//! pending step is applied, as `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD`; with those
-//! absent or refused, the run fails naming exactly those two variables and the pending file.
+//! succeeds with no admin credential at all (release pre-activate on every flip).
+//!
+//! A pending step is applied by whoever its migration FILE needs ([`Applier`]): a file made
+//! only of guarded DML — `UPDATE t SET ... WHERE ...` / `DELETE FROM t WHERE ...` — on tables
+//! `lifecycle/grants.sql` lets the service user write that way (UPDATE on bead, delivery,
+//! batch, batch_member; DELETE on none) is applied by the service user itself and re-verified
+//! by its probe, since lc-serve already writes those rows in normal operation (0003 is one).
+//! Any other file — DDL (ALTER/CREATE/DROP/GRANT), an unguarded write, an INSERT, a table
+//! outside those grants — is applied as `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD`. With
+//! those absent or refused — or the service user refused its DML (a privilege error) and no
+//! admin to fall back to — the run fails naming exactly those two variables and the pending
+//! file. A credential is never printed.
 //!
 //! A ledger table was rejected: a database `schema.sql` created fresh already has every
 //! column, so a ledger would still need this same detection to know 0001/0002 are moot, and
@@ -333,58 +342,150 @@ fn what(st: &Stmt, applied: bool) -> String {
 /// every refusal (law-a-refusal-names-its-exit).
 pub const ADMIN_VARS: &str = "SPIRA_LC_ADMIN_USER and SPIRA_LC_ADMIN_PASSWORD";
 
-/// Probe every step as the service user; when one is pending, apply it and every later
-/// pending step as `admin` — or refuse naming [`ADMIN_VARS`] when there is no admin.
+/// The grants production gives the lifecycle service user — the same file install applies,
+/// so "which tables the service user writes" has one source, not a list kept beside it.
+const GRANTS_SQL: &str = include_str!("../../lifecycle/grants.sql");
+
+/// The service user's grantee, as grants.sql spells it.
+const SERVICE_GRANTEE: &str = "'spira_lc'@'%'";
+
+/// Whether `grants` gives the service user privilege `privilege` (`UPDATE`, `DELETE`) on
+/// `spira_lifecycle.<table>`. Only single-line `GRANT p, q ON spira_lifecycle.t TO
+/// 'spira_lc'@'%'` statements count; anything else grants nothing here.
+pub fn service_may(grants: &str, privilege: &str, table: &str) -> bool {
+    grants.lines().any(|line| {
+        let line = line.trim().trim_end_matches(';').trim();
+        let Some(rest) = line.strip_prefix("GRANT ") else { return false };
+        let Some((privs, rest)) = rest.split_once(" ON ") else { return false };
+        let Some((object, grantee)) = rest.split_once(" TO ") else { return false };
+        let Some(t) = object.trim().strip_prefix("spira_lifecycle.") else { return false };
+        grantee.trim() == SERVICE_GRANTEE && ident(t) == table && privs.split(',').any(|p| p.trim().eq_ignore_ascii_case(privilege))
+    })
+}
+
+/// Who applies a pending migration file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applier {
+    /// Every statement is guarded DML (`UPDATE t SET ... WHERE ...` / `DELETE FROM t WHERE
+    /// ...`) on a table grants.sql lets the service user write that way: lc-serve's own
+    /// connection applies it, no admin needed.
+    Service,
+    /// Anything else — DDL (ALTER/CREATE/DROP/GRANT), an unguarded write, an INSERT, a
+    /// table the service user may not write — needs [`ADMIN_VARS`].
+    Admin,
+}
+
+/// Whether one statement is guarded DML the service user's grants (`grants`) cover.
+pub fn service_can_apply(grants: &str, st: &Stmt) -> bool {
+    let Stmt::Plain(sql) = st else { return false };
+    let toks: Vec<&str> = sql.split_whitespace().collect();
+    let up = |i: usize| toks.get(i).map(|t| t.to_ascii_uppercase()).unwrap_or_default();
+    if where_at(sql).is_none() {
+        return false;
+    }
+    let (privilege, table) = match up(0).as_str() {
+        "UPDATE" if up(2) == "SET" => ("UPDATE", toks.get(1)),
+        "DELETE" if up(1) == "FROM" && up(3) == "WHERE" => ("DELETE", toks.get(2)),
+        _ => return false,
+    };
+    table.and_then(|t| plain_ident(t)).is_some_and(|t| service_may(grants, privilege, &t))
+}
+
+/// Who applies migration file `name`: [`Applier::Service`] only when every one of its
+/// statements is guarded DML the service user may run; one DDL statement makes it Admin.
+pub fn applier_for(grants: &str, steps: &[(String, Stmt)], name: &str) -> Applier {
+    let mut of_file = steps.iter().filter(|(n, _)| n == name).peekable();
+    if of_file.peek().is_some() && of_file.all(|(_, st)| service_can_apply(grants, st)) { Applier::Service } else { Applier::Admin }
+}
+
+/// A server refusal on privileges (`... command denied to user ...`, `Access denied ...`),
+/// as opposed to a failing statement.
+fn is_privilege_error(e: &str) -> bool {
+    e.to_ascii_lowercase().contains("denied")
+}
+
+/// Probe every step as the service user; apply each pending step as its [`Applier`]: a
+/// guarded-DML migration as the service user itself (re-verified by its probe afterwards),
+/// anything else as `admin` — or refuse naming [`ADMIN_VARS`] when there is no admin, or
+/// when the service user is refused the DML and there is no admin to fall back to.
 pub fn migrate(steps: &[(String, Stmt)], service: &dyn Sql, admin: Option<&dyn Sql>) -> (i32, String) {
+    migrate_with(GRANTS_SQL, steps, service, admin)
+}
+
+pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, admin: Option<&dyn Sql>) -> (i32, String) {
     let mut report = Vec::new();
-    // Phase 1, read-only, as the service user: everything before the first pending step.
-    // Later steps are decided only after it applies (a probe may read what it adds).
-    let mut first_pending = None;
-    for (i, (name, st)) in steps.iter().enumerate() {
-        match is_applied(service, st) {
-            Ok(true) => report.push(format!("{name}: {} — skipped", what(st, true))),
-            Ok(false) => {
-                first_pending = Some(i);
-                break;
+    let needs_admin = |name: &str, st: &Stmt, why: &str| {
+        (2, format!("admin-migrate: {name} is pending ({}) and applying it needs a database admin — set {ADMIN_VARS} (no admin credential is configured{why})", what(st, false)))
+    };
+    let refused = |name: &str, e: &str| (2, format!("admin-migrate: {name}: pending, and applying it as the database admin failed: {e} — check {ADMIN_VARS}"));
+    let applied_as = |st: &Stmt, who: &str| match st {
+        Stmt::AddColumn { table, column, .. } => format!("added {table}.{column}"),
+        _ => format!("applied as {who}"),
+    };
+    let mut wrote = false;
+    // Once the admin has written, later steps are probed on the admin's session: a probe
+    // may read what an earlier step added, which the service user's grants need not cover.
+    let mut admin_wrote = false;
+    for (name, st) in steps {
+        let prober: &dyn Sql = match admin {
+            Some(a) if admin_wrote => a,
+            _ => service,
+        };
+        match is_applied(prober, st) {
+            Ok(true) => {
+                report.push(format!("{name}: {} — skipped", what(st, true)));
+                continue;
             }
+            Ok(false) => {}
+            Err(e) if admin_wrote => return refused(name, &e),
             Err(e) => return (2, format!("admin-migrate: {name}: cannot tell whether it is applied (read as the lifecycle service user): {e}")),
         }
-    }
-    let Some(from) = first_pending else {
-        report.push(format!("admin-migrate: every migration already applied ({} step(s)) — no admin needed", steps.len()));
-        return (0, report.join("\n"));
-    };
-    let (name, st) = &steps[from];
-    let Some(admin) = admin else {
-        return (
-            2,
-            format!(
-                "admin-migrate: {name} is pending ({}) and applying it needs a database admin — set {ADMIN_VARS} (no admin credential is configured)",
-                what(st, false)
-            ),
-        );
-    };
-    // Phase 2, as the admin: re-probe each remaining step on the admin's own session (it
-    // sees its own earlier writes) and apply only what is still pending.
-    let refused = |name: &str, e: &str| format!("admin-migrate: {name}: pending, and applying it as the database admin failed: {e} — check {ADMIN_VARS}");
-    for (name, st) in &steps[from..] {
-        match is_applied(admin, st) {
-            Ok(true) => report.push(format!("{name}: {} — skipped", what(st, true))),
-            Ok(false) => {
-                let sql = match st {
-                    Stmt::AddColumn { sql, .. } | Stmt::Plain(sql) => sql,
-                    Stmt::UnguardedAlter(_) => unreachable!("plan refuses these"),
-                };
-                match admin.exec(sql) {
-                    Ok(()) => report.push(match st {
-                        Stmt::AddColumn { table, column, .. } => format!("{name}: added {table}.{column}"),
-                        _ => format!("{name}: applied"),
-                    }),
-                    Err(e) => return (2, refused(name, &e)),
+        let sql = match st {
+            Stmt::AddColumn { sql, .. } | Stmt::Plain(sql) => sql,
+            Stmt::UnguardedAlter(_) => unreachable!("plan refuses these"),
+        };
+        let mut service_refused = None;
+        if applier_for(grants, steps, name) == Applier::Service {
+            match service.exec(sql) {
+                Ok(()) => {
+                    // Re-verify through the probe that called it pending.
+                    match is_applied(service, st) {
+                        Ok(true) => {}
+                        Ok(false) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but its probe still finds {}", what(st, false))),
+                        Err(e) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but cannot tell whether it took: {e}")),
+                    }
+                    wrote = true;
+                    report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user")));
+                    continue;
                 }
+                Err(e) if is_privilege_error(&e) => service_refused = Some(e),
+                Err(e) => return (2, format!("admin-migrate: {name}: pending, and applying it as the lifecycle service user failed: {e}")),
             }
-            Err(e) => return (2, refused(name, &e)),
         }
+        let Some(admin) = admin else {
+            let why = service_refused.map(|e| format!("; the lifecycle service user was refused it: {e}")).unwrap_or_default();
+            return needs_admin(name, st, &why);
+        };
+        // The admin re-probes on its own session before writing (it sees its own writes).
+        match is_applied(admin, st) {
+            Ok(true) => {
+                report.push(format!("{name}: {} — skipped", what(st, true)));
+                continue;
+            }
+            Ok(false) => {}
+            Err(e) => return refused(name, &e),
+        }
+        match admin.exec(sql) {
+            Ok(()) => {
+                wrote = true;
+                admin_wrote = true;
+                report.push(format!("{name}: {}", applied_as(st, "the database admin")));
+            }
+            Err(e) => return refused(name, &e),
+        }
+    }
+    if !wrote {
+        report.push(format!("admin-migrate: every migration already applied ({} step(s)) — no admin needed", steps.len()));
     }
     (0, report.join("\n"))
 }
@@ -527,8 +628,12 @@ mod tests {
         state: Rc<RefCell<State>>,
         /// The server refuses this user anything (wrong password).
         refused: bool,
-        /// The user may read but not write (the service user's grants on a DDL).
-        read_only: bool,
+        /// The user may run DDL (ALTER/CREATE/...) — the admin, never the service user.
+        can_ddl: bool,
+        /// The user may run DML (UPDATE/DELETE) — the service user's grants on `bead`.
+        can_dml: bool,
+        /// Every statement this user attempted to execute, applied or not.
+        attempts: RefCell<Vec<String>>,
     }
     impl Sql for FakeConn {
         fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
@@ -546,11 +651,14 @@ mod tests {
             Err(format!("fake: unexpected read {sql}"))
         }
         fn exec(&self, sql: &str) -> Result<(), String> {
+            self.attempts.borrow_mut().push(sql.to_string());
             if self.refused {
                 return Err(format!("Access denied for user '{}'", self.user));
             }
-            if self.read_only {
-                return Err(format!("command denied to user '{}'", self.user));
+            let ddl = matches!(sql.split_whitespace().next().map(|t| t.to_ascii_uppercase()).as_deref(), Some("ALTER" | "CREATE" | "DROP" | "GRANT"));
+            if (ddl && !self.can_ddl) || (!ddl && !self.can_dml) {
+                let verb = sql.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+                return Err(format!("{verb} command denied to user '{}'@'%' for table 'bead'", self.user));
             }
             let mut st = self.state.borrow_mut();
             match classify(sql) {
@@ -581,8 +689,13 @@ mod tests {
         Rc::new(RefCell::new(st))
     }
 
+    /// The lifecycle service user as grants.sql makes it: DML on `bead`, no DDL.
     fn service(state: &Rc<RefCell<State>>) -> FakeConn {
-        FakeConn { user: "spira_lc", state: state.clone(), refused: false, read_only: true }
+        FakeConn { user: "spira_lc", state: state.clone(), refused: false, can_ddl: false, can_dml: true, attempts: RefCell::default() }
+    }
+
+    fn admin(state: &Rc<RefCell<State>>, refused: bool) -> FakeConn {
+        FakeConn { user: "root", state: state.clone(), refused, can_ddl: true, can_dml: true, attempts: RefCell::default() }
     }
 
     #[test]
@@ -607,12 +720,50 @@ mod tests {
     }
 
     #[test]
-    fn a_pending_guarded_update_is_pending_too() {
+    fn a_pending_guarded_update_is_applied_by_the_service_user_with_no_admin() {
         let db = migrated();
         db.borrow_mut().stale_terminal_rows = true;
         let (rc, out) = migrate(&real_steps(), &service(&db), None);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains("0003-terminal-holder.sql: applied as the lifecycle service user"), "{out}");
+        let w = db.borrow().writes.clone();
+        assert_eq!(w.len(), 1, "0003 only: {w:?}");
+        assert!(w[0].starts_with("spira_lc: UPDATE bead"), "{w:?}");
+        // Re-verified, and a second run finds nothing pending.
+        let (rc, out) = migrate(&real_steps(), &service(&db), None);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains("every migration already applied"), "{out}");
+        assert_eq!(db.borrow().writes.len(), 1, "nothing re-run");
+    }
+
+    #[test]
+    fn a_pending_alter_with_no_admin_is_never_tried_as_the_service_user() {
+        let db = migrated();
+        db.borrow_mut().columns.remove(&("bead".into(), "since".into()));
+        let svc = service(&db);
+        let (rc, out) = migrate(&real_steps(), &svc, None);
         assert_eq!(rc, 2, "{out}");
-        assert!(out.contains("0003-terminal-holder.sql") && out.contains("SPIRA_LC_ADMIN_USER"), "{out}");
+        assert!(out.contains("SPIRA_LC_ADMIN_USER") && out.contains("SPIRA_LC_ADMIN_PASSWORD"), "{out}");
+        assert!(out.contains("0002-since.sql is pending"), "{out}");
+        assert!(svc.attempts.borrow().is_empty(), "DDL is the admin's: {:?}", svc.attempts.borrow());
+    }
+
+    #[test]
+    fn a_service_user_refused_on_the_update_falls_back_to_the_admin_refusal() {
+        let db = migrated();
+        db.borrow_mut().stale_terminal_rows = true;
+        let svc = FakeConn { can_dml: false, ..service(&db) };
+        let (rc, out) = migrate(&real_steps(), &svc, None);
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains("0003-terminal-holder.sql is pending"), "{out}");
+        assert!(out.contains("set SPIRA_LC_ADMIN_USER and SPIRA_LC_ADMIN_PASSWORD"), "{out}");
+        assert_eq!(svc.attempts.borrow().len(), 1, "the service user did try: {:?}", svc.attempts.borrow());
+        assert!(db.borrow().writes.is_empty());
+        // With an admin configured, the same refusal is applied as the admin instead.
+        let root = admin(&db, false);
+        let (rc, out) = migrate(&real_steps(), &svc, Some(&root));
+        assert_eq!(rc, 0, "{out}");
+        assert!(db.borrow().writes.iter().all(|w| w.starts_with("root: ")), "{:?}", db.borrow().writes);
     }
 
     #[test]
@@ -620,13 +771,14 @@ mod tests {
         let db = migrated();
         db.borrow_mut().columns.remove(&("bead".into(), "since".into()));
         db.borrow_mut().stale_terminal_rows = true;
-        let admin = FakeConn { user: "root", state: db.clone(), refused: false, read_only: false };
+        let admin = admin(&db, false);
         let (rc, out) = migrate(&real_steps(), &service(&db), Some(&admin));
         assert_eq!(rc, 0, "{out}");
         assert!(out.contains("0002-since.sql: added bead.since"), "{out}");
         let w = db.borrow().writes.clone();
         assert_eq!(w.len(), 2, "0002 and 0003 only, 0001 untouched: {w:?}");
-        assert!(w.iter().all(|s| s.starts_with("root: ")), "{w:?}");
+        assert!(w[0].starts_with("root: ALTER"), "the DDL as the admin: {w:?}");
+        assert!(w[1].starts_with("spira_lc: UPDATE"), "the guarded DML as the service user: {w:?}");
         // And the next activation needs no admin.
         let (rc, out) = migrate(&real_steps(), &service(&db), None);
         assert_eq!(rc, 0, "{out}");
@@ -636,7 +788,7 @@ mod tests {
     fn a_refused_admin_names_the_variables_and_never_a_password() {
         let db = migrated();
         db.borrow_mut().columns.remove(&("bead".into(), "since".into()));
-        let admin = FakeConn { user: "root", state: db.clone(), refused: true, read_only: false };
+        let admin = admin(&db, true);
         let (rc, out) = migrate(&real_steps(), &service(&db), Some(&admin));
         assert_eq!(rc, 2, "{out}");
         assert!(out.contains("SPIRA_LC_ADMIN_USER") && out.contains("SPIRA_LC_ADMIN_PASSWORD"), "{out}");
@@ -669,6 +821,40 @@ mod tests {
         assert_eq!(probe_for(&Stmt::Plain("CREATE TABLE IF NOT EXISTS t2 (a INT)".into())), Probe::Table("t2".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE UNIQUE INDEX i ON bead (state)".into())), Probe::Index { table: "bead".into(), index: "i".into() });
         assert_eq!(probe_for(&Stmt::Plain("INSERT INTO t VALUES (1)".into())), Probe::Unprobeable);
+    }
+
+    #[test]
+    fn the_service_users_writes_are_read_from_the_shipped_grants() {
+        assert!(service_may(GRANTS_SQL, "UPDATE", "bead"));
+        assert!(service_may(GRANTS_SQL, "update", "batch_member"));
+        assert!(!service_may(GRANTS_SQL, "UPDATE", "event"), "the event log is INSERT-only");
+        assert!(service_may(GRANTS_SQL, "INSERT", "event"));
+        assert!(!service_may(GRANTS_SQL, "DELETE", "bead"), "no DELETE grant anywhere");
+        assert!(!service_may("GRANT UPDATE ON spira_lifecycle.bead TO 'spira_lc_ro'@'%';", "UPDATE", "bead"), "another grantee's grant is not the service user's");
+    }
+
+    #[test]
+    fn only_guarded_dml_on_a_table_the_service_user_writes_is_the_service_users() {
+        let g = "GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.bead TO 'spira_lc'@'%';\nGRANT SELECT, DELETE ON spira_lifecycle.`batch` TO 'spira_lc'@'%';\n";
+        let ok = |sql: &str| service_can_apply(g, &classify(sql));
+        assert!(ok("UPDATE bead SET holder = NULL WHERE state = 'LANDED'"));
+        assert!(ok("DELETE FROM batch WHERE id = 'x'"));
+        assert!(!ok("UPDATE bead SET holder = NULL"), "unguarded: no WHERE");
+        assert!(!ok("DELETE FROM bead WHERE id = 'x'"), "no DELETE grant on bead");
+        assert!(!ok("UPDATE event SET kind = 'x' WHERE id = 1"), "no UPDATE grant on event");
+        assert!(!ok("UPDATE bead, batch SET bead.holder = NULL WHERE 1 = 1"), "multi-table");
+        for ddl in ["ALTER TABLE bead ADD COLUMN x INT", "CREATE TABLE t (a INT)", "DROP TABLE bead", "GRANT UPDATE ON spira_lifecycle.bead TO 'x'@'%'", "INSERT INTO bead VALUES (1)"] {
+            assert!(!ok(ddl), "{ddl}");
+        }
+        // Per file: one DDL statement makes the whole migration the admin's.
+        let steps = plan(&[("0001.sql".into(), "UPDATE bead SET a = 1 WHERE b = 2;".into()), ("0002.sql".into(), "UPDATE bead SET a = 1 WHERE b = 2; ALTER TABLE bead ADD COLUMN c INT;".into())]).unwrap();
+        assert_eq!(applier_for(g, &steps, "0001.sql"), Applier::Service);
+        assert_eq!(applier_for(g, &steps, "0002.sql"), Applier::Admin);
+        // The shipped migrations: 0003 is the service user's, the column adds the admin's.
+        let real = real_steps();
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0003-terminal-holder.sql"), Applier::Service);
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0001-stack.sql"), Applier::Admin);
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0002-since.sql"), Applier::Admin);
     }
 
     #[test]
