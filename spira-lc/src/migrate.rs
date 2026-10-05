@@ -168,7 +168,23 @@ pub fn column_probe_sql(table: &str, column: &str) -> String {
     )
 }
 
+/// `--if-enforced` (sp-vf9iu): release pre-activate runs admin-migrate on every activation,
+/// including on installs with no lifecycle store (`lifecycle_enforce` off), where there is
+/// nothing to migrate. Returns the remaining arguments, or `None` when the flag is present
+/// and enforcement is off (nothing to do).
+pub fn gate_if_enforced(args: &[String], enforced: impl FnOnce() -> bool) -> Option<Vec<String>> {
+    let rest: Vec<String> = args.iter().filter(|a| *a != "--if-enforced").cloned().collect();
+    if rest.len() != args.len() && !enforced() {
+        return None;
+    }
+    Some(rest)
+}
+
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(args) = gate_if_enforced(args, || spira_config::lifecycle_enforce(None)) else {
+        return (0, "admin-migrate: lifecycle_enforce is off — no lifecycle store to migrate".into());
+    };
+    let args = &args[..];
     if args.is_empty() {
         return (2, "admin-migrate: missing <migrations-dir-or-file>...".into());
     }
@@ -222,6 +238,15 @@ mod tests {
         let got = ordered_files(&[d.path().to_string_lossy().to_string()]).unwrap();
         let names: Vec<String> = got.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
         assert_eq!(names, ["0001-stack.sql", "0002-since.sql", "0010-later.sql"]);
+    }
+
+    #[test]
+    fn if_enforced_skips_only_when_enforcement_is_off() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(gate_if_enforced(&a(&["--if-enforced", "m"]), || false), None);
+        assert_eq!(gate_if_enforced(&a(&["--if-enforced", "m"]), || true), Some(a(&["m"])));
+        // Without the flag enforcement is never consulted: an explicit run always runs.
+        assert_eq!(gate_if_enforced(&a(&["m"]), || panic!("consulted")), Some(a(&["m"])));
     }
 
     #[test]

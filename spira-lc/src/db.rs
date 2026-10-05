@@ -257,11 +257,14 @@ impl Conn {
         }
     }
 
-    /// DDL runs on a connection with no default database, because `schema.sql` itself opens with `CREATE DATABASE
-    /// IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;` — the database need not exist
-    /// yet when this is called, which is exactly the state it's called in on a fresh server.
+    /// DDL runs with `SPIRA_LC_DB` selected when that database exists, so a file that names
+    /// no database (`lifecycle/migrations/*.sql`) applies as shipped (sp-vf9iu: 0002-since.sql
+    /// failed "no database selected"). On a fresh server the database does not exist yet and
+    /// selecting it fails the handshake, so it falls back to no default database: `schema.sql`
+    /// itself opens with `CREATE DATABASE IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;`.
     pub fn apply_ddl(&self, sql_text: &str) -> Result<(), DbError> {
-        let result = self.connect(None).and_then(|mut wire| wire.exec(sql_text));
+        let wire = self.connect(Some(&self.database)).or_else(|_| self.connect(None));
+        let result = wire.and_then(|mut wire| wire.exec(sql_text));
         match result {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("DDL reported a serialization conflict".into())),

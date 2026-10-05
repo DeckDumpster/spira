@@ -158,7 +158,8 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("admin-apply-ddl") => cmd_admin_apply_ddl(&args[1..], conn),
         // lifecycle/migrations/*.sql in filename order, each ADD COLUMN applied only when
         // the column is absent (migrate.rs) — what spira-install's lifecycle-store phase runs
-        // after schema.sql, so a fresh database and an old one converge (sp-xfqnr).
+        // after schema.sql, so a fresh database and an old one converge (sp-xfqnr), and
+        // what release pre-activate runs (`--if-enforced`) before every flip (sp-vf9iu).
         Some("admin-migrate") => migrate::run(&args[1..], conn),
         // The one-time migration classifier (design §4). Deploys inert like the rest of
         // this binary: nothing calls it until the cutover deploy step (a later bead).
