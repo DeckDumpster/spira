@@ -9,12 +9,12 @@ statement = "in an aeon session, queue- and landing-operating commands (`batch.s
 [[use_case]]
 id = "UC-safety-fences-02"
 tier = "T1"
-statement = "in an aeon session, writes under `SPIRA_PROD` or `SPIRA_RUN/landstate` are refused (redirect, rm, mv, tee, `sed -i`, `git -C` add/commit/reset/checkout/clean); reads/exec from prod, rendered brief commands, `census.sh`, and prod paths in heredoc/prose are allowed"
+statement = "in an aeon session, writes under `SPIRA_PROD` or `SPIRA_RUN/queue` are refused (redirect, rm, mv, tee, `sed -i`, `git -C` add/commit/reset/checkout/clean); reads/exec from prod, rendered brief commands, `census.sh`, and prod paths in heredoc/prose are allowed"
 
 [[use_case]]
 id = "UC-safety-fences-03"
 tier = "T1"
-statement = "in an aeon session, `bd create` against production is refused for a test-data title or a `repo:` label missing from the repo map; an inline `SPIRA_DB=` does not bypass it, a non-production path passes, and `SPIRA_BD_CREATE_OVERRIDE=1` bypasses"
+statement = "aeon-fence carries no `bd create` rule: in an aeon session, of any persona, a `bd create` passes the fence — no aeon persona has bd (model PATH holds only `work`, sp-zf4q3; bead operations are `work` verbs, sp-st0mm; sp-j7l3q)"
 
 [[use_case]]
 id = "UC-safety-fences-04"
