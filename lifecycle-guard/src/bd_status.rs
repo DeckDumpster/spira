@@ -133,6 +133,17 @@ fn compares_status(r: &Res, n: &str) -> bool {
 pub const ROWLESS_CONTROLS: &[(&str, &str)] =
     &[("sentinel/src/lifecycle.rs", "rowless"), ("watchtower/src/probes.rs", "rowless_beads")];
 
+/// The off claim record — the rule's other NAMED exceptions (DESIGN.md "The off claim
+/// record", argued for spira-claim in spira-claim/DESIGN.md §8.7): `(file, function)`. With
+/// `lifecycle_enforce` off an aeon claims through bd (sp-860zj kept that path), so bd's
+/// `in_progress` and assignee are the claim and no lifecycle row records it; spira-claim's
+/// live-work guard must read that claim, and its reopen must release it, or the off path
+/// loses its safety and its ready set. Each function is called only with the switch off and
+/// goes with the off path; a further entry is a design change argued there, not a
+/// configuration.
+pub const OFF_CLAIM_RECORD: &[(&str, &str)] =
+    &[("spira-claim/src/bd_claim.rs", "off_holder"), ("spira-claim/src/bd_claim.rs", "off_release_args")];
+
 /// Test code decides nothing in production: a file under a `tests/` directory, or named
 /// `tests.rs` / `*_tests.rs`.
 fn is_test_file(rel: &str) -> bool {
@@ -197,7 +208,8 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
     // The status-named `match` heads still open: (brace depth at the head, line).
     let mut depth: i64 = 0;
     let mut heads: Vec<i64> = Vec::new();
-    let controls: Vec<&str> = ROWLESS_CONTROLS.iter().filter(|(f, _)| *f == rel).map(|(_, n)| *n).collect();
+    let controls: Vec<&str> =
+        ROWLESS_CONTROLS.iter().chain(OFF_CLAIM_RECORD).filter(|(f, _)| *f == rel).map(|(_, n)| *n).collect();
     // Inside a rowless control: the brace depth its `fn` line opened from.
     let mut control: Option<i64> = None;
     for (idx, n) in lines.iter().enumerate() {
@@ -345,6 +357,16 @@ mod tests {
         assert_eq!(lines("watchtower/src/probes.rs", "rowless_beads"), vec![4]);
         assert_eq!(lines("sentinel/src/lifecycle.rs", "rowless_too"), vec![2, 4], "a name that only starts the same");
         assert_eq!(lines("sentinel/src/store.rs", "rowless"), vec![2, 4], "the same name in another file");
+    }
+
+    /// The off claim record: spira-claim's two named functions, and only those, in only
+    /// that file.
+    #[test]
+    fn the_off_claim_record_is_named_by_file_and_function() {
+        let src = "pub fn off_holder(b: &BeadRecord) -> Option<String> {\n    (b.status == \"in_progress\").then(|| String::new())\n}\npub fn off_release_args(id: &str) -> [&str; 4] {\n    [\"update\", id, \"--status\", \"open\"]\n}\nfn other(b: &BeadRecord) -> bool { b.status == \"closed\" }\n";
+        let lines = |rel: &str| scan_text(rel, src).into_iter().map(|f| f.line).collect::<Vec<_>>();
+        assert_eq!(lines("spira-claim/src/bd_claim.rs"), vec![7], "the two named functions are exempt, the third is not");
+        assert_eq!(lines("spira-claim/src/unpoison.rs"), vec![2, 5, 7], "the same names in another file");
     }
 
     #[test]

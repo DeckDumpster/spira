@@ -393,13 +393,12 @@ fn bd_mode_does_not_refilter() {
 
 // ---- the lifecycle switch (DESIGN.md §6a) ------------------------------------------------
 
+/// sp-mve9i: off, `--blockers machine` is refused — the bd-status stand-in for the
+/// machine's rule (every blocker bd-closed) is retired — and nothing is read to refuse it.
 #[test]
-fn off_machine_mode_is_the_legacy_rule_and_never_reads_the_lifecycle() {
+fn off_machine_mode_is_refused_and_never_reads_the_lifecycle() {
     enforce(false);
     let (ready, _, recs) = machine_fixture();
-    // No --lifecycle: were the snapshot read, the store's spira-lc would be run and fail
-    // ("cannot tell"). A garbage --lifecycle file: were it read, parsing would fail. Both
-    // answer, so neither source was consulted.
     let garbage = tmp("not json");
     let epics = tmp("{}");
     for extra in [vec![], vec!["--lifecycle".to_string(), garbage.to_string()]] {
@@ -411,16 +410,13 @@ fn off_machine_mode_is_the_legacy_rule_and_never_reads_the_lifecycle() {
         args.extend(extra);
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let o = run(&args, &ready);
-        assert_eq!(o.code, 0, "{}", o.err);
-        let ids: Vec<&str> = o.out.lines().map(|l| l.split('\t').nth(5).unwrap()).collect();
-        // Every blocker (A, D, G, I) is open in bd, so B, C, F and H wait; J, K and L have
-        // none. No stacking without the machine: A's CERTIFIED row does not release B.
-        assert_eq!(ids, ["J", "K", "L"]);
+        assert_eq!((o.code, o.out.as_str()), (USAGE, ""), "{}", o.err);
+        assert!(o.err.contains("needs lifecycle_enforce on"), "{}", o.err);
     }
 }
 
 #[test]
-fn off_spira_poison_label_is_not_claimable_in_either_mode() {
+fn off_spira_poison_label_is_not_claimable() {
     enforce(false);
     let ready = serde_json::json!([
         {"id":"P","priority":0,"labels":["repo:spira","spira-poison"]},
@@ -428,8 +424,6 @@ fn off_spira_poison_label_is_not_claimable_in_either_mode() {
     ])
     .to_string();
     assert_eq!(run(&["select", "--fayth", "t", "--count"], &ready).out, "1\n");
-    let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &tmp("[]"), "--count"], &ready);
-    assert_eq!((o.code, o.out.as_str()), (0, "1\n"), "{}", o.err);
 }
 
 #[test]
@@ -562,20 +556,53 @@ fn store_passes_db_and_chunks_ids() {
     assert!(lines.iter().all(|l| l.starts_with("-C /fake/db sql --json select")));
 }
 
+/// `epics`: bd list --id gives the epic priorities, bd children the children, and each
+/// child's progress is its lifecycle row (sp-mve9i) — sp-E's child is SUBMITTED, so sp-E is
+/// started, though bd says the child is open; sp-F's is READY, though bd says closed.
+fn epics_with(lc: Option<&str>, on: bool) -> Outcome {
+    enforce(on);
+    let bd = sh(r#"case "$*" in
+  *children*sp-E*) echo '[{"id":"k","status":"open","labels":[]}]' ;;
+  *children*sp-F*) echo '[{"id":"k2","status":"closed","labels":[]}]' ;;
+  *list*) echo '[{"id":"sp-E","priority":0},{"id":"sp-F","priority":2}]' ;;
+esac"#);
+    let no_lc = testkit::TempDir::new("spira-claim-epics-no-lc");
+    let path = match lc {
+        Some(rows) => fake_lc_path(rows),
+        None => Tmp { path: format!("{}:/usr/bin:/bin", no_lc.to_string_lossy()), _dir: testkit::TempDir::new("spira-claim-epics-path") },
+    };
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_LC_BIN", None),
+        ("PATH", Some(path.as_str())),
+    ]);
+    let o = run(&["epics"], r#"[{"id":"a","parent":"sp-E"},{"id":"b","parent":"sp-F"}]"#);
+    enforce(false);
+    o
+}
+
 #[test]
-fn store_lookup_fetch() {
-    // bd list --id → epic priorities; bd children → started.
-    let st = fake_bd(
-        r#"case "$3" in
-  list) echo '[{"id":"sp-E","priority":0},{"id":"sp-F","priority":2}]' ;;
-  children) if [ "$4" = sp-E ]; then echo '[{"id":"k","status":"open","labels":["spira-submitted"]}]'; else echo '[{"id":"k2","status":"open","labels":[]}]'; fi ;;
-esac"#,
-    );
-    let rows = rank::parse_ready(r#"[{"id":"a","parent":"sp-E"},{"id":"b","parent":"sp-F"}]"#).unwrap();
-    let epics = st.list_by_ids(&rank::parents(&rows)).unwrap();
-    assert_eq!(epics.len(), 2);
-    assert!(rank::epic_started(&st.children("sp-E").unwrap(), "spira-submitted"));
-    assert!(!rank::epic_started(&st.children("sp-F").unwrap(), "spira-submitted"));
+fn epics_reads_each_childs_progress_from_its_lifecycle_row() {
+    let lc = r#"[{"bead_id":"k","state":"SUBMITTED","holds":"[]"},{"bead_id":"k2","state":"READY","holds":"[]"}]"#;
+    for on in [true, false] {
+        let o = epics_with(Some(lc), on);
+        assert_eq!(o.code, 0, "{}", o.err);
+        let l: EpicLookup = serde_json::from_str(o.out.trim()).unwrap();
+        assert_eq!(l.prio.get("sp-E"), Some(&0));
+        assert_eq!(l.started, vec!["sp-E".to_string()], "enforce={on}");
+    }
+}
+
+#[test]
+fn epics_with_no_machine_is_cannot_tell_on_and_unstarted_off() {
+    let on = epics_with(None, true);
+    assert_eq!((on.code, on.out.as_str()), (CANNOT_TELL, ""));
+    assert!(on.err.contains("lifecycle_enforce is on"), "{}", on.err);
+    let off = epics_with(None, false);
+    assert_eq!(off.code, 0, "{}", off.err);
+    let l: EpicLookup = serde_json::from_str(off.out.trim()).unwrap();
+    assert!(l.started.is_empty(), "off, a machine that does not answer starts nothing: {l:?}");
 }
 
 #[test]

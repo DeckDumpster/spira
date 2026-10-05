@@ -131,17 +131,9 @@ fn one(o: &Opts, w: &mut dyn World, c: &Candidate, out: &mut String) -> Outcome 
     // Live work is never touched (same guard `unpoison` uses, DESIGN.md §8.2 precondition 4):
     // a poisoned bead should never be claimed, but this is the one check standing between a
     // wrong merge-status verdict and a lift under a live aeon.
-    let assignee = bead.assignee.as_deref().filter(|a| !a.trim().is_empty());
-    let lc_holder = lc
-        .as_ref()
-        .filter(|r| r.state == lifecycle::bead::BeadState::Working)
-        .and_then(|r| r.holder.as_deref())
-        .filter(|h| !h.trim().is_empty());
-    let held = match (bead.status.as_str(), assignee, lc_holder) {
-        ("in_progress", Some(a), _) => Some(format!("{a} (in_progress)")),
-        (_, _, Some(h)) => Some(format!("{h} (lifecycle WORKING)")),
-        _ => None,
-    };
+    // On, the lifecycle row's WORKING holder (bd status is never read, sp-mve9i); off, bd's
+    // own claim, the only one an off-mode claim writes (`bd_claim`, DESIGN.md §8.7).
+    let held = if o.enforce { lc.as_ref().and_then(LcRow::working_holder) } else { crate::bd_claim::off_holder(&bead) };
     if let Some(h) = held {
         out.push_str(&format!(
             "FAIL {}: held by {h} — live work is never touched: let that aeon finish (or stop it: spira/slay.sh --bead {}), then re-run\n",

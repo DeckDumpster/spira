@@ -106,14 +106,13 @@ pub fn parents(rows: &[ReadyRow]) -> Vec<String> {
     rows.iter().filter_map(|r| r.parent.clone()).filter(|p| !p.is_empty()).collect::<BTreeSet<_>>().into_iter().collect()
 }
 
-/// An epic is started when any child is in progress or closed, or open with the submitted
-/// label (epic_parent_lookup's rule).
-pub fn epic_started(children: &[ReadyRow], submitted_label: &str) -> bool {
-    children.iter().any(|c| match c.status.as_deref() {
-        Some("in_progress") | Some("closed") => true,
-        Some("open") => c.labels.iter().any(|l| l == submitted_label),
-        _ => false,
-    })
+/// An epic is started when any child's lifecycle row has left the queue: an aeon holds it
+/// (WORKING) or the builder has handed it on (SUBMITTED onwards, or over) — what bd's
+/// "in progress, closed, or open with the submitted label" meant (epic_parent_lookup's
+/// rule). A child read from its lifecycle row, never bd status (design §3.4, sp-mve9i); a
+/// child with no row has not started anything.
+pub fn epic_started(children: &[ReadyRow], lc: &HashMap<String, LifecycleRow>) -> bool {
+    children.iter().any(|c| lc.get(&c.id).is_some_and(|r| !matches!(r.state, BeadState::Ready | BeadState::Rework)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -327,9 +326,8 @@ pub fn stack_plan(
     let mut stacked_max: Option<u32> = None;
     for bid in blockers(cand) {
         let rec = bd.get(&bid);
-        let bd_closed = rec.and_then(|r| r.status.as_deref()) == Some("closed");
         let ok = match lc.get(&bid) {
-            None => bd_closed,
+            None => rec.is_some_and(rowless_blocker_done),
             Some(row) => {
                 let stackable = stack_max_depth > 0
                     && rec.is_some_and(|r| is_work(r) && r.label_value("repo:") == own_repo && own_repo.is_some());
@@ -342,8 +340,9 @@ pub fn stack_plan(
                         }
                         true
                     }
-                    s if s.is_terminal() => bd_closed,
-                    _ => false,
+                    // SUPERSEDED / DROPPED: nothing more will happen to the blocker, so
+                    // waiting on it would wait forever (the machine's word, not bd's).
+                    s => s.is_terminal(),
                 }
             }
         };
@@ -358,6 +357,23 @@ pub fn stack_plan(
     Ok((stack, depth))
 }
 
+/// A blocker with no lifecycle row (DESIGN.md §2, sp-mve9i). A container, decision, event,
+/// molecule or gate bead is not a work bead: the machine never holds it, and bd's status is
+/// its whole lifecycle, read through `spira_config::nonwork` naming the kind. A work bead
+/// with no row is not live work — every work bead gets its row at creation, and CHECK-ROWLESS
+/// backfills a READY row for a live one that missed it, at which point it blocks by its row —
+/// so it holds nothing back (the reading the sentinel's backlog and the claim witness give a
+/// rowless bead).
+fn rowless_blocker_done(r: &ReadyRow) -> bool {
+    use spira_config::nonwork::{self, Kind};
+    let kind = match r.issue_type.as_deref() {
+        Some("gate") => Kind::Hold,
+        Some("epic") | Some("decision") | Some("event") | Some("molecule") => Kind::Epic,
+        _ => return true,
+    };
+    nonwork::is_closed(kind, r.status.as_deref().unwrap_or(""))
+}
+
 /// The legacy poison record: the bd label CHECK 4 puts on a bead when `lifecycle_enforce`
 /// is off (DESIGN.md §6a; unpoison's §8.7 clears the same label).
 pub const POISON_LABEL: &str = "spira-poison"; // literal-ok: the label is the contract
@@ -365,23 +381,6 @@ pub const POISON_LABEL: &str = "spira-poison"; // literal-ok: the label is the c
 /// `lifecycle_enforce` off: a bead labelled [`POISON_LABEL`] is not claimable.
 pub fn poisoned_by_label(r: &ReadyRow) -> bool {
     r.labels.iter().any(|l| l == POISON_LABEL)
-}
-
-/// `--blockers machine` with `lifecycle_enforce` off (DESIGN.md §6a): the same question as
-/// [`claimable`], answered from legacy records only — no lifecycle row exists to read. The
-/// poison is the label; every `blocks` target must be bd-`closed` (the "no lifecycle row"
-/// row of the §2 table, which is also what `bd ready` applies); nothing stacks, so depth
-/// is 0.
-pub fn claimable_legacy(cand: &ReadyRow, bd: &HashMap<String, ReadyRow>) -> Verdict {
-    if poisoned_by_label(cand) {
-        return Verdict::Held(HoldKind::Poison);
-    }
-    for bid in blockers(cand) {
-        if bd.get(&bid).and_then(|r| r.status.as_deref()) != Some("closed") {
-            return Verdict::Blocked(bid);
-        }
-    }
-    Verdict::Claimable { depth: 0 }
 }
 
 /// The hard ceiling the spira-config schema enforces (stacked-dependents §1).
@@ -489,15 +488,18 @@ mod tests {
         assert_eq!(top_tier(&rows, &lk), ["a|spira/a|spira|0|0|1", "b|spira/b|spira|0|0|1"]);
     }
 
+    /// sp-mve9i: a child's progress is its lifecycle row, whatever bd's status says.
     #[test]
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
-        assert!(!epic_started(&[c.clone()], "spira-submitted"));
-        c.labels.push("spira-submitted".into());
-        assert!(epic_started(&[c.clone()], "spira-submitted"));
-        c.labels.clear();
         c.status = Some("in_progress".into());
-        assert!(epic_started(&[c], "spira-submitted"));
+        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None })]);
+        assert!(!epic_started(&[c.clone()], &HashMap::new()), "no row: nothing started, though bd says in_progress");
+        assert!(!epic_started(&[c.clone()], &at(BeadState::Ready)));
+        assert!(!epic_started(&[c.clone()], &at(BeadState::Rework)));
+        assert!(epic_started(&[c.clone()], &at(BeadState::Working)));
+        assert!(epic_started(&[c.clone()], &at(BeadState::Submitted)));
+        assert!(epic_started(&[c], &at(BeadState::Landed)));
     }
 
     #[test]
@@ -646,13 +648,30 @@ mod tests {
         assert_eq!(claimable(&b, &lc, &bd, 4), Verdict::Claimable { depth: 0 });
     }
 
+    /// sp-mve9i: a rowless work blocker is not live work — bd's status is not read for it;
+    /// a rowless gate is a non-work bead whose bd status is its state.
     #[test]
-    fn blocker_with_no_lifecycle_row_uses_bd_status() {
+    fn blocker_with_no_lifecycle_row() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
         let open: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
-        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &open, 4), Verdict::Blocked("A".into()));
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &open, 4), Verdict::Claimable { depth: 0 }, "bd's open is not read for a work bead");
         // unknown to bd too: blocked (fail closed)
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &HashMap::new(), 4), Verdict::Blocked("A".into()));
+        let gate: HashMap<_, _> = [bdrec("A", "open", "gate", "spira")].into();
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &gate, 4), Verdict::Blocked("A".into()));
+        let gate: HashMap<_, _> = [bdrec("A", "closed", "gate", "spira")].into();
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &gate, 4), Verdict::Claimable { depth: 0 });
+    }
+
+    /// A SUPERSEDED or DROPPED blocker is over: the machine's terminal word releases it,
+    /// whatever bd's status still says.
+    #[test]
+    fn terminal_blocker_is_done_by_the_machine() {
+        let open: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        for st in [BeadState::Superseded, BeadState::Dropped] {
+            let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", st, &[], 0)].into();
+            assert_eq!(claimable(&blocked_on("B", "A"), &lc, &open, 4), Verdict::Claimable { depth: 0 }, "{st:?}");
+        }
     }
 
     #[test]

@@ -239,15 +239,30 @@ fn floor_is_written_before_the_hold_is_released() {
     assert_eq!(f.trail.first().map(String::as_str), Some("event:poison.cleared"));
 }
 
+/// sp-mve9i: on, the claim is the lifecycle row — bd's in_progress and assignee are not a
+/// holder (no on-mode claim writes them), and a READY row is nobody's.
 #[test]
-fn refuse_when_held_by_bd_assignee() {
+fn on_bd_in_progress_is_not_a_holder() {
     let mut f = Fake::new()
         .bead("pz3", "in_progress", Some("aeon-test"), &["spira-poison"])
         .claims("pz3", 3)
         .lc("pz3", BeadState::Ready, &[HoldKind::Poison], None);
     let (code, out) = run(&opts(&["pz3"]), &mut f);
+    assert_eq!(code, EXIT_OK, "{out}");
+    assert!(out.contains("OK   pz3"), "{out}");
+    assert!(!f.lc["pz3"].poisoned());
+}
+
+/// The refusal names the holder and the exit.
+#[test]
+fn refuse_when_held_names_the_exit() {
+    let mut f = Fake::new()
+        .bead("pz3", "open", None, &["spira-poison"])
+        .claims("pz3", 3)
+        .lc("pz3", BeadState::Working, &[HoldKind::Poison], Some("aeon-test"));
+    let (code, out) = run(&opts(&["pz3"]), &mut f);
     assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("FAIL pz3: held by aeon-test (in_progress)"), "{out}");
+    assert!(out.contains("FAIL pz3: held by aeon-test (lifecycle WORKING)"), "{out}");
     assert!(out.contains("let that aeon finish"), "{out}");
     assert!(out.contains("slay.sh --bead pz3"), "the refusal names the exit: {out}");
     assert_eq!(f.writes(), 0, "{:?}", f.trail);
@@ -393,7 +408,7 @@ fn credit_written_before_floor_and_not_counted() {
     assert!(f.notes[0].1.contains("(groomer;"), "{:?}", f.notes);
 
     // A refused bead gets no credit written.
-    let mut f = Fake::new().bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3);
+    let mut f = Fake::new().bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("aeon-test"));
     let (_, _) = run(&o_with_credit(&["pz3"]), &mut f);
     assert_eq!(f.writes(), 0);
 }
@@ -406,7 +421,7 @@ fn o_with_credit(b: &[&str]) -> Opts {
 
 #[test]
 fn several_beads_one_failure_fails_the_run() {
-    let mut f = poisoned_a().bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3);
+    let mut f = poisoned_a().bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("aeon-test"));
     let (code, out) = run(&opts(&["sp-a", "pz3"]), &mut f);
     assert_eq!(code, EXIT_FAILED);
     assert!(out.contains("OK   sp-a:") && out.contains("FAIL pz3:"), "{out}");
@@ -543,7 +558,7 @@ fn watch_survives_rotation() {
 #[test]
 fn watch_not_started_when_a_bead_failed() {
     let (mut f, mut o) = watching();
-    f = f.bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3);
+    f = f.bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("aeon-test"));
     o.beads.push("pz3".into());
     let (code, out) = run(&o, &mut f);
     assert_eq!(code, EXIT_FAILED);
@@ -621,6 +636,7 @@ fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
         asked_dir: dir.join("run/poison-asked"),
         ask_label: "needs-ryan".into(), // literal-ok: fixture/fallback
         beads_actor: "harness".into(),
+        enforce: false,
     };
     (l, dir)
 }
@@ -854,7 +870,7 @@ fn on_unreachable_machine_is_a_loud_fail() {
 }
 
 #[test]
-fn reopen_sets_status_open_so_an_in_progress_bead_is_ready_again() {
-    let a = crate::unpoison::reopen_status_args("sp-a");
+fn off_reopen_sets_status_open_so_an_in_progress_bead_is_ready_again() {
+    let a = crate::bd_claim::off_release_args("sp-a");
     assert_eq!(a, ["update", "sp-a", "--status", "open", "--assignee", ""]);
 }

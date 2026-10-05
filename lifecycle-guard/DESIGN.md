@@ -43,6 +43,23 @@ change argued here, not a configuration. A function with the same name in anothe
 longer name that starts the same way, is still held to the rule (unit test
 `the_rowless_controls_are_named_exceptions_and_nothing_else_is`).
 
+### The off claim record
+
+Two more functions are named exceptions, listed by file and function in `OFF_CLAIM_RECORD`
+and argued in spira-claim/DESIGN.md §8.7:
+
+- `spira-claim/src/bd_claim.rs` `off_holder`
+- `spira-claim/src/bd_claim.rs` `off_release_args`
+
+With `lifecycle_enforce` off an aeon claims through bd (sp-860zj kept that path), so bd's
+`in_progress` and assignee are the claim and no lifecycle row records it. spira-claim's
+live-work guard (unpoison, deadlocked) must read that claim or it is blind, and a reopen must
+release it or a refused handoff never re-enters `bd ready`. Each function is called only with
+the switch off; with it on, the holder is the lifecycle row's and a reopen writes no bd status.
+They go when the off path does. A further entry is a design change argued in the owning
+crate's design and here, not a configuration (unit test
+`the_off_claim_record_is_named_by_file_and_function`).
+
 ### Gate status
 
 `bd-status-read` joins `GATE_CLASSES` in the commit that clears its last findings: spira-claim's

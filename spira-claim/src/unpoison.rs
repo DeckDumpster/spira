@@ -45,6 +45,14 @@ pub struct LcRow {
 }
 
 impl LcRow {
+    /// The aeon holding a WORKING row, as the refusal names it.
+    pub fn working_holder(&self) -> Option<String> {
+        let h = self.holder.as_deref().filter(|h| !h.trim().is_empty())?;
+        (self.state == BeadState::Working).then(|| format!("{h} (lifecycle WORKING)"))
+    }
+}
+
+impl LcRow {
     pub fn poisoned(&self) -> bool {
         self.holds.contains(&HoldKind::Poison)
     }
@@ -205,17 +213,10 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
     let labelled = bead.labels.iter().any(|l| l == POISON_LABEL);
     let poisoned = if o.enforce { lc.as_ref().is_some_and(LcRow::poisoned) } else { labelled };
 
-    let assignee = bead.assignee.as_deref().filter(|a| !a.trim().is_empty());
-    let lc_holder = lc
-        .as_ref()
-        .filter(|r| r.state == BeadState::Working)
-        .and_then(|r| r.holder.as_deref())
-        .filter(|h| !h.trim().is_empty());
-    let held = match (bead.status.as_str(), assignee, lc_holder) {
-        ("in_progress", Some(a), _) => Some(format!("{a} (in_progress)")),
-        (_, _, Some(h)) => Some(format!("{h} (lifecycle WORKING)")),
-        _ => None,
-    };
+    // The live holder is the claim record the switch runs on (§8.7): on, the lifecycle row's
+    // WORKING holder — bd's status is never read (sp-mve9i); off, bd's own claim
+    // (`bd_claim::off_holder`), since an off-mode claim writes no lifecycle row.
+    let held = if o.enforce { lc.as_ref().and_then(LcRow::working_holder) } else { crate::bd_claim::off_holder(&bead) };
     if let Some(h) = held {
         return fail(
             out,
@@ -657,6 +658,8 @@ pub struct Live {
     pub asked_dir: PathBuf,
     pub ask_label: String,
     pub beads_actor: String,
+    /// `lifecycle_enforce`: off, a reopen also releases bd's own claim (`bd_claim`).
+    pub enforce: bool,
 }
 
 impl Live {
@@ -831,12 +834,6 @@ impl World for Live {
 // `Live`'s private `bd`/`bd_ok`/`land` helpers directly, the same split `deadlocked`
 // already draws ("the write is unpoison's Live, reused rather than duplicated").
 
-/// `bd reopen` only acts on a closed bead; a refused handoff reopens one still in_progress,
-/// which `bd ready` excludes, so the status is set explicitly as well.
-pub(crate) fn reopen_status_args(id: &str) -> [&str; 6] {
-    ["update", id, "--status", "open", "--assignee", ""]
-}
-
 impl crate::reopen::World for Live {
     fn write_ejected(&mut self, id: &str, suites: &str) {
         let Some(dir) = self.ejected_dir() else { return };
@@ -851,7 +848,12 @@ impl crate::reopen::World for Live {
 
     fn bd_reopen(&mut self, id: &str) -> Result<(), String> {
         let reopened = self.bd_ok(&["reopen", id], None);
-        self.bd_ok(&reopen_status_args(id), None).map(|_| ()).or(reopened.map(|_| ()))
+        if self.enforce {
+            // On, the bead's state is the machine's: bd status is inert (sp-mve9i), and
+            // nothing reads the bd claim the off-mode write below releases.
+            return reopened.map(|_| ());
+        }
+        self.bd_ok(&crate::bd_claim::off_release_args(id), None).map(|_| ()).or(reopened.map(|_| ()))
     }
 
     fn remove_submitted_label(&mut self, id: &str, label: &str) {

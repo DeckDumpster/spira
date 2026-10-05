@@ -276,6 +276,16 @@ fn live_work_refuses_and_touches_nothing() {
     assert!(w.removed_labels.is_empty());
 }
 
+/// sp-mve9i: on, bd's in_progress is not the claim — only the lifecycle row's holder is.
+#[test]
+fn on_bd_in_progress_without_a_working_row_is_not_held() {
+    use lifecycle::bead::{BeadState, HoldKind};
+    let mut w = Fake::default().bead("sp-s", "in_progress", Some("aeon-1"), &[]).lc("sp-s", BeadState::Ready, &[HoldKind::Poison], None);
+    let (code, out) = run(&opts(false, true), &[cand("sp-s", true, "")], &mut w);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("WOULD    sp-s"), "{out}");
+}
+
 #[test]
 fn lifecycle_working_holder_is_also_held() {
     use lifecycle::bead::{BeadState, HoldKind};

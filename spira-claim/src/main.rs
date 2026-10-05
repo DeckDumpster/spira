@@ -2,6 +2,7 @@
 //! selection. See DESIGN.md for the contract; this file is argument handling only.
 
 mod audit;
+mod bd_claim;
 mod counters;
 mod deadlock;
 mod decide;
@@ -17,7 +18,7 @@ use std::io::Read;
 
 use decide::{AskedStamp, Inputs, Thresholds};
 use events::EventRow;
-use rank::{EpicLookup, ReadyRow, Verdict};
+use rank::{EpicLookup, LifecycleRow, ReadyRow, Verdict};
 use store::{Config, Store};
 
 pub const USAGE: i32 = 1;
@@ -47,7 +48,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim counts [--events F]                      (ids on stdin)
        spira-claim decide [thresholds] [--] <n> <requeues> <reclaims> <labels> <stamp> [poisoned]
        spira-claim poison-decide <bead> [--labels CSV] [--asked RQ:RC:PO[:PL]] [--poisoned 0|1] [thresholds] [--events F] [--json]
-       spira-claim epics [--ready F] [--submitted-label L]  (ready JSON on stdin by default)
+       spira-claim epics [--ready F]                       (ready JSON on stdin by default)
        spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F] [--top-tier|--count|--json]
                           [--blockers bd|machine] [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
@@ -376,14 +377,26 @@ fn read_ready(a: &Args, env: &mut Env) -> Result<Vec<ReadyRow>, Outcome> {
     rank::parse_ready(&text).map_err(Outcome::cannot_tell)
 }
 
-fn submitted_label(a: &Args, cfg: &Config) -> String {
-    a.get("--submitted-label")
-        .map(str::to_string)
-        .or_else(|| cfg.submitted_label.clone())
-        .unwrap_or_else(|| "spira-submitted".into())
+/// The lifecycle rows the epic lookup reads a child's progress from (sp-mve9i: a work bead's
+/// state is its row, never bd's status). `known` is a snapshot the caller already holds
+/// (machine-mode `select`). Otherwise `spira-lc list` is read: with `lifecycle_enforce` on a
+/// machine that cannot answer is cannot-tell; off it is read quietly, and a machine that
+/// cannot answer leaves every epic unstarted — the started tier is a tie-break, and a
+/// guess at it from bd would be the very read this replaces (DESIGN.md §6a).
+fn epic_lc(st: &Store, known: Option<&HashMap<String, LifecycleRow>>) -> Result<HashMap<String, LifecycleRow>, Outcome> {
+    if let Some(m) = known {
+        return Ok(m.clone());
+    }
+    match st.lifecycle_snapshot().and_then(|t| rank::parse_lifecycle(&t)) {
+        Ok(m) => Ok(m),
+        Err(e) if lifecycle_on() => {
+            Err(Outcome::cannot_tell(format!("epic lookup: lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)")))
+        }
+        Err(_) => Ok(HashMap::new()),
+    }
 }
 
-fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow]) -> Result<EpicLookup, Outcome> {
+fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
     let parents = rank::parents(rows);
     if parents.is_empty() {
         return Ok(EpicLookup::default());
@@ -391,11 +404,11 @@ fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow]) -> Result<EpicLookup, Ou
     let s = store(a, &env.config).map_err(Outcome::usage)?;
     let epics = s.list_by_ids(&parents).map_err(Outcome::cannot_tell)?;
     let prio = epics.iter().map(|e| (e.id.clone(), e.priority.unwrap_or(99))).collect();
-    let label = submitted_label(a, &env.config);
+    let lc = epic_lc(&s, known)?;
     let mut started = Vec::new();
     for p in &parents {
         let kids = s.children(p).map_err(Outcome::cannot_tell)?;
-        if rank::epic_started(&kids, &label) {
+        if rank::epic_started(&kids, &lc) {
             started.push(p.clone());
         }
     }
@@ -403,14 +416,14 @@ fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow]) -> Result<EpicLookup, Ou
 }
 
 fn cmd_epics(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--ready", "--submitted-label"]) {
+    if let Err(e) = a.check_known(&["--ready"]) {
         return Outcome::usage(e);
     }
     let rows = match read_ready(a, env) {
         Ok(r) => r,
         Err(o) => return o,
     };
-    match fetch_lookup(a, env, &rows) {
+    match fetch_lookup(a, env, &rows, None) {
         Ok(l) => Outcome::ok(format!("{}\n", serde_json::to_string(&l).unwrap())),
         Err(o) => o,
     }
@@ -434,7 +447,7 @@ fn lifecycle_on() -> bool {
 fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
     let known = [
         "--fayth", "--ready", "--epics", "--resumable", "--top-tier", "--count", "--json", "--blockers",
-        "--lifecycle", "--blocker-records", "--stack-max-depth", "--submitted-label",
+        "--lifecycle", "--blocker-records", "--stack-max-depth",
     ];
     if let Err(e) = a.check_known(&known) {
         return Outcome::usage(e);
@@ -461,36 +474,37 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => r,
         Err(o) => return o,
     };
-    // THE lifecycle switch (DESIGN.md §6a). Off: spira-lc is never run and the poison is
-    // the spira-poison label — in either blockers mode a labelled bead is not claimable.
+    // THE lifecycle switch (DESIGN.md §6a). Off: the poison is the spira-poison label — a
+    // labelled bead is not claimable — and `--blockers machine` is refused: claimability by
+    // the machine's rule needs the machine (sp-mve9i retired the bd-status stand-in; its
+    // caller, the aeon, asks for machine mode only with the switch on).
     let enforce = lifecycle_on();
     if !enforce {
         rows.retain(|r| !rank::poisoned_by_label(r));
+        if machine {
+            return Outcome::usage(format!(
+                "{fayth}: --blockers machine needs lifecycle_enforce on — the machine's claim rule reads the machine; with it off, bd ready's own blocker rule (--blockers bd) is the one in force"
+            ));
+        }
     }
 
+    let mut machine_lc: Option<HashMap<String, LifecycleRow>> = None;
     if machine {
         let st = match store(a, &env.config) {
             Ok(s) => s,
             Err(e) => return Outcome::usage(e),
         };
-        let lc = if enforce {
-            let lc_text = match a.get("--lifecycle") {
-                Some(p) => read_source(p, env.stdin),
-                None => st.lifecycle_snapshot(),
-            };
-            match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
-                Ok(m) => Some(m),
-                Err(e) => {
-                    return Outcome::cannot_tell(format!(
-                        "{fayth}: lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)"
-                    ))
-                }
+        let lc_text = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin),
+            None => st.lifecycle_snapshot(),
+        };
+        let lc = match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+            Ok(m) => m,
+            Err(e) => {
+                return Outcome::cannot_tell(format!(
+                    "{fayth}: lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)"
+                ))
             }
-        } else {
-            if a.has("--lifecycle") {
-                eprintln!("spira-claim: {fayth}: --lifecycle ignored — lifecycle_enforce is off, claimability comes from bd records");
-            }
-            None
         };
         let wanted = rank::all_blockers(&rows);
         let recs = match a.get("--blocker-records") {
@@ -502,13 +516,8 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(r) => rank::index_rows(r),
             Err(e) => return Outcome::cannot_tell(format!("{fayth}: blocker records: {e}")),
         };
-        rows.retain(|r| {
-            let v = match &lc {
-                Some(lc) => rank::claimable(r, lc, &bd, stack_max),
-                None => rank::claimable_legacy(r, &bd),
-            };
-            matches!(v, Verdict::Claimable { .. })
-        });
+        rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, stack_max), Verdict::Claimable { .. }));
+        machine_lc = Some(lc);
     }
 
     if a.has("--count") {
@@ -520,7 +529,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(l) => l,
             Err(e) => return Outcome::cannot_tell(format!("{fayth}: epic lookup: {e}")),
         },
-        None => match fetch_lookup(a, env, &rows) {
+        None => match fetch_lookup(a, env, &rows, machine_lc.as_ref()) {
             Ok(l) => l,
             Err(o) => return o,
         },
@@ -703,9 +712,10 @@ fn open_children_label(env: &Env) -> String {
 }
 
 /// `ready_shared_exclude`'s own reading of `SPIRA_SUBMITTED_LABEL` (bare `${VAR:-}`) —
-/// distinct from [`submitted_label`], which backs `epics`/`select` and matches
-/// `epic_parent_lookup`'s own `${SPIRA_SUBMITTED_LABEL:-spira-submitted}` fallback. The same
-/// key, two different bash functions, two different embedded defaults — both kept exactly.
+/// distinct from [`reopen_submitted_label`]'s `${SPIRA_SUBMITTED_LABEL:-spira-submitted}`
+/// fallback. The same key, two different bash functions, two different embedded defaults —
+/// both kept exactly. (`epics`/`select` read no label: a child's progress is its lifecycle
+/// row, sp-mve9i.)
 fn submitted_label_f(env: &Env) -> String {
     resolved_label(None, env.config.submitted_label.as_deref(), "SPIRA_SUBMITTED_LABEL", "")
 }
@@ -1199,6 +1209,7 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
         asked_dir,
         ask_label,
         beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
+        enforce: o.enforce,
     };
     let (code, out) = unpoison::run(&o, &mut live);
     Outcome { code, out, err: String::new() }
@@ -1296,6 +1307,7 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor.clone(),
+        enforce,
     };
     let o = deadlock::Opts { apply: a.has("--apply"), actor, enforce };
     let (code, out) = deadlock::run(&o, &candidates, &mut live);
@@ -1515,6 +1527,7 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor,
+        enforce: lifecycle_on(),
     };
     let o = reopen::Opts { id: id.clone(), cause, note, suites, submitted_label: reopen_submitted_label(env) };
     let rc = reopen::run(&o, &mut live);
