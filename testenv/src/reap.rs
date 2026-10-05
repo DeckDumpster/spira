@@ -5,13 +5,13 @@
 //!
 //! Candidates are `<worktrees>/<bead id>/target` and `<worktrees>/concierge-<bead id>/target`
 //! — the aeon and the Concierge's own worktree conventions. Gate trees and testenv slots are
-//! owned by the gate and testenv. The gate is per worktree, decided by [`crate::landed`]: its
-//! tip an ancestor of the ref its repo lands on, AND that ref naming the bead, is reaped —
-//! whatever the bead's status. A bead that stays open past landing, or is never filed at
-//! all, no longer holds the target/ hostage (sp-x9kbg); nor does a fresh worktree whose tip
-//! trivially equals the base it was just cut from (the same bead's second, worse defect —
-//! round 198 reaped two in-progress aeons this way). Anything [`crate::landed`] cannot tell
-//! — no git answer, no resolvable landing ref — is kept (fail closed — never guess that
+//! owned by the gate and testenv. The gate is per worktree, decided by [`crate::landed`]: a
+//! bead the lifecycle record has LANDED (`spira-lc state`) is reaped — whatever bd's status
+//! says, so a bead that stays open past landing no longer holds the target/ hostage
+//! (sp-x9kbg). A fresh worktree is WORKING on the record, never LANDED, so its tip trivially
+//! equalling the base it was cut from no longer matters (the same bead's second defect —
+//! round 198 reaped two in-progress aeons). Anything [`crate::landed`] cannot tell — the
+//! record unreachable — is kept (fail closed — never guess that
 //! work is finished), and so is anything a live process still has open ([`crate::busy`]), a
 //! second, structural guard independent of what landed-ness concluded.
 
@@ -82,20 +82,19 @@ pub struct Reaped {
     pub kept_active: usize,
 }
 
-/// Reap: `landed(id, worktree_dir)` answers per worktree — `Some(true)` its tip is an
-/// ancestor of the ref its repo lands on AND that ref names the bead (truly landed),
-/// `Some(false)` either commits are outstanding or nothing names the bead yet (a fresh
-/// claim), `None` it cannot be told. Only `Some(true)` is a candidate for removal, and even
+/// Reap: `lc_landed(id, worktree_dir)` answers per worktree — `Some(true)` the lifecycle
+/// record has the bead LANDED, `Some(false)` it has it in any other state (or no row at
+/// all), `None` it cannot be told. Only `Some(true)` is a candidate for removal, and even
 /// then only when `busy(worktree_dir)` says no live process still has it open.
 pub fn reap(
     worktrees: &Path,
     dry_run: bool,
-    landed: &dyn Fn(&str, &Path) -> Option<bool>,
+    lc_landed: &dyn Fn(&str, &Path) -> Option<bool>,
     busy: &dyn Fn(&Path) -> bool,
 ) -> Result<Reaped, String> {
     let mut out = Reaped::default();
     for (id, dir, t) in candidates(worktrees) {
-        match landed(&id, &dir) {
+        match lc_landed(&id, &dir) {
             Some(true) => {
                 if busy(&dir) {
                     out.kept_busy += 1;

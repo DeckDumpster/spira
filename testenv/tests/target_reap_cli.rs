@@ -6,14 +6,13 @@
 //!    own harness home in-process (the same three rungs `queue`'s and `landing-pass`'s own
 //!    `harness_home` climb), never require the caller to have set it.
 //! 2. "Tip is an ancestor of the landing ref" is trivially true for a worktree JUST cut
-//!    from base — a fresh aeon claim with zero commits of its own. Landed must also
-//!    require the landing ref to hold a commit naming the bead (the `spira: land <id>` /
-//!    `<id>:` convention), or a freshly claimed worktree gets its target/ deleted
-//!    mid-compile.
+//!    from base — a fresh aeon claim with zero commits of its own. Landed is the lifecycle
+//!    record's LANDED (`spira-lc state`, sp-2c1n0) — a fresh claim is WORKING there — or a
+//!    freshly claimed worktree gets its target/ deleted mid-compile.
 //!
 //! Both are exercised together: one fixture, one invocation, under an `env -i`-equivalent
-//! environment (HOME + PATH only — PATH carries this binary's own directory plus
-//! `/usr/bin:/bin` for `git`, exactly as `landing-pass` launches it after its sweep).
+//! environment (HOME + PATH only — PATH carries this binary's own directory and
+//! `/usr/bin:/bin`; SPIRA_LC_BIN pins a stub `spira-lc` — the way `landing-pass` launches it after its sweep).
 
 use std::fs;
 use std::path::Path;
@@ -75,6 +74,14 @@ fn sp_x9kbg_target_reap_under_a_bare_env_reaps_only_the_truly_landed_worktree() 
         fs::write(d.join("x"), vec![1u8; bytes]).unwrap();
     }
 
+    // The lifecycle record: sp-land1 LANDED, sp-fresh WORKING (a claim, never landed).
+    let lc_dir = t.path().join("lc-bin");
+    fs::create_dir_all(&lc_dir).unwrap();
+    testkit::write_exe(
+        lc_dir.join("spira-lc"),
+        "#!/bin/sh\n[ \"$1\" = state ] || exit 2\ncase \"$2\" in sp-land1) echo LANDED ;; sp-fresh) echo WORKING ;; *) exit 1 ;; esac\n",
+    );
+
     let bin = env!("CARGO_BIN_EXE_target-reap");
     let bin_dir = Path::new(bin).parent().unwrap();
     let path = format!("{}:/usr/bin:/bin", bin_dir.display());
@@ -86,6 +93,9 @@ fn sp_x9kbg_target_reap_under_a_bare_env_reaps_only_the_truly_landed_worktree() 
         .env_clear()
         .env("HOME", &home)
         .env("PATH", &path)
+        // Pinned, so the run can never reach a real lifecycle record through a release
+        // that config discovery finds on this box.
+        .env("SPIRA_LC_BIN", lc_dir.join("spira-lc"))
         .output()
         .unwrap();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));

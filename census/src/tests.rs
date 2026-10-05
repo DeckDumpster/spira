@@ -100,7 +100,7 @@ impl World for Fake {
     fn repo_root(&self) -> Option<String> {
         self.repo_root.borrow().clone()
     }
-    fn landed(&self, id: &str) -> i32 {
+    fn lc_landed(&self, id: &str) -> i32 {
         self.landed.borrow().get(id).copied().unwrap_or(2)
     }
     fn count_py(&self, tabular: &str) -> Result<String, String> {
@@ -387,8 +387,8 @@ fn real_landed_reads_the_lifecycle_record_not_the_landing_pass_oracle() {
         "#!/bin/sh\n[ \"$1\" = state ] || exit 2\ncase \"$2\" in sp-l) echo LANDED ;; sp-c) echo CERTIFIED ;; sp-n) exit 1 ;; *) exit 2 ;; esac\n",
     );
     let r = crate::real::Real::new(root.join("spira"));
-    assert_eq!(r.landed("sp-l"), 0, "LANDED in the lifecycle record is landed");
-    assert_eq!(r.landed("sp-c"), 1, "CERTIFIED is not landed, whatever landing-pass says");
-    assert_eq!(r.landed("sp-n"), 1, "no row (spira-lc NO_ROW) is not landed");
-    assert_eq!(r.landed("sp-x"), 2, "the record cannot answer: cannot tell");
+    assert_eq!(r.lc_landed("sp-l"), 0, "LANDED in the lifecycle record is landed");
+    assert_eq!(r.lc_landed("sp-c"), 1, "CERTIFIED is not landed, whatever landing-pass says");
+    assert_eq!(r.lc_landed("sp-n"), 1, "no row (spira-lc NO_ROW) is not landed");
+    assert_eq!(r.lc_landed("sp-x"), 2, "the record cannot answer: cannot tell");
 }

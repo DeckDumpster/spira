@@ -62,7 +62,7 @@ certified_gone() {
 }
 
 # Write a LANDED row with a given age in seconds.
-landed() { lc_bead LANDED "$1" fakeshafakeshafakeshafakeshafakeshafake "$(( NOW - ${2:-60} ))"; }
+lc_seed_landed() { lc_bead LANDED "$1" fakeshafakeshafakeshafakeshafakeshafake "$(( NOW - ${2:-60} ))"; }
 
 fresh() {
     rm -rf "$TMP/run"
@@ -112,7 +112,7 @@ echo "positive controls — each detector fires on its fixture:"
 # POSITIVE CONTROL: throttle. Depth high, drain active → stamp written.
 fresh
 for i in $(seq 1 16); do certified "sp-tc-c${i}"; done    # 16 CERTIFIED (depth >= 16)
-landed "sp-tc-l1" 60                                       # landed 1m ago (drain active)
+lc_seed_landed "sp-tc-l1" 60                                       # landed 1m ago (drain active)
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "throttle: stamp written when depth=16 >= threshold=16, drain=1m < 50m" \
      "yes" "$(stamp_exists)"
@@ -125,7 +125,7 @@ fresh
 git -C "$GIT_REPO" commit -q --allow-empty -m "sp-c8w16 async gate implementation"
 git -C "$GIT_REPO" commit -q --allow-empty -m "sp-74gwk async gate landing"
 for i in $(seq 1 16); do certified "sp-tc-c${i}"; done    # 16 CERTIFIED
-landed "sp-tc-l1" $(( 60 * 60 ))                          # landed 60m ago (stall)
+lc_seed_landed "sp-tc-l1" $(( 60 * 60 ))                          # landed 60m ago (stall)
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "stall: NO stamp when depth=16 >= threshold=16 but drain=60m >= 50m stall" \
      "no" "$(stamp_exists)"
@@ -149,7 +149,7 @@ fresh
 git -C "$GIT_REPO" commit -q --allow-empty -m "sp-c8w16 async gate implementation"
 git -C "$GIT_REPO" commit -q --allow-empty -m "sp-74gwk async gate landing"
 for i in $(seq 1 16); do certified "sp-tc-c${i}"; done
-landed "sp-tc-l1" $(( 55 * 60 ))   # 55m ago, above 50m stall threshold
+lc_seed_landed "sp-tc-l1" $(( 55 * 60 ))   # 55m ago, above 50m stall threshold
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "critical pair: drain=55m does NOT throttle (stall treatment)" \
      "no" "$(stamp_exists)"
@@ -162,7 +162,7 @@ echo "depth below threshold — no action:"
 # ======================================================================================
 fresh
 for i in $(seq 1 15); do certified "sp-tc-c${i}"; done    # 15 < 16 threshold
-landed "sp-tc-l1" 60
+lc_seed_landed "sp-tc-l1" 60
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "depth=15 below threshold=16: no stamp" "no" "$(stamp_exists)"
 is   "depth=15: no incident" "" "$(subjects)"
@@ -176,7 +176,7 @@ fresh
 for i in $(seq 1 5); do certified "sp-tc-c${i}"; done     # depth=5, release_at=8
 printf 'since=2026-09-17T20:15:00Z depth=16 since_land=3m\n' \
     > "$TMP/run/queue-throttled"                           # pre-existing stamp
-landed "sp-tc-l1" 60
+lc_seed_landed "sp-tc-l1" 60
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_RELEASE_AT=8 \
       SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "lift: stamp removed when depth=5 < release_at=8" "no" "$(stamp_exists)"
@@ -188,7 +188,7 @@ fresh
 for i in $(seq 1 10); do certified "sp-tc-c${i}"; done    # depth=10, between 8 and 16
 printf 'since=2026-09-17T20:15:00Z depth=16 since_land=3m\n' \
     > "$TMP/run/queue-throttled"
-landed "sp-tc-l1" 60
+lc_seed_landed "sp-tc-l1" 60
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_RELEASE_AT=8 \
       SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "maintain: stamp NOT removed when depth=10 between release=8 and engage=16" \
@@ -201,7 +201,7 @@ echo "override off — throttle pinned disabled:"
 # ======================================================================================
 fresh
 for i in $(seq 1 20); do certified "sp-tc-c${i}"; done    # depth well above threshold
-landed "sp-tc-l1" 60                                       # drain active
+lc_seed_landed "sp-tc-l1" 60                                       # drain active
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_OVERRIDE=off
 is   "override=off: no stamp even when depth=20 > threshold=16" \
      "no" "$(stamp_exists)"
@@ -221,7 +221,7 @@ echo "halted world — throttle check skipped:"
 # ======================================================================================
 fresh
 for i in $(seq 1 20); do certified "sp-tc-c${i}"; done
-landed "sp-tc-l1" 60
+lc_seed_landed "sp-tc-l1" 60
 printf 'halted\n' > "$TMP/run/world.halted"
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16
 is   "halted world: no stamp" "no" "$(stamp_exists)"
@@ -230,7 +230,7 @@ is   "halted world: no incident" "" "$(subjects)"
 # Running world (no halt stamp) still throttles: positive control for halt guard
 fresh
 for i in $(seq 1 16); do certified "sp-tc-c${i}"; done
-landed "sp-tc-l1" 60
+lc_seed_landed "sp-tc-l1" 60
 # No world.halted stamp
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "running world: stamp written (positive control for halt guard)" \
@@ -252,7 +252,7 @@ echo "engage escalation fires once per engagement (dedup via stable ref):"
 # ======================================================================================
 fresh
 for i in $(seq 1 16); do certified "sp-tc-c${i}"; done
-landed "sp-tc-l1" 60
+lc_seed_landed "sp-tc-l1" 60
 rm -f "$TMP/inc-refs"
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
@@ -280,7 +280,7 @@ certified_gone "tc-rebase-1"      # landed after rebase — tip not on main, bra
 certified_gone "tc-super-1"       # superseded — no branch
 certified_gone "tc-super-2"       # superseded — no branch
 certified "tc-live-1"             # genuinely waiting — branch exists, tip not on main
-landed "tc-prev-land" 30          # drain active (30s ago)
+lc_seed_landed "tc-prev-land" 30          # drain active (30s ago)
 wt_tc SPIRA_TC_LAND_REF="" \
       SPIRA_QUEUE_THROTTLE_DEPTH_AT=1 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "stale-filter positive control: branch-filter only, landed branches excluded → depth>=1 → stamp" \
@@ -295,7 +295,7 @@ is   "11-record fixture: only live branch counts → depth=1 < threshold=2 → n
 # Verify the live branch DOES engage when above threshold (filter fires, not gate).
 fresh
 certified "tc-live-only"
-landed "tc-prev-land" 30
+lc_seed_landed "tc-prev-land" 30
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=1 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 is   "1 live cert at threshold=1 → stamp written (positive control for filter)" \
      "yes" "$(stamp_exists)"

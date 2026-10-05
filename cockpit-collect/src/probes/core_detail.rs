@@ -456,19 +456,4 @@ mod tests {
         }
         assert_eq!(defect, 2);
     }
-
-    #[test]
-    fn landed_subject_recognises_land_and_colon_forms() {
-        let subjects = vec!["spira: land sp-abc \u{2014} title here".to_string(), "sp-xyz: some other commit".to_string()];
-        let lines: Vec<&str> = subjects.iter().flat_map(|s| s.lines()).collect();
-        let landed = |id: &str| {
-            lines.iter().any(|s| {
-                let s = s.trim();
-                s == format!("spira: land {id}") || s.starts_with(&format!("spira: land {id} ")) || s.starts_with(&format!("{id}: "))
-            })
-        };
-        assert!(landed("sp-abc"));
-        assert!(landed("sp-xyz"));
-        assert!(!landed("sp-none"));
-    }
 }
