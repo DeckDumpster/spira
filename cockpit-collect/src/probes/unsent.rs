@@ -111,13 +111,15 @@ fn branch_backlog_section(out: &mut Kv) {
                         }
                         BeadStatus::Closed { submitted } => {
                             done += 1;
-                            if awaits_round(&land, submitted) {
-                                awaiting_round += 1;
-                            } else if !b.starts_with("spira/queue/") {
-                                closed_stranded += 1;
-                                if let Some(ts) = ts {
-                                    if closed_stranded_oldest.map(|o| ts < o).unwrap_or(true) {
-                                        closed_stranded_oldest = Some(ts);
+                            match closed_branch_class(&land, submitted, b.starts_with("spira/queue/"), in_delivery.contains_key(id)) {
+                                ClosedClass::AwaitingRound => awaiting_round += 1,
+                                ClosedClass::Delivering | ClosedClass::BatchBranch => {}
+                                ClosedClass::Stranded => {
+                                    closed_stranded += 1;
+                                    if let Some(ts) = ts {
+                                        if closed_stranded_oldest.map(|o| ts < o).unwrap_or(true) {
+                                            closed_stranded_oldest = Some(ts);
+                                        }
                                     }
                                 }
                             }
@@ -132,7 +134,7 @@ fn branch_backlog_section(out: &mut Kv) {
                             }
                         }
                     }
-                    if !matches!(status, BeadStatus::Closed { .. }) {
+                    if batched_check_applies(&status, in_delivery.contains_key(id)) {
                         if let Some(row) = in_delivery.get(id) {
                             let mut in_batch = false;
                             if let Ok(entries) = std::fs::read_dir(&qdir) {
@@ -233,6 +235,37 @@ fn branch_backlog_section(out: &mut Kv) {
 /// is a closed bead's surviving branch a stranding.
 fn awaits_round(land: &str, submitted: bool) -> bool {
     submitted && land == "queue.local"
+}
+
+/// How a done branch (its bead past the builder) is counted.
+#[derive(Debug, PartialEq, Eq)]
+enum ClosedClass {
+    /// Submitted under queue.local: waits for a round by design.
+    AwaitingRound,
+    /// The machine has it IN_DELIVERY: the batch check judges it.
+    Delivering,
+    /// A batch PR branch: never a stranding.
+    BatchBranch,
+    /// Done and nobody is moving it.
+    Stranded,
+}
+
+fn closed_branch_class(land: &str, submitted: bool, batch_branch: bool, delivering: bool) -> ClosedClass {
+    if delivering {
+        ClosedClass::Delivering
+    } else if awaits_round(land, submitted) {
+        ClosedClass::AwaitingRound
+    } else if batch_branch {
+        ClosedClass::BatchBranch
+    } else {
+        ClosedClass::Stranded
+    }
+}
+
+/// The BATCHED checks (in an open batch? delivering too long?) apply to every branch whose
+/// bead the machine has IN_DELIVERY, whatever else it reads as.
+fn batched_check_applies(_status: &BeadStatus, delivering: bool) -> bool {
+    delivering
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -654,6 +687,22 @@ mod tests {
         let closed: Value = serde_json::json!({"id": "sp-a", "status": "closed", "closed_at": "2026-10-01T00:00:00Z"});
         assert!(finished_at(&closed, Some(&row("REWORK"))).is_none());
         assert!(finished_at(&closed, None).is_none());
+    }
+
+    /// sp-mve9i: a branch whose bead the machine has IN_DELIVERY is past the builder, so it
+    /// reads "done" — but the delivery pipeline holds it: its stranding is the BATCHED check
+    /// (no open batch names it), never the closed-bead stranding. With bd status it was never
+    /// "closed" here, so both checks ran as they should; with the lifecycle row they must be
+    /// told apart explicitly.
+    #[test]
+    fn a_delivering_branch_is_judged_by_its_batch_not_as_a_stranded_closed_bead() {
+        assert_eq!(closed_branch_class("push", true, false, true), ClosedClass::Delivering);
+        assert_eq!(closed_branch_class("push", true, false, false), ClosedClass::Stranded);
+        assert_eq!(closed_branch_class("queue.local", true, false, false), ClosedClass::AwaitingRound);
+        assert_eq!(closed_branch_class("push", false, true, false), ClosedClass::BatchBranch);
+        assert!(batched_check_applies(&BeadStatus::Closed { submitted: true }, true));
+        assert!(batched_check_applies(&BeadStatus::Open, true));
+        assert!(!batched_check_applies(&BeadStatus::Open, false));
     }
 
     #[test]
