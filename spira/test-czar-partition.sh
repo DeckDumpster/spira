@@ -9,14 +9,16 @@
 # WHAT THIS SUITE CHECKS.
 #   1. czar.fayth FAYTH_LABELS contains SPIRA_CZAR_LABEL (default: czar-trigger).
 #   2. czar.fayth FAYTH_LABELS does NOT contain plan or incident.
-#   3. When fayth_ready asks ready_count for czar, the include argument carries czar-trigger
-#      and NOT plan (the end-to-end predicate check).
+#   3. fayth_ready czar, over a ready set holding one czar-trigger bead and one plan bead,
+#      takes the czar-trigger bead and never the plan bead (the end-to-end predicate check).
 #   4. builder.fayth FAYTH_LABELS does NOT contain czar-trigger — partitions are disjoint.
 #
-# WHAT THIS SUITE DOES NOT USE. No real database, no systemd, no network. `fayth_ready`
-# (wave 4.25, sp-obhv6: a one-line shim onto `spira-claim fayth-ready`) is exercised end to
-# end against a fake `$SPIRA_BD` that records its own argv, same technique
-# test-builder-qa-proposed.sh and test-sentinel-store-reads.sh use.
+# WHAT THIS SUITE DOES NOT USE. No real database, no systemd, no network. `fayth_ready` is a
+# one-line shim onto `spira-claim fayth-ready` (wave 4.25, sp-obhv6), and its ready set is the
+# lifecycle machine's READY rows (sp-v62vn: no off mode, so no `bd ready` argv to read): a
+# spira-lc stand-in (testlib `lc_mirror_bd`) answers `list` from a fake `$SPIRA_BD`'s fixture
+# beads, and spira-claim's own label predicate does the partitioning — the same fixture
+# test-builder-qa-proposed.sh uses.
 #
 # tier: T1
 # covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/* UC-dispatch-09
@@ -55,25 +57,35 @@ lack "czar FAYTH_LABELS does not contain incident" "incident" "$czar_labels"
 
 # ==========================================================================================
 echo
-echo "fayth_ready czar — czar-trigger appears in the include argument to ready_count"
+echo "fayth_ready czar — the czar's ready set is the czar-trigger bead, never the plan bead"
 # ==========================================================================================
-BD_ARGS_FILE="$T/observed-bd-args"
+# Both beads are READY in the machine and carry the scope label; one is a queue-state
+# escalation (czar-trigger), the other plain plan work. czar.fayth's own FAYTH_LABELS is the
+# only thing that may tell them apart.
+CZ="${SPIRA_CZAR_LABEL:-czar-trigger}"
+FIXTURE="$T/beads.json"
+cat > "$FIXTURE" <<EOF
+[{"id":"sp-czq1","title":"queue-state escalation","status":"open","issue_type":"task","priority":1,"labels":["spira","$CZ"]},
+ {"id":"sp-czp1","title":"plan work","status":"open","issue_type":"task","priority":1,"labels":["spira","plan"]}]
+EOF
 FAKE_BD="$T/fake-bd"
 cat > "$FAKE_BD" <<EOF
 #!/bin/sh
-printf '%s\n' "\$*" >> "$BD_ARGS_FILE"
-echo '[]'
+case " \$* " in *" list "*) cat "$FIXTURE" ;; *) echo '[]' ;; esac
 EOF
 chmod +x "$FAKE_BD"
+lc_mirror_bd "$T/lc"
 
-SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" fayth_ready czar >/dev/null 2>&1 || true
-observed_bd_args="$(cat "$BD_ARGS_FILE" 2>/dev/null)"
-# `--label <FAYTH_LABELS> --exclude-label ...` — czar-trigger must be the INCLUDE value,
-# never buried in the exclude list, so this checks the token right after `--label`.
-observed_incl="$(printf '%s' "$observed_bd_args" | sed -n 's/.*--label \([^ ]*\).*/\1/p')"
-want "fayth_ready czar passes czar-trigger in the include arg" \
-    "${SPIRA_CZAR_LABEL:-czar-trigger}" "$observed_incl"
-lack "fayth_ready czar does NOT pass plan in the include arg" "plan" "$observed_incl"
+# SPIRA_SCOPE_LABEL pinned to the fixture's own scope label, so czar.fayth's FAYTH_LABELS
+# (scope + czar label) is a predicate both fixture beads could satisfy but for the czar label.
+czar_count="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+    fayth_ready czar 2>/dev/null)"
+czar_set="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+    _spira_claim fayth-ready czar --json 2>/dev/null)"
+# POSITIVE CONTROL: the fixture reaches spira-claim — exactly one bead counts.
+is     "positive control: fayth_ready czar counts exactly one bead" "1" "$czar_count"
+want   "fayth_ready czar takes the czar-trigger bead" "sp-czq1" "$czar_set"
+nowant "fayth_ready czar does NOT take the plan bead" "sp-czp1" "$czar_set"
 
 # ==========================================================================================
 echo
