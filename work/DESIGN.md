@@ -14,11 +14,11 @@ socket (`SPIRA_LC_SOCKET`; default `/run/spira-lc/sock` in system mode, `/run/us
   `submit`.
 - **Exit:** the machine's own exit code on a reply. `2` means cannot tell: unbound, socket
   unreachable, or a malformed reply; retrying is safe. `3` means refused: a foreign bead, an
-  unknown verb, or the switch is off; do not retry.
+  unknown verb; do not retry.
 - **Callers:** only the model, and only under the aeon's restricted environment (design
   §3.5; `aeon/src/restrict.rs`, formerly the `work-env.sh` wrap, retired sp-zpaq0) and the
   `{{FINISH}}` brief, and every persona prompt in the chamber plus the archivist's (sp-st0mm).
-  Both apply only when `LIFECYCLE_ENFORCE=1`. No harness script invokes `work`.
+  No harness script invokes `work`.
 
 ## 2a. Lane verbs (sp-st0mm)
 
@@ -47,44 +47,14 @@ since the broker cannot read the aeon's files.
 **Limit:** the persona comes from the aeon's environment (`SPIRA_FAYTH`), which the model's
 own shell can override; the broker does not yet authenticate the caller (peer credentials).
 
-## 3. Lifecycle switch
+## 3. Lifecycle switch (retired)
 
-**Finding (operator, 2026-09-28):** the lifecycle machine was never deployed on this host.
-There is no `spira_lifecycle` database, no `spira_lc` grant, and no service or socket.
-**Decision:** `lifecycle_enforce` is THE switch for everything that touches the lifecycle
-machine.
+`lifecycle_enforce` once gated every verb: off, `work` refused (exit 3) before touching the
+socket, since the machine was not the host's record. After the cutover (2026-10-05) the
+machine is the only record, and sp-v62vn retired the switch: every verb goes to the socket,
+an unreachable socket is `cannot tell` (exit 2), and a config or environment still saying off
+is refused by spira-config, naming its exit. The aeon's restricted environment
+(`aeon/src/restrict.rs`) no longer carries `SPIRA_LIFECYCLE_ENFORCE`.
 
-**Resolution** (`spira_config::lifecycle_enforce`, the aeon crate's rule):
-- `SPIRA_LIFECYCLE_ENFORCE` wins: `1`/`true` is on, and anything else, including empty, is off.
-- Else `spira.lifecycle_enforce` from the spira.toml that spira-config discovers:
-  `$SPIRA_TOML`, `$SPIRA_REPO/spira.toml`, `$XDG_CONFIG_HOME` or `$HOME/.config`
-  `/spira/spira.toml`, or `/etc/spira/spira.toml`.
-- Else **off**.
+**Tests:** `tests/switch.rs::a_verb_reaches_the_socket`, `an_unreachable_socket_is_cannot_tell`.
 
-A socket or binary existing never turns it on.
-
-| verb | **off** (production today) | **on** |
-|---|---|---|
-| every verb | **refused, exit 3, before the socket is touched.** The stderr line names the switch and the legacy path: `bd show`, `bd note`, closing through `bd` per the brief, the brief's escalation, `bead.sh file`. Nothing was done | the request goes to the socket. Unreachable → `cannot tell`, exit 2 (unchanged) |
-
-**Why refuse rather than succeed quietly.** Off, the model is never wrapped in work-env.sh
-and its brief names `bd`, so `work` is not on its PATH in the first place. If something does
-reach `work` in off mode, a no-op "success" would report a `submit` or a close that never
-happened, which is the silent valve the harness's laws exist to prevent. A legacy
-translation is impossible by construction, because `work` has no `bd` and no credential.
-So the right answer is a loud, non-retryable refusal.
-
-**Tests:**
-- `tests/switch.rs::off_refuses_every_verb_without_touching_the_socket`: a live listening
-  socket must record no connection for `0`, empty, or `yes`.
-- `on_reaches_the_socket`
-- `on_unreachable_socket_is_cannot_tell`
-- `lib::off_refusal_names_the_switch_and_a_legacy_path_for_every_verb`
-
-**Cutover addition (now `aeon/src/restrict.rs`; the wrapper process it describes, `spira/
-work-env.sh`, is retired — sp-zpaq0):** the restricted environment runs `work` under an
-allow-list and does not pass `SPIRA_LIFECYCLE_ENFORCE` unless it is present and non-empty
-in the aeon's own environment. In on mode, `work` then falls back to the spira.toml it can
-find from `HOME`. If on is set only through the environment (spira.conf or a unit), every
-verb would be refused, so `restrict.rs` carries `SPIRA_LIFECYCLE_ENFORCE` through
-(defaulted to `0`) rather than dropping it. Nothing is needed for off.

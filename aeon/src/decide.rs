@@ -2,6 +2,7 @@
 //! gathered inputs, each is now a Rust function with its table as a test.
 
 use crate::bd;
+use spira_config::nonwork;
 
 /// `world_stop_decide`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,28 +200,37 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
 }
 
-/// What a closed bead's lifecycle row says about a batch eviction racing the close.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Eviction {
-    None,
-    Stale,
-    Cap,
-    Reopen,
+/// Did the session's builder hand its bead on by closing it — the legacy close path the
+/// verdict fences (sp-mve9i; teardown's own closed branch is deleted, sp-v62vn)? Read from the bead's
+/// lifecycle row, never bd's `status` (design §3.4: bd status is inert for work beads).
+///
+/// A restricted session (every session the aeon launches) hands its bead on only through the work verbs
+/// (`work submit`/`done`), which teardown's disposition reads as `submitted`
+/// (`lc_bead_verified`); bd's status never moved for it, so it never took this path and
+/// still does not. An unrestricted session's close is the row past the builder
+/// (`lc_state::past_builder`). No row is not a close: the conservative answer, which sends
+/// the bead through the disposition (release, never a reopen).
+pub fn builder_closed(restricted: bool, row: Option<&spira_config::lc_state::Row>) -> bool {
+    !restricted && row.is_some_and(|r| r.past_builder())
 }
 
-/// The row is `spira-lc show`'s bead object: REWORK with an eviction reason is an eviction.
-/// `row_tip` is the tip the eviction was recorded against; `cur_tip` the branch tip now.
-pub fn eviction_reopen(state: &str, reason: &str, row_tip: &str, cur_tip: &str, recent: i64, escalate_at: i64) -> Eviction {
-    if state != "REWORK" || !matches!(reason, "batch-ejected" | "base-withdrawn") {
-        return Eviction::None;
+/// A restricted session handed its bead on by `work submit`: the row stands SUBMITTED. The
+/// close guards (prod-dirty, close-reason, groom escalation) judge this hand-on as they judge an
+/// unrestricted close; without it they never ran, since every session is restricted.
+pub fn builder_submitted(restricted: bool, row: Option<&spira_config::lc_state::Row>) -> bool {
+    restricted && row.is_some_and(|r| r.state == "SUBMITTED")
+}
+
+/// The status word the aeon ledger has always recorded (`done … status=<word>`), from the
+/// lifecycle row: `?` when there is none.
+pub fn ledger_word(row: Option<&spira_config::lc_state::Row>) -> &'static str {
+    match row {
+        None => "?",
+        Some(r) if r.working() => "in_progress",
+        Some(r) if r.claimable() => "open",
+        Some(r) if r.past_builder() => "closed",
+        Some(_) => "?",
     }
-    if !row_tip.is_empty() && !cur_tip.is_empty() && row_tip != cur_tip {
-        return Eviction::Stale;
-    }
-    if recent >= escalate_at {
-        return Eviction::Cap;
-    }
-    Eviction::Reopen
 }
 
 /// `open_ask_blocker <bd-show-json> <bead-id> <ask-label>`: does the bead carry an open,
@@ -237,7 +247,8 @@ pub fn open_ask_blocker(json: &str, bead_id: &str, ask_label: &str) -> bool {
     let Some(row) = bd::first_row(json) else { return false };
     let close_sfx = (!bead_id.is_empty()).then(|| format!(" for bead {bead_id}"));
     row.dependencies.as_deref().unwrap_or(&[]).iter().any(|d| {
-        let open = d.status.as_deref() != Some("closed");
+        // An ask is not a work bead: bd's status is its only state (spira_config::nonwork).
+        let open = !nonwork::is_closed(nonwork::Kind::Ask, d.status.as_deref().unwrap_or(""));
         let has_ask = d.labels.as_deref().unwrap_or(&[]).iter().any(|l| l == ask_label);
         let blocks = d.kind() == Some("blocks");
         let title = d.title.as_deref().unwrap_or("");
@@ -434,6 +445,19 @@ pub fn rapid_recur_streak(lines: &[&str]) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_restricted_submission_is_judged_by_the_close_guards() {
+        let row = |st: &str| spira_config::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
+        // Every session is restricted: its hand-on is SUBMITTED, never a bd close.
+        assert!(builder_submitted(true, Some(&row("SUBMITTED"))));
+        assert!(!builder_closed(true, Some(&row("SUBMITTED"))));
+        assert!(!builder_submitted(true, Some(&row("WORKING"))));
+        assert!(!builder_submitted(true, Some(&row("REWORK"))));
+        assert!(!builder_submitted(true, None));
+        // An unrestricted session is judged by its close, not here.
+        assert!(!builder_submitted(false, Some(&row("SUBMITTED"))));
+    }
+
     use super::*;
 
     #[test]
@@ -517,18 +541,6 @@ mod tests {
         assert_eq!(disposition(&i).ledger_status, "?");
         let r = DispositionIn { requeue_cause: Some("-".into()), tip_moved: true, ..base() };
         assert_eq!(disposition(&r).note, NoteKey::Unlanded, "`-` is no cause");
-    }
-
-    #[test]
-    fn eviction_table() {
-        assert_eq!(eviction_reopen("CERTIFIED", "", "abc", "abc", 0, 3), Eviction::None);
-        assert_eq!(eviction_reopen("REWORK", "suites-failed", "abc", "abc", 0, 3), Eviction::None);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "abc", 0, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("REWORK", "base-withdrawn", "abc", "abc", 0, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "def", 0, 3), Eviction::Stale);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "", "def", 0, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "", 0, 3), Eviction::Reopen, "unknown current tip is not stale");
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "abc", 3, 3), Eviction::Cap);
     }
 
     // test-aeon-disposition.sh's open_ask_blocker table.

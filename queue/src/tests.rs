@@ -378,12 +378,14 @@ struct FLc {
     bead_rows: RefCell<std::collections::HashMap<String, (String, String)>>,
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
     certify_refused: Cell<bool>,
+    /// `show <bead>` cannot answer (the bulk `list` still does).
+    row_fails: Cell<bool>,
     calls: RefCell<Vec<String>>,
 }
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), row_fails: Cell::new(false), calls: RefCell::default() }
     }
 }
 
@@ -443,6 +445,9 @@ impl Lc for FLc {
     }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
         self.calls.borrow_mut().push(format!("row {bead}"));
+        if self.row_fails.get() {
+            return None;
+        }
         self.rows.borrow().clone().ok()?.into_iter().find(|b| b.bead_id == bead)
     }
     fn certify(&self, bead: &str, tip: &str, _: &str, _: &str) -> Result<(), (i32, String)> {
@@ -1202,13 +1207,14 @@ fn open_batch_refuses_while_a_batch_is_open() {
 }
 
 #[test]
-fn open_batch_does_not_admit_when_bd_cannot_answer() {
+fn open_batch_does_not_admit_when_the_lifecycle_row_cannot_be_read() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.fail.set(true);
+    t.lc.row_fails.set(true);
     assert_eq!(t.run(&["open-batch", "--members", "sp-a"]), 1);
+    assert!(t.out().contains("sp-a: no lifecycle row (spira-lc could not say) — not admitted"), "{}", t.out());
     assert!(t.out().contains("no cut — nothing admissible for spira"));
 }
 
@@ -2049,6 +2055,29 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
     assert!(t.lib.has("event queue.abandoned abandoned PR 12 for spira (actor=op)"));
 }
 
+/// sp-mve9i: admission reads the member's lifecycle row, never bd's status (design §3.4 —
+/// bd status is inert for work beads). A CERTIFIED bead whose bd row still reads in_progress
+/// (the work verbs never move it) is admitted; a bd-closed bead whose row has gone back to
+/// REWORK is not.
+#[test]
+fn open_batch_admits_on_the_lifecycle_row_not_bd_status() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into()), ("spira/sp-r".into(), "tr".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.lc_row("sp-r", "REWORK", "tr", 2);
+    t.lc_row("sp-r", "CERTIFIED", "tr", 2);
+    t.bd.rows.borrow_mut().extend([
+        BeadRow { id: "sp-a".into(), status: Some("in_progress".into()), title: Some("A".into()), ..Default::default() },
+        BeadRow { id: "sp-r".into(), status: Some("closed".into()), title: Some("R".into()), ..Default::default() },
+    ]);
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
+    let out = t.out();
+    assert!(out.contains("skip — sp-r: lifecycle state=REWORK (no longer CERTIFIED) — not admitted"), "{out}");
+    let rec = fs::read_to_string(t.qfile("open")).unwrap();
+    assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
+}
+
 #[test]
 fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
     let t = T::new(LandMode::Queue);
@@ -2056,6 +2085,9 @@ fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into()), ("spira/sp-b".into(), "tb".into()), ("spira/sp-c".into(), "tc".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
     t.lc_row("sp-b", "CERTIFIED", "tb", 2);
+    // sp-c was CERTIFIED when the candidates were read and is REWORK by admission (the
+    // fake's fresh `show` finds the first row).
+    t.lc_row("sp-c", "REWORK", "tc", 3);
     t.lc_row("sp-c", "CERTIFIED", "tc", 3);
     t.bd.rows.borrow_mut().extend([
         BeadRow { id: "sp-a".into(), status: Some("closed".into()), title: Some("A".into()), ..Default::default() },
@@ -2066,7 +2098,7 @@ fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
     t.git.merge_fail.borrow_mut().insert("tb".into());
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let out = t.out();
-    assert!(out.contains("skip — sp-c: bead status=open (not closed, not submitted)"));
+    assert!(out.contains("skip — sp-c: lifecycle state=REWORK (no longer CERTIFIED) — not admitted"), "{out}");
     assert!(out.contains("skip — sp-b: conflicts with base"));
     assert!(out.contains("PR 77 opened — 1 branches (spira/queue/20260929T010203Z)"));
     let rec = fs::read_to_string(t.qfile("open")).unwrap();

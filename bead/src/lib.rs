@@ -151,7 +151,14 @@ pub fn non_work_labels(
 /// Work-query types: excludes `event`/`escalation`/`proposal`/`gate` by construction,
 /// matching `schema.sh`'s `SCHEMA_WORK_TYPES` plus `epic` (kept for the repo: check only).
 const REPO_CHECK_TYPES: &[&str] = &["task", "bug", "feature", "epic", "chore", "spike"];
-const PARTITION_CHECK_TYPES: &[&str] = &["task", "bug", "feature", "chore", "spike"];
+pub const PARTITION_CHECK_TYPES: &[&str] = &["task", "bug", "feature", "chore", "spike"];
+
+/// Whether a work bead still waits for dispatch, the one fact the partition check needs: the
+/// lifecycle row's answer (READY/REWORK), never bd's `status` (design §3.4, sp-mve9i). A bead
+/// with no row can never be claimed, so it waits for nothing.
+pub fn awaits_dispatch(row: Option<&spira_config::lc_state::Row>) -> bool {
+    row.is_some_and(|r| r.claimable())
+}
 
 fn has_token(space_joined_labels: &str, token: &str) -> bool {
     space_joined_labels.split_whitespace().any(|l| l == token)
@@ -165,10 +172,11 @@ fn has_label_starting_with(space_joined_labels: &str, prefix: &str) -> bool {
 
 /// `_bead_lint_judge <labels> <status> <type> <partitions>` — pure, no `bd`, no I/O. Each
 /// defect is one line of `out`; `count` is how many were found. `partitions` is
-/// space-separated, matching the bash's own calling convention.
+/// space-separated, matching the bash's own calling convention. `awaits_dispatch` replaces
+/// the bash's `status = open` ([`awaits_dispatch`]; a bead being filed awaits it).
 pub fn lint_judge(
     labels: &str,
-    status: &str,
+    awaits_dispatch: bool,
     ty: &str,
     partitions: &str,
     no_loop_label: &str,
@@ -179,7 +187,7 @@ pub fn lint_judge(
         out.push("no repo: label".to_string());
     }
 
-    if status == "open" && PARTITION_CHECK_TYPES.contains(&ty) {
+    if awaits_dispatch && PARTITION_CHECK_TYPES.contains(&ty) {
         let has_no_loop = !no_loop_label.is_empty() && has_token(labels, no_loop_label);
         if !has_no_loop {
             let has_partition = partitions.split_whitespace().any(|p| has_token(labels, p));
@@ -545,16 +553,29 @@ mod tests {
             ("repo:spira", "open", "bug", PART, 1, vec![add_one.as_str()]),
         ];
         for (labels, status, ty, part, want_n, want_lines) in &rows {
-            let (n, lines) = lint_judge(labels, status, ty, part, NO_LOOP);
+            let (n, lines) = lint_judge(labels, *status == "open", ty, part, NO_LOOP); // literal-ok: the bash table's own column
             assert_eq!(n, *want_n, "labels={labels:?} status={status} type={ty}");
             let want: Vec<String> = want_lines.iter().map(|s| s.to_string()).collect();
             assert_eq!(lines, want, "labels={labels:?} status={status} type={ty}");
         }
     }
 
+    /// sp-mve9i: the partition check runs for a bead the machine has waiting for a builder
+    /// and for no other, whatever bd's status says.
+    #[test]
+    fn the_partition_check_follows_the_lifecycle_row_not_bd_status() {
+        use spira_config::lc_state::Row;
+        let row = |st: &str| Row { bead_id: "sp-a".into(), state: st.into(), ..Default::default() };
+        for (st, want) in [("READY", 1), ("REWORK", 1), ("WORKING", 0), ("SUBMITTED", 0), ("LANDED", 0)] {
+            let (n, _) = lint_judge("repo:spira", awaits_dispatch(Some(&row(st))), "task", PART, NO_LOOP);
+            assert_eq!(n, want, "{st}");
+        }
+        assert!(!awaits_dispatch(None), "a bead with no row can never be claimed");
+    }
+
     #[test]
     fn lint_judge_no_loop_label_unset_has_no_add_one_suffix() {
-        let (n, lines) = lint_judge("repo:spira", "open", "task", PART, "");
+        let (n, lines) = lint_judge("repo:spira", true, "task", PART, "");
         assert_eq!(n, 1);
         assert_eq!(lines, vec!["no partition label".to_string()]);
     }

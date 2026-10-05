@@ -73,9 +73,6 @@ pub fn parse_candidates(text: &str) -> Result<Vec<Candidate>, String> {
 pub struct Opts {
     pub apply: bool,
     pub actor: String,
-    /// `lifecycle_enforce` (DESIGN.md §6a/§8.7): off reads the `spira-poison` bd label and
-    /// never calls spira-lc; on reads and releases the lifecycle hold.
-    pub enforce: bool,
 }
 
 enum Outcome {
@@ -99,26 +96,15 @@ fn one(o: &Opts, w: &mut dyn World, c: &Candidate, out: &mut String) -> Outcome 
             return Outcome::Failed;
         }
     };
-    let lc: Option<LcRow> = if o.enforce {
-        match w.lc_row(&c.id) {
-            Ok(r) => r,
-            Err(e) => {
-                out.push_str(&format!(
-                    "FAIL {}: cannot tell (spira-lc show: {e}; lifecycle_enforce is on, so the machine must answer)\n",
-                    c.id
-                ));
-                return Outcome::Failed;
-            }
+    let lc: Option<LcRow> = match w.lc_row(&c.id) {
+        Ok(r) => r,
+        Err(e) => {
+            out.push_str(&format!("FAIL {}: cannot tell (spira-lc show: {e}; the machine must answer)\n", c.id));
+            return Outcome::Failed;
         }
-    } else {
-        None
     };
     let labelled = bead.labels.iter().any(|l| l == POISON_LABEL);
-    let poisoned = if o.enforce {
-        lc.as_ref().is_some_and(LcRow::poisoned)
-    } else {
-        labelled
-    };
+    let poisoned = lc.as_ref().is_some_and(LcRow::poisoned);
     if !poisoned {
         return Outcome::NotOurs;
     }
@@ -131,17 +117,8 @@ fn one(o: &Opts, w: &mut dyn World, c: &Candidate, out: &mut String) -> Outcome 
     // Live work is never touched (same guard `unpoison` uses, DESIGN.md §8.2 precondition 4):
     // a poisoned bead should never be claimed, but this is the one check standing between a
     // wrong merge-status verdict and a lift under a live aeon.
-    let assignee = bead.assignee.as_deref().filter(|a| !a.trim().is_empty());
-    let lc_holder = lc
-        .as_ref()
-        .filter(|r| r.state == lifecycle::bead::BeadState::Working)
-        .and_then(|r| r.holder.as_deref())
-        .filter(|h| !h.trim().is_empty());
-    let held = match (bead.status.as_str(), assignee, lc_holder) {
-        ("in_progress", Some(a), _) => Some(format!("{a} (in_progress)")),
-        (_, _, Some(h)) => Some(format!("{h} (lifecycle WORKING)")),
-        _ => None,
-    };
+    // The lifecycle row's WORKING holder (bd status is never read, sp-mve9i).
+    let held = lc.as_ref().and_then(LcRow::working_holder);
     if let Some(h) = held {
         out.push_str(&format!(
             "FAIL {}: held by {h} — live work is never touched: let that aeon finish (or stop it: spira/slay.sh --bead {}), then re-run\n",
@@ -174,12 +151,9 @@ fn one(o: &Opts, w: &mut dyn World, c: &Candidate, out: &mut String) -> Outcome 
             LcApply::CannotTell(e) => warns.push(format!("unhold: {e}")),
         }
     }
+    // The legacy label is vestigial (best effort, silent) — the poison is the hold.
     if labelled {
-        if let Err(e) = w.remove_label(&c.id, POISON_LABEL) {
-            if !o.enforce {
-                warns.push(format!("label remove: {e}"));
-            }
-        }
+        let _ = w.remove_label(&c.id, POISON_LABEL);
     }
     let note = format!(
         "Poison lifted by spira-claim deadlocked ({}): {} carries a commit naming {} and merges cleanly into {}, \
@@ -206,11 +180,7 @@ permanently. The counters are left standing as the record of how it got here.",
         warns.push(format!("mark poison-lifted: {e}"));
     }
 
-    let still_poisoned = if o.enforce {
-        matches!(w.lc_row(&c.id), Ok(Some(r)) if r.poisoned())
-    } else {
-        matches!(w.bead(&c.id), Ok(Some(b)) if b.labels.iter().any(|l| l == POISON_LABEL))
-    };
+    let still_poisoned = matches!(w.lc_row(&c.id), Ok(Some(r)) if r.poisoned());
     if still_poisoned {
         out.push_str(&format!(
             "REFUSED  {}: the poison hold would not come off\n",

@@ -69,8 +69,13 @@ print(" ".join(sorted(r.get("id","") for r in (d if isinstance(d, list) else [d]
 
 LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-spira-open-children}"
 
+# A CHILD'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): CHECK 3c asks `spira-lc list`
+# whether a child is still open (not terminal), never bd status. The stand-in on PATH answers
+# from the rows seed/kid_closed declare.
+lc_path_stub "$TMP/lcbin" "$TMP/lcfix"
+
 # CHECK 3c alone, through the binary on PATH (the tree's own build under testenv).
-mark_open_children() { sentinel --open-children >/dev/null 2>&1; }
+mark_open_children() { PATH="$TMP/lcbin:$PATH" sentinel --open-children >/dev/null 2>&1; }
 
 seed() {
     testdb_reset
@@ -80,6 +85,8 @@ seed() {
 {"id":"sp-kid2","title":"child two","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid2","depends_on_id":"sp-parent","type":"parent-child"}]}
 {"id":"sp-lonely","title":"no children","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+    rm -rf "$LC_FIX/bead" "$LC_FIX/show"
+    for id in sp-parent sp-kid1 sp-kid2 sp-lonely; do lc_bead READY "$id" "" 0; done
 }
 
 # kid_closed <n> — child sp-kid<n>'s row as closed: FIXTURE STATE, declared as data (an upsert
@@ -88,6 +95,7 @@ kid_closed() {
     testdb_seed <<JSONL
 {"id":"sp-kid$1","title":"child $1","status":"closed","closed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","dependencies":[{"issue_id":"sp-kid$1","depends_on_id":"sp-parent","type":"parent-child"}]}
 JSONL
+    lc_bead LANDED "sp-kid$1" "" 0   # the child is done: its lifecycle row is terminal
 }
 
 echo "test-dispatch-open-children.sh"

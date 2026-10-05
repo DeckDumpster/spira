@@ -1,7 +1,7 @@
 //! The stranded-work detectors (wave4-decomposition.md family T, row 29, sp-8ofmt):
-//! `detect_livelocked`, `detect_landed_but_open`, `detect_closed_unlanded_states`,
-//! `detect_false_blockers`, `detect_incident_needs_builder`, `detect_invalid_closed` and
-//! `all_partition_members`. The sentinel-side half of family T (`detect_unclaimable_ready`,
+//! `detect_livelocked`, `detect_incident_needs_builder`, `detect_invalid_closed` and
+//! `all_partition_members` (`detect_landed_but_open`, `detect_closed_unlanded_states` and
+//! `detect_false_blockers` were deleted in sp-mve9i — see their section below). The sentinel-side half of family T (`detect_unclaimable_ready`,
 //! `file_unclaimable_incidents`, `detect_branch_collisions`, `park_branch_collisions`) is a
 //! different bead ("two beads", decomposition table row T) and stays a lib.sh seam here —
 //! [`unclaimable_lines`] reaches it the same way `sentinel`'s own Rust crate still does
@@ -91,236 +91,70 @@ fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
     String::from_utf8_lossy(&o.stdout).trim().parse().ok()
 }
 
-/// `git merge-tree --write-tree <base> <branch>`'s exit status alone — a plain "would this
-/// merge without conflict", distinct from `content_on_base`'s tree-equality question.
-fn merge_tree_clean(repo: &Path, base: &str, branch: &str) -> bool {
-    Command::new("git")
-        .current_dir(repo)
-        .args(["merge-tree", "--write-tree", base, branch])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Whether the lifecycle record has the bead LANDED (`spira-lc state`). A missing row or an
-/// unreachable record reads as `None`: both mean "cannot prove it landed". The commit is not
-/// recorded here, so the sha is empty and callers fall back to the base's own commit search.
-fn landed_sha_via_cli(id: &str, _repo_path: &str) -> Option<String> {
-    let o = Command::new("spira-lc").args(["state", id]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    (o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "LANDED").then(String::new)
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // all_partition_members
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// lib.sh `all_partition_members`: every open/in_progress bead a partition's own labels
-/// match, EVERY EXCLUSION DROPPED — the claimable-set predicate answers "can this be
-/// claimed right now"; this answers "whose is it", which a poisoned or asked-about bead
-/// still is. One id per line, first-seen order, deduplicated.
+/// lib.sh `all_partition_members`: every unfinished bead a partition's own labels match,
+/// EVERY EXCLUSION DROPPED — the claimable-set predicate answers "can this be claimed right
+/// now"; this answers "whose is it", which a poisoned or asked-about bead still is. One id
+/// per line, first-seen order, deduplicated. "Unfinished" is the lifecycle row's answer
+/// (READY, WORKING or REWORK — what bd's `open,in_progress` meant), never bd's status
+/// (sp-mve9i); with the machine unreadable there is no answer, so no members.
 pub fn all_partition_members(cfg: &Config) -> String {
     let specs = probe::roster(cfg, None).unwrap_or_default();
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for spec in specs {
-        if spec.labels.is_empty() {
-            continue;
-        }
-        for b in list_beads(cfg, &["--status", "open,in_progress", "--label", spec.labels.as_str()]) {
-            if seen.insert(b.id.clone()) {
-                out.push(b.id);
-            }
-        }
-    }
-    out.join("\n")
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// detect_landed_but_open
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// lib.sh `detect_landed_but_open`: one `STATE <id> landed-but-open — <evidence>` line for
-/// every open/in_progress work bead whose repository's base already carries a commit
-/// landing it — no partition filter, the whole graph (sp-0qp7s: a scan bounded to one
-/// partition cannot see a bead filed under another).
-pub fn detect_landed_but_open(cfg: &Config) -> String {
-    let reg = registry(cfg);
-    let home = reg.home_repo().to_string();
-    let mut out = Vec::new();
-    for b in list_beads(cfg, &["--status", "open,in_progress"]) {
-        let ty = b.issue_type.as_deref().unwrap_or("");
-        if !cfg.work_close_types.split_whitespace().any(|w| w == ty) {
-            continue;
-        }
-        let repo = label_value(&b.labels, "repo:").unwrap_or(home.as_str()).to_string();
-        let Some(root) = reg.root(&repo) else { continue };
-        if let Some(sha) = landed_sha_via_cli(&b.id, &root) {
-            if reopened_after_landing(cfg, &reg, &b.id, &root, &sha) {
-                continue;
-            }
-            let sha_disp = if sha.is_empty() { "a commit".to_string() } else { sha };
-            out.push(format!("STATE {} landed-but-open — {} names it on {}'s base; close it", b.id, sha_disp, repo));
-        }
-    }
-    out.join("\n")
-}
-
-const UTC_STAMP: &str = "--date=format-local:%Y-%m-%dT%H:%M:%SZ";
-
-/// Newest commit naming `id` on `base`, as a UTC `…Z` stamp (sorts lexicographically).
-fn newest_naming_commit(repo: &Path, base: &str, id: &str, sha: &str) -> Option<String> {
-    let stamp = |args: &[&str]| -> Option<String> {
-        let o = Command::new("git").current_dir(repo).env("TZ", "UTC").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        (o.status.success() && !s.is_empty()).then_some(s)
-    };
-    let pattern = format!("{}([^.a-z0-9]|$)", id);
-    let by_sha = if sha.is_empty() { None } else { stamp(&["show", "-s", UTC_STAMP, "--format=%cd", sha]) };
-    let by_grep = stamp(&["log", "-1", "-E", UTC_STAMP, "--format=%cd", &format!("--grep={pattern}"), base]);
-    by_sha.into_iter().chain(by_grep).max()
-}
-
-/// The bead's last `reopened` event, as a UTC `…Z` stamp, from bd's own event table.
-fn last_reopen(cfg: &Config, id: &str) -> Option<String> {
-    let q = format!("select max(created_at) as t from events where issue_id='{}' and event_type='reopened'", id.replace('\'', ""));
-    let raw = probe::bd(cfg, &["sql", "--json", q.as_str()], None).ok()?;
-    let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
-    v.get(0)?.get("t")?.as_str().map(str::to_string)
-}
-
-/// A bead reopened after the newest commit naming it was reopened because that commit did
-/// not fix it; only a later commit can make it landed again.
-fn reopened_after_landing(cfg: &Config, reg: &Registry, id: &str, root: &str, sha: &str) -> bool {
-    let Some(reopen) = last_reopen(cfg, id) else { return false };
-    let Some((base, _)) = spira_config::repos::landrefs(reg, root) else { return false };
-    match newest_naming_commit(Path::new(root), &base, id, sha) {
-        Some(commit) => reopen > commit,
-        None => false,
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// detect_closed_unlanded_states
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// lib.sh `detect_closed_unlanded_states`: one STATE line per closed work bead, across
-/// every partition this host watches, that carries none of CHECK 5's recognised landing
-/// signals and that `landed()` cannot prove via the base's own commit graph.
-pub fn detect_closed_unlanded_states(cfg: &Config) -> String {
-    let specs = probe::roster(cfg, None).unwrap_or_default();
-    let reg = registry(cfg);
-    let home = reg.home_repo().to_string();
-
-    let mut seen = HashSet::new();
-    let mut candidates: Vec<(String, String, String)> = Vec::new();
-    for spec in specs {
-        if spec.labels.is_empty() {
-            continue;
-        }
-        let excl: Vec<&str> = spec.exclude.split(',').filter(|s| !s.is_empty()).collect();
-        for b in list_beads(cfg, &["--label", spec.labels.as_str(), "--status", "closed"]) {
-            if !b.is_closed() {
-                continue;
-            }
-            let ty = b.issue_type.as_deref().unwrap_or("");
-            if !cfg.work_close_types.split_whitespace().any(|w| w == ty) {
-                continue;
-            }
-            if excl.iter().any(|x| b.has(x)) {
-                continue;
-            }
-            if b.labels.iter().any(|l| l.starts_with("delivers:")) {
-                continue;
-            }
-            if b.has("spira-dropped") || b.has("content-landed") {
-                continue;
-            }
-            if b.dependencies.iter().any(|d| d.dep_type.as_deref() == Some("supersedes")) {
-                continue;
-            }
-            if b.assignee.as_deref().is_some_and(|a| !a.is_empty()) {
-                continue;
-            }
-            if !seen.insert(b.id.clone()) {
-                continue;
-            }
-            let repo = label_value(&b.labels, "repo:").unwrap_or("").to_string();
-            let br = label_value(&b.labels, "branch:").unwrap_or("").to_string();
-            candidates.push((b.id, repo, br));
-        }
-    }
-
-    let mut out = Vec::new();
-    for (id, repo, br) in candidates {
-        let repo_disp = if repo.is_empty() { home.clone() } else { repo };
-        let Some(root) = reg.root(&repo_disp) else { continue };
-        let repo_path = Path::new(&root);
-        if landed_sha_via_cli(&id, &root).is_some() {
-            continue;
-        }
-        if br.is_empty() || !git_branch_exists(repo_path, &br) {
-            let suffix = if br.is_empty() { String::new() } else { format!(" (branch: label {br} names no ref)") };
-            out.push(format!("STATE {id} closed-no-branch — repo {repo_disp}{suffix}; nothing committed, no landing record"));
-            continue;
-        }
-        let Some((base, _local)) = spira_config::repos::landrefs(&reg, &root) else { continue };
-        if base.is_empty() {
-            continue;
-        }
-        if sending::git::Git(repo_path).content_on_base(&br, &base) {
-            continue;
-        }
-        if merge_tree_clean(repo_path, &base, &br) {
-            out.push(format!("STATE {id} closed-never-landed batch-ready {repo_disp} {br} {base} — merges cleanly, ready to requeue"));
-        } else {
-            out.push(format!("STATE {id} closed-never-landed conflict {repo_disp} {br} {base} — does not merge, needs a rebase"));
-        }
-    }
-    out.join("\n")
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// detect_false_blockers
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// lib.sh `detect_false_blockers <blocker-ids>`: one `STATE <id> blocked-by-unlanded
-/// <blocker> — …` line for every open/in_progress bead depending (`type=blocks`) on one of
-/// `blockers` (space or newline separated). Empty input is a no-op, never a query.
-pub fn detect_false_blockers(cfg: &Config, blockers: &str) -> String {
-    let blockers: HashSet<&str> = blockers.split_whitespace().collect();
-    if blockers.is_empty() {
+    let Ok(lc) = spira_config::lc_state::list().map(spira_config::lc_state::index) else {
         return String::new();
-    }
-    let mut out = Vec::new();
-    for b in list_beads(cfg, &["--status", "open,in_progress"]) {
-        let mut emitted: HashSet<&str> = HashSet::new();
-        for target in b.blocks_targets() {
-            if blockers.contains(target) && emitted.insert(target) {
-                out.push(format!("STATE {} blocked-by-unlanded {} — depends on {}, which is closed but its work never landed", b.id, target, target));
-            }
-        }
-    }
-    out.join("\n")
+    };
+    let per_spec = specs
+        .iter()
+        .filter(|spec| !spec.labels.is_empty())
+        .map(|spec| list_beads(cfg, &["--all", "--label", spec.labels.as_str()]).into_iter().map(|b| b.id).collect())
+        .collect();
+    unfinished_members(per_spec, &lc).join("\n")
 }
+
+/// The ids, first-seen and deduplicated across `per_spec`, whose lifecycle row is still
+/// before its builder's hand-off. A bead with no row can never be worked: not a member.
+pub fn unfinished_members(per_spec: Vec<Vec<String>>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    per_spec
+        .into_iter()
+        .flatten()
+        .filter(|id| lc.get(id).is_some_and(|r| !r.past_builder()))
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+// detect_landed_but_open, detect_closed_unlanded_states and detect_false_blockers are
+// deleted (sp-mve9i): each was a disagreement between bd's `status` and the lifecycle
+// record (open-but-LANDED, closed-but-not-LANDED, and the dependents of the latter). bd's
+// status is inert for work beads (design §3.4), so the disagreement is no longer a state a
+// bead can be in; CHECK5-LC (sentinel/src/lifecycle.rs) reads the drifts that remain from the
+// spira-lc rows alone. The groomer stopped calling them in sp-jnwbn.
 
 // ──────────────────────────────────────────────────────────────────────────────
 // detect_incident_needs_builder
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// lib.sh `detect_incident_needs_builder`: one `STATE <id> incident-is-code — …` line for
-/// every open/in_progress bead carrying the incident label whose recorded `branch:` already
-/// has a commit ahead of the repo's base.
+/// every unfinished bead carrying the incident label whose recorded `branch:` already has a
+/// commit ahead of the repo's base. An incident bead is a work bead (sp-jgjvh): bd supplies
+/// the labelled beads' content, and "unfinished" (what bd's open/in_progress meant) is the
+/// lifecycle row's READY/WORKING/REWORK — [`unfinished_incidents`]. A machine that cannot
+/// answer is an Err, never "no incident".
 pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
     if cfg.incident_label.is_empty() {
         return Err("SPIRA_INCIDENT_LABEL is unset — source conf.sh".into());
     }
+    let lc = spira_config::lc_state::list().map(spira_config::lc_state::index).map_err(|e| format!("cannot tell: {e}"))?;
     let reg = registry(cfg);
     let home = reg.home_repo().to_string();
     let mut out = Vec::new();
-    for b in list_beads(cfg, &["--status", "open,in_progress", "--label", cfg.incident_label.as_str()]) {
+    let labelled = list_beads(cfg, &["--all", "--label", cfg.incident_label.as_str()]);
+    for b in unfinished_incidents(labelled, &lc) {
         let Some(br) = label_value(&b.labels, "branch:") else { continue };
         let br = br.to_string();
         let repo = label_value(&b.labels, "repo:").unwrap_or("").to_string();
@@ -341,6 +175,12 @@ pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
         out.push(format!("STATE {} incident-is-code — {} commit(s) already on {} ahead of {}; remaining work is a code change, not operational", b.id, ahead, br, base));
     }
     Ok(out.join("\n"))
+}
+
+/// The incident beads whose lifecycle row still owes builder work; a bead with no row is not
+/// live work (it can never be claimed; CHECK-ROWLESS reports it).
+pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> Vec<Bead> {
+    beads.into_iter().filter(|b| lc.get(&b.id).is_some_and(|r| !r.past_builder())).collect()
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -502,17 +342,34 @@ for i in (d if isinstance(d, list) else [d]):
             bid, follow_hit, reason_short, title))
 "#;
 
+/// The rows of a `bd list --json` array that carry a non-empty `close_reason`, re-serialised
+/// for the embedded script; the input unchanged when it is not an array.
+fn with_close_reason(raw: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(raw.trim()) {
+        Ok(serde_json::Value::Array(a)) => serde_json::Value::Array(
+            a.into_iter()
+                .filter(|r| r.get("close_reason").and_then(|v| v.as_str()).is_some_and(|v| !v.trim().is_empty()))
+                .collect(),
+        )
+        .to_string(),
+        _ => raw.to_string(),
+    }
+}
+
 /// lib.sh `detect_invalid_closed`: `INVALID-CLOSED`/`UNFILED-FOLLOW`/`ALLOWED-IC` lines for
 /// closed beads whose close reasons admit unfinished work or imply untracked follow-on work.
 pub fn detect_invalid_closed(cfg: &Config) -> String {
-    let mut args: Vec<&str> = vec!["list", "--status", "closed", "--limit", "0", "--json"];
+    let mut args: Vec<&str> = vec!["list", "--all", "--limit", "0", "--json"];
     if !cfg.scope_label.is_empty() {
-        args = vec!["list", "--status", "closed", "--label", &cfg.scope_label, "--limit", "0", "--json"];
+        args = vec!["list", "--all", "--label", &cfg.scope_label, "--limit", "0", "--json"];
     }
     let raw = probe::bd(cfg, &args, None).unwrap_or_default();
     if raw.trim().is_empty() {
         return String::new();
     }
+    // The close records are the subject: a bead that carries a close reason, whatever bd's
+    // status says (sp-mve9i: bd status is not read for a work bead; the reason is content).
+    let raw = with_close_reason(&raw);
     let home = cfg.home.clone().unwrap_or_default().to_string_lossy().into_owned();
     let run = cfg.run.clone().unwrap_or_default().to_string_lossy().into_owned();
     let o = probe::run(
@@ -544,39 +401,43 @@ mod tests {
         assert_eq!(label_value(&labels, "team:"), None);
     }
 
-    fn git(dir: &Path, date: &str, args: &[&str]) {
-        let st = Command::new("git")
-            .current_dir(dir)
-            .env("GIT_COMMITTER_DATE", date)
-            .env("GIT_AUTHOR_DATE", date)
-            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-            .args(args)
-            .stdout(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(st.success(), "git {args:?}");
+
+    /// sp-mve9i: a partition's members are the beads whose lifecycle row is unfinished —
+    /// READY, WORKING, REWORK — deduplicated in first-seen order; no row, no member.
+    #[test]
+    fn partition_members_are_the_unfinished_lifecycle_rows() {
+        use spira_config::lc_state::Row;
+        let lc = [("a", "READY"), ("b", "WORKING"), ("c", "SUBMITTED"), ("d", "REWORK"), ("e", "LANDED")]
+            .iter()
+            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
+            .collect();
+        let per = vec![vec!["b".into(), "c".into(), "a".into()], vec!["a".into(), "d".into(), "e".into(), "z".into()]];
+        assert_eq!(unfinished_members(per, &lc), vec!["b", "a", "d"]);
+    }
+
+    /// sp-jgjvh: an incident is unfinished by its lifecycle row, whatever bd's status says;
+    /// a rowless bead is not live work.
+    #[test]
+    fn incidents_needing_a_builder_are_the_unfinished_lifecycle_rows() {
+        use spira_config::lc_state::Row;
+        let beads = model::parse_beads(
+            r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c","status":"in_progress"},{"id":"d","status":"open"}]"#,
+        )
+        .unwrap();
+        let lc = [("a", "WORKING"), ("b", "SUBMITTED"), ("c", "REWORK")]
+            .iter()
+            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
+            .collect();
+        let ids: Vec<String> = unfinished_incidents(beads, &lc).into_iter().map(|b| b.id).collect();
+        assert_eq!(ids, vec!["a", "c"]);
     }
 
     #[test]
-    fn newest_naming_commit_finds_the_latest_exact_id_and_orders_against_a_reopen() {
-        let tmp = testkit::TempDir::new("strand-nnc");
-        let dir = tmp.path().to_path_buf();
-        git(&dir, "2026-10-02T10:00:00Z", &["init", "-q", "-b", "main"]);
-        git(&dir, "2026-10-02T10:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abc: first"]);
-        git(&dir, "2026-10-02T12:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abcd: other bead"]);
-        let first = newest_naming_commit(&dir, "main", "sp-abc", "").unwrap();
-        assert_eq!(first, "2026-10-02T10:00:00Z");
-        assert!("2026-10-02T11:00:00Z".to_string() > first, "reopened after the commit: not landed");
-        git(&dir, "2026-10-02T13:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abc: real fix"]);
-        let later = newest_naming_commit(&dir, "main", "sp-abc", "").unwrap();
-        assert_eq!(later, "2026-10-02T13:00:00Z");
-        assert!("2026-10-02T11:00:00Z".to_string() < later, "commit newer than the reopen: landed");
-    }
-
-    #[test]
-    fn detect_false_blockers_is_a_noop_on_empty_input() {
-        let cfg = Config::resolve(&crate::config::Live::load());
-        assert_eq!(detect_false_blockers(&cfg, ""), "");
-        assert_eq!(detect_false_blockers(&cfg, "   "), "");
+    fn invalid_closed_reads_the_rows_that_carry_a_close_reason() {
+        let out = with_close_reason(r#"[{"id":"a","status":"open","close_reason":"done"},{"id":"b","status":"closed","close_reason":""},{"id":"c","status":"closed"}]"#);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 1);
+        assert_eq!(v[0]["id"], "a");
+        assert_eq!(with_close_reason("not json"), "not json");
     }
 }

@@ -64,6 +64,9 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# The claim goes through the lifecycle (sp-860zj): the bd fixture is told to the aeon in
+# lifecycle terms, or nothing is claimed and the session never runs.
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-gate-unfinished-attempts: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 

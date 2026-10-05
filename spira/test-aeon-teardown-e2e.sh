@@ -6,7 +6,7 @@
 # yield-headless phrasing table, open_ask_blocker's table — already lives as Rust unit tests
 # in the aeon crate (decide::tests::{disposition_table, session_yield_headless_table,
 # open_ask_blocker_table}, ledger::tests::session_fields_sum_and_last; `cargo test -p aeon`).
-# What is left here is the WIRING: that aeon's own marks, mail's own marker, and
+# What is left here is the WIRING: that aeon's own marks, the work broker's ask hold, and
 # attempts_of's own SQL agree with what those tables predict.
 #
 # Replaces seven suites (docs/test-plan/aeon-execution.md D8, D12, D15 — sp-g44ke):
@@ -27,7 +27,7 @@
 #
 # defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd sp-wnsks
 # tier: T3
-# covers: aeon/src/* spira/lib.sh mail/src/* UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
+# covers: aeon/src/* spira/lib.sh mail/src/* spira-lc/src/work.rs work/* cockpit/ops/src/resolve.rs cockpit/ops/src/resolve_main.rs UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-18
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -89,18 +89,12 @@ lib() { bash -c ". \"$HERE/lib.sh\"; $1" 2>/dev/null; }
 count_of()   { local c; c="$(lib "attempts_of $1")"; printf '%s' "${c:-0}"; }
 requeue_of() { local c; c="$(lib "requeues_of $1")"; printf '%s' "${c:-0}"; }
 
-fa_reset; fa_seed sp-rq-1; shim 1 1 1; fa_run_aeon >/dev/null
-is     "reopened over a rebase conflict — the bead is open again" open "$(field sp-rq-1 status)"
-want   "and the log says why"                  "REOPENED — closed behind" "$(fa_out)"
-is     "no attempt is charged"                 "0" "$(count_of sp-rq-1)"
-is     "it is counted as a requeue instead"    "1" "$(requeue_of sp-rq-1)"
-want   "the teardown says no attempt was charged" "no attempt charged" "$(fa_out)"
-want   "the bead carries the decision"         "Requeue 1 (rebase-conflict)" "$(fa_notes sp-rq-1 | tr -s ' ')"
-want   "and the ledger carries the outcome"    "status=requeue-rebase-conflict" "$(fa_ledger_line sp-rq-1)"
-# THE BRANCH SURVIVES THE REQUEUE. The aeon committed before closing; the rebase failed
-# after close and was aborted, leaving the branch at its pre-abort tip.
-_nc="$(git -C "$FA_REPO" rev-list --count "$(git -C "$FA_REPO" rev-parse origin/main)..spira/sp-rq-1" 2>/dev/null || echo 0)"
-is     "the branch still carries the aeon's commit after the requeue" "1" "$_nc"
+# THE REBASE-CONFLICT REOPEN AT CLOSE (sp-rq-1) IS GONE with sp-v62vn: every session runs
+# restricted, and a restricted session hands its bead on only through the work verbs —
+# teardown's closed branch (aeon decide::builder_closed, "never took this path and still
+# does not") is where the rebase check at close lived, so a session's close now reads as
+# submitted and the conflict is the gate's and the landing pass's to find. The row asserted
+# a path no session reaches; it is deleted, not rewritten.
 
 # ALSO the exit-code positive control (UC-18): a bead left open with claude's own rc=1 must
 # make aeon itself exit non-zero — reusing this run rather than a dedicated one, since the
@@ -142,15 +136,17 @@ want   "the note reads No progress, not Unlanded"   "No progress" "$notes_np"
 nowant "the note does not read Unlanded"            "Unlanded"    "$notes_np"
 want   "the note says no attempt was charged"       "No attempt charged" "$notes_np"
 # sp-k7eqd: status=deferred hid expired holds from bd ready forever (27 beads stranded) —
-# the fix leaves status OPEN and relies on a future defer_until to keep bd ready from
-# listing it until the backoff elapses, so it releases itself instead of needing a second
-# actor to flip it back. "held" now means open + defer_until, not status=deferred.
-is     "held for the backoff — status stays open so it releases itself" \
-       "open" "$(field sp-np-1 status)"
+# the fix then left status OPEN with a future defer_until. bd since makes a DATED defer a
+# snooze that wakes to open by itself once the date passes (`bd defer --help`: "A defer WITH
+# a date is a snooze: once --until passes, the next ready-front read returns the issue to
+# open automatically"), and the aeon writes no bd status at all any more (sp-mve9i, design
+# §3.4) — so "held" is bd's own dated snooze, which releases itself with no second actor.
+is     "held for the backoff — bd's dated snooze (deferred until a date), which wakes on its own" \
+       "deferred" "$(field sp-np-1 status)"
 [ -n "$(field sp-np-1 defer_until)" ] && _defer_set=yes || _defer_set=no
 is   "a defer_until is recorded — the hold the next ready query reads" "yes" "$_defer_set"
 np_ready="$(bd -C "$SPIRA_DB" ready --limit 0 --exclude-type epic,event -u --json 2>/dev/null)"
-nowant "held — open + a future defer_until still keeps it off bd ready, not plain open for the next summon" \
+nowant "held — the future defer_until keeps it off bd ready, not plain open for the next summon" \
        '"sp-np-1"' "$np_ready"
 is   "POSITIVE CONTROL — bead not closed, claude rc=1 — aeon exits non-zero" "1" "$rc"
 
@@ -167,9 +163,9 @@ cat > "$FA_BIN/claude" <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 _bd="${SPIRA_BD:-bd}"
-id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+# The bound bead is BEAD_ID, from the aeon: since sp-v62vn the claim is the lifecycle
+# row's, and bd's status no longer reads in_progress for it.
+id="${BEAD_ID:-}"
 if [ -n "$id" ]; then
     BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" create \
         "Operator question about $id" \
@@ -208,9 +204,9 @@ cat > "$FA_BIN/claude" <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 _bd="${SPIRA_BD:-bd}"
-id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+# The bound bead is BEAD_ID, from the aeon: since sp-v62vn the claim is the lifecycle
+# row's, and bd's status no longer reads in_progress for it.
+id="${BEAD_ID:-}"
 if [ -n "$id" ]; then
     # COMMITS (sp-1zxru): this row proves the own-closeout ask is not a decision-blocker,
     # which needs the session to reach the real unlanded/charged path to show — a session
@@ -235,134 +231,16 @@ want   "own-closeout-ask: attempt IS charged (Unlanded, not released)" "Unlanded
 nowant "own-closeout-ask: not released as decision-blocked" "No attempt charged" "$notes4"
 nowant "own-closeout-ask: ledger must not say decision-blocked" "decision-blocked" "$(fa_ledger_line sp-db-4)"
 
-# ==========================================================================================
-echo
-echo "ROW: operator-wait marker — released, no attempt charged"
-# ==========================================================================================
-cat > "$FA_BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-cat /dev/stdin > /dev/null
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
-    printf '%s\n' "$SESSION_EPOCH" > "$SPIRA_RUN/$BEAD_ID.operator-wait"
-fi
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 0
-SHIM
-chmod +x "$FA_BIN/claude"
-fa_reset; fa_seed sp-ow-2; fa_run_aeon >/dev/null
-is   "bead is still open (correctly not closed)" "open" "$(fa_status sp-ow-2)"
-notes_ow="$(fa_notes sp-ow-2)"
-want "note says kind-question mail"      "kind-question mail" "$notes_ow"
-want "note says No attempt charged"      "No attempt charged" "$notes_ow"
-nowant "note does not say Unlanded"      "Unlanded"           "$notes_ow"
-want "ledger says operator-wait" "operator-wait" "$(fa_ledger_line sp-ow-2)"
-
-echo
-echo "mail, driven directly (no aeon run): kind=question writes the operator-wait marker"
-# mail is a compiled binary now (sp-ooh1k) — there is no `cmd_send` bash function left to
-# source; call the real `send` subcommand instead (bare name, on the suite's own PATH).
+# THE OPERATOR-WAIT ROW IS LAST, below: it is the one row that runs against a real
+# lifecycle service (spira-lc serve on a throwaway spira_lifecycle), since the model asks
+# through `work ask` and the broker's ask hold is what teardown reads.
 #
-# --class permissions + a "## Class basis" section (sp-ccvdv): a BEAD_ID-scoped operator
-# question with no declared escalation class is now rerouted to the concierge instead
-# (law-escalate-decisions-not-problems — see spira/test-mail.sh's own "escalation class"
-# row), so without this the mail never reaches the operator mailbox and this row would be
-# proving the reroute, not the marker.
-BEAD_ID=sp-ow-mail SPIRA_RUN="$SPIRA_RUN" mail send operator --from "Builder <builder@spira>" \
-    --subject "fixture question" --kind question --default "proceed without waiting" \
-    --class permissions <<BODY >/dev/null 2>&1
-## Question
-
-Can the fixture answer this itself?
-
-## Default
-
-Proceed without waiting.
-
-## Class basis
-
-Needs a credential only the operator holds.
-BODY
-is "mail send kind=question wrote the marker itself" "yes" \
-   "$([ -e "$SPIRA_RUN/sp-ow-mail.operator-wait" ] && echo yes || echo no)"
-
-# ==========================================================================================
-echo
-echo "ROW: operator-wait marker present AND bead closed — consumed, not left stranded (sp-nw7jb)"
-# ==========================================================================================
-# THE DEFECT THIS GUARDS. The disposition gathering that consumes the operator-wait marker
-# only runs for an OPEN bead (the `st != closed` branch above) — so a session that sent a
-# kind-question mail and then closed its own bead in the same breath never reached the
-# branch that removes the marker. It sat on disk forever: no garbage collector, one
-# consumer, and that consumer never ran.
-#
-# COMMITTED, so close_verdict reads "keep|committed" and the close genuinely stands — a
-# close with nothing committed is reopened by an entirely different, unrelated mechanism
-# (closed-without-commit) that would otherwise obscure what this row is proving. Chore, not
-# task: a work-type close is converted to "submitted" by a later, unrelated block regardless
-# of commit or this fix, for the same reason.
-cat > "$FA_BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-cat /dev/stdin > /dev/null
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-_bd="${SPIRA_BD:-bd}"
-id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
-if [ -n "$id" ]; then
-    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
-    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
-    printf '%s\n' "$SESSION_EPOCH" > "$SPIRA_RUN/$id.operator-wait"
-    BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" close "$id" --reason "done, asked a question in passing" >/dev/null 2>&1
-fi
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 0
-SHIM
-chmod +x "$FA_BIN/claude"
-fa_reset; fa_seed sp-ow-3; bd -C "$SPIRA_DB" update sp-ow-3 --type chore >/dev/null 2>&1
-fa_run_aeon >/dev/null
-is   "the marker does not survive the session that wrote it, even though the bead closed" "no" \
-     "$([ -e "$SPIRA_RUN/sp-ow-3.operator-wait" ] && echo yes || echo no)"
-is   "the close stands (a non-work type closes by the agent's own hand, unchanged)" "closed" "$(fa_status sp-ow-3)"
-want "the close is recorded as carrying an operator-wait marker" \
-     "operator-wait marker" "$(fa_notes sp-ow-3)"
-
-# ==========================================================================================
-echo
-echo "ROW: operator-wait marker from a PREVIOUS session is ignored, not read as this one's wait (sp-nw7jb)"
-# ==========================================================================================
-# THE DEFECT THIS GUARDS. Before mail stamped the marker with its writing session's own
-# SESSION_EPOCH, the marker carried no identity at all — any later session on the same bead
-# that exited without closing was released here with NO attempt charged, on the strength of
-# a question a DIFFERENT, earlier session asked. Reproduced by pre-seeding a marker stamped
-# with an epoch that cannot be this run's (`1`, 1970) before the aeon ever starts.
-cat > "$FA_BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-cat /dev/stdin > /dev/null
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-# COMMITS (sp-1zxru): this row proves the stale marker is ignored, which needs the real
-# unlanded/charged path to show it landed on — a session with no commit now lands on the
-# no-progress exit instead (its own row covers that shape).
-if [ -n "${BEAD_ID:-}" ]; then
-    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
-    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — the work"
-fi
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 1
-SHIM
-chmod +x "$FA_BIN/claude"
-fa_reset; fa_seed sp-ow-4
-printf '1\n' > "$SPIRA_RUN/sp-ow-4.operator-wait"
-fa_run_aeon >/dev/null
-is   "bead is still open (session did not close)" "open" "$(fa_status sp-ow-4)"
-notes_stale="$(fa_notes sp-ow-4)"
-want   "charged as the normal unlanded case, not released as operator-wait" "Unlanded" "$notes_stale"
-nowant "not released on a stranger's wait" "kind-question mail" "$notes_stale"
-nowant "ledger must not say operator-wait" "operator-wait" "$(fa_ledger_line sp-ow-4)"
-is   "the stale marker was cleared, not left for the next summon either" "no" \
-     "$([ -e "$SPIRA_RUN/sp-ow-4.operator-wait" ] && echo yes || echo no)"
-want "the log says the marker predates this session" \
-     "operator-wait marker predates this session" "$(fa_out)"
+# ROWS DELETED with the operator-wait marker (sp-v62vn follow-up): "mail send kind=question
+# writes the marker" and "a marker from a PREVIOUS session is ignored (sp-nw7jb)". mail no
+# longer writes a marker and teardown no longer reads one; a previous session's ask hold
+# never reaches a later session's teardown, because the claim releases a bead carrying any
+# non-wait hold (aeon run.rs blocking_holds, `cargo test -p aeon
+# enforce_releases_a_bead_held_between_the_ready_read_and_the_claim`).
 
 # ==========================================================================================
 echo
@@ -495,9 +373,7 @@ cat > "$FA_BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 cat /dev/stdin > /dev/null 2>&1
-id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+id="${BEAD_ID:-}"   # the bound bead (sp-v62vn: bd status no longer reads in_progress)
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
 BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
@@ -509,56 +385,20 @@ chmod +x "$FA_BIN/claude"
 fa_reset; fa_seed sp-ex-2
 printf 1 > "$FA_TMP/shim-rc"
 rc="$(fa_run_aeon)"
-is "bead is converted to submitted, not left closed" "open" "$(fa_status sp-ex-2)"
+# Since sp-v62vn the session is restricted, and its hand-on (the shim's close, which the
+# lifecycle stand-in reads as `work submit`) is the submitted disposition, not teardown's
+# closed branch: the bd-close conversion to open+spira-submitted is gone with the branch.
+# The ledger's real rc is NOT (UC-aeon-execution-18): the submitted exit recorded the
+# aeon's own 0 until the submitted branch ledgered the model's rc itself.
 is "aeon exits 0 despite claude rc=1 (the fix)" "0" "$rc"
 want "ledger still records the real rc" "rc=1" "$(fa_ledger_line sp-ex-2)"
 want "and records the submitted status" "status=submitted" "$(fa_ledger_line sp-ex-2)"
 # The positive control for this UC (bead not closed, claude rc=1, aeon exits non-zero) is
 # the "session did not close" row above (sp-rq-2) — the same discrimination, one fewer run.
 
-# ==========================================================================================
-echo
-echo "ROW: FAYTH_GRAPH_ONLY persona closes a work bead with no commit — close stands (sp-wnsks)"
-# ==========================================================================================
-# The groomer's own shape: no Edit or Write in FAYTH_TOOLS, so its close is never followed
-# by a commit — sp-yyzm3 (filed by hand, no delivers: label) was converted to submitted
-# by the row above's same logic and stranded there forever, since a graph-only edit never
-# produces the commit that conversion waits for. FAYTH_GRAPH_ONLY=1 is the fix: the
-# conversion above must not fire for this persona, commit or no commit.
-cat > "$FA_HOME/chamber/groomonly.fayth" <<GOFAYTH
-FAYTH_NAME=groomonly
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,${SPIRA_ASK_LABEL:-needs-operator}"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH_GRAPH_ONLY=1
-GOFAYTH
-printf 'groom-only close {{BEAD_ID}}\n{{PARK}}\n' > "$FA_HOME/chamber/groomonly.md"
-
-cat > "$FA_BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-cat /dev/stdin > /dev/null 2>&1
-id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
-BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "graph-only: dependency re-pointed, nothing to commit" >/dev/null 2>&1
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 0
-SHIM
-chmod +x "$FA_BIN/claude"
-
-fa_reset; fa_seed sp-ex-3
-rc="$(fa_run_aeon groomonly)"
-is "graph-only close stands — NOT converted to submitted" "closed" "$(fa_status sp-ex-3)"
-is "aeon exits 0" "0" "$rc"
-# fa_ledger_line hardcodes the "builder" fayth name; this row runs as groomonly, so read
-# its own last done-line directly rather than duplicating that assumption.
-ledger3="$(grep " sp-ex-3 rc=" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null | tail -1)"
-want   "ledger has a done line for this bead" "sp-ex-3" "$ledger3"
-nowant "and it does NOT record a submitted conversion" "status=submitted" "$ledger3"
-# The positive control for this UC (the same shim, no FAYTH_GRAPH_ONLY) is the "exit code,
-# bead mode" row above (sp-ex-2): identical close, converted to submitted without the flag.
+# ROW DELETED — FAYTH_GRAPH_ONLY's close standing unconverted (sp-wnsks) was a rule inside
+# teardown's closed branch, which no session reaches since sp-v62vn (every session is
+# restricted and hands its bead on through the work verbs).
 
 # ==========================================================================================
 echo
@@ -587,5 +427,114 @@ is "sweep with claude rc=1 but ran exits 0 (ops/qa sweep fix)" "0" "$sweep_rc"
 # The positive control for this UC (a refused sweep — no tool calls — exits non-zero so a
 # real ops failure stays visible) is test-aeon-sweep.sh's instead, which already builds the
 # lighter sweep-only fixture this control needs and does not touch this file's 60s cap.
+
+# ==========================================================================================
+echo
+echo "ROW: operator-wait — the model asks through work ask, the ask hold releases it, no attempt charged"
+# ==========================================================================================
+# THE DEFECT THIS GUARDS (sp-v62vn follow-up). Teardown released a session as operator-wait
+# only on the `<bead>.operator-wait` marker `mail` wrote, stamped with SESSION_EPOCH. Every
+# session is restricted now — its PATH holds only `work`, no `mail` — so no session could be
+# released operator-wait at all, and a question to the operator was charged as an attempt.
+# The model asks through `work ask`; the broker delivers the question to the operator and
+# places an `ask` hold on the bound bead's lifecycle row, and teardown reads that hold.
+#
+# A REAL LIFECYCLE SERVICE for this row only (testlib/lc-fixture.sh + spira-lc serve, as
+# test-submitted-lands.sh): the hold is the broker's own Hold event on a real row, so the
+# lc_aeon_mirror stand-in is taken off PATH and the aeon claims, renews, reads and releases
+# through the same service. Last in the file so no earlier row sees SPIRA_LC_*.
+. "$HERE/testlib/lc-fixture.sh"
+OW_SERVE_PID=""
+trap '[ -n "$OW_SERVE_PID" ] && kill "$OW_SERVE_PID" >/dev/null 2>&1; lcfix_down; fa_teardown' EXIT INT TERM
+PATH="${PATH//"$FA_TMP/lcm:"/}"; export PATH
+lcfix_up || bail "could not build a lifecycle fixture"
+OW_SOCK="$FA_TMP/lc.sock"
+SPIRA_LC_SOCKET="$OW_SOCK" spira-lc serve "$OW_SOCK" > "$FA_TMP/serve.log" 2>&1 &
+OW_SERVE_PID=$!
+for _ in $(seq 1 50); do [ -S "$OW_SOCK" ] && break; sleep 0.1; done
+[ -S "$OW_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$FA_TMP/serve.log")"
+export SPIRA_LC_SOCKET="$OW_SOCK"
+aeon_fixture_agent "$FA_BIN/claude"   # re-capture PATH: the model reaches `work`, not the stand-in
+
+cat > "$FA_BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"work ask"}}]}}\n'
+work ask --subject "fixture question" --kind question --default "proceed without waiting" > "$TMP/ask.out" 2>&1
+printf '%s' "$?" > "$TMP/ask.rc"
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
+exit 0
+SHIM
+chmod +x "$FA_BIN/claude"
+fa_reset; fa_seed sp-ow2   # sp-<alnum>: `work` refuses a binding with a hyphen in the id
+lcfix_seed sp-ow2 READY || bail "could not seed sp-ow2's lifecycle row"
+fa_run_aeon >/dev/null
+is   "the model's work ask was applied by the broker" "0" "$(cat "$FA_TMP/ask.rc" 2>/dev/null || echo missing)"
+[ "$(cat "$FA_TMP/ask.rc" 2>/dev/null)" = 0 ] || sed 's/^/# /' "$FA_TMP/ask.out" 2>/dev/null
+ow_row() {   # ow_row <id> -> "<STATE> <holds,...|->"
+    spira-lc show "$1" 2>/dev/null | python3 -c '
+import sys, json
+b = json.load(sys.stdin)["bead"]
+h = b.get("holds") or []
+h = json.loads(h) if isinstance(h, str) else h   # the row stores holds as a JSON text column
+print(b["state"], ",".join(h) or "-")' 2>/dev/null
+}
+hdr_of() {   # hdr_of <file> <header> -> the header's value
+    awk -v h="$2" '/^[[:space:]]*$/ { exit } tolower($0) ~ "^" tolower(h) ":" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$1"
+}
+is   "the row: released to READY, still carrying the ask hold until the operator answers" "READY ask" "$(ow_row sp-ow2)"
+notes_ow="$(fa_notes sp-ow2)"
+want   "note says the session asked the operator" "asked the operator" "$notes_ow"
+want   "note says No attempt charged"             "No attempt charged" "$notes_ow"
+nowant "note does not say Unlanded"               "Unlanded"           "$notes_ow"
+want   "ledger says operator-wait" "operator-wait" "$(fa_ledger_line sp-ow2)"
+is     "no attempt charged" "0" "$(count_of sp-ow2)"
+# THE BROKER'S ASK IS CLASSIFIED (sp-v62vn follow-up): the question declares no escalation
+# class, so mail routes it to the concierge, never the operator. Before, the broker called
+# mail without BEAD_ID, mail's class check never ran, and this landed in operator/.
+ow_mail="$(grep -l '^Subject: fixture question' "$SPIRA_MAIL"/concierge/new/* "$SPIRA_MAIL"/concierge/cur/* 2>/dev/null | head -1)"
+is   "the unclassed question reached the concierge's mailbox" "yes" "$([ -n "$ow_mail" ] && echo yes || echo no)"
+is   "and not the operator's" "" "$(grep -l '^Subject: fixture question' "$SPIRA_MAIL"/operator/new/* "$SPIRA_MAIL"/operator/cur/* 2>/dev/null)"
+is   "the ask mail names the work bead it is about" "sp-ow2" "$([ -n "$ow_mail" ] && hdr_of "$ow_mail" X-Spira-Work-Bead)"
+is   "and no marker file was involved" "no" "$([ -e "$SPIRA_RUN/sp-ow2.operator-wait" ] && echo yes || echo no)"
+
+# ==========================================================================================
+echo
+echo "ROW: the answer lifts the ask hold — a reply to the ask mail through mail sendmail"
+# ==========================================================================================
+# THE DEFECT THIS GUARDS (sp-v62vn follow-up): only `spira-lc reply` / `withdraw-ask` lift an
+# ask hold, and nothing that carries an answer emitted one — so a bead whose question was
+# answered stayed held, unclaimable, forever. The concierge answers the routed question the
+# way any answer arrives: a reply with In-Reply-To, through `mail sendmail`.
+ow_qid="$([ -n "$ow_mail" ] && hdr_of "$ow_mail" Message-ID)"
+printf 'From: Concierge <concierge@spira>\nSubject: Re: fixture question\nIn-Reply-To: %s\nMessage-ID: <ow-answer-1@spira>\n\nProceed without waiting.\n' "$ow_qid" \
+    | mail sendmail > "$FA_TMP/sendmail.out" 2>&1
+is   "the reply was delivered" "0" "$?"
+is   "the row: READY with no hold — claimable again" "READY -" "$(ow_row sp-ow2)"
+if spira-lc held sp-ow2 ask >/dev/null 2>&1; then bad "spira-lc held sp-ow2 ask: no longer held" "still held"; else ok "spira-lc held sp-ow2 ask: no longer held"; fi
+want "the answer is on the work bead for the next session" "Proceed without waiting." "$(fa_notes sp-ow2)"
+is   "the routed question's reply closed no bead (the work bead is still open in bd)" "open" "$(fa_field sp-ow2 status)"
+
+# ==========================================================================================
+echo
+echo "ROW: a question closed without an answer withdraws the ask — resolve on the ask bead"
+# ==========================================================================================
+# A CLASSED question goes to the operator and files a tracking (ask) bead naming the work
+# bead (work-bead:<id>). The concierge resolving that ask bead itself — moot, or established
+# without him — is the question closed with no answer: withdraw-ask, not reply.
+printf '## Question\nMay the fixture rotate its deploy key?\n\n## Default\nno\n\n## Class basis\nthe deploy key is a credential only the operator holds\n' \
+    | SPIRA_WORK_BEAD_ID=sp-ow2 SPIRA_FAYTH=builder work ask --subject "rotate the fixture deploy key" --kind question --default no --class permissions --body-file - \
+    > "$FA_TMP/ask2.out" 2>&1
+is   "a classed work ask is applied" "0" "$?"
+is   "the row is held again" "READY ask" "$(ow_row sp-ow2)"
+ow_mail2="$(grep -l '^Subject: rotate the fixture deploy key' "$SPIRA_MAIL"/operator/new/* 2>/dev/null | head -1)"
+is   "the classed question reached the operator" "yes" "$([ -n "$ow_mail2" ] && echo yes || echo no)"
+ow_ask="$([ -n "$ow_mail2" ] && hdr_of "$ow_mail2" X-Spira-Bead)"
+want "its ask bead carries the work bead's label" "work-bead:sp-ow2" "$(fa_labels "$ow_ask")"
+COCKPIT_DB="$SPIRA_DB" resolve "$ow_ask" "moot: the fixture's key never needed rotating" > "$FA_TMP/resolve.out" 2>&1
+is   "resolve closed the ask bead" "0" "$?"
+want "resolve says it withdrew the hold" "withdrew the ask hold on sp-ow2" "$(cat "$FA_TMP/resolve.out")"
+is   "the row: READY with no hold" "READY -" "$(ow_row sp-ow2)"
+want "and the lift was a withdraw, not a reply" "AskWithdrawn" "$(spira-lc history sp-ow2 2>/dev/null)"
 
 tl_summary

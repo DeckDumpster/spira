@@ -39,11 +39,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
@@ -89,8 +84,6 @@ done
 lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
-export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle
@@ -101,6 +94,9 @@ unset SPIRA_LC_SOCKET
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
+# Every fixture bead carries its lifecycle row (sp-mve9i): sending's claim witness reads the
+# row, never bd status — bd open → READY, in_progress → WORKING, closed (the builder's submit)
+# → SUBMITTED; a bead with no row is one nothing proves unclaimed, so it would be HELD.
 seed_lc() {   # seed_lc <bead-id> <state>
     lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
     lc_root_sql --use-db spira_lifecycle sql -q \
@@ -209,11 +205,12 @@ branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/$1" 2>/dev/nul
 # ---- fixture branches ----------------------------------------------------------------
 
 # sp-cl0: content-landed via the ancestor shortcut, ahead=0 — the branch IS the base tip.
-# No commits of its own, so no ContentOnBase event either (UC-17) — seeded WORKING here as
-# the negative control: the ahead-count guard means the call is never made for it.
+# No commits of its own, so no ContentOnBase event either (UC-17) — seeded READY here (bd open,
+# in lifecycle terms) as the negative control: the ahead-count guard means the call is never
+# made for it.
 git -C "$REPO" branch spira/sp-cl0 main
 bead sp-cl0 open
-seed_lc sp-cl0 WORKING
+seed_lc sp-cl0 READY
 
 # sp-cl1: content-landed via merge-tree equality, ahead=1 — an empty commit that names the
 # bead but changes no files (sp-kq8l). Ancestry alone would refuse this (the branch is not
@@ -224,7 +221,7 @@ git -C "$REPO" checkout -q main
 bead sp-cl1 closed
 printf 'LANDED %s %s\n' "$(git -C "$REPO" rev-parse spira/sp-cl1)" "$(date +%s)" \
     > "$RUN/landstate/sp-cl1"
-seed_lc sp-cl1 WORKING
+seed_lc sp-cl1 SUBMITTED
 
 # sp-clnoassert: same shape as sp-cl1, but with NO landstate record at all — CHECK 5 (the
 # sentinel), not this program, owns the closed-not-landed invariant now (sp-jci6o), so the
@@ -233,6 +230,7 @@ git -C "$REPO" checkout -q -b spira/sp-clnoassert main
 git -C "$REPO" commit -q --allow-empty -m "sp-clnoassert: review only"
 git -C "$REPO" checkout -q main
 bead sp-clnoassert closed
+seed_lc sp-clnoassert SUBMITTED
 
 # spira/round-54: a Concierge round-merge branch, an ancestor of main and with no bead of
 # its own — the same content-landed shape as sp-clnoassert, and with no landstate record
@@ -250,6 +248,7 @@ git -C "$REPO" checkout -q main
 printf 'base version\n' > "$REPO/shared-sup.txt"
 git -C "$REPO" add shared-sup.txt && git -C "$REPO" commit -q -m "base: conflicting change"
 bead sp-supsafe closed '[{"issue_id":"sp-supsafe","depends_on_id":"sp-succ","type":"supersedes"}]'
+seed_lc sp-supsafe SUBMITTED
 
 # sp-supunsafe: superseded, but its one commit adds content the base does not have and
 # merge-tree succeeds cleanly (no conflict) — KEEP superseded-unsafe, and its worktree
@@ -259,6 +258,7 @@ printf 'unique content the base never got\n' > "$REPO/sp-supunsafe.txt"
 git -C "$REPO" add sp-supunsafe.txt && git -C "$REPO" commit -q -m "sp-supunsafe: unique work"
 git -C "$REPO" checkout -q main
 bead sp-supunsafe closed '[{"issue_id":"sp-supunsafe","depends_on_id":"sp-succ","type":"supersedes"}]'
+seed_lc sp-supunsafe SUBMITTED
 git -C "$REPO" worktree add -q "$RUN/worktree/sp-supunsafe" spira/sp-supunsafe >/dev/null 2>&1
 
 # sp-sq: squash-merged. The PR's headRefOid equals the branch's current tip; the base moved
@@ -275,6 +275,7 @@ git -C "$REPO" add shared-sq.txt && git -C "$REPO" commit -q -m "sp-sq: squash-m
 printf 'line1\nline2\nline3\n' > "$REPO/shared-sq.txt"
 git -C "$REPO" add shared-sq.txt && git -C "$REPO" commit -q -m "unrelated: advance shared-sq.txt"
 bead sp-sq closed
+seed_lc sp-sq SUBMITTED
 
 # The `gh` stub. sending.sh's ghq wrapper (lib.sh) calls ${SPIRA_GH:-gh}; keyed by branch
 # name, like test-sending-squash-merged.sh's own stub, so only sp-sq resolves to a merged
@@ -326,6 +327,7 @@ printf 'genuinely unlanded work\n' > "$REPO/sp-unlanded.txt"
 git -C "$REPO" add sp-unlanded.txt && git -C "$REPO" commit -q -m "sp-unlanded: real work"
 git -C "$REPO" checkout -q main
 bead sp-unlanded open
+seed_lc sp-unlanded READY
 
 # sp-noone: real, unique content not on the base; no bd record at all. ORPHAN no-bead —
 # archived at refs/archive/spira/sp-noone, never plain-deleted (sp-hwhnw).
@@ -349,6 +351,7 @@ printf 'work in flight\n' > "$REPO/sp-held.txt"
 git -C "$REPO" add sp-held.txt && git -C "$REPO" commit -q -m "sp-held: an aeon is still here"
 git -C "$REPO" checkout -q main
 bead sp-held in_progress
+seed_lc sp-held WORKING
 
 printf 'sp-held\tin_progress\n' > "$STATUS_FILE"
 
@@ -426,7 +429,7 @@ printf '%s\n' "$out" >&2
 # SEND / content-landed
 want   "sp-cl0 is SENT"                     "SENT sp-cl0"          "$out"
 is     "sp-cl0 branch is gone"              1 "$(branch_exists spira/sp-cl0; echo $?)"
-is     "sp-cl0's spira-lc row is untouched (ahead=0, no ContentOnBase call made)" "WORKING" \
+is     "sp-cl0's spira-lc row is untouched (ahead=0, no ContentOnBase call made)" "READY" \
     "$(lc_row_state sp-cl0)"
 
 want   "sp-cl1 is SENT"                     "SENT sp-cl1"          "$out"
@@ -537,7 +540,7 @@ git -C "$DREPO" checkout -q -b spira/sp-dry main
 git -C "$DREPO" commit -q --allow-empty -m "sp-dry: review only"
 git -C "$DREPO" checkout -q main
 bead sp-dry closed
-seed_lc sp-dry WORKING
+seed_lc sp-dry SUBMITTED
 DHOME="$(basename "$DREPO")"
 printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 
@@ -548,7 +551,7 @@ dry_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$DRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
 is "dry-run leaves the branch in place" 0 "$(git -C "$DREPO" show-ref --verify -q refs/heads/spira/sp-dry; echo $?)"
-is "dry-run does not fire a ContentOnBase event" "WORKING" "$(lc_row_state sp-dry)"
+is "dry-run does not fire a ContentOnBase event" "SUBMITTED" "$(lc_row_state sp-dry)"
 
 # ---- mid-send HELD — the recheck immediately before a deletion is sending's own unit test
 # now (sending/src/tests.rs `mid_send_hold_queue_and_failure`): with sending.sh gone there is
@@ -576,6 +579,7 @@ git -C "$FREPO" worktree add -q "$FRUN/worktree/sp-fail" spira/sp-fail >/dev/nul
 # salvage refuses rather than guessing the tree is clean.
 echo 'gitdir: /nonexistent' > "$FRUN/worktree/sp-fail/.git"
 bead sp-fail closed
+seed_lc sp-fail SUBMITTED
 FHOME="$(basename "$FREPO")"
 printf '%s | %s | push | main | |\n' "$FHOME" "$FREPO" > "$TMP/fail-repo-map"
 

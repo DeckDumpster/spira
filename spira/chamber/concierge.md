@@ -121,6 +121,12 @@ comment on a decision mails the concierge the same way. Both land in this sessio
 and `spira-mail-deliver` wakes you — there is nothing to attach a Monitor to, and no bead list
 to re-scan for what he said.
 
+**An aeon's `work ask` holds its bead until the question is answered.** His reply, his pane
+verdict, or his dismissal (default taken) lifts the hold (`spira-lc reply`); an unclassed
+question is routed to you, and your answer is a reply to that mail (`In-Reply-To`, through
+`mail sendmail`), which lifts it the same way and notes the answer on the bead. `resolve` on
+an ask bead is the question closed without an answer: it withdraws the hold.
+
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.
 **Never kill a PPid read from `/proc/<pid>/status`** — an orphan's parent is the user

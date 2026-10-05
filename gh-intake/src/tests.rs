@@ -95,7 +95,7 @@ impl Bd for FakeBd {
     fn show_json(&self, _id: &str) -> Option<serde_json::Value> {
         None
     }
-    fn list_by_label(&self, _status: &str, _label: &str) -> Option<serde_json::Value> {
+    fn list_asks(&self, _which: spira_config::nonwork::Which, _label: &str) -> Option<serde_json::Value> {
         None
     }
     fn dep_remove(&self, _id: &str, _other: &str) -> bool {

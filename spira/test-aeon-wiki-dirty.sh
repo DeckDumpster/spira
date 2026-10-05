@@ -94,6 +94,12 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS WIKI ORIGIN REPO
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib
+# aeon_fixture_agent, carrying the wiki path the shim writes into.
+aeon_fixture_agent "$BIN/claude" WIKI
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-wiki-dirty: aeon is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
@@ -116,12 +122,9 @@ b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl"
 [ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
 rm -rf "$SPIRA_RUN/worktree"
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
-bead_status="$(bd -C "$SPIRA_DB" show "$b1" --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null)"
-# A task bead's close is converted to open+spira-submitted at teardown (sp-qsona): only the
-# landing pass closes a work bead, so "open" here is the session's close having happened.
-is "wiki-write: bead's close was converted to submitted" "open" "$bead_status"
-want "wiki-write: carrying the submitted label" "spira-submitted" \
-    "$(bd -C "$SPIRA_DB" show "$b1" --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(",".join(d[0].get("labels") or []) if d else "")' 2>/dev/null)"
+# The session's bd close reads, in the lifecycle stand-in, as the builder's submit
+# (testlib lc_row_state: the restricted session never reaches sp-qsona's bd conversion).
+is "wiki-write: the session finished its bead (SUBMITTED)" "SUBMITTED" "$(lc_row_state "$b1")"
 is "wiki-write: wiki checkout is clean after exit" "" \
     "$(git -C "$WIKI" diff --name-only HEAD 2>/dev/null)"
 author="$(git -C "$WIKI" log --format="%ae" -1 -- "wiki/notes/sop-$b1.md" 2>/dev/null)"

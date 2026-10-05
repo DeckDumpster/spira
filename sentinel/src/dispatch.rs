@@ -77,20 +77,6 @@ impl<'a> Sentinel<'a> {
             .collect()
     }
 
-    /// The switch this pass resolved, handed to a worker systemd-run starts with a clean
-    /// environment — so the audit worker and `landing-pass land` resolve the same mode.
-    /// SPIRA_LIFECYCLE_ENFORCE=0 is the whole of OFF (sp-gypjk).
-    fn lifecycle_setenv(&self) -> Vec<String> {
-        vec![format!(
-            "--setenv=SPIRA_LIFECYCLE_ENFORCE={}",
-            if self.lc == crate::cfg::Lifecycle::On {
-                "1"
-            } else {
-                "0"
-            }
-        )]
-    }
-
     fn drain_into_progress(&self, mailbox: &Path, stem: &str) {
         for line in drain(&self.cfg.run, mailbox, stem) {
             self.progress(&line);
@@ -192,7 +178,6 @@ impl<'a> Sentinel<'a> {
             ]));
             // B1: the switches the operator sets on the sentinel's unit reach the worker
             // that actually runs the checks they switch off.
-            a.extend(self.lifecycle_setenv());
             for k in ["SPIRA_SKIP_RECLAIM"] {
                 if !self.cfg.raw(k).is_empty() {
                     a.push(format!("--setenv={k}={}", self.cfg.raw(k)));
@@ -399,7 +384,6 @@ impl<'a> Sentinel<'a> {
                 "--setenv=SPIRA_LAND_MAXSEC={}",
                 self.cfg.land_maxsec
             ));
-            a.extend(self.lifecycle_setenv());
             // systemd-run's transient unit has no launcher PATH: hand it the PATH-resolved
             // program (the release's), or the bare name for systemd to refuse, naming it.
             a.push(crate::pass::on_path(&self.cfg.landing_bin, self.cfg.raw("PATH")));

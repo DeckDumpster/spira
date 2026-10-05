@@ -14,7 +14,6 @@ struct Fake {
     removed_labels: Vec<(String, String)>,
     lifted: BTreeMap<String, u32>,
     refuse_unhold_times: u32,
-    lc_forbidden: bool,
 }
 
 impl Fake {
@@ -59,6 +58,10 @@ impl Fake {
         }
         self
     }
+    /// A READY bead carrying the poison hold — the machine's record of the poison.
+    fn poisoned(self, id: &str) -> Self {
+        self.lc(id, lifecycle::bead::BeadState::Ready, &[lifecycle::bead::HoldKind::Poison], None)
+    }
 }
 
 impl World for Fake {
@@ -74,10 +77,6 @@ impl World for Fake {
             .collect())
     }
     fn lc_row(&mut self, id: &str) -> Result<Option<LcRow>, String> {
-        assert!(
-            !self.lc_forbidden,
-            "spira-lc show called with lifecycle_enforce off ({id})"
-        );
         Ok(self.lc.get(id).cloned())
     }
     fn lc_unhold_poison(&mut self, id: &str, row: &LcRow, _actor: &str) -> LcApply {
@@ -145,18 +144,14 @@ fn cand(id: &str, ok: bool, why: &str) -> Candidate {
     }
 }
 
-fn opts(apply: bool, enforce: bool) -> Opts {
-    Opts {
-        apply,
-        actor: "groomer".into(),
-        enforce,
-    }
+fn opts(apply: bool) -> Opts {
+    Opts { apply, actor: "groomer".into() }
 }
 
 #[test]
 fn not_poisoned_is_silent_and_uncounted() {
     let mut w = Fake::default().bead("sp-a", "open", None, &[]);
-    let (code, out) = run(&opts(true, false), &[cand("sp-a", true, "")], &mut w);
+    let (code, out) = run(&opts(true), &[cand("sp-a", true, "")], &mut w);
     assert_eq!(code, 0);
     assert_eq!(
         out,
@@ -166,10 +161,10 @@ fn not_poisoned_is_silent_and_uncounted() {
 }
 
 #[test]
-fn off_mode_keeps_a_bead_whose_work_never_merges() {
-    let mut w = Fake::default().bead("sp-k", "open", None, &["spira-poison"]);
+fn keeps_a_bead_whose_work_never_merges() {
+    let mut w = Fake::default().bead("sp-k", "open", None, &[]).poisoned("sp-k");
     let (code, out) = run(
-        &opts(false, false),
+        &opts(false),
         &[cand(
             "sp-k",
             false,
@@ -192,8 +187,8 @@ fn off_mode_keeps_a_bead_whose_work_never_merges() {
 
 #[test]
 fn dry_run_would_and_writes_nothing() {
-    let mut w = Fake::default().bead("sp-s", "open", None, &["spira-poison"]);
-    let (code, out) = run(&opts(false, false), &[cand("sp-s", true, "")], &mut w);
+    let mut w = Fake::default().bead("sp-s", "open", None, &[]).poisoned("sp-s");
+    let (code, out) = run(&opts(false), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 0);
     assert!(out.contains("WOULD    sp-s finished on spira/sp-s and it merges into origin/main — would lift the poison"), "{out}");
     assert!(
@@ -205,11 +200,13 @@ fn dry_run_would_and_writes_nothing() {
 }
 
 #[test]
-fn off_mode_apply_restores_and_leaves_the_attempt_record_standing() {
+fn apply_restores_and_leaves_the_attempt_record_standing() {
+    // Carries the legacy label too: removed best-effort, but the hold is the poison.
     let mut w = Fake::default()
         .bead("sp-s", "open", None, &["spira-poison"])
+        .poisoned("sp-s")
         .claims("sp-s", 3);
-    let (code, out) = run(&opts(true, false), &[cand("sp-s", true, "")], &mut w);
+    let (code, out) = run(&opts(true), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 0, "{out}");
     assert!(
         out.contains(
@@ -229,7 +226,7 @@ fn off_mode_apply_restores_and_leaves_the_attempt_record_standing() {
         "{}",
         w.notes[0].1
     );
-    assert!(!w.beads["sp-s"].labels.contains(&"spira-poison".to_string()));
+    assert!(!w.lc["sp-s"].holds.contains(&lifecycle::bead::HoldKind::Poison));
     // sp-wiyr2: the record of the count this lift happened at, so the very next CHECK 4
     // pass — reading the same 3 charged attempts, since deadlocked never floors them —
     // does not poison the bead right back.
@@ -237,7 +234,7 @@ fn off_mode_apply_restores_and_leaves_the_attempt_record_standing() {
 }
 
 #[test]
-fn on_mode_apply_unholds_and_never_touches_the_label() {
+fn apply_unholds_and_never_touches_an_absent_label() {
     use lifecycle::bead::{BeadState, HoldKind};
     let mut w = Fake::default().bead("sp-s", "open", None, &[]).lc(
         "sp-s",
@@ -245,7 +242,7 @@ fn on_mode_apply_unholds_and_never_touches_the_label() {
         &[HoldKind::Poison],
         None,
     );
-    let (code, out) = run(&opts(true, true), &[cand("sp-s", true, "")], &mut w);
+    let (code, out) = run(&opts(true), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("RESTORED sp-s"), "{out}");
     assert!(!w.lc["sp-s"].holds.contains(&HoldKind::Poison));
@@ -255,29 +252,18 @@ fn on_mode_apply_unholds_and_never_touches_the_label() {
     );
 }
 
+/// sp-mve9i: bd's in_progress is not the claim — only the lifecycle row's holder is.
 #[test]
-fn on_mode_never_calls_spira_lc_when_off() {
-    let mut w = Fake {
-        lc_forbidden: true,
-        ..Fake::default()
-    }
-    .bead("sp-a", "open", None, &[]);
-    let (code, _) = run(&opts(true, false), &[cand("sp-a", true, "")], &mut w);
-    assert_eq!(code, 0);
+fn bd_in_progress_without_a_working_row_is_not_held() {
+    use lifecycle::bead::{BeadState, HoldKind};
+    let mut w = Fake::default().bead("sp-s", "in_progress", Some("aeon-1"), &[]).lc("sp-s", BeadState::Ready, &[HoldKind::Poison], None);
+    let (code, out) = run(&opts(false), &[cand("sp-s", true, "")], &mut w);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("WOULD    sp-s"), "{out}");
 }
 
 #[test]
-fn live_work_refuses_and_touches_nothing() {
-    let mut w = Fake::default().bead("sp-s", "in_progress", Some("aeon-1"), &["spira-poison"]);
-    let (code, out) = run(&opts(true, false), &[cand("sp-s", true, "")], &mut w);
-    assert_eq!(code, 3);
-    assert!(out.contains("held by aeon-1 (in_progress)"), "{out}");
-    assert!(w.notes.is_empty());
-    assert!(w.removed_labels.is_empty());
-}
-
-#[test]
-fn lifecycle_working_holder_is_also_held() {
+fn a_lifecycle_working_holder_refuses_and_touches_nothing() {
     use lifecycle::bead::{BeadState, HoldKind};
     let mut w = Fake::default().bead("sp-s", "open", None, &[]).lc(
         "sp-s",
@@ -285,9 +271,11 @@ fn lifecycle_working_holder_is_also_held() {
         &[HoldKind::Poison],
         Some("aeon-2"),
     );
-    let (code, out) = run(&opts(true, true), &[cand("sp-s", true, "")], &mut w);
+    let (code, out) = run(&opts(true), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 3);
     assert!(out.contains("held by aeon-2 (lifecycle WORKING)"), "{out}");
+    assert!(w.notes.is_empty());
+    assert!(w.removed_labels.is_empty());
 }
 
 #[test]
@@ -300,7 +288,7 @@ fn unhold_refused_once_then_retried_from_a_fresh_read() {
         None,
     );
     w.refuse_unhold_times = 1;
-    let (code, out) = run(&opts(true, true), &[cand("sp-s", true, "")], &mut w);
+    let (code, out) = run(&opts(true), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("RESTORED sp-s"), "{out}");
     assert!(!w.lc["sp-s"].holds.contains(&HoldKind::Poison));
@@ -308,8 +296,8 @@ fn unhold_refused_once_then_retried_from_a_fresh_read() {
 
 #[test]
 fn still_poisoned_after_apply_is_refused() {
-    // remove_label is a no-op double of what really happened: the fake bead keeps the label,
-    // so verify still finds it and the run must not report success.
+    // lc_unhold_poison reports Applied but the hold stays — verify re-reads the row, finds it,
+    // and the run must not report success.
     struct Stuck(Fake);
     impl World for Stuck {
         fn bead(&mut self, id: &str) -> Result<Option<BeadRecord>, String> {
@@ -321,8 +309,8 @@ fn still_poisoned_after_apply_is_refused() {
         fn lc_row(&mut self, id: &str) -> Result<Option<LcRow>, String> {
             World::lc_row(&mut self.0, id)
         }
-        fn lc_unhold_poison(&mut self, id: &str, row: &LcRow, actor: &str) -> LcApply {
-            World::lc_unhold_poison(&mut self.0, id, row, actor)
+        fn lc_unhold_poison(&mut self, _id: &str, _row: &LcRow, _actor: &str) -> LcApply {
+            LcApply::Applied // pretend to release it, but never actually do it — the stuck case
         }
         fn write_event(&mut self, id: &str, t: &str, v: &str) -> Result<(), String> {
             World::write_event(&mut self.0, id, t, v)
@@ -333,8 +321,8 @@ fn still_poisoned_after_apply_is_refused() {
         fn ask_history_exists(&mut self, id: &str) -> bool {
             World::ask_history_exists(&mut self.0, id)
         }
-        fn remove_label(&mut self, _id: &str, _label: &str) -> Result<(), String> {
-            Ok(()) // pretend to remove it, but never actually do it — the stuck case
+        fn remove_label(&mut self, id: &str, label: &str) -> Result<(), String> {
+            World::remove_label(&mut self.0, id, label)
         }
         fn note(&mut self, id: &str, t: &str) -> Result<(), String> {
             World::note(&mut self.0, id, t)
@@ -361,8 +349,8 @@ fn still_poisoned_after_apply_is_refused() {
             World::mark_poison_lifted(&mut self.0, id, attempts)
         }
     }
-    let mut w = Stuck(Fake::default().bead("sp-s", "open", None, &["spira-poison"]));
-    let (code, out) = run(&opts(true, false), &[cand("sp-s", true, "")], &mut w);
+    let mut w = Stuck(Fake::default().bead("sp-s", "open", None, &[]).poisoned("sp-s"));
+    let (code, out) = run(&opts(true), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 3);
     assert!(
         out.contains("REFUSED  sp-s: the poison hold would not come off"),
@@ -373,10 +361,12 @@ fn still_poisoned_after_apply_is_refused() {
 #[test]
 fn several_candidates_one_kept_one_restored_summary_counts_both() {
     let mut w = Fake::default()
-        .bead("sp-k", "open", None, &["spira-poison"])
-        .bead("sp-r", "open", None, &["spira-poison"]);
+        .bead("sp-k", "open", None, &[])
+        .poisoned("sp-k")
+        .bead("sp-r", "open", None, &[])
+        .poisoned("sp-r");
     let cands = vec![cand("sp-k", false, "no branch"), cand("sp-r", true, "")];
-    let (code, out) = run(&opts(true, false), &cands, &mut w);
+    let (code, out) = run(&opts(true), &cands, &mut w);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("KEEP     sp-k"), "{out}");
     assert!(out.contains("RESTORED sp-r"), "{out}");

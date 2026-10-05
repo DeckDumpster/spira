@@ -165,7 +165,12 @@ impl Config {
     }
 }
 
+/// Epoch seconds; `SPIRA_NOW` overrides, the same clock seam bead, strand, watchd and
+/// cockpit-collect honour, so a suite advances past a grace period instead of sleeping.
 fn unix_now() -> u64 {
+    if let Some(n) = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()) {
+        return n;
+    }
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 

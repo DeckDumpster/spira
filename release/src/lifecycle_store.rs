@@ -1,7 +1,10 @@
-//! Install's lifecycle-store phase (sp-xfqnr): build the `spira_lifecycle` database a fresh
+//! The lifecycle-store phase (sp-xfqnr): build the `spira_lifecycle` database a fresh
 //! same-user install never got — `lifecycle/schema.sql`, then `lifecycle/migrations/*.sql`,
 //! then `lifecycle/grants.sql` with the two same-user credentials phase 1.5 wrote — so an
 //! aeon can claim and submit, and `spira-lc history` answers, the moment install finishes.
+//! Two callers run it: `spira-install` (re-exported as `install::lifecycle_store`) against
+//! the operator's Dolt, and `release stage up` (sp-880u4) against the stage's own private
+//! sql-server, so a stage's store is built exactly the way a real one is.
 //!
 //! THE MECHANISM IS spira-lc's OWN, the one `spira/cutover-deploy.sh` steps 1–2 use:
 //! `spira-lc admin-apply-ddl <file>` as the database admin, plus `spira-lc admin-migrate

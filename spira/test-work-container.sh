@@ -19,14 +19,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
 . "$HERE/testdb.sh"
 testdb_require "test-work-container.sh"
@@ -97,20 +94,10 @@ root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u ro
 
 # Same pin as test-lifecycle-container.sh: this suite runs inside testenv-batch.sh's own
 # podman exec, which sets its own CARGO_TARGET_DIR.
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build-lc.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build-lc.log")"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/work/Cargo.toml" --quiet 2>"$TMP/build-work.log" \
-    || bail "work failed to build: $(cat "$TMP/build-work.log")"
-LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
-WORK_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/work"
+LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
+WORK_BIN="$(command -v work 2>/dev/null)"; [ -n "$WORK_BIN" ] || { echo "work is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
-# `work` is the lifecycle machine's door: its subject is lifecycle-ON behaviour. OFF (the
-# default) refuses every verb before the socket — covered by work/src/lib.rs unit tests and
-# test-work-crate.sh.
-export SPIRA_LIFECYCLE_ENFORCE=1
+# `work` is the lifecycle machine's door.
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
 export SPIRA_LC_DB=spira_lifecycle

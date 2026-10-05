@@ -30,11 +30,17 @@ exit 0
 STUB
 chmod +x "$STUB"
 
+# Whether a sweep is still open is its lifecycle row's answer, never bd status (sp-mve9i):
+# a sweep is filed work the warden's aeon claims and delivers, so the machine holds its
+# state. bd only says which beads carry the labels; the rows live in this stand-in spira-lc.
+lc_fix_init "$T/lc"
+
 run_trigger() {
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_CONF="$T/none.conf" SPIRA_BD="$STUB" BD_LOG_PATH="$LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" BD_CREATE_FAIL="${BD_CREATE_FAIL:-}" \
         SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$MAP" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         ${EXTRA_ENV:-} warden-trigger.sh 2>&1
 }
 
@@ -57,9 +63,18 @@ want "carries warden label" "warden-sweep" "$(cat "$LOG")"
 
 echo; echo "DEDUP: an open sweep suppresses filing (positive control: filing happened above)"
 : > "$LOG"
+lc_bead READY sp-x deadbeef 0
 out="$(BD_LIST_OUTPUT='[{"id":"sp-x"}]' run_trigger)"; rc=$?
 is "dedup exits 0" 0 "$rc"
 lack "no second bead" "create" "$(cat "$LOG")"
+
+echo; echo "DEDUP: a sweep the machine has seen handed on no longer suppresses filing"
+: > "$LOG"
+lc_bead LANDED sp-x deadbeef 0
+out="$(BD_LIST_OUTPUT='[{"id":"sp-x"}]' run_trigger)"; rc=$?
+is "landed sweep: files, exits 0" 0 "$rc"
+want "landed sweep: a new sweep is filed" "create" "$(cat "$LOG")"
+rm -f "$LC_FIX"/bead/*/sp-x "$LC_FIX/show/sp-x"
 
 echo; echo "FAILURE: a create that fails exits 1"
 out="$(BD_CREATE_FAIL=1 run_trigger)"; rc=$?

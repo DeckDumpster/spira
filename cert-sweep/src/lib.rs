@@ -369,6 +369,14 @@ pub fn filing_kind(e: &Event) -> Option<FilingKind> {
     }
 }
 
+/// The (id, title) pairs of the beads still open — the filed bugs whose lifecycle row is not
+/// terminal (sp-mve9i: a work bead's state is spira-lc's, never bd's `status`). A bead with no
+/// row is not open: it can never be worked, and counting it would let one stale title
+/// suppress every later filing for its suite.
+pub fn still_open(all: Vec<(String, String)>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> Vec<(String, String)> {
+    all.into_iter().filter(|(id, _)| lc.get(id).is_some_and(|r| !r.terminal())).collect()
+}
+
 /// The id of an open bead already filed for this suite and kind, matched on the title.
 pub fn open_duplicate<'a>(open: &'a [(String, String)], suite: &str, kind: FilingKind) -> Option<&'a str> {
     let words: &[&str] = match kind {

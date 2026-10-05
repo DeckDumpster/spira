@@ -98,8 +98,8 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
             GateOutcome::NoVerdict => p.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out),
             _ => {
                 let (st_closed, st) = {
-                    let st = p.land_status(id);
-                    (st == "closed", st)
+                    let st = p.bead_lc_state(id);
+                    (crate::model::handed_on(&st), st)
                 };
                 if !st_closed {
                     p.out.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not reopening {br}"));
@@ -122,8 +122,8 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
         p.out.log(&format!("CHECK6 {id}: gate PASS on {br} in {name} — this tree had already passed, so no suite ran"));
     }
     p.files.clear_noverdict(br);
-    let st = p.land_status(id);
-    if st != "closed" {
+    let st = p.bead_lc_state(id);
+    if !crate::model::handed_on(&st) {
         p.out.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not landing {br}"));
         return Flow::Next;
     }
@@ -165,15 +165,12 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
         p.out.log(&format!("CHECK6 {id}: no landing worktree at {} — leaving {br} to the next pass", w.land.display()));
         return;
     }
-    // THE LIFECYCLE SWITCH: ON, spira-lc is authoritative for the delivery this landing is,
-    // so an unreachable machine refuses the landing rather than land it unrecorded.
-    if p.s.lifecycle_enforce {
-        if let Err(why) = p.lc_ready() {
-            p.out.log(&crate::lifecycle::unreachable_line(&why, &format!("not landing {br} this pass")));
-            return;
-        }
+    // spira-lc is authoritative for the delivery this landing is, so an unreachable machine
+    // refuses the landing rather than land it unrecorded.
+    if let Err(why) = p.lc_ready() {
+        p.out.log(&crate::lifecycle::unreachable_line(&why, &format!("not landing {br} this pass")));
+        return;
     }
-    let lc = p.s.lifecycle_enforce;
     let remote = repo.base_remote.clone().unwrap_or_default();
     let subject = p.lib.land_subject(id);
     let mut outcome = Landed::Nothing;
@@ -253,9 +250,7 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
             // RECORDED FIRST: everything after can fail; the fact that must survive is that
             // this commit is on the base (law-closed-is-not-landed, one layer in).
             let head = p.git.tree_head(&w.land).unwrap_or_default();
-            if lc {
-                p.lib.deliver_delivered(id, &head);
-            }
+            p.lib.deliver_delivered(id, &head);
             p.lib.closeout(id, &head, path);
             p.lib.close_on_land(id, &head);
             let short: String = head.chars().take(7).collect();
@@ -269,9 +264,7 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
                 p.out.log(&format!("landing: {br} merges clean but push failed — leaving closed"));
             } else {
                 p.out.log(&format!("landing: {br} merges clean but push kept losing the race — retrying next pass"));
-                if lc {
-                    p.lib.deliver_requeued(id, &tip);
-                }
+                p.lib.deliver_requeued(id, &tip);
             }
         }
         Landed::Conflict(files) => {
@@ -304,9 +297,7 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
             } else {
                 format!("Reopened by sentinel: branch {br} conflicts with {}. The branch carries {ahead} commit(s) from the previous session. Those files were changed on {} by {others} — check whether this work is already landed before resolving.", w.base, w.base)
             };
-            if lc {
-                p.lib.deliver_returned(id, &format!("genuinely conflicts with {}", w.base));
-            }
+            p.lib.deliver_returned(id, &format!("genuinely conflicts with {}", w.base));
             p.lib.reopen(id, "rebase-conflict", &note);
             p.out.progress(&format!("reopened {id} — branch conflicts with {}", w.base));
             p.lib.event(

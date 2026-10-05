@@ -3,7 +3,7 @@
 //!
 //! Pure: every input is in the arguments. Nothing here claims, selects or reads the store —
 //! claim selection lives in claim.rs and never touches this module (sp-f0qhr). What the
-//! session is told about finishing is `lifecycle_enforce`'s alone (sp-wmcvb).
+//! session is told about finishing is the `work` verbs' alone (sp-wmcvb, sp-v62vn).
 //!
 //! Texts are aeon.sh's and lib.sh's, verbatim. Substitution is literal (DESIGN.md §8.1).
 
@@ -69,8 +69,7 @@ pub const TESTENV: &str = "testenv";
 /// The chamber's tool placeholders. The model's PATH holds only `work` (sp-st0mm), so each
 /// is the `work` verb that reaches the same tool through the spira-lc broker — `{{GROOM}}
 /// close <id>` is `work groom close <id>`, run by the broker under the persona's own allow
-/// row. Unconditional: the chamber is written for these verbs, and with `lifecycle_enforce`
-/// off `work` refuses every verb, so a lane persona there has no bead tool at all.
+/// row. Unconditional: the chamber is written for these verbs.
 pub fn tool_tokens() -> Vec<(&'static str, String)> {
     vec![
         ("SOP", "work sop".to_string()),
@@ -81,55 +80,31 @@ pub fn tool_tokens() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Tokens never rendered while `lifecycle_enforce` is on: the bd database path and the
-/// harness's home — the model reaches neither (sp-st0mm), so no persona prompt names them.
-pub const WITHHELD_UNDER_ENFORCE: &[&str] = &["DB", "SPIRA_HOME"];
+/// Tokens never rendered: the bd database path and the harness's home — the model reaches
+/// neither (sp-st0mm), so no persona prompt names them.
+pub const WITHHELD: &[&str] = &["DB", "SPIRA_HOME"];
 
-/// `{{NO_BD}}`: the persona prompts' "you have no bd" line, selected by `lifecycle_enforce`
-/// exactly as `{{FINISH}}` is. With it OFF the model does have bd and its Finishing section
-/// says `bd close`; a persona line telling it the opposite left nothing able to submit
-/// (sp-74gzo — test-aeon-chamber-overlay.sh's SEEN RED CONTROL). Empty when off.
-pub fn no_bd_brief(lifecycle_enforce: bool) -> String {
-    if lifecycle_enforce {
-        "- You have no `bd` and no database path: every bead operation is a `work` verb, run by the
+/// `{{NO_BD}}`: the persona prompts' "you have no bd" line.
+pub fn no_bd_brief() -> String {
+    "- You have no `bd` and no database path: every bead operation is a `work` verb, run by the
   spira-lc broker under this persona's own allow row — a verb it may not run is refused."
-            .to_string()
-    } else {
-        String::new()
-    }
+        .to_string()
 }
 
-/// `{{FOLLOWUP}}`: how to file work discovered rather than done, selected by
-/// `lifecycle_enforce` exactly as `{{FINISH}}` is. With it OFF every `work` verb refuses
-/// (exit 3), and an aeon that fell back to raw `bd create --parent` gave all six children
-/// the parent's `branch:` label (sp-o4co5).
-pub fn followup_brief(lifecycle_enforce: bool, bead_id: &str, repo_name: &str) -> String {
-    if lifecycle_enforce {
-        format!(
-            "**File it as a bead** — `work file-followup \"<title>\"` for work that follows from
+/// `{{FOLLOWUP}}`: how to file work discovered rather than done — the `work` verbs, which
+/// parent the child for the model and never copy its `branch:` label (sp-o4co5).
+pub fn followup_brief(bead_id: &str) -> String {
+    format!(
+        "**File it as a bead** — `work file-followup \"<title>\"` for work that follows from
   this one, `work split \"<title>\"` for a piece of this bead's own scope. Both are parented
   to `{bead_id}` for you and never carry its `branch:` label."
-        )
-    } else {
-        format!(
-            "**File it as a bead** through the contract, never with raw `bd create`:
-
-      bead.sh file \"<title>\" --for <persona> --repo {repo_name} [--priority N] [--body-file F] [--parent {bead_id}]
-
-  `--for` names the persona that should claim it (`bead.sh contract` lists the legal
-  personas, repos and types). A follow-up must never carry this bead's `branch:` label —
-  `branch:` names one bead's own worktree, and raw `bd create --parent` copies it onto every
-  child. `bead.sh file` does not. (The `work` verbs refuse while lifecycle enforcement is
-  off; do not use them.)"
-        )
-    }
+    )
 }
 
-/// `{{FINISH}}`: selected by `lifecycle_enforce` and nothing else.
-pub fn finish_brief(lifecycle_enforce: bool, bead_id: &str, db: &str) -> String {
-    if lifecycle_enforce {
-        format!(
-            "**You have no `bd`.** `bd` is not on your PATH and no database credential is in your
+/// `{{FINISH}}`: the `work` verbs, the model's only way to act on its bead.
+pub fn finish_brief(bead_id: &str) -> String {
+    format!(
+        "**You have no `bd`.** `bd` is not on your PATH and no database credential is in your
 environment (design §3.5) — the only way you act on your bead is `work`, bound to exactly
 this one: `{bead_id}`. Naming any other bead to `work` is refused.
 
@@ -172,57 +147,7 @@ If you genuinely cannot finish and none of the above fits — leave a note with 
 saying precisely what is blocked and what you would do by default, and exit non-zero. An
 honest failure is cheap. A bead whose lifecycle event doesn't match what actually happened
 is expensive, because everything downstream of it acts on that record."
-        )
-    } else {
-        format!(
-            "When the work is committed on your branch, close the bead with evidence. The first line of
-the reason must declare the terminal outcome:
-
-    bd -C {db} close {bead_id} --reason-file - <<'REASON'
-    OUTCOME: submitted
-    <what landed, and how it was verified>
-    REASON
-
-The seven valid outcomes, and when each applies:
-
-| Outcome     | When to use |
-|-------------|-------------|
-| `submitted` | Work committed on your branch; the landing pass carries it from here |
-| `delivered` | Deliverable is not code — beads, a note, a document; name what you wrote |
-| `escalated` | Blocked on an operator decision; name the ask bead (which must list this bead as a dependent) |
-| `blocked`   | Blocked on another bead; name it |
-| `abandoned` | Bead should not be done; explain why |
-| `parked`    | Out of lifetime; name what remains |
-| `landed`    | Work is already on the base branch (sentinel's record) |
-
-`submitted` is the standard outcome for a builder. Use `delivered` when the work is
-child beads, a mail message, or a document rather than a code commit.
-
-`--reason-file -`, never `--reason -`. `bd close` does not read stdin for `--reason`: it
-stores the literal string `-`, prints a success line and exits 0, so a close whose whole
-value is its evidence silently becomes a dash. Prose belongs on stdin anyway — backticks
-and `$( )` inside a double-quoted argument are command substitution
-(`law-commit-messages-via-stdin`).
-
-**A bead whose deliverable is child beads closes with `--force`.** From bd v1.2.1 a close is
-refused while the bead has open children — *\"cannot close X: 1 open child issue(s); close
-children first or use --force to override\"*. When you filed those children deliberately and
-said so with `delivers:beads`, that refusal is aimed at the wrong thing: the children ARE the
-work, and closing them first would be a lie. Pass `--force` in that case and only that case —
-if you did not declare `delivers:beads`, an open child means you are not finished. A close
-that fails leaves the bead `in_progress`, so the verdict finds no commit and reopens it, and
-the attempt counts toward poisoning the bead.
-
-If you cannot finish — the bead is ambiguous, needs a credential, or needs a decision that
-is the operator's to make — do **not** close it. Leave it open, add a note saying precisely what is
-blocked and what you would do by default, and exit non-zero:
-
-    bd -C {db} note {bead_id} \"BLOCKED: <what is blocked>. Default: <what you would do>.\"
-
-An honest failure is cheap. A bead closed without its work landing is expensive, because
-everything downstream of it unblocks on a lie."
-        )
-    }
+    )
 }
 
 /// The fixture this session built, if any.
@@ -438,28 +363,16 @@ A merge conflict is not an escalation — do not close the bead and do not ask a
     )
 }
 
-pub fn already_done_brief(lifecycle_enforce: bool, base: &str, bead_id: &str, work: &str, db: &str) -> String {
-    // With lifecycle_enforce on the model has no `bd` (sp-st0mm): the record is the
-    // supersede *request* `work superseded-by` files, confirmed by the groomer or operator.
-    let record = if lifecycle_enforce {
-        "2. Once confirmed on the base, **request the supersede**:
+pub fn already_done_brief(base: &str, bead_id: &str, work: &str) -> String {
+    // The model has no `bd` (sp-st0mm): the record is the supersede *request* `work
+    // superseded-by` files, confirmed by the groomer or operator.
+    let record = "2. Once confirmed on the base, **request the supersede**:
 
        work superseded-by <successor-id>
 
 That holds the bead and asks for confirmation; once confirmed, the sentinel, landing pass and
 cleanup checks all recognise this bead as retired and skip it correctly. A close reason alone
-is not read by any of them."
-            .to_string()
-    } else {
-        format!(
-            "2. Once confirmed on the base, **run `bd supersede`**:
-
-       bd -C {db} supersede {bead_id} --with <successor-id>
-
-That records the relation so the sentinel, landing pass, and cleanup checks all recognise this
-bead as retired and skip it correctly. A close reason alone is not read by any of them."
-        )
-    };
+is not read by any of them.";
     format!(
         "## If you find the work is already done
 
@@ -745,26 +658,19 @@ mod tests {
         assert_eq!(TESTENV, "testenv");
     }
 
-    // sp-o4co5: {{FOLLOWUP}} follows lifecycle_enforce exactly as {{FINISH}} does.
+    // sp-o4co5: {{FOLLOWUP}} names the `work` verbs, never raw `bd create`.
     #[test]
-    fn followup_follows_lifecycle_enforce() {
-        let off = followup_brief(false, "sp-a", "spira");
-        assert!(off.contains("\n      bead.sh file \"<title>\" --for <persona> --repo spira"));
-        assert!(off.contains("never with raw `bd create`"));
-        assert!(off.contains("`branch:` label"));
-        assert!(!off.contains("work file-followup"));
-        let on = followup_brief(true, "sp-a", "spira");
+    fn followup_names_the_work_verbs() {
+        let on = followup_brief("sp-a");
         assert!(on.contains("work file-followup"));
         assert!(on.contains("work split"));
         assert!(!on.contains("bead.sh file"));
     }
 
-    // sp-st0mm: every persona that says "you have no bd" says it through {{NO_BD}}, which
-    // renders only under enforce — never as fixed chamber text a legacy-mode aeon would read.
+    // sp-st0mm: every persona that says "you have no bd" says it through {{NO_BD}}.
     #[test]
-    fn no_bd_line_follows_lifecycle_enforce() {
-        assert_eq!(no_bd_brief(false), "");
-        assert!(no_bd_brief(true).contains("You have no `bd`"));
+    fn no_bd_line_is_one_token() {
+        assert!(no_bd_brief().contains("You have no `bd`"));
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
         let mut uses = 0;
         for e in std::fs::read_dir(&dir).unwrap() {
@@ -783,11 +689,11 @@ mod tests {
     #[test]
     fn builder_chamber_renders_runner_and_followup() {
         let chamber = include_str!("../../spira/chamber/builder.md");
-        for enforce in [false, true] {
+        {
             let t = Tokens {
                 single: vec![
                     ("TESTENV", TESTENV.into()),
-                    ("FOLLOWUP", followup_brief(enforce, "sp-a", "spira")),
+                    ("FOLLOWUP", followup_brief("sp-a")),
                     ("BRANCH", "spira/sp-a".into()),
                     ("REPO_NAME", "spira".into()),
                     ("SPIRA_HOME", "/srv/h/spira".into()),
@@ -805,10 +711,10 @@ mod tests {
             assert!(!p.contains("{{TESTENV}}") && !p.contains("{{FOLLOWUP}}"));
             assert!(!p.contains("/../bin/testenv"));
             assert!(!p.contains("--suites test-"));
-            assert_eq!(p.contains("bead.sh file"), !enforce);
-            assert_eq!(p.contains("work file-followup"), enforce);
+            assert!(!p.contains("bead.sh file"));
+            assert!(p.contains("work file-followup"));
             if std::env::var_os("AEON_PRINT_BRIEF").is_some() {
-                println!("==== lifecycle_enforce={enforce} ====\n{p}");
+                println!("{p}");
             }
         }
     }
@@ -836,18 +742,14 @@ mod tests {
         assert!(!p.contains("exactly what the landing"));
     }
 
-    // test-aeon-chamber-overlay.sh GOLDEN (sp-wmcvb): {{FINISH}} follows lifecycle_enforce.
+    // test-aeon-chamber-overlay.sh GOLDEN (sp-wmcvb): {{FINISH}} is the `work` verbs.
     #[test]
-    fn finish_follows_lifecycle_enforce_only() {
-        let off = finish_brief(false, "sp-a", "/db");
-        assert!(!off.contains("You have no `bd`"));
-        assert!(off.contains("bd -C /db close sp-a --reason-file - <<'REASON'"));
-        assert!(off.contains("bd -C /db note sp-a \"BLOCKED:"));
-        let on = finish_brief(true, "sp-a", "/db");
+    fn finish_is_the_work_verbs() {
+        let on = finish_brief("sp-a");
         assert!(on.contains("**You have no `bd`.**"));
         assert!(on.contains("this one: `sp-a`"));
         assert!(on.contains("    work submit\n"));
-        assert!(!on.contains("bd -C /db close"));
+        assert!(!on.contains("bd -C"));
     }
 
     #[test]
@@ -1040,8 +942,8 @@ mod tests {
     fn close_and_already_done_blocks() {
         assert!(close_brief("local/main", "/w", "").contains("    # local/main is a local ref already in this checkout; no fetch needed\n    git -C /w rebase local/main"));
         assert!(close_brief("origin/main", "/w", "origin").contains("    git -C /w fetch origin\n"));
-        assert!(already_done_brief(false, "origin/main", "sp-a", "/w", "/db").contains("-n ${SPIRA_VERDICT_WINDOW:-400} origin/main | grep"));
-        let on = already_done_brief(true, "origin/main", "sp-a", "/w", "/db");
+        let on = already_done_brief("origin/main", "sp-a", "/w");
+        assert!(on.contains("-n ${SPIRA_VERDICT_WINDOW:-400} origin/main | grep"));
         assert!(on.contains("work superseded-by <successor-id>") && !on.contains("bd "), "{on}");
         assert!(rebase_brief("b", "o/m", "/w", "").contains("conflicts in: unknown"));
         assert!(dirty_brief(&["a".into(), "b c".into()]).contains("```\n  a\n  b c\n```"));

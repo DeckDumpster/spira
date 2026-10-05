@@ -17,16 +17,17 @@
 #
 # TWO CASES (law-absence-needs-a-positive-control):
 #
-#   0. POSITIVE CONTROL — the partition's only bead carries no submitted label → the
-#      mock ready query returns it, and strand.sh DOES report 'starved'. Proves the rest
-#      of the harness (SPIRA_LABELS routing, the mock, live=0) can produce the finding
-#      before trusting its silence in case 1.
+#   0. POSITIVE CONTROL — strand's exclusion does not name the bead's label (the configured
+#      submitted label is a different one) → the ready set holds the bead, and strand DOES
+#      report 'starved'. Proves the rest of the harness (SPIRA_LABELS routing, the
+#      lifecycle stand-in, live=0) can produce the finding before trusting its silence in
+#      case 1.
 #
-#   1. THE BUG — the partition's only bead carries SPIRA_SUBMITTED_LABEL. The mock `bd
-#      ready` call inspects the --exclude-label argument it was actually passed (as the
-#      real `bd ready` would honour it) and returns nothing when the submitted label is
-#      in that list, so this case fails on today's strand.sh: it does not pass the label
-#      through and gets the bead back as "ready", reporting 'starved'.
+#   1. THE BUG — the partition's only bead carries SPIRA_SUBMITTED_LABEL. strand's ready set
+#      is spira-claim's `ready-count <labels> <exclude> --json` over the lifecycle machine's
+#      READY rows (sp-7g5q6; sp-v62vn: the only mode), and spira-claim applies the exclude
+#      list strand hands it — so the bead drops out only if strand puts the submitted label
+#      in that list. A strand that does not reports 'starved'.
 #
 # SPIRA_SUBMITTED_LABEL is pinned to a non-default value so a matcher that hardcodes the
 # shipped default ("spira-submitted") cannot pass by accident.
@@ -47,39 +48,26 @@ for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$TMP/home/$_s"; 
 
 SUBMITTED=mysubmitted-nondefault
 
-# Mock bd: `list` always returns the fixture bead (used to build the holders set — this
-# bead is "open", never "in_progress", so it never becomes a holder). `ready` behaves like
-# the real predicate: it reads the --exclude-label argument it was actually passed and
-# withholds the bead when that argument names the submitted label — exactly what a real
-# `bd ready --exclude-label ...,$SUBMITTED,...` would do for a bead carrying it.
+# Mock bd: every `list` (strand's store read, spira-claim's `list --id` content read, the
+# lifecycle stand-in's own read) returns the one fixture bead — open, so the stand-in below
+# makes it a READY row. Nothing here asks bd for "ready": the machine's row is the ready set,
+# and spira-claim's label predicate does the excluding.
 cat > "$TMP/mock-bd" <<MOCKBD
 #!/usr/bin/env bash
 case "\${1:-}" in -C) shift 2 ;; esac
-cmd="\${1:-}"; shift || true
-excl=""
-while [ \$# -gt 0 ]; do
-    case "\$1" in
-        --exclude-label) excl="\$2"; shift 2 ;;
-        *) shift ;;
-    esac
-done
-labels='["spira","test-groom","$SUBMITTED"]'
-bead='{"id":"sp-subm1","title":"groomer graph edit","status":"open","labels":'"\$labels"'}'
-case "\$cmd" in
-    list)  printf '[%s]\n' "\$bead" ;;
-    ready)
-        case ",\$excl," in
-            *",$SUBMITTED,"*) printf '[]\n' ;;
-            *)                printf '[%s]\n' "\$bead" ;;
-        esac
-        ;;
-    *) exit 0 ;;
+bead='{"id":"sp-subm1","title":"groomer graph edit","status":"open","issue_type":"task","labels":["spira","test-groom","$SUBMITTED"]}'
+case "\${1:-}" in
+    list) printf '[%s]\n' "\$bead" ;;
+    *)    exit 0 ;;
 esac
 MOCKBD
 chmod +x "$TMP/mock-bd"
+# The lifecycle machine, answered from the mock bd's store (testlib lc_mirror_bd): spira-claim
+# finds spira-lc by name on PATH, so its directory goes first.
+lc_mirror_bd "$TMP/lc"
 
 run_report() {
-    SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \
+    SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_DB="$TMP/no-db" \
@@ -93,12 +81,11 @@ echo "test-strand-submitted.sh"
 
 # ======================================================================================
 echo
-echo "case 0 — positive control: mock ready returns the bead → starved IS reported:"
+echo "case 0 — positive control: the ready set holds the bead → starved IS reported:"
 # ======================================================================================
-# Same run, but --exclude-label from classify_one never carries a label matching the one
-# baked into the mock's check (nothing here names the submitted label back to the mock),
-# so the mock hands the bead back and starvation is real.
-out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/mock-bd" \
+# Same run, but the configured submitted label is a different one, so strand's exclude list
+# never names the bead's label, spira-claim hands the bead back, and starvation is real.
+out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/mock-bd" \
         SPIRA_DB="$TMP/no-db" SPIRA_SUMMON=stub \
         SPIRA_SUBMITTED_LABEL=some-other-label-entirely \
         SPIRA_LABELS="spira,test-groom" \
@@ -109,10 +96,9 @@ want "positive control: starved IS reported" "starved" "$out0"
 echo
 echo "case 1 — the bug: only ready bead carries the submitted label → NOT starved:"
 # ======================================================================================
-# strand.sh's classify_one must pass the submitted label through --exclude-label, same as
-# fayth_exclude does for CHECK7's summon predicate. Fails on today's strand.sh: 'starved'
-# was reported here (sp-wnsks), because classify_one never told the ready query about
-# SPIRA_SUBMITTED_LABEL and the mock (acting as a real `bd ready` would) withheld nothing.
+# strand must put the submitted label in the exclude list it hands spira-claim, same as
+# fayth_exclude does for CHECK7's summon predicate. 'starved' was reported here (sp-wnsks)
+# when strand's ready query never named SPIRA_SUBMITTED_LABEL.
 out1="$(run_report)"
 nowant "the bug: starved is NOT reported for a submitted-only partition" "starved" "$out1"
 

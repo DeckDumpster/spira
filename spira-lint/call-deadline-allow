@@ -40,7 +40,7 @@
 1 groomer/src/sweep.rs
 1 groomer/src/unpoison.rs
 1 inbox-triage/src/main.rs
-4 incident/src/main.rs
+3 incident/src/main.rs
 1 incident/src/real.rs
 28 install/src/bin/install.rs
 1 install/src/bin/unit_ensure.rs
@@ -65,7 +65,7 @@
 1 reconciler-flow/src/main.rs
 8 reconciler/src/main.rs
 2 release/src/build.rs
-14 release/src/canary.rs
+8 release/src/canary.rs
 4 release/src/git.rs
 1 release/src/install.rs
 1 release/src/intake.rs
@@ -106,7 +106,6 @@
 1 spira-world/src/round.rs
 1 spira-world/src/seam.rs
 4 spira-world/src/sysctl.rs
-1 spira/acceptance-agent.sh
 7 spira/acceptance-ci.sh
 7 spira/acceptance-local.sh
 1 spira/acceptance-prev-tag.sh
@@ -123,10 +122,10 @@
 1 spira/gate-sweep.sh
 1 spira/gh-app.sh
 1 spira/git-credential-app.sh
-2 spira/groom-trigger.sh
+1 spira/groom-trigger.sh
 1 spira/law-synth.sh
 2 spira/lib-test-install.sh
-10 spira/lib.sh
+9 spira/lib.sh
 4 spira/pr-notify.sh
 2 spira/pre-activate.sh
 1 spira/publish-backlog.sh
@@ -144,19 +143,19 @@
 3 spira/test-aeon-chamber-overlay.sh
 2 spira/test-aeon-dirty-commit.sh
 4 spira/test-aeon-eviction-race.sh
-7 spira/test-aeon-gate-close-silent.sh
+4 spira/test-aeon-gate-close-silent.sh
 4 spira/test-aeon-gate-unfinished-attempts.sh
 6 spira/test-aeon-lifecycle-cutover.sh
 12 spira/test-aeon-prod-dirty.sh
 6 spira/test-aeon-prompt-layers.sh
-9 spira/test-aeon-resume-collision.sh
+5 spira/test-aeon-resume-collision.sh
 6 spira/test-aeon-resume.sh
 3 spira/test-aeon-slain-attempts.sh
 7 spira/test-aeon-sweep.sh
-3 spira/test-aeon-teardown-e2e.sh
+2 spira/test-aeon-teardown-e2e.sh
 2 spira/test-aeon-wiki-concurrent.sh
 9 spira/test-aeon-wiki-dirty.sh
-6 spira/test-aeon-worktree-collision.sh
+4 spira/test-aeon-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
 3 spira/test-aeon-world-stop.sh
 12 spira/test-auron.sh
@@ -168,7 +167,7 @@
 5 spira/test-branch-guard.sh
 3 spira/test-branch-sweep.sh
 2 spira/test-cadence-tool.sh
-5 spira/test-canary.sh
+4 spira/test-canary.sh
 1 spira/test-census-burst.sh
 4 spira/test-census-events.sh
 2 spira/test-census-tz-boundary.sh
@@ -192,7 +191,7 @@
 6 spira/test-deadlock-sweep.sh
 3 spira/test-destroy-branch.sh
 1 spira/test-dispatch-open-children.sh
-5 spira/test-epic-claim-order.sh
+2 spira/test-epic-claim-order.sh
 1 spira/test-escape-classify.sh
 3 spira/test-express-lane.sh
 1 spira/test-gate-check-flaky.sh
@@ -233,7 +232,6 @@
 5 spira/test-lifecycle-container.sh
 4 spira/test-lifecycle-cutover.sh
 3 spira/test-lifecycle-delivery-cutover.sh
-3 spira/test-lifecycle-enforce-gate.sh
 5 spira/test-lifecycle-stack-migration.sh
 2 spira/test-loop-readonly.sh
 9 spira/test-maechen-closed-record.sh
@@ -245,7 +243,6 @@
 1 spira/test-overrides.sh
 3 spira/test-persona-model.sh
 3 spira/test-pilgrimage.sh
-6 spira/test-poison.sh
 4 spira/test-pr-notify.sh
 4 spira/test-publish-backlog.sh
 1 spira/test-queue-land-local.sh
@@ -300,7 +297,7 @@
 4 spira/verify-landed.sh
 1 spira/warden-trigger.sh
 1 spira/wiki-commit.sh
-5 strand/src/detectors.rs
+2 strand/src/detectors.rs
 1 strand/src/probe.rs
 1 suite-select/src/io.rs
 1 supervise/src/main.rs

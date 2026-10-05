@@ -264,8 +264,15 @@ impl Run<'_> {
         unit_set(&self.systemctl(&["list-unit-files", "--no-legend"]).out)
     }
 
+    /// The model's part is over: the bead store says closed/submitted, or (the lifecycle
+    /// cutover: a model finishes with `work submit` and never closes the bead itself) its
+    /// lifecycle history has reached SUBMITTED.
     fn bead_finished(&self, id: &str) -> bool {
-        bead_finished(&self.h.run(&self.bd(&["show", id, "--json"])).out)
+        if bead_finished(&self.h.run(&self.bd(&["show", id, "--json"])).out) {
+            return true;
+        }
+        let hist = self.h.run(&self.tool("spira-lc").args(["history", id]));
+        hist.rc == 0 && lifecycle_submitted(&lifecycle_states(&hist.out))
     }
 
     fn world_halted_line(&self) -> Option<String> {
@@ -291,7 +298,7 @@ impl Run<'_> {
         let out = self.h.run(&self.bd(&["create", "--title", title, "--description", description, "--label", &l, "--type", "task"]));
         let Some(id) = extract_bead_id(&out.text) else { return (None, out.text) };
         // File the way bead.sh does: the bead's lifecycle row is part of filing it. Under
-        // lifecycle_enforce a rowless bead is never claimable, so the probe sat unsummoned
+        // the machine a rowless bead is never claimable, so the probe sat unsummoned
         // (sp-6ka75); a row that cannot be created fails "bead filed", naming why.
         let lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
         if lc.rc != 0 {
@@ -494,7 +501,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         let m = missing_release_bins(&releases.join("current"));
         r.check("phase A: all native binaries present and executable", m.is_empty(), || format!("missing: {m}"));
         // sp-zf4q3: the model's PATH names model-bin/ only; a tarball without it would
-        // leave every enforced aeon refusing its session.
+        // leave every aeon refusing its session.
         let mb = spira_config::release_env::model_bin_problems(&releases.join("current"));
         r.check("phase A: model-bin/ holds work and nothing else", mb.is_empty(), || mb.join("; "));
     }

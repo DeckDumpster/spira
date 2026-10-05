@@ -174,6 +174,18 @@ fn members_name_their_bead_only_when_the_subject_is_a_merge() {
     assert_eq!(m[1], Member { commit: "bbb".into(), bead: None });
 }
 
+/// sp-mve9i: a filed bug is still open while its lifecycle row is not terminal — bd's status
+/// is not consulted, and a bead with no row is not open.
+#[test]
+fn a_bug_is_open_while_its_lifecycle_row_is_not_terminal() {
+    use spira_config::lc_state::Row;
+    let row = |id: &str, st: &str| (id.to_string(), Row { bead_id: id.into(), state: st.into(), ..Default::default() });
+    let lc: std::collections::HashMap<String, Row> = [row("sp-w", "WORKING"), row("sp-s", "SUBMITTED"), row("sp-l", "LANDED"), row("sp-d", "DROPPED")].into_iter().collect();
+    let all: Vec<(String, String)> = ["sp-w", "sp-s", "sp-l", "sp-d", "sp-none"].iter().map(|i| (i.to_string(), format!("t {i}"))).collect();
+    let ids: Vec<String> = still_open(all, &lc).into_iter().map(|(i, _)| i).collect();
+    assert_eq!(ids, vec!["sp-w", "sp-s"]);
+}
+
 #[test]
 fn an_open_bead_only_covers_its_own_suite_and_kind() {
     let open = vec![("sp-1".to_string(), "cert-sweep: test-a.sh flips on one commit".to_string())];

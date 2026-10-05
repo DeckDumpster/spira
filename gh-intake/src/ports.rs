@@ -41,10 +41,11 @@ pub trait Bd {
     /// returns a bare object OR a one-element array of one; callers normalise either shape.
     fn show_json(&self, id: &str) -> Option<serde_json::Value>;
 
-    /// `bd -C <db> list --status <status> --label <label> --limit 0 --json` (sp-j3fim):
+    /// `bd -C <db> list --status <which> --label <ask-label> --limit 0 --json` (sp-j3fim):
     /// `ask_already_open`/`ask_closed_subject`/`_gh_close_ask_unblock`/
-    /// `_gh_resolve_stale_asks` all read the operator-ask queue through this one shape.
-    fn list_by_label(&self, status: &str, label: &str) -> Option<serde_json::Value>;
+    /// `_gh_resolve_stale_asks` all read the operator-ask queue through this one shape. An
+    /// ask is not a work bead, so its bd status is its state (`spira_config::nonwork`, sp-mve9i).
+    fn list_asks(&self, which: spira_config::nonwork::Which, label: &str) -> Option<serde_json::Value>;
 
     /// `bd -C <db> dep remove <id> <other>`, best effort (sp-j3fim, `_gh_close_ask_unblock`).
     fn dep_remove(&self, id: &str, other: &str) -> bool;

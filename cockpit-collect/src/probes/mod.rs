@@ -16,6 +16,8 @@ mod unsent;
 use crate::io;
 use crate::quoting::{sanitize, sanitize_title};
 use serde_json::Value;
+use spira_config::nonwork::{self, Kind, Which};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// The capacity pause file's path (wave 4.26: family K's home is `aeon::capacity`, read
@@ -488,7 +490,9 @@ fn py_truthy(v: Option<&Value>) -> bool {
 pub fn core_counts_keys() -> Kv {
     let mut out = Kv::new();
     let ask_label = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
-    let rows = io::bd_rows(io::bdjson(&["list", "--status", "open", "--limit", "0", "--label", &ask_label]));
+    // Asks are not work beads: bd status is their only state (spira_config::nonwork).
+    let [flag, open] = nonwork::status_args(Kind::Ask, Which::Open);
+    let rows = io::bd_rows(io::bdjson(&["list", &flag, &open, "--limit", "0", "--label", &ask_label]));
     match rows {
         None => push(&mut out, "SP_WAITING", "?"),
         Some(rows) => push(&mut out, "SP_WAITING", rows.len().to_string()),
@@ -560,26 +564,24 @@ pub fn slots_keys() -> Kv {
 
 pub fn sphere_keys() -> Kv {
     let mut out = Kv::new();
-    let poison_rows = io::bd_rows(io::bdjson(&["list", "--all", "--limit", "0", "--label", "spira-poison"]));
-    match poison_rows {
+    // A work bead's state is the lifecycle row's (design §3.4); `None` renders `?`.
+    let lc_rows = lc::state_index();
+    match &lc_rows {
         None => push(&mut out, "SP_POISON", "?"),
-        Some(rows) => {
-            let n = rows.iter().filter(|r| r.get("status").and_then(Value::as_str) != Some("closed")).count();
-            push(&mut out, "SP_POISON", n.to_string());
-        }
+        Some(lc) => push(&mut out, "SP_POISON", poison_count(lc).to_string()),
     }
 
     let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0", "--label", &label]));
-    match rows {
+    match rows.zip(lc_rows.as_ref()) {
         None => {
             push(&mut out, "SP_OPEN", "?");
             push(&mut out, "SP_INPROG", "?");
             push(&mut out, "SP_NEEDSOP", "?");
         }
-        Some(rows) => {
+        Some((rows, lc)) => {
             const WORK: &[&str] = &["task", "bug", "feature", "epic", "chore", "spike"];
             let work: Vec<&Value> = rows
                 .iter()
@@ -596,18 +598,7 @@ pub fn sphere_keys() -> Kv {
                     }
                 })
                 .collect();
-            let has = |i: &Value, lab: &str| {
-                i.get("labels")
-                    .and_then(Value::as_array)
-                    .map(|a| a.iter().any(|l| l.as_str() == Some(lab)))
-                    .unwrap_or(false)
-            };
-            let open_n = work.iter().filter(|i| i.get("status").and_then(Value::as_str) != Some("closed")).count();
-            let inprog_n = work.iter().filter(|i| i.get("status").and_then(Value::as_str) == Some("in_progress")).count();
-            let needsop_n = work
-                .iter()
-                .filter(|i| i.get("status").and_then(Value::as_str) != Some("closed") && has(i, &ask))
-                .count();
+            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, lc, &ask);
             push(&mut out, "SP_OPEN", open_n.to_string());
             push(&mut out, "SP_INPROG", inprog_n.to_string());
             push(&mut out, "SP_NEEDSOP", needsop_n.to_string());
@@ -676,32 +667,14 @@ pub fn dup_refs_keys() -> Kv {
         return out;
     };
     let rows = io::bd_rows(io::bdjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
-    let Some(rows) = rows else {
+    // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
+    let Some((rows, lc)) = rows.zip(lc::state_index()) else {
         push(&mut out, "SP_DUP_REFS", "?");
         push(&mut out, "SP_DUP_BEADS", "?");
         push(&mut out, "SP_DUP_N", "0");
         return out;
     };
-    let mut by_ref: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for i in &rows {
-        let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
-        if ref_.is_empty() {
-            continue;
-        }
-        let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        if labels.iter().any(|l| l.starts_with("duplicate-of:")) {
-            continue;
-        }
-        if i.get("status").and_then(Value::as_str) == Some("closed") {
-            let closed_at = i.get("closed_at").and_then(Value::as_str).unwrap_or("");
-            let closed_date = closed_at.get(..10).unwrap_or("");
-            if closed_date < since.as_str() {
-                continue;
-            }
-        }
-        let id = i.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-        by_ref.entry(ref_.to_string()).or_default().push(id);
-    }
+    let by_ref = incidents_by_ref(&rows, &lc, &since);
     let mut dup: Vec<(String, Vec<String>)> = by_ref.into_iter().filter(|(_, ids)| ids.len() > 1).collect();
     push(&mut out, "SP_DUP_REFS", dup.len().to_string());
     push(&mut out, "SP_DUP_BEADS", dup.iter().map(|(_, ids)| ids.len() - 1).sum::<usize>().to_string());
@@ -761,7 +734,8 @@ pub fn livelock_keys() -> Kv {
     // three caps at 20 rows the way LIVELOCK above does — the bash's own cap check there is
     // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
     let ic_out = strand::detectors::detect_invalid_closed(&cfg);
-    if ic_out.is_empty() && io::bdjson(&["list", "--status", "closed", "--limit", "1"]).is_none() {
+    // An empty detector answer is only "none" when the store answers at all.
+    if ic_out.is_empty() && io::bdjson(&["list", "--all", "--limit", "1"]).is_none() {
         push(&mut out, "SP_INVALID_CLOSED", "?");
         push(&mut out, "SP_INVCLSD_N", "?");
         push(&mut out, "SP_UNFILED_FOLLOW", "?");
@@ -878,6 +852,7 @@ pub fn czar_triggers_keys() -> Kv {
         return out;
     }
     let rows = rows.unwrap();
+    let lc_rows = lc::state_index();
     let mut by_ref: std::collections::HashMap<String, Vec<&Value>> = std::collections::HashMap::new();
     for b in &rows {
         let r = b.get("external_ref").and_then(Value::as_str).unwrap_or("").to_string();
@@ -900,10 +875,10 @@ pub fn czar_triggers_keys() -> Kv {
             format!("{}Z", created.get(..16).unwrap_or(created).trim_end_matches('T'))
         };
         let by = newest.get("assignee").and_then(Value::as_str).unwrap_or("-").split_whitespace().next().unwrap_or("-").to_string();
-        let status = newest.get("status").and_then(Value::as_str).unwrap_or("");
-        let outcome = if status == "open" || status == "in_progress" {
-            "pending".to_string()
-        } else if status == "closed" {
+        let outcome = match czar_progress(newest, lc_rows.as_ref()) {
+            CzarProgress::Pending => "pending".to_string(),
+            CzarProgress::Unknown => "-".to_string(),
+            CzarProgress::Finished => {
             let mut outcome = "yes".to_string();
             for (idx, bead) in beads.iter().enumerate().take(beads.len().saturating_sub(1)) {
                 let cla = bead.get("closed_at").and_then(Value::as_str).and_then(crate::quoting::parse_iso8601);
@@ -918,8 +893,7 @@ pub fn czar_triggers_keys() -> Kv {
                 }
             }
             outcome
-        } else {
-            "-".to_string()
+            }
         };
         push(&mut out, &format!("SP_CZAR_{tag}_FIRED"), fired);
         push(&mut out, &format!("SP_CZAR_{tag}_BY"), by);
@@ -1183,9 +1157,157 @@ pub fn sending_keys() -> Kv {
     }
 }
 
+/// SP_DUP_*: incident bead ids grouped by `external_ref`, over the incidents that still
+/// count — read from each bead's lifecycle row, never bd status (sp-jgjvh). Unfinished or
+/// in delivery (not terminal) counts; a terminal one counts only while its `closed_at`
+/// (bd content) falls inside the dedup lookback (`since`, `YYYY-MM-DD`); a bead with no
+/// lifecycle row is not live work and is not counted. A `duplicate-of:` bead is already
+/// accounted for.
+pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &str) -> HashMap<String, Vec<String>> {
+    let mut by_ref: HashMap<String, Vec<String>> = HashMap::new();
+    for i in rows {
+        let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
+        if ref_.is_empty() {
+            continue;
+        }
+        let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        if labels.iter().any(|l| l.starts_with("duplicate-of:")) {
+            continue;
+        }
+        let id = i.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        let Some(row) = lc.get(&id) else { continue };
+        if row.terminal() {
+            let closed_at = i.get("closed_at").and_then(Value::as_str).unwrap_or("");
+            let closed_date = closed_at.get(..10).unwrap_or("");
+            if closed_date < since {
+                continue;
+            }
+        }
+        by_ref.entry(ref_.to_string()).or_default().push(id);
+    }
+    by_ref
+}
+
+/// SP_POISON: work beads the machine holds for poison, not yet over (the `spira-poison`
+/// label is retired; holds replace it, design §3.4).
+pub fn poison_count(lc: &HashMap<String, lc::Row>) -> usize {
+    lc.values().filter(|r| r.held("poison") && !r.terminal()).count()
+}
+
+/// SP_OPEN / SP_INPROG / SP_NEEDSOP over the plan's work items: a work bead's state is its
+/// lifecycle row's — open is "not over" (not terminal), in progress is WORKING. An epic has
+/// no lifecycle row: it is a coordination bead, whose bd status is its only state
+/// (spira_config::nonwork). Any other item with no row is not counted: the machine cannot
+/// tell its state, and a rowless bead can never be claimed (CHECK-ROWLESS reports it).
+pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>, ask: &str) -> (usize, usize, usize) {
+    let has = |i: &Value, lab: &str| {
+        i.get("labels")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().any(|l| l.as_str() == Some(lab)))
+            .unwrap_or(false)
+    };
+    let (mut open_n, mut inprog_n, mut needsop_n) = (0, 0, 0);
+    for i in work {
+        let id = i.get("id").and_then(Value::as_str).unwrap_or("");
+        let (open, working) = match lc.get(id) {
+            Some(r) => (!r.terminal(), r.working()),
+            None if i.get("issue_type").and_then(Value::as_str) == Some("epic") => {
+                let st = nonwork::status_of(Kind::Epic, i);
+                (!nonwork::is_closed(Kind::Epic, st), nonwork::is_in_progress(Kind::Epic, st))
+            }
+            None => (false, false),
+        };
+        open_n += usize::from(open);
+        inprog_n += usize::from(working);
+        needsop_n += usize::from(open && has(i, ask));
+    }
+    (open_n, inprog_n, needsop_n)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CzarProgress {
+    Pending,
+    Finished,
+    Unknown,
+}
+
+/// A czar trigger is a work bead the czar persona claims: pending while it waits for or holds
+/// a builder, finished once the builder handed it on (`past_builder`), unknown with no
+/// lifecycle row or no machine answer.
+pub fn czar_progress(bead: &Value, lc: Option<&HashMap<String, lc::Row>>) -> CzarProgress {
+    let id = bead.get("id").and_then(Value::as_str).unwrap_or("");
+    match lc.and_then(|m| m.get(id)) {
+        Some(r) if r.past_builder() => CzarProgress::Finished,
+        Some(r) if !r.state.is_empty() => CzarProgress::Pending,
+        _ => CzarProgress::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lcmap(rows: &[(&str, &str, &[&str])]) -> HashMap<String, lc::Row> {
+        rows.iter()
+            .map(|(id, st, holds)| {
+                (id.to_string(), lc::Row { bead_id: id.to_string(), state: st.to_string(), holds: holds.iter().map(|h| h.to_string()).collect(), ..Default::default() })
+            })
+            .collect()
+    }
+
+    /// sp-jgjvh: duplicate incident refs are counted from the lifecycle row: live and in
+    /// delivery count, terminal counts only inside the lookback, rowless never.
+    #[test]
+    fn dup_refs_count_by_lifecycle_state_not_bd_status() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"a","status":"closed","external_ref":"r1"},
+                {"id":"b","status":"open","external_ref":"r1"},
+                {"id":"c","status":"open","external_ref":"r1","closed_at":"2026-01-01T00:00:00Z"},
+                {"id":"d","status":"open","external_ref":"r1","closed_at":"2026-10-04T00:00:00Z"},
+                {"id":"e","status":"open","external_ref":"r1"},
+                {"id":"f","status":"open","external_ref":"r1","labels":["duplicate-of:a"]}]"#,
+        )
+        .unwrap();
+        let lc = lcmap(&[("a", "WORKING", &[]), ("b", "SUBMITTED", &[]), ("c", "LANDED", &[]), ("d", "DONE", &[]), ("f", "READY", &[])]);
+        let mut got = incidents_by_ref(&rows, &lc, "2026-09-28").remove("r1").unwrap();
+        got.sort();
+        assert_eq!(got, vec!["a", "b", "d"]);
+    }
+
+    /// sp-mve9i: the counts follow the lifecycle row, whatever bd's status says.
+    #[test]
+    fn sphere_counts_read_the_lifecycle_state_not_bd_status() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"a","status":"closed","issue_type":"task","labels":["ask"]},
+                {"id":"b","status":"open","issue_type":"task"},
+                {"id":"c","status":"in_progress","issue_type":"bug"},
+                {"id":"d","status":"open","issue_type":"task"},
+                {"id":"e","status":"open","issue_type":"epic"}]"#,
+        )
+        .unwrap();
+        let work: Vec<&Value> = rows.iter().collect();
+        let lc = lcmap(&[("a", "REWORK", &[]), ("b", "LANDED", &[]), ("c", "SUBMITTED", &[])]);
+        // a: open (REWORK) and needs-op; b: over; c: open, not WORKING; d: rowless, not
+        // counted; e: an epic, open by bd.
+        assert_eq!(sphere_counts(&work, &lc, "ask"), (3, 0, 1));
+        let lc = lcmap(&[("d", "WORKING", &[])]);
+        assert_eq!(sphere_counts(&work, &lc, "ask"), (2, 1, 0));
+    }
+
+    #[test]
+    fn poison_counts_live_poison_holds() {
+        let lc = lcmap(&[("a", "REWORK", &["poison"]), ("b", "LANDED", &["poison"]), ("c", "READY", &["wait"])]);
+        assert_eq!(poison_count(&lc), 1);
+    }
+
+    #[test]
+    fn czar_outcome_follows_the_lifecycle_row() {
+        let bead: Value = serde_json::from_str(r#"{"id":"z","status":"closed"}"#).unwrap();
+        assert_eq!(czar_progress(&bead, Some(&lcmap(&[("z", "WORKING", &[])]))), CzarProgress::Pending);
+        assert_eq!(czar_progress(&bead, Some(&lcmap(&[("z", "DONE", &[])]))), CzarProgress::Finished);
+        assert_eq!(czar_progress(&bead, Some(&lcmap(&[]))), CzarProgress::Unknown);
+        assert_eq!(czar_progress(&bead, None), CzarProgress::Unknown);
+    }
 
     #[test]
     fn sphere_reports_zero_not_question_mark_on_empty() {

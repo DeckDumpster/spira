@@ -146,8 +146,8 @@ pub trait Beat: Send + Sync {
     /// `trace_last`, first `n` bytes.
     fn trace_last(&self, n: usize) -> String;
     /// Renew the claim's lease to `lease_until` (epoch seconds), once per beat while the
-    /// session runs: `bd heartbeat <id>` with lifecycle_enforce off, the lifecycle row's
-    /// `spira-lc renew` with it on (sp-2jf0a). False ends the heartbeat.
+    /// session runs: the lifecycle row's `spira-lc renew` (sp-2jf0a). False ends the
+    /// heartbeat.
     fn renew(&self, lease_until: i64) -> bool;
     fn log(&self, msg: &str);
 }

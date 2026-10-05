@@ -4,7 +4,7 @@
 //! judgement call `decide.rs` could have made instead — table-driven parity against the
 //! bash is easiest when every "should this fire" answer has exactly one place it is typed.
 
-use crate::decide::{self, DedupHit};
+use crate::decide::{self, DedupHit, Scope};
 use crate::ports::{self, Bd, Clock, Mailer};
 
 pub struct FileConfig<'a> {
@@ -71,29 +71,28 @@ pub fn epoch_to_date(epoch: i64) -> String {
 /// from `bd list`'s own `2>/dev/null`.
 fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, now: i64) -> Result<Option<DedupHit>, ()> {
     let ref_label = format!("ref:{}", decide::ref_hash(reference));
-
-    if let Ok(rows) = bd.list(db, &["open", "in_progress"], Some(&ref_label), None) {
-        if let Some(hit) = decide::dedup_scan(&rows, true, false, reference) {
-            return Ok(Some(hit));
-        }
-    }
-    if let Ok(rows) = bd.list(db, &["open", "in_progress"], None, None) {
-        if let Some(hit) = decide::dedup_scan(&rows, true, true, reference) {
-            return Ok(Some(hit));
-        }
-    }
     let since = since_date(now, lookback_days);
-    if let Ok(rows) = bd.list(db, &["closed"], Some(&ref_label), Some(&since)) {
-        if let Some(hit) = decide::dedup_scan(&rows, false, false, reference) {
-            return Ok(Some(hit));
+    // Open/closed is each bead's lifecycle row (sp-jgjvh: incident beads are work beads);
+    // the closed lookback keeps bd's `closed_at` as content. A pass that could not read —
+    // bd or the machine — is not "nothing found": the event stays spooled.
+    let passes: [(Scope, Option<&str>, Option<&str>, bool); 4] = [
+        (Scope::Unfinished, Some(ref_label.as_str()), None, false),
+        (Scope::Unfinished, None, None, true),
+        (Scope::HandedOn, Some(ref_label.as_str()), Some(since.as_str()), false),
+        (Scope::HandedOn, None, Some(since.as_str()), true),
+    ];
+    let mut blind = false;
+    for (scope, label, closed_after, skip_ref_labeled) in passes {
+        match bd.list(db, scope, label, closed_after) {
+            Ok(rows) => {
+                if let Some(hit) = decide::dedup_scan(&rows, scope == Scope::Unfinished, skip_ref_labeled, reference) {
+                    return Ok(Some(hit));
+                }
+            }
+            Err(_) => blind = true,
         }
     }
-    if let Ok(rows) = bd.list(db, &["closed"], None, Some(&since)) {
-        if let Some(hit) = decide::dedup_scan(&rows, false, true, reference) {
-            return Ok(Some(hit));
-        }
-    }
-    if bd.reachable(db) {
+    if !blind && bd.reachable(db) {
         Ok(None)
     } else {
         Err(())
@@ -143,8 +142,22 @@ pub fn file_one(
             bd.note(cfg.db, &id, &note);
             bump_and_note(bd, mailer, clock, cfg, &id, reference, title, payload, true, now, log)
         }
-        None => file_new(bd, cfg, reference, title, payload, labels, log),
+        // sp-nmlna: a terminal row has no move out, so reopening the bead in bd would only
+        // pile notes under a row that stays LANDED. The recurrence is a new incident: a fresh
+        // bead (and, through `Bd::create`, a fresh row) citing the closed one, linked to it;
+        // the closed bead and its row are left exactly as they are.
+        Some(DedupHit::Terminal { id: pred, closed_at }) => {
+            let predecessor = Predecessor { id: &pred, closed_at: closed_at.as_deref() };
+            file_new(bd, cfg, reference, title, payload, labels, Some(predecessor), log)
+        }
+        None => file_new(bd, cfg, reference, title, payload, labels, None, log),
     }
+}
+
+/// The terminal incident a fresh filing recurs (sp-nmlna).
+struct Predecessor<'a> {
+    id: &'a str,
+    closed_at: Option<&'a str>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -210,7 +223,17 @@ fn bump_and_note(
     FileOutcome::Filed(id.to_string())
 }
 
-fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload: &[u8], labels: &str, log: &mut Vec<String>) -> FileOutcome {
+#[allow(clippy::too_many_arguments)]
+fn file_new(
+    bd: &dyn Bd,
+    cfg: &FileConfig,
+    reference: &str,
+    title: &str,
+    payload: &[u8],
+    labels: &str,
+    predecessor: Option<Predecessor>,
+    log: &mut Vec<String>,
+) -> FileOutcome {
     if let Some(bad_repo) = cfg.repo_declared.and_then(|r| decide::invalid_repo_label(&format!("repo:{r}"), cfg.home_repo, cfg.known_repos)) {
         log.push(format!("spira: repo:{bad_repo} is not in the repo map"));
         // Same fallback the bash's set-state guard takes: file under the home repo rather
@@ -225,7 +248,16 @@ fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload
         return FileOutcome::Refused;
     }
 
-    let body = String::from_utf8_lossy(payload).into_owned();
+    let payload_text = String::from_utf8_lossy(payload);
+    let body = match &predecessor {
+        Some(p) => format!(
+            "Recurrence of {} (predecessor) — closed{}, its lifecycle row terminal, so this recurrence within the {}-day dedup window is filed as a fresh incident rather than reopening it.\n\n{payload_text}",
+            p.id,
+            p.closed_at.map(|c| format!(" {c}")).unwrap_or_default(),
+            cfg.dedup_lookback_days
+        ),
+        None => payload_text.into_owned(),
+    };
     // bd create rejects titles over 500 chars; clip (full text stays in the body) so a long
     // aeon-filed title does not re-spool forever (sp-nredi).
     let clipped: String = title.chars().take(490).collect();
@@ -237,7 +269,15 @@ fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload
             return FileOutcome::Unreachable;
         }
     };
-    log.push(format!("filed {id} for {reference}"));
+    match &predecessor {
+        Some(p) => {
+            log.push(format!("filed {id} for {reference} — recurrence of {} (terminal; left untouched)", p.id));
+            if !bd.relate(cfg.db, &id, p.id) {
+                log.push(format!("warning: could not relate {id} to its predecessor {} — the body still cites it", p.id));
+            }
+        }
+        None => log.push(format!("filed {id} for {reference}")),
+    }
 
     if let Some(repo) = cfg.repo_declared {
         let effective = if repo == cfg.home_repo || cfg.known_repos.iter().any(|r| r == repo) {
@@ -351,7 +391,12 @@ mod tests {
     struct FakeBd {
         rows: RefCell<Vec<BeadRow>>,
         reachable: bool,
+        /// The lifecycle machine does not answer: every dedup pass is blind.
+        lc_down: bool,
         created: RefCell<Vec<(String, String)>>,
+        bodies: RefCell<HashMap<String, String>>,
+        reopened: RefCell<Vec<String>>,
+        related: RefCell<Vec<(String, String)>>,
         labels: RefCell<HashMap<String, Vec<String>>>,
         notes: RefCell<HashMap<String, Vec<String>>>,
         next_id: RefCell<u32>,
@@ -364,20 +409,15 @@ mod tests {
     }
 
     impl Bd for FakeBd {
-        fn list(&self, _db: &str, statuses: &[&str], label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        // A row's `status` stands for its lifecycle row's state (decide::status_of_lc).
+        fn list(&self, _db: &str, scope: Scope, label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+            if self.lc_down {
+                return Err("spira-lc: down".into());
+            }
             let rows = self.rows.borrow();
             Ok(rows
                 .iter()
-                .filter(|r| {
-                    let status_ok = statuses.iter().any(|s| match *s {
-                        "open" => r.status == BeadStatus::Open,
-                        "in_progress" => r.status == BeadStatus::InProgress,
-                        "closed" => r.status == BeadStatus::Closed,
-                        _ => false,
-                    });
-                    let label_ok = label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true);
-                    status_ok && label_ok
-                })
+                .filter(|r| scope.holds(r.status) && label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true))
                 .cloned()
                 .collect())
         }
@@ -386,6 +426,7 @@ mod tests {
             let id = format!("sp-fake{n}");
             *n += 1;
             self.created.borrow_mut().push((title.to_string(), external_ref.to_string()));
+            self.bodies.borrow_mut().insert(id.clone(), _body.to_string());
             self.rows.borrow_mut().push(BeadRow {
                 id: id.clone(),
                 status: BeadStatus::Open,
@@ -419,10 +460,15 @@ mod tests {
             true
         }
         fn reopen(&self, _db: &str, id: &str) -> bool {
+            self.reopened.borrow_mut().push(id.to_string());
             if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
                 row.status = BeadStatus::Open;
                 row.closed_at = None;
             }
+            true
+        }
+        fn relate(&self, _db: &str, a: &str, b: &str) -> bool {
+            self.related.borrow_mut().push((a.to_string(), b.to_string()));
             true
         }
         fn show_closed_at(&self, _db: &str, id: &str) -> Option<String> {
@@ -547,6 +593,88 @@ mod tests {
         let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
         assert!(matches!(out, FileOutcome::Unreachable));
         assert_eq!(bd.created.borrow().len(), 0);
+    }
+
+    /// sp-jgjvh: a lifecycle machine that does not answer cannot say no incident holds the
+    /// reference — the event stays spooled, never filed as a fresh bead.
+    #[test]
+    fn an_unanswering_lifecycle_machine_stays_spooled() {
+        let bd = FakeBd { reachable: true, lc_down: true, next_id: RefCell::new(1), ..Default::default() };
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Unreachable));
+        assert_eq!(bd.created.borrow().len(), 0);
+    }
+
+    /// sp-nmlna: a recurrence inside the lookback that matches an incident whose lifecycle
+    /// row is terminal (LANDED) files a FRESH bead citing the closed one as its predecessor
+    /// and linked to it; the old bead is not reopened, noted or labelled, and its row stays
+    /// terminal. SEEN RED before the fix: the old bead was reopened in bd and noted under a
+    /// LANDED row, and no new bead was filed (`created` stayed 0).
+    #[test]
+    fn a_recurrence_of_a_landed_incident_files_a_fresh_bead_citing_its_predecessor() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_790_812_800); // 2026-10-01T00:00:00Z
+        let known = vec!["spira".to_string()];
+        let c = cfg(&known);
+        let old_labels = vec![format!("ref:{}", decide::ref_hash("incident:landed")), "spira".to_string()];
+        let old = BeadRow {
+            id: "sp-landed".into(),
+            status: BeadStatus::Terminal,
+            external_ref: Some("incident:landed".into()),
+            labels: old_labels.clone(),
+            closed_at: Some("2026-09-30T00:00:00Z".into()),
+        };
+        bd.rows.borrow_mut().push(old.clone());
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:landed", "landed failed again", b"fresh payload", "spira,incident", &mut log);
+        let new_id = match out {
+            FileOutcome::Filed(id) => id,
+            _ => panic!("expected Filed, log: {log:?}"),
+        };
+        assert_ne!(new_id, "sp-landed", "a terminal incident must not absorb the recurrence");
+        assert_eq!(bd.created.borrow().len(), 1, "exactly one fresh bead filed");
+        let body = bd.bodies.borrow().get(&new_id).cloned().unwrap_or_default();
+        assert!(body.contains("sp-landed"), "the fresh bead's body cites its predecessor: {body}");
+        assert!(body.contains("fresh payload"), "and still carries the payload: {body}");
+        assert!(bd.reopened.borrow().is_empty(), "the old bead is never reopened");
+        assert!(bd.notes.borrow().get("sp-landed").is_none(), "no note lands under a terminal row");
+        let now_old = bd.rows.borrow().iter().find(|r| r.id == "sp-landed").cloned().unwrap();
+        assert_eq!(now_old, old, "the old bead and its row are untouched");
+        assert_eq!(*bd.related.borrow(), vec![(new_id.clone(), "sp-landed".to_string())], "the fresh bead is linked to its predecessor");
+        assert!(log.iter().any(|l| l.contains(&new_id) && l.contains("sp-landed")), "{log:?}");
+
+        // The next recurrence finds the fresh (unfinished) bead and bumps it — no third bead.
+        let again = file_one(&bd, &mailer, &clock, &c, "incident:landed", "landed failed again", b"fresh payload", "spira,incident", &mut log);
+        assert!(matches!(again, FileOutcome::Filed(ref id) if *id == new_id));
+        assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    /// A handed-on but non-terminal incident (SUBMITTED) still absorbs the recurrence: its
+    /// row can still move, so the existing bead stays the incident's identity.
+    #[test]
+    fn a_recurrence_of_a_submitted_incident_still_reopens_it() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_790_812_800);
+        let known = vec!["spira".to_string()];
+        let c = cfg(&known);
+        bd.rows.borrow_mut().push(BeadRow {
+            id: "sp-submitted".into(),
+            status: BeadStatus::Closed,
+            external_ref: Some("incident:sub".into()),
+            labels: vec![],
+            closed_at: Some("2026-09-30T00:00:00Z".into()),
+        });
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:sub", "t", b"p", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Filed(ref id) if id == "sp-submitted"));
+        assert_eq!(bd.created.borrow().len(), 0);
+        assert_eq!(*bd.reopened.borrow(), vec!["sp-submitted".to_string()]);
     }
 
     #[test]

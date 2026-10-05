@@ -56,8 +56,10 @@ pub fn reopen_cause(closed_epoch: i64, now_epoch: i64, interval_s: i64) -> &'sta
     }
 }
 
-/// A bead's status as `_dedup_incident` needs it: whether it counts as open-ish
-/// (open/in_progress) or closed, plus the fields the decision depends on.
+/// A bead as `_dedup_incident` needs it: its lifecycle state, read as open-ish (READY/REWORK
+/// or WORKING) or closed (past the builder), plus the bd content the decision depends on. An
+/// incident bead is a work bead (sp-jgjvh): `status` is its lifecycle row's answer
+/// ([`status_of_lc`]), never bd's `status`; `closed_at` is bd content, kept for the lookback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeadRow {
     pub id: String,
@@ -67,11 +69,45 @@ pub struct BeadRow {
     pub closed_at: Option<String>,
 }
 
+/// Which incidents a dedup pass reads: the unfinished ones (the builder still owes work) or
+/// the ones the builder has handed on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Unfinished,
+    HandedOn,
+}
+
+impl Scope {
+    pub fn holds(self, status: BeadStatus) -> bool {
+        match self {
+            Scope::Unfinished => matches!(status, BeadStatus::Open | BeadStatus::InProgress),
+            Scope::HandedOn => matches!(status, BeadStatus::Closed | BeadStatus::Terminal),
+        }
+    }
+}
+
+/// A bead's [`BeadStatus`] from its lifecycle row: WORKING is in progress, READY/REWORK open,
+/// a terminal row (LANDED/DONE/SUPERSEDED/DROPPED — no move out, for any actor) terminal, and
+/// anything else past the builder closed. No row is `Other` — a bead the machine has no row for is
+/// not live work (it can never be claimed), and neither dedup pass matches it.
+pub fn status_of_lc(row: Option<&spira_config::lc_state::Row>) -> BeadStatus {
+    match row {
+        Some(r) if r.working() => BeadStatus::InProgress,
+        Some(r) if r.claimable() => BeadStatus::Open,
+        Some(r) if r.terminal() => BeadStatus::Terminal,
+        Some(r) if r.past_builder() => BeadStatus::Closed,
+        _ => BeadStatus::Other,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeadStatus {
     Open,
     InProgress,
+    /// Past the builder but not terminal (SUBMITTED/CERTIFIED/IN_DELIVERY).
     Closed,
+    /// A terminal row: the machine never leaves it (sp-nmlna).
+    Terminal,
     Other,
 }
 
@@ -79,7 +115,11 @@ pub enum BeadStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DedupHit {
     Open { id: String },
+    /// Handed on but its row can still move: the recurrence reopens it.
     Closed { id: String, closed_at: Option<String> },
+    /// Its row is terminal (sp-nmlna): the recurrence files a fresh bead citing this one as
+    /// its predecessor, and this bead is left as it is.
+    Terminal { id: String, closed_at: Option<String> },
 }
 
 /// One pass of the scan incident-dedup-decision.py performed: `open`=true selects
@@ -88,6 +128,7 @@ pub enum DedupHit {
 /// because those were already checked on the label-keyed pass and re-matching them here
 /// would let an unrelated bead's unlabeled duplicate short-circuit on the wrong row.
 pub fn dedup_scan(rows: &[BeadRow], open: bool, skip_ref_labeled: bool, reference: &str) -> Option<DedupHit> {
+    let mut terminal: Option<DedupHit> = None;
     for row in rows {
         if skip_ref_labeled && row.labels.iter().any(|l| l.starts_with("ref:")) {
             continue;
@@ -96,14 +137,26 @@ pub fn dedup_scan(rows: &[BeadRow], open: bool, skip_ref_labeled: bool, referenc
             continue;
         }
         if open {
-            if matches!(row.status, BeadStatus::Open | BeadStatus::InProgress) {
+            if Scope::Unfinished.holds(row.status) {
                 return Some(DedupHit::Open { id: row.id.clone() });
             }
-        } else if matches!(row.status, BeadStatus::Closed) {
+        } else if row.status == BeadStatus::Closed {
             return Some(DedupHit::Closed { id: row.id.clone(), closed_at: row.closed_at.clone() });
+        } else if row.status == BeadStatus::Terminal {
+            // A ref can hold several terminal beads (each recurrence after a landing files a
+            // fresh one): the predecessor is the most recently closed. ISO-8601 UTC strings
+            // order lexically; a missing closed_at sorts first.
+            let newer = match &terminal {
+                Some(DedupHit::Terminal { closed_at, .. }) => row.closed_at > *closed_at,
+                _ => true,
+            };
+            if newer {
+                terminal = Some(DedupHit::Terminal { id: row.id.clone(), closed_at: row.closed_at.clone() });
+            }
         }
     }
-    None
+    // A handed-on bead whose row can still move wins over any terminal one (returned above).
+    terminal
 }
 
 /// Prints the first 2000 bytes of the payload when it differs from the last recorded
@@ -275,6 +328,22 @@ mod tests {
         assert_eq!(reopen_cause(1000, 2800, 1800), "recurrence");
     }
 
+    /// sp-jgjvh: an incident's open/closed is its lifecycle row's state.
+    #[test]
+    fn status_reads_the_lifecycle_row() {
+        use spira_config::lc_state::Row;
+        let r = |st: &str| Row { bead_id: "a".into(), state: st.into(), ..Default::default() };
+        assert_eq!(status_of_lc(Some(&r("READY"))), BeadStatus::Open);
+        assert_eq!(status_of_lc(Some(&r("REWORK"))), BeadStatus::Open);
+        assert_eq!(status_of_lc(Some(&r("WORKING"))), BeadStatus::InProgress);
+        assert_eq!(status_of_lc(Some(&r("SUBMITTED"))), BeadStatus::Closed);
+        assert_eq!(status_of_lc(Some(&r("LANDED"))), BeadStatus::Terminal);
+        assert_eq!(status_of_lc(Some(&r("DONE"))), BeadStatus::Terminal);
+        assert_eq!(status_of_lc(Some(&r("SUPERSEDED"))), BeadStatus::Terminal);
+        assert_eq!(status_of_lc(Some(&r("DROPPED"))), BeadStatus::Terminal);
+        assert_eq!(status_of_lc(None), BeadStatus::Other);
+    }
+
     fn row(id: &str, status: BeadStatus, ext_ref: Option<&str>, labels: &[&str], closed_at: Option<&str>) -> BeadRow {
         BeadRow {
             id: id.into(),
@@ -312,6 +381,33 @@ mod tests {
             dedup_scan(&rows, false, false, "incident:x"),
             Some(DedupHit::Closed { id: "sp-a".into(), closed_at: Some("2026-09-01T00:00:00Z".into()) })
         );
+    }
+
+    /// sp-nmlna: a terminal row is its own hit, never `Closed` (which reopens).
+    #[test]
+    fn dedup_scan_terminal_row_is_a_terminal_hit() {
+        let rows = vec![row("sp-a", BeadStatus::Terminal, Some("incident:x"), &[], Some("2026-09-01T00:00:00Z"))];
+        assert_eq!(
+            dedup_scan(&rows, false, false, "incident:x"),
+            Some(DedupHit::Terminal { id: "sp-a".into(), closed_at: Some("2026-09-01T00:00:00Z".into()) })
+        );
+        assert_eq!(dedup_scan(&rows, true, false, "incident:x"), None, "never an open hit");
+    }
+
+    #[test]
+    fn dedup_scan_prefers_a_movable_row_then_the_latest_terminal_one() {
+        let rows = vec![
+            row("sp-old", BeadStatus::Terminal, Some("incident:x"), &[], Some("2026-09-01T00:00:00Z")),
+            row("sp-new", BeadStatus::Terminal, Some("incident:x"), &[], Some("2026-09-03T00:00:00Z")),
+            row("sp-mid", BeadStatus::Terminal, Some("incident:x"), &[], Some("2026-09-02T00:00:00Z")),
+        ];
+        assert_eq!(
+            dedup_scan(&rows, false, false, "incident:x"),
+            Some(DedupHit::Terminal { id: "sp-new".into(), closed_at: Some("2026-09-03T00:00:00Z".into()) })
+        );
+        let mut with_sub = rows.clone();
+        with_sub.push(row("sp-sub", BeadStatus::Closed, Some("incident:x"), &[], None));
+        assert_eq!(dedup_scan(&with_sub, false, false, "incident:x"), Some(DedupHit::Closed { id: "sp-sub".into(), closed_at: None }));
     }
 
     #[test]

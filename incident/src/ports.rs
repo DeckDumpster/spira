@@ -3,16 +3,17 @@
 //! host; unit tests implement them as fakes so the orchestration in `run.rs` is testable
 //! without a database.
 
-use crate::decide::BeadRow;
+use crate::decide::{BeadRow, Scope};
 
 pub trait Bd {
-    /// `bd -C db list --status <statuses> [--label <label>] [--closed-after <date>]
-    /// --limit 0 --json`, parsed into rows. Err when bd could not be reached at all
-    /// (distinct from an empty Ok(vec![]), which is a real "nothing found").
+    /// The incident beads in `scope` — bd's `list --all [--label <label>] [--closed-after
+    /// <date>] --json` for the content, each bead's state from its lifecycle row (sp-jgjvh:
+    /// incident beads are work beads; bd status is never read). Err when bd or the lifecycle
+    /// machine could not be reached (distinct from an empty Ok(vec![]), a real "nothing").
     fn list(
         &self,
         db: &str,
-        statuses: &[&str],
+        scope: Scope,
         label: Option<&str>,
         closed_after: Option<&str>,
     ) -> Result<Vec<BeadRow>, String>;
@@ -39,6 +40,9 @@ pub trait Bd {
     fn set_state(&self, db: &str, id: &str, kv: &str) -> bool;
     /// `bd -C db reopen <id>`.
     fn reopen(&self, db: &str, id: &str) -> bool;
+    /// `bd -C db dep relate <a> <b>`: a bidirectional see-also link (sp-nmlna: a fresh
+    /// incident to the terminal one it recurs).
+    fn relate(&self, db: &str, a: &str, b: &str) -> bool;
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String>;
     fn show_created_at(&self, db: &str, id: &str) -> Option<String>;
     /// A cheap reachability probe (`bd list --limit 1`) — used to distinguish "no open

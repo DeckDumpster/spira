@@ -144,21 +144,12 @@ pub fn conflict_reopen_note(git: &dyn Git, repo: &Path, br: &str, base: &str, na
 // close on land (the push pass's own bd close)
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// The push pass's close-on-land three-way read of a bead's status: `submitted` only
-/// when bd's raw status is not already `closed` and the submitted label is present — the
-/// one case this function acts on. `BeadRow::status` already folds a submitted label into
-/// `"closed"` (sp-qsona) for every OTHER reader, which is exactly why this reads
-/// `raw_status` instead: closed and submitted-but-not-yet-closed must stay distinguishable
-/// here, or a bead already closed for real gets re-closed.
-pub fn close_on_land_status(row: &BeadRow, submitted_label: &str) -> &'static str {
-    let submitted = row.labels.iter().any(|l| l == submitted_label);
-    if row.raw_status == "closed" {
-        "closed"
-    } else if submitted {
-        "submitted"
-    } else {
-        "other"
-    }
+/// Whether the push pass closes this bead for a landed reason: its lifecycle row says the
+/// builder handed it on and it did not end another way — SUBMITTED, CERTIFIED, IN_DELIVERY
+/// or LANDED (sp-mve9i; `spira-lc close-on-land`'s own rule). Never bd's status or the
+/// retired submitted label. A bead the machine holds no row for is left alone.
+pub fn should_close_on_land(row: &BeadRow) -> bool {
+    matches!(row.state.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "LANDED")
 }
 
 fn label_value<'a>(labels: &'a [String], prefix: &str) -> Option<&'a str> {
@@ -204,15 +195,14 @@ fn sending_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, w
 }
 
 /// The push pass's close-on-land `<id> <sha>` — the only place a work bead is closed for a
-/// landed reason. Idempotent both ways: a bead already `closed` is left alone, and one
-/// never marked submitted is left alone too. On a successful close, best-effort reaps the branch through `sending` (family X's own chokepoint; never touched
+/// landed reason. Acts only on a bead [`should_close_on_land`] says the builder handed on;
+/// one never handed on, or ended another way, is left alone. On a successful close, best-effort reaps the branch through `sending` (family X's own chokepoint; never touched
 /// directly here).
 #[allow(clippy::too_many_arguments)]
-pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, submitted_label: &str, row: Option<&BeadRow>, id: &str, sha: &str) {
+pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, row: Option<&BeadRow>, id: &str, sha: &str) {
     let Some(row) = row else { return };
-    match close_on_land_status(row, submitted_label) {
-        "closed" | "other" => return,
-        _ => {}
+    if !should_close_on_land(row) {
+        return;
     }
     let shown_sha = if sha.is_empty() { "unknown" } else { sha };
     let reason = format!("OUTCOME: landed\nClosed by the landing pass: work landed at {shown_sha} (law-closed-is-not-landed).\n");
@@ -328,13 +318,12 @@ mod tests {
         assert!(note.contains("A merge conflict is not an escalation"));
     }
 
-    // ── close-on-land's status read ────────────────────────────────────
+    // ── close-on-land's state read ─────────────────────────────────────
 
-    fn row(raw_status: &str, labels: &[&str]) -> BeadRow {
+    fn row(state: &str, labels: &[&str]) -> BeadRow {
         BeadRow {
             id: "sp-a".into(),
-            status: raw_status.into(),
-            raw_status: raw_status.into(),
+            state: state.into(),
             repo: "spira".into(),
             labels: labels.iter().map(|s| s.to_string()).collect(),
             superseded: false,
@@ -346,14 +335,17 @@ mod tests {
         }
     }
 
+    /// sp-mve9i: the close is the lifecycle row's call. A bead the builder handed on (the
+    /// machine's SUBMITTED through LANDED) is closed whatever bd shows; one still with a
+    /// builder, one dropped or superseded, or one with no row is left alone — the submitted
+    /// label (still on this row) decides nothing.
     #[test]
-    fn close_on_land_status_is_closed_when_bd_already_says_closed() {
-        assert_eq!(close_on_land_status(&row("closed", &["spira-submitted"]), "spira-submitted"), "closed");
-    }
-
-    #[test]
-    fn close_on_land_status_is_submitted_only_with_the_label_and_not_yet_closed() {
-        assert_eq!(close_on_land_status(&row("open", &["spira-submitted"]), "spira-submitted"), "submitted");
-        assert_eq!(close_on_land_status(&row("open", &[]), "spira-submitted"), "other");
+    fn close_on_land_reads_the_lifecycle_state_not_bd_status_or_the_label() {
+        for st in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"] {
+            assert!(should_close_on_land(&row(st, &[])), "{st}");
+        }
+        for st in ["READY", "WORKING", "REWORK", "DROPPED", "SUPERSEDED", "DONE", "-"] {
+            assert!(!should_close_on_land(&row(st, &["spira-submitted"])), "{st}");
+        }
     }
 }

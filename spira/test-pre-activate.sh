@@ -229,7 +229,8 @@ chmod +x "$REL/bin/spira-lc"
 SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred" run "$REL"
 is   "lifecycle: migrations applied: exit 0" 0 "$rc"
 want "lifecycle: reports the check" "ok   lifecycle" "$out"
-want "lifecycle: runs admin-migrate against the release's own migrations, gated on enforce" "admin-migrate --if-enforced $REL/lifecycle/migrations" "$(cat "$TMP/lc-argv")"
+want "lifecycle: runs admin-migrate against the release's own migrations" "admin-migrate $REL/lifecycle/migrations" "$(cat "$TMP/lc-argv")"
+nowant "lifecycle: passes no retired --if-enforced (sp-v62vn)" "--if-enforced" "$(cat "$TMP/lc-argv")"
 # sp-p1z81: the service identity lc-serve uses, untouched — never swapped for a default root.
 want "lifecycle: as the service user, its credential file kept" "user=spira_lc pwfile=$TMP/svc.cred admin=unset admin-migrate" "$(cat "$TMP/lc-argv")"
 
@@ -287,7 +288,7 @@ YAML
     printf '%s\n' "$SVCPW" > "$TMP/svc.cred"; chmod 600 "$TMP/svc.cred"
     sed -e "s/@SPIRA_LC_PASSWORD@/$SVCPW/" -e "s/@SPIRA_LC_RO_PASSWORD@/ro-$SVCPW/" "$REPO/lifecycle/grants.sql" > "$TMP/grants.sql"
     lc_env() { env SPIRA_LC_SOCKET=/nonexistent/test-pre-activate SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle \
-        XDG_CONFIG_HOME="$TMP/home/.config" SPIRA_LIFECYCLE_ENFORCE=1 "$@"; }
+        XDG_CONFIG_HOME="$TMP/home/.config" "$@"; }
     lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_PASSWORD_FILE= "$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/dolt/ddl.log" 2>&1 \
         && lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_PASSWORD_FILE= "$LC_BIN" admin-apply-ddl "$TMP/grants.sql" >>"$TMP/dolt/ddl.log" 2>&1 \
         && dsql -u root -p "" sql -q "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOTPW'" >>"$TMP/dolt/ddl.log" 2>&1 \

@@ -348,6 +348,7 @@ fn close_decision(db: &str, item: &Item, reason: &str) -> Result<(), String> {
         Some(&actor),
     ) {
         Ok(()) => {
+            lift_work_holds(db, item, &actor);
             notify_or_log(db, item, "verdict", reason, &actor);
             return Ok(());
         }
@@ -356,6 +357,38 @@ fn close_decision(db: &str, item: &Item, reason: &str) -> Result<(), String> {
     match run_as("bd", &["-C", db, "comments", "add", id, reason], Some(&actor)) {
         Ok(()) => Err(format!("{e} — still open; your answer is kept as a comment")),
         Err(_) => Err(format!("{e} — AND THE ANSWER WAS NOT SAVED: {reason}")),
+    }
+}
+
+/// The work beads an ask bead is about: its `work-bead:<id>` labels, which `mail send`
+/// writes on the tracking bead of a question asked about a work bead.
+pub fn work_beads(item: &Item) -> Vec<&str> {
+    item.labels.iter().filter_map(|l| l.strip_prefix("work-bead:")).filter(|w| !w.is_empty()).collect()
+}
+
+/// A VERDICT TYPED HERE IS THE ANSWER, so it lifts the asking bead's `ask` hold (sp-v62vn
+/// follow-up): `work ask` held the bead, and only a `Reply` lifts it — without this the
+/// bead the operator just answered stays unclaimable forever. `spira-lc reply <work-bead>
+/// <ask-bead-id>`: the ask bead is the record the answer lives on. Exit 1 (no row) and 3
+/// (no ask hold — an answer to a question that held nothing) are not failures; anything
+/// else is written to the ask bead, like a failed mail, rather than swallowed.
+fn lift_work_holds(db: &str, item: &Item, actor: &str) {
+    for w in work_beads(item) {
+        let out = Command::new("timeout")
+            .arg("5")
+            .arg(crate::store::bin("spira-lc"))
+            .args(["reply", w, &item.id, actor])
+            .env("PATH", crate::store::child_path())
+            .stdin(std::process::Stdio::null())
+            .output();
+        let failed = match out {
+            Ok(o) if matches!(o.status.code(), Some(0) | Some(1) | Some(3)) => None,
+            Ok(o) => Some(format!("exit {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim())),
+            Err(e) => Some(e.to_string()),
+        };
+        if let Some(e) = failed {
+            let _ = run_as("bd", &["-C", db, "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor));
+        }
     }
 }
 
@@ -1225,6 +1258,36 @@ mod tests {
         want(&msg, "X-Spira-Bead: sp-a1");
         want(&msg, "raise the pool to 32");
         assert!(!msg.contains("In-Reply-To"), "no In-Reply-To: {msg:?}");
+    }
+
+    /// THE GAP THIS CLOSES (sp-v62vn follow-up): `work ask` holds the asking bead and only a
+    /// Reply lifts it. A verdict typed on its ask bead is the answer, so it emits
+    /// `spira-lc reply <work-bead> <ask-bead>` for the bead the ask is about.
+    #[test]
+    fn a_verdict_on_an_ask_about_a_work_bead_lifts_its_ask_hold() {
+        let stub = crate::test_support::StubBd::new().mail().lc().env("SPIRA_OPERATOR_ACTOR", "optest");
+        let item = work_item(&["ask-question", "overseer", "work-bead:sp-w1"]);
+        assert!(close_decision("/fake/db", &item, "yes, go").is_ok());
+        let log = stub.argv_log();
+        want(&log, "LC: reply sp-w1 sp-x optest");
+        assert!(log.find("close sp-x").unwrap() < log.find("LC: reply").unwrap(), "the close is the verdict; the lift follows it: {log}");
+    }
+
+    /// No work-bead label: nothing is lifted. A refusal (no ask hold to lift) is not recorded
+    /// as a failure; a cannot-tell is, on the ask bead.
+    #[test]
+    fn a_verdict_lifts_only_what_its_labels_name_and_records_a_failed_lift() {
+        let stub = crate::test_support::StubBd::new().mail().lc();
+        assert!(close_decision("/fake/db", &work_item(&["ask-question"]), "ok").is_ok());
+        assert!(!stub.argv_log().contains("LC:"), "{}", stub.argv_log());
+        drop(stub);
+        let stub = crate::test_support::StubBd::new().mail().lc().env("LC_RC", "3");
+        assert!(close_decision("/fake/db", &work_item(&["ask-question", "work-bead:sp-w1"]), "ok").is_ok());
+        assert!(!stub.argv_log().contains("not lifted"), "{}", stub.argv_log());
+        drop(stub);
+        let stub = crate::test_support::StubBd::new().mail().lc().env("LC_RC", "2");
+        assert!(close_decision("/fake/db", &work_item(&["ask-question", "work-bead:sp-w1"]), "ok").is_ok());
+        want(&stub.argv_log(), "ask hold on sp-w1 not lifted");
     }
 
     /// A mail that fails to send must not be lost silently: the bead is already the answer's

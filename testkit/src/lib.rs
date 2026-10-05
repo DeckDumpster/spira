@@ -211,6 +211,10 @@ mod tests {
     /// How many processes on this box currently belong to process group `pgid` — read
     /// straight from `/proc/<pid>/stat` (field 5, past the LAST `)` so a `comm` containing
     /// its own parens, spaces or digits never misleads the split).
+    /// LIVE members of a process group. A zombie is not counted: it is already dead, and only
+    /// waits for its parent — for the orphaned grandchild, whatever reaps orphans here — to
+    /// collect it, which under load (a full round's unit step, PID 1 busy) took long enough
+    /// that a count including zombies saw the killed group as still there.
     fn group_member_count(pgid: u32) -> usize {
         let Ok(entries) = std::fs::read_dir("/proc") else { return 0 };
         entries
@@ -219,7 +223,8 @@ mod tests {
             .filter(|e| {
                 let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { return false };
                 let Some((_, rest)) = stat.rsplit_once(')') else { return false };
-                rest.split_whitespace().nth(2).and_then(|s| s.parse::<u32>().ok()) == Some(pgid)
+                let f: Vec<&str> = rest.split_whitespace().collect();
+                f.first() != Some(&"Z") && f.get(2).and_then(|s| s.parse::<u32>().ok()) == Some(pgid)
             })
             .count()
     }
@@ -257,6 +262,13 @@ mod tests {
         }
         assert_eq!(group_member_count(pgid), 2, "fixture: leader + backgrounded grandchild both up");
         g.kill();
+        // SIGKILL is delivered asynchronously; wait for the group's live members to go the same
+        // bounded way the fixture waited for them to arrive (zombies are not counted).
+        let mut tries = 0;
+        while group_member_count(pgid) > 0 && tries < 200 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            tries += 1;
+        }
         assert_eq!(group_member_count(pgid), 0, "the whole group is gone, not just the leader");
     }
 

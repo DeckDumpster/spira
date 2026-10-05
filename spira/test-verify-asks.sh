@@ -88,6 +88,25 @@ want "close reason cites the VERIFY command" "VERIFY check now passes" "$close_c
 want "and quotes the command itself"         "exit 0"                 "$close_call"
 
 echo
+echo "a satisfied ask about a work bead withdraws that bead's ask hold (sp-v62vn follow-up):"
+# `work ask` holds the asking bead; only a Reply or an AskWithdrawn lifts it. A VERIFY close
+# is the question closed without an answer, so it emits withdraw-ask on the work bead the
+# ask's work-bead: label names — a stub spira-lc on PATH records the call.
+LC_STUB_DIR="$TMP/lcstub"; mkdir -p "$LC_STUB_DIR"; LC_LOG="$TMP/lc.log"; : > "$LC_LOG"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %q\nexit "${LC_STUB_RC:-0}"\n' "$LC_LOG" > "$LC_STUB_DIR/spira-lc"
+chmod +x "$LC_STUB_DIR/spira-lc"
+printf '[%s]' "$(row sp-vw0 open decision "work-bead:sp-vw1" "asked by a session\\n\\nVERIFY: exit 0")" > "$ROWS_FILE"
+: > "$CLOSED_LOG"
+out="$(PATH="$LC_STUB_DIR:$PATH" verify --apply 2>&1)"
+want "the ask is closed"                          "sp-vw0"                      "$(cat "$CLOSED_LOG")"
+is   "withdraw-ask is emitted on the work bead"   "withdraw-ask sp-vw1 claude"  "$(cat "$LC_LOG")"
+want "and says so"                                "withdrew the ask hold on sp-vw1" "$out"
+: > "$LC_LOG"
+printf '[%s]' "$(row sp-vw2 open decision "" "no work bead\\n\\nVERIFY: exit 0")" > "$ROWS_FILE"
+out="$(PATH="$LC_STUB_DIR:$PATH" verify --apply 2>&1)"
+is   "SEEN RED control: an ask naming no work bead withdraws nothing" "" "$(cat "$LC_LOG")"
+
+echo
 echo "a failing VERIFY check (exit non-zero) leaves the ask open:"
 
 printf '[%s]' "$(row sp-vfail1 open decision "" "still open\\n\\nVERIFY: exit 1")" > "$ROWS_FILE"

@@ -381,3 +381,46 @@ fn gate_mode_refuses_a_close_behind_a_directory_flag() {
     assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
     assert!(out.lines().any(|l| l.starts_with("planted.sh:2: [direct-write]") && l.contains("bd close")), "{out}");
 }
+
+/// sp-mve9i: a Rust decision on a work bead's bd status or assignee — compared, matched,
+/// queried with `--status`, or an assignee in a condition — is a bd-status-read, design §3.4.
+#[test]
+fn rust_bd_status_reads_are_reported_in_each_shape() {
+    let findings = run("bd_status_rust", None);
+    let got: Vec<(u64, &str, &str)> = findings
+        .iter()
+        .map(|f| (f["line"].as_u64().unwrap(), f["class"].as_str().unwrap(), f["callee"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (3, "bd-status-read", "compare"),
+            (7, "bd-status-read", "query"),
+            (12, "bd-status-read", "match"),
+            (18, "bd-status-read", "assignee"),
+        ],
+        "{findings:#?}"
+    );
+    assert!(findings.iter().all(|f| f["file"] == "src/decide.rs"), "{findings:#?}");
+}
+
+/// The same decisions read through spira_config::lc_state and spira_config::nonwork are not
+/// findings, nor are a comment, a process's ExitStatus, a PR's own state, a test module, or
+/// the non-work scope itself.
+#[test]
+fn rust_state_read_through_the_machine_or_the_nonwork_scope_is_not_reported() {
+    let findings = run("bd_status_rust_clean", None);
+    assert!(findings.is_empty(), "{findings:#?}");
+}
+
+/// The gate refuses a planted Rust bd-status decision (sp-mve9i): the class is in
+/// GATE_CLASSES, so a decision on a work bead's bd status is a red, not a count.
+#[test]
+fn gate_mode_refuses_a_rust_bd_status_read() {
+    let (code, out, err) = gate(&fixture("gate_bd_status_rust"));
+    assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.lines().any(|l| l.starts_with("src/lib.rs:2: [bd-status-read]")), "{out}");
+    assert!(!out.contains("not yet refused at the gate: bd-status-read"), "{out}");
+    assert!(!out.contains("fence: lifecycle-guard"), "a refused run proves nothing: {out}");
+    assert!(err.contains("REFUSED"), "{err}");
+}

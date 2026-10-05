@@ -383,17 +383,13 @@ this bead). `suite-state-fence.sh` itself is not rewritten to Rust here — only
 changes (source the deleted bash → run `testenv suites lint`) — its own bd/CLOSED-bead check
 is outside this bead's remit (suite-state.sh never had it).
 
-## 6a. lifecycle_enforce (operator decision, 2026-09-28)
+## 6a. spira-lc
 
-`lifecycle_enforce` is the single switch for everything touching spira-lc (env
-`SPIRA_LIFECYCLE_ENFORCE` `1`/`true`, else `spira.lifecycle_enforce`, else OFF).
-**`testenv suites` never touches spira-lc in either mode**: no subcommand runs it, reads
-`SPIRA_LC_BIN`, sources lc.sh, or reads the switch, so OFF and ON behave identically here.
-A transition's `queue submit` is the queue
-binary's own business, and the queue crate applies the switch there. Pinned by the unit
-test `suites::tests::suites_never_touches_spira_lc_in_either_lifecycle_mode` (the module
-sources name none of spira-lc / SPIRA_LC_BIN / lc.sh / the switch; settings resolve
-identically with the switch at 0 and 1).
+The `lifecycle_enforce` switch is retired (sp-v62vn): the lifecycle machine is the only
+mode. **`testenv suites` never touches spira-lc**: no subcommand runs it, reads
+`SPIRA_LC_BIN` or sources lc.sh. A transition's `queue submit` is the queue binary's own
+business. Pinned by the unit test `suites::tests::suites_never_touches_spira_lc` (the module
+sources name none of spira-lc / SPIRA_LC_BIN / lc.sh).
 
 ## 7. Findings (not fixed here)
 

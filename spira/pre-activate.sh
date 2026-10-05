@@ -205,7 +205,8 @@ check_lifecycle() {
     local out rc
     # The environment's own lifecycle identity, untouched: admin-migrate probes as it and
     # reads SPIRA_LC_ADMIN_USER/PASSWORD itself, only when a migration is pending (sp-p1z81).
-    out="$("$lc" admin-migrate --if-enforced "$mig" 2>&1)"
+    # No --if-enforced: there is no off to gate on (sp-v62vn).
+    out="$("$lc" admin-migrate "$mig" 2>&1)"
     rc=$?
     if [ "$rc" -eq 0 ]; then
         ok "lifecycle ($(printf '%s' "$out" | tail -1))"

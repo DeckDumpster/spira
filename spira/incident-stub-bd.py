@@ -16,7 +16,9 @@
 # calls" for UC-04's dedup-efficiency property).
 #
 # COMMANDS IMPLEMENTED (the subset incident.sh and lib.sh's bump_*/recurs_of call):
-#   list --status S[,S...] [--closed-after DATE] --limit N [--label L] --json
+#   list [--all | --status S[,S...]] [--closed-after DATE] [--id ID[,ID...]] --limit N
+#        [--label L] --json   (incident reads --all since sp-jgjvh: its open/closed is each
+#        bead's lifecycle row — a suite pairs this stub with testlib.sh lc_mirror_bd)
 #   create <title> --type T --priority P --labels L --external-ref REF --body-file F --silent
 #   show <id> --json
 #   label add|remove|list <id> [<label>]
@@ -72,6 +74,7 @@ def main():
         statuses = []
         label = None
         closed_after = None
+        ids = None
         i = 1
         while i < len(argv):
             if argv[i] == "--status":
@@ -80,6 +83,8 @@ def main():
                 label = argv[i + 1]; i += 2
             elif argv[i] == "--closed-after":
                 closed_after = argv[i + 1]; i += 2
+            elif argv[i] == "--id":
+                ids = set(argv[i + 1].split(",")); i += 2
             else:
                 i += 1
         # bd's --label takes a comma list meaning AND: every named label must be present.
@@ -87,6 +92,8 @@ def main():
         rows = []
         for b in state["beads"].values():
             if statuses and b.get("status") not in statuses:
+                continue
+            if ids is not None and b.get("id") not in ids:
                 continue
             if want_labels and not all(l in (b.get("labels") or []) for l in want_labels):
                 continue

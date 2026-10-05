@@ -21,11 +21,6 @@ testdb_up cockpit-funnel || exit 1
 
 # Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
 # can overwrite PATH with the harness's own tool directories.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — needed to build spira-lc"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
 
@@ -37,7 +32,7 @@ BD_PATH="${SPIRA_PATH:-}"
 REAL_BD="$(PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" command -v bd)"
 [ -n "$REAL_BD" ] || { echo "SKIP cockpit-funnel: no bd binary" >&2; exit 77; }
 TESTDB_BD_PATH="$(command -v bd)"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$BASE_PATH"
+export PATH="$(dirname "$DOLT_BIN"):$BASE_PATH"
 
 # spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
 # and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
@@ -72,11 +67,7 @@ done
 [ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
 
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
-CARGO_TARGET_DIR_FOR_LC="$TMP/lc-cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_LC" \
-    "$CARGO_BIN" build --manifest-path "$REPO_ROOT/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
-LC_BIN="$CARGO_TARGET_DIR_FOR_LC/debug/spira-lc"
+LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
 SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
@@ -157,7 +148,12 @@ lc_seed_bead sp-r5 REWORK "$NOW_EPOCH" policy-violation
 # sp-c1: CERTIFIED.
 lc_seed_bead sp-c1 CERTIFIED "$OLD_EPOCH"
 
-# sp-d1..3 have no spira-lc row (done stage).
+# sp-d1..3: SUBMITTED too — the done stage is a handed-on bead awaiting certification with a
+# branch and no landing (sp-mve9i; it was "closed in bd, no row", which cannot happen once
+# the row is the bead's state), split by age at the cert window.
+lc_seed_bead sp-d1 SUBMITTED "$NOW_EPOCH"
+lc_seed_bead sp-d2 SUBMITTED "$NOW_EPOCH"
+lc_seed_bead sp-d3 SUBMITTED "$NOW_EPOCH"
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
@@ -171,13 +167,14 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
 echo "--- (a) funnel stage counts ---"
-is "SP_UNLANDED_N is 3 (sp-d1..3: done)"     "3"  "$(val SP_UNLANDED_N)"
+# Done is every SUBMITTED bead with a branch: sp-d1..3 and sp-g1..2.
+is "SP_UNLANDED_N is 5 (sp-d1..3, sp-g1..2: SUBMITTED)" "5"  "$(val SP_UNLANDED_N)"
 # sp-bf31a: SP_UNLANDED_N splits into stranded (older than the cert window) and cert
-# (within it). sp-d1/sp-d2 closed 2h ago are stranded; sp-d3 closed 65m ago is not
-# (default window is 90m).
+# (within it). sp-d1/sp-d2 finished 2h ago are stranded; sp-d3, sp-g1, sp-g2 finished 65m
+# ago are not (default window is 90m).
 is "SP_STRANDED_N is 2 (sp-d1,sp-d2 closed 2h ago)" "2"  "$(val SP_STRANDED_N)"
-is "SP_CERT_N is 1 (sp-d3 closed 65m ago)"          "1"  "$(val SP_CERT_N)"
-is "SP_FUNNEL_CERTIFY_N is 2 (sp-g1..2)"      "2"  "$(val SP_FUNNEL_CERTIFY_N)"
+is "SP_CERT_N is 3 (sp-d3, sp-g1..2 finished 65m ago)" "3"  "$(val SP_CERT_N)"
+is "SP_FUNNEL_CERTIFY_N is 5 (sp-d1..3, sp-g1..2 SUBMITTED)" "5"  "$(val SP_FUNNEL_CERTIFY_N)"
 is "SP_FUNNEL_RED_N is 5 (sp-r1..5)"          "5"  "$(val SP_FUNNEL_RED_N)"
 is "SP_QUEUE_DEPTH is 1 (sp-c1 CERTIFIED)"    "1"  "$(val SP_QUEUE_DEPTH)"
 

@@ -35,28 +35,25 @@ it existed).
 | `certify <id> <tip> <pass\|red\|infra> [detail] [actor=lifecycle-cert]` · `resubmit <id> <tip> [actor]` | `lc_certify` · `lc_resubmit` | 0 · 2 cannot tell · 3 refused/skipped; each outcome appended to `$SPIRA_RUN/lifecycle-cert.log` as before |
 | `renew <id> <holder> <lease-until>` | `bd heartbeat` (sp-2jf0a: the aeon's heartbeat renews its lifecycle lease) | 0 renewed · 1 not this holder's WORKING row · 2 cannot tell · 3 refused (race, or a deadline that does not advance); the machine refuses a non-holder with `NotHolder` |
 
-**Two verbs carry bd's half of a claim or an epic, and run whatever the switch says** (sp-hyo5e —
+**Two verbs release a claim or close an epic** (sp-hyo5e —
 nothing in shell writes a claim, a status or a close around the machine any more):
 
 | verb | replaces | exit |
 |---|---|---|
-| `unclaim <id> <actor>` | `release_own_claim`'s `lc_release_bead` + `bdq update --status open --assignee ""` | switch on: the machine's `Release` when the row is WORKING under `<actor>`, refused when another holder has it, success when the claim is already over; bd is not written (the row is the claim). Switch off: `bd unclaim <id> --if-assignee <actor>`. 0 released · 1 another holder, or no such bead · 2 cannot tell, usage |
+| `unclaim <id> <actor>` | `release_own_claim`'s `lc_release_bead` + `bdq update --status open --assignee ""` | the machine's `Release` when the row is WORKING under `<actor>`, refused when another holder has it, success when the claim is already over; bd is not written (the row is the claim). 0 released · 1 another holder, or no such bead · 2 cannot tell, usage |
 | `close-epic <id> <reason>` | pilgrimage.sh's `bdq close` | `bd close` only when bd's `issue_type` is `epic` (a grouping, never claimed, no lifecycle row). 0 closed · 2 cannot tell / usage · 3 refused (not an epic) |
 
-**Two verbs touch no lifecycle state and ignore the switch.** `content-landed <repo> <branch> <base>`
+**Two verbs touch no lifecycle state.** `content-landed <repo> <branch> <base>`
 (0 base holds every change the branch makes · 1 not · 2 usage) and `close-on-land <id> [sha]` (closes a
 submitted, unclosed work bead citing the sha, marks the ledger LANDED, reaps the branch through
 `sending`; best-effort, always 0). The first replaces lib.sh's bash merge-tree check; the second
 is what every landing path calls to close a landed bead (sending's seam directly; the queue still
 through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's own subcommand.
 
-**The switch is read before anything else.** `lifecycle_enforce` (`SPIRA_LIFECYCLE_ENFORCE`,
-else `spira.lifecycle_enforce`, else off — spira-config's one resolver). Off, every caller
-verb answers exactly what the shell function answered off — 2 for events/state/certify, an
-empty 0 for the reads, 1 for `held`, the "no delivery row … inert" log line and 1 for
-`deliver` — **without** opening the socket, a connection, or a repository (tests/switch.rs
-proves it with a listener that counts connections). conf.sh now exports the switch it resolved, so a
-script's children agree with the script, as the sourced functions did by construction.
+**There is no switch.** `lifecycle_enforce` once gave every caller verb an off-answer that
+touched nothing; sp-v62vn retired the off mode, so every verb reaches the machine
+(tests/switch.rs proves it with a listener that counts connections). A config or environment
+that still says off is refused by spira-config, naming the exit.
 
 **CAS from the caller's own read.** Every event verb reads the row once and applies its
 event under that row's `(state, version)` — a stale view is refused (3), never forced.

@@ -28,10 +28,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Resolved BEFORE testdb.sh, which sources conf.sh, which rebuilds PATH from SPIRA_PATH +
 # $HOME/.local/bin + /usr/local/bin + /usr/bin + /bin — dropping wherever this box's cargo
 # actually lives (gap #4's row below needs it after that rebuild has already happened).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
 . "$HERE/testdb.sh"
 testdb_require test-cockpit-bd-contract
 TMP="$(mktemp -d)"
@@ -39,9 +35,16 @@ testdb_up bdcontract || { echo "test-cockpit-bd-contract: could not build a fixt
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 RUN="$TMP/run"; mkdir -p "$RUN"
+# SP_POISON is the lifecycle machine's poison holds (sp-mve9i); this world's machine mirrors
+# the real store (spira-poison label → poison hold, closed → LANDED), read through real bd.
+# SP_READY is spira-claim's ready set (sp-7g5q6), the machine's READY/REWORK rows, and
+# spira-claim finds spira-lc by name on PATH (sp-gypjk), not through SPIRA_LC_BIN — so the
+# mirror goes first on PATH as well, or the count asks the tree's real spira-lc, which has no
+# machine here to answer, and renders ?.
+lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd-embedded}" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
@@ -130,14 +133,10 @@ echo
 echo "gap #4: the panel's own Snapshot parsing (store.rs::fetch_beads) against a real"
 echo "bd list --all --json, not the hand-shaped literal store.rs's own unit test stubs:"
 # ======================================================================================
-PANEL_MANIFEST="$(dirname "$HERE")/cockpit/panel/Cargo.toml"
-if [ -z "$CARGO_BIN" ]; then
-    printf '  skip  gap #4: cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/\n'
-elif ! PATH="$(dirname "$CARGO_BIN"):$PATH" "$CARGO_BIN" build --manifest-path "$PANEL_MANIFEST" --quiet 2>"$TMP/panel-build.err"; then
-    bad "panel binary builds for the real-bd contract row" "cargo build failed: $(tail -5 "$TMP/panel-build.err")"
+PANEL_BIN="$(command -v panel 2>/dev/null || true)"
+if [ -z "$PANEL_BIN" ]; then
+    bad "the panel binary is on PATH (the tree's build provides it)" "panel not found"
 else
-    PANEL_TARGET="${CARGO_TARGET_DIR:-$(dirname "$PANEL_MANIFEST")/target}"
-    PANEL_BIN="$PANEL_TARGET/debug/panel"
     testdb_reset
     testdb_seed <<'JSONL'
 {"id":"sp-cbdump1","title":"real bd through the panel's own Snapshot parsing","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-08T00:00:00Z"}

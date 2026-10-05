@@ -15,14 +15,15 @@
 #
 # WHAT THIS SUITE CHECKS.
 #   1. builder.fayth's FAYTH_EXCLUDE_LABELS contains qa-proposed (the direct field check).
-#   2. When fayth_ready asks ready_count for the builder, qa-proposed appears in the
-#      exclude argument (the end-to-end predicate check).
+#   2. fayth_ready builder, over a ready set holding one plain plan bead and one QA proposal,
+#      counts the plan bead and never the proposal (the end-to-end predicate check).
 #
-# WHAT THIS SUITE DOES NOT USE. No real database, no systemd, no network. `fayth_ready`
-# (wave 4.25, sp-obhv6: a one-line shim onto `spira-claim fayth-ready`, no longer an
-# in-process bash call to `ready_count`) is exercised end to end against a fake `$SPIRA_BD`
-# that records its own argv — one layer lower than the old `ready_count` function stub, but
-# the same technique test-sentinel-store-reads.sh already uses.
+# WHAT THIS SUITE DOES NOT USE. No real database, no systemd, no network. `fayth_ready` is a
+# one-line shim onto `spira-claim fayth-ready` (wave 4.25, sp-obhv6), and its ready set is the
+# lifecycle machine's READY rows (sp-v62vn: there is no off mode, so no `bd ready` call whose
+# argv this suite could read): a spira-lc stand-in (testlib `lc_mirror_bd`) answers `list`
+# from a fake `$SPIRA_BD`'s two fixture beads, and spira-claim's own label predicate does
+# the excluding.
 #
 # tier: T1
 # covers: spira/chamber/builder.fayth spira/lib.sh spira-claim/*
@@ -59,23 +60,37 @@ want "builder FAYTH_LABELS contains plan" "plan" "$builder_labels"
 
 # ==========================================================================================
 echo
-echo "fayth_ready builder — qa-proposed appears in the exclude argument to ready_count"
+echo "fayth_ready builder — a qa-proposed bead is not in the builder's ready set"
 # ==========================================================================================
-# A fake bd that records its own argv: `fayth-ready` calls `ready_count`'s Rust equivalent
-# with `--label <FAYTH_LABELS> --exclude-label <fayth_exclude ...>`, so qa-proposed (from
-# builder.fayth's own FAYTH_EXCLUDE_LABELS) must appear there.
-BD_ARGS_FILE="$T/observed-bd-args"
+# Two READY beads carrying the scope and plan labels: one plain, one also labelled
+# qa-proposed. The machine says both are READY; builder.fayth's own FAYTH_EXCLUDE_LABELS is
+# the only thing that may tell them apart. SPIRA_SCOPE_LABEL is pinned to the fixture's scope
+# label below, so builder.fayth's FAYTH_LABELS (scope + plan) is a predicate both satisfy.
+lbl_json='"spira","plan",'
+FIXTURE="$T/beads.json"
+cat > "$FIXTURE" <<EOF
+[{"id":"sp-qaplain","title":"approved plan work","status":"open","issue_type":"task","priority":1,"labels":[${lbl_json}"repo:spira"]},
+ {"id":"sp-qaprop","title":"a QA proposal","status":"open","issue_type":"task","priority":1,"labels":[${lbl_json}"repo:spira","qa-proposed"]}]
+EOF
 FAKE_BD="$T/fake-bd"
 cat > "$FAKE_BD" <<EOF
 #!/bin/sh
-printf '%s\n' "\$*" >> "$BD_ARGS_FILE"
-echo '[]'
+case " \$* " in *" list "*) cat "$FIXTURE" ;; *) echo '[]' ;; esac
 EOF
 chmod +x "$FAKE_BD"
+lc_mirror_bd "$T/lc"
 
-SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" fayth_ready builder >/dev/null 2>&1 || true
-observed_excl="$(cat "$BD_ARGS_FILE" 2>/dev/null)"
-want "fayth_ready builder passes qa-proposed in the exclude arg to bd" "qa-proposed" "$observed_excl"
+ready_builder() {   # ready_builder [--json]
+    PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+        _spira_claim fayth-ready builder "$@" 2>/dev/null
+}
+# POSITIVE CONTROL: the fixture reaches spira-claim at all — the plain bead counts. A machine
+# that answered nothing would read 0 and make the exclusion below vacuous.
+is "positive control: fayth_ready builder counts the plain plan bead" "1" \
+    "$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira fayth_ready builder 2>/dev/null)"
+builder_set="$(ready_builder --json)"
+want   "fayth_ready builder's set holds the plain plan bead" "sp-qaplain" "$builder_set"
+nowant "fayth_ready builder's set excludes the qa-proposed bead" "sp-qaprop" "$builder_set"
 
 # ==========================================================================================
 echo

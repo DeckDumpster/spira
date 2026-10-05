@@ -19,7 +19,6 @@ pub const KINDS_FILE: &str = "spira-lint/event-kinds";
 pub const WIRED: &[(&str, &str)] = &[
     ("gate-check/src/main.rs", "ci.failed"),
     ("sentinel/src/check4.rs", "bead.poisoned"),
-    ("strand/src/check.rs", "branch.reclaimed"),
     ("landing-pass/src/push.rs", "bead.landed"),
     ("landing-pass/src/push.rs", "bead.reopened"),
 ];
@@ -204,10 +203,10 @@ mod tests {
         let t = TempDir::new("ev-wire");
         t.write(KINDS_FILE, KINDS);
         let files = wired(&t);
-        t.write("strand/src/check.rs", "// branch.reclaimed moved\n");
+        t.write("landing-pass/src/push.rs", "emit(\"bead.landed\"); // bead.reopened moved\n");
         assert_eq!(
             run(&t, files, &[]).unwrap(),
-            vec!["event-taxonomy: strand/src/check.rs: no call site emits branch.reclaimed (expected \"\\\"branch.reclaimed\\\"\")"]
+            vec!["event-taxonomy: landing-pass/src/push.rs: no call site emits bead.reopened (expected \"\\\"bead.reopened\\\"\")"]
         );
     }
 

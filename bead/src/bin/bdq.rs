@@ -295,8 +295,13 @@ fn cmd_bdq(args: &[String]) -> i32 {
         let u = claimdesc::parse_update_args(&args[1..]);
         call_args = std::iter::once("update".to_string()).chain(u.passthrough.iter().cloned()).collect();
         if let (true, Some(id)) = (u.touches_description, u.id.as_ref()) {
-            let shown = bd_capture(&timeout_s, &bd_bin, &db, &["show", id, "--json"]);
-            if let Some(claim) = claimdesc::live_claim(&util_json_only(&shown), now_epoch()) {
+            // The claim is the lifecycle row's (sp-mve9i). A machine that cannot answer refuses
+            // nothing, as a failed bd show refused nothing before it.
+            let row = spira_config::lc_state::row(id).unwrap_or_else(|e| {
+                eprintln!("bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim");
+                None
+            });
+            if let Some(claim) = claimdesc::live_claim(row.as_ref(), now_epoch()) {
                 match u.force {
                     None => {
                         eprint!("{}", claimdesc::refusal(id, &claim));
@@ -312,7 +317,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
-    let lc_row = is_create(args) && !creates_closed(args) && spira_config::lifecycle_enforce(None);
+    let lc_row = is_create(args) && !creates_closed(args);
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
         let (rc, err, out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row);

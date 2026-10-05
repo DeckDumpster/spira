@@ -1,12 +1,11 @@
-//! The lifecycle switch at the binary's edge (DESIGN.md §3): off never touches the socket;
-//! on reaches it, and an unreachable socket is "cannot tell".
+//! The binary's edge (DESIGN.md §3): every verb reaches the socket, and an unreachable
+//! socket is "cannot tell". There is no off mode (sp-v62vn).
 
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 fn scratch(tag: &str) -> testkit::TempDir {
     testkit::TempDir::new(&format!("work-switch-{tag}"))
@@ -29,7 +28,7 @@ fn machine(sock: &PathBuf) -> Arc<AtomicBool> {
     hit
 }
 
-fn work(enforce: &str, sock: &Path, home: &Path, verb: &str) -> std::process::Output {
+fn work(sock: &Path, home: &Path, verb: &str) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_work"))
         .arg(verb)
         .env_clear()
@@ -37,42 +36,25 @@ fn work(enforce: &str, sock: &Path, home: &Path, verb: &str) -> std::process::Ou
         .env("PATH", "/usr/bin:/bin")
         .env("SPIRA_WORK_BEAD_ID", "sp-abc12")
         .env("SPIRA_LC_SOCKET", sock)
-        .env("SPIRA_LIFECYCLE_ENFORCE", enforce)
         .output()
         .unwrap()
 }
 
 #[test]
-fn off_refuses_every_verb_without_touching_the_socket() {
-    let d = scratch("off");
+fn a_verb_reaches_the_socket() {
+    let d = scratch("reach");
     let sock = d.join("sock");
     let hit = machine(&sock);
-    for (enforce, verb) in [("0", "show"), ("", "note"), ("yes", "done"), ("0", "submit")] {
-        let o = work(enforce, &sock, &d, verb);
-        assert_eq!(o.status.code(), Some(3), "{enforce:?} {verb}");
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert!(err.contains("lifecycle_enforce is off"), "{err}");
-        assert!(o.stdout.is_empty());
-    }
-    std::thread::sleep(Duration::from_millis(100));
-    assert!(!hit.load(Ordering::SeqCst), "the socket must never be touched with lifecycle_enforce off");
-}
-
-#[test]
-fn on_reaches_the_socket() {
-    let d = scratch("on");
-    let sock = d.join("sock");
-    let hit = machine(&sock);
-    let o = work("1", &sock, &d, "show");
+    let o = work(&sock, &d, "show");
     assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "ok");
     assert!(hit.load(Ordering::SeqCst));
 }
 
 #[test]
-fn on_unreachable_socket_is_cannot_tell() {
-    let d = scratch("on-gone");
-    let o = work("true", &d.join("absent-sock"), &d, "show");
+fn an_unreachable_socket_is_cannot_tell() {
+    let d = scratch("gone");
+    let o = work(&d.join("absent-sock"), &d, "show");
     assert_eq!(o.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&o.stderr).contains("cannot tell"));
 }

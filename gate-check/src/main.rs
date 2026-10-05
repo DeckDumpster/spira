@@ -89,15 +89,28 @@ fn resolve_escalated(world: &dyn World, esc: &str) {
     world.spira_event("ci.failed", &blocked, &format!("CI red — {blocked} returned to queue"), esc);
 }
 
+/// The lifecycle rows a filing step dedups against; without them the step files nothing this
+/// pass rather than risk a duplicate it could not check for.
+fn lc_or_skip(world: &dyn World, step: &str) -> Option<engine::Lc> {
+    match world.lc_rows() {
+        Ok(lc) => Some(lc),
+        Err(e) => {
+            world.print(&format!("gate-check: {step} skipped — lifecycle state unreadable ({e})"));
+            None
+        }
+    }
+}
+
 /// STEP 3: FLAKY SUITE BEADS.
 fn flaky_beads(world: &dyn World, repo: &str) {
     let home_repo = world.home_repo();
+    let Some(lc) = lc_or_skip(world, "flaky suite beads") else { return };
     for run_id in world.gh_recent_run_ids(repo, 20) {
         for job_id in engine::job_ids(&world.gh_jobs_json(repo, &run_id)) {
             let annotations = world.gh_annotations_json(repo, &job_id.to_string());
             for suite in engine::flaky_suites(&annotations) {
                 let title = engine::flaky_title(&suite);
-                if engine::has_open_bead(&world.bd_list_json(), &title) {
+                if engine::has_open_bead(&world.bd_list_json(), &title, &lc) {
                     continue;
                 }
                 world.file_bead(&title, &home_repo, 2, &engine::flaky_body(&run_id, &suite));
@@ -110,6 +123,7 @@ fn flaky_beads(world: &dyn World, repo: &str) {
 /// scoped to `--branch main` (a PR run sharing the repo must never trigger it).
 fn red_twice_beads(world: &dyn World, repo: &str) {
     let home_repo = world.home_repo();
+    let Some(lc) = lc_or_skip(world, "red-twice suite beads") else { return };
     let repo_root = world.repo_root(&home_repo);
     let last_green = world.gh_last_green_main_sha(repo).unwrap_or_default();
     let mut seen: Vec<String> = Vec::new();
@@ -123,7 +137,7 @@ fn red_twice_beads(world: &dyn World, repo: &str) {
                 seen.push(suite.clone());
                 let title = engine::red_twice_title(&suite);
                 let list = world.bd_list_json();
-                if let Some((id, pri)) = engine::find_open_bead(&list, &title) {
+                if let Some((id, pri)) = engine::find_open_bead(&list, &title, &lc) {
                     if pri <= 1 {
                         continue;
                     }

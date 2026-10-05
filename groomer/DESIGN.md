@@ -95,13 +95,8 @@ the bash suites' `STUB_BD` argv-recording technique without a subprocess.
   (repo map lookup, branch existence, land base, a commit naming the bead, a clean
   merge-tree), and hands the verdicts to `spira-claim deadlocked` as the same bare JSON
   array on `--merge-status`, unchanged.
-  - **The non-enforce poison check is `contains`, not the landed bash's `grep -qx`
-    (exact whole line).** Checked against a live `bd label list <id>`: the real output is
-    never a bare label per line — `🏷️ Labels for <id>:` then `  - <label>` rows — so an
-    exact-line match can never fire. `groomer.sh`'s own `triage-poison` case already used
-    the substring form for this reason; `deadlocked`'s `grep -qx` looks like a bug in the
-    bash this crate is replacing, not a behaviour to reproduce, and lifecycle_enforce's
-    path (`spira-lc held <id> poison`) is unaffected either way.
+  - **Poisoned is the lifecycle machine's hold** (`spira-lc held <id> poison`), never bd's
+    `spira-poison` label (sp-v62vn retired the label-reading off path).
 - **`groomer-litter-predicate.py` is gone, not repointed.** It was pure JSON-in,
   judgement-out with no dependency the Rust binary doesn't already have (`serde_json`),
   so keeping it as a subprocess `groomer` shells out to would be paying a process spawn

@@ -139,6 +139,22 @@ exit "$rc"
         self
     }
 
+    /// Also installs a `spira-lc` stub on `SPIRA_PATH` — the verdict's hold-lifting leg
+    /// (sp-v62vn follow-up). Argv goes to the same log, prefixed `LC:`; exit `LC_RC`.
+    pub fn lc(self) -> Self {
+        testkit::write_exe(
+            &self.dir.join("spira-lc"),
+            &format!(
+                r#"#!/usr/bin/env bash
+printf 'LC: %s\n' "$*" >> {log:?}
+exit "${{LC_RC:-0}}"
+"#,
+                log = self.log
+            ),
+        );
+        self
+    }
+
     /// The last message the stubbed `mail sendmail` received on stdin, whole.
     pub fn mail_inbox(&self) -> String {
         self.mail_inbox

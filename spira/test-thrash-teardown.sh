@@ -73,6 +73,12 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+aeon_fixture_agent "$BIN/claude"
+# The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
+# `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
+# lifecycle terms, ahead of the tree's spira-lc on PATH.
+lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
 command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 

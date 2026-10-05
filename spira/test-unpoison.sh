@@ -68,9 +68,7 @@ done
 lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
 
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-# The machine is seeded and asserted on below, so the switch is on (spira-claim/DESIGN.md
-# §8.7); off never calls spira-lc and the hold assertions would be meaningless.
-export SPIRA_LIFECYCLE_ENFORCE=1
+# The machine is seeded and asserted on below (spira-claim/DESIGN.md §8.7).
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LCPORT"
 export SPIRA_LC_DB=spira_lifecycle
@@ -80,9 +78,10 @@ export SPIRA_LC_PASSWORD=""
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 
-lc_seed_working_poisoned() {   # lc_seed_working_poisoned <bead-id>
+lc_seed_working_poisoned() {   # lc_seed_working_poisoned <bead-id> [holder]
+    local holder="NULL"; [ -n "${2:-}" ] && holder="'$2'"
     lc_root_sql --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','WORKING','[\"poison\"]',0,0)" >/dev/null 2>&1
+        "INSERT INTO bead (bead_id, state, holder, holds, version, updated_at) VALUES ('$1','WORKING',$holder,'[\"poison\"]',0,0)" >/dev/null 2>&1
 }
 
 seedt() {   # seedt <id> <event_type> <new_value> <created_at>
@@ -105,15 +104,15 @@ testdb_seed <<JSONL
 {"id":"pz1","title":"poisoned by three failed claims","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz2","title":"control: label-only clear","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz3","title":"held by a live aeon","status":"in_progress","assignee":"aeon-test","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
-{"id":"pz5","title":"poisoned, cleared with lifecycle_enforce off","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz4","title":"healthy","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pzask","title":"Spira bead pz1 — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?","status":"open","issue_type":"decision","labels":["$SPIRA_ASK_LABEL","overseer"],"updated_at":"2026-09-01T00:00:00Z"}
 JSONL
-for id in pz1 pz2 pz3 pz5; do
+for id in pz1 pz2 pz3; do
     for t in '2026-09-01 01:00:00' '2026-09-01 02:00:00' '2026-09-01 03:00:00'; do seedt "$id" claimed '' "$t"; done
 done
 lc_seed_working_poisoned pz1
-lc_seed_working_poisoned pz3
+# pz3 is held: the claim is the row's WORKING holder, never bd's in_progress (sp-mve9i).
+lc_seed_working_poisoned pz3 aeon-test
 
 echo
 echo "CONTROL — removing only the label leaves CHECK 4 about to re-poison:"
@@ -138,18 +137,6 @@ is   "...and the lifecycle row's WORKING state is undisturbed by releasing the h
 is   "the poisoning's operator ask is resolved" "closed" "$(status_of pzask)"
 want "the cause is recorded on the bead" "every session ended its turn" "$(bdjson show pz1 | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("notes") or "")')"
-
-echo
-echo "lifecycle_enforce off: the label is the poison, and spira-lc is never needed:"
-# A spira-lc that records being called goes first on PATH: off must never touch it.
-mkdir -p "$TMP/lc-trap"
-printf '#!/bin/sh\ntouch "%s/lc-called"\nexit 1\n' "$TMP" > "$TMP/lc-trap/spira-lc"; chmod +x "$TMP/lc-trap/spira-lc"
-out="$(PATH="$TMP/lc-trap:$PATH" SPIRA_LIFECYCLE_ENFORCE=0 "$UNPOISON" unpoison --bead pz5 --cause "off-mode clear" 2>&1)"; rc=$?
-is   "off: spira-lc is never called" "no" "$([ -e "$TMP/lc-called" ] && echo yes || echo no)"
-is   "off: exit 0" "0" "$rc"
-want "off: reports OK" "OK   pz5" "$out"
-nowant "off: the spira-poison label is removed" "spira-poison" "$(labels_of pz5)"
-is   "off: attempt count floored to 0" "0" "$(attempts_of pz5)"
 
 echo
 echo "refusals:"

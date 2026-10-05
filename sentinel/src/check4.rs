@@ -3,6 +3,8 @@
 //! `decide`); this module reads the dedup stamps, acts on the tokens and writes the asks.
 
 use std::collections::{HashMap, HashSet};
+
+use spira_config::lc_state;
 use std::path::Path;
 
 use crate::host::{Io, Spec};
@@ -198,10 +200,6 @@ impl<'a> Sentinel<'a> {
     /// One lifecycle read serves the main loop and the stale clear. A hold this pass applies
     /// is on a bead at or over the threshold, which the clear would never release anyway.
     pub fn check4(&self, snap: &Snapshot) {
-        if self.lc == crate::cfg::Lifecycle::Off {
-            self.log("CHECK4 lifecycle_enforce is off — no lifecycle machine to read, no poison decision");
-            return;
-        }
         let poisoned = self.poisoned_set();
         self.check4_main(snap, poisoned.as_ref());
         self.check4_closed(snap);
@@ -336,11 +334,12 @@ impl<'a> Sentinel<'a> {
                 // landing pass or an aeon may have moved this bead since it was taken.
                 let was = snap.get(id).map(|b| b.status.clone()).unwrap_or_default();
                 let live = self.reread(&[id.as_str()]);
-                if let Some(b) = live.as_ref().and_then(|m| m.get(id.as_str())) {
-                    if b.status == "closed" && was != "closed" {
-                        self.log(&format!("CHECK4 {id}: {n} attempts, but it closed while this pass ran — not poisoned, not asked"));
-                        continue;
-                    }
+                // Handed on by its builder since the snapshot: the lifecycle row, re-read
+                // live, is past WORKING where the pass's read was not (design §3.4 — never
+                // bd's status, sp-mve9i).
+                if !snap.lc_past_builder(id) && self.lc_live_state(id).is_some_and(|st| lc_state::past_builder(&st)) {
+                    self.log(&format!("CHECK4 {id}: {n} attempts, but it closed while this pass ran — not poisoned, not asked"));
+                    continue;
                 }
                 let Some(shown) = self.still("CHECK4", id, &was, live.as_ref()).cloned() else {
                     continue;
@@ -519,8 +518,10 @@ impl<'a> Sentinel<'a> {
         let mut held: Vec<&str> = poisoned
             .iter()
             .map(String::as_str)
+            // Still owed builder work by its lifecycle row (never bd status, sp-mve9i), and
+            // work rather than an epic/event; a held id the store does not list is checked.
             .filter(|id| match snap.get(id) {
-                Some(b) => b.status != "closed" && !matches!(b.typ(), "epic" | "event"),
+                Some(b) => !snap.lc_past_builder(id) && !matches!(b.typ(), "epic" | "event"),
                 None => true,
             })
             .collect();

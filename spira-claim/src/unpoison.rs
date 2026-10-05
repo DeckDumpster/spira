@@ -45,6 +45,14 @@ pub struct LcRow {
 }
 
 impl LcRow {
+    /// The aeon holding a WORKING row, as the refusal names it.
+    pub fn working_holder(&self) -> Option<String> {
+        let h = self.holder.as_deref().filter(|h| !h.trim().is_empty())?;
+        (self.state == BeadState::Working).then(|| format!("{h} (lifecycle WORKING)"))
+    }
+}
+
+impl LcRow {
     pub fn poisoned(&self) -> bool {
         self.holds.contains(&HoldKind::Poison)
     }
@@ -115,9 +123,6 @@ pub struct Opts {
     pub credit: Option<String>,
     pub actor: String,
     pub poison_at: u32,
-    /// `lifecycle_enforce` (DESIGN.md §8.7). Off: the poison is the `spira-poison` label and
-    /// spira-lc is never called. On: the poison is the lifecycle hold.
-    pub enforce: bool,
 }
 
 pub fn valid_id(s: &str) -> bool {
@@ -187,35 +192,19 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
         Ok(r) => r,
         Err(e) => return fail(out, format!("cannot tell (events: {e}) — nothing was written")),
     };
-    // Off: spira-lc is never called at all — the machine is not deployed.
-    let lc = if o.enforce {
-        match w.lc_row(id) {
-            Ok(r) => r,
-            Err(e) => {
-                return fail(
-                    out,
-                    format!("cannot tell (spira-lc show: {e}; lifecycle_enforce is on, so the machine must answer) — nothing was written"),
-                )
-            }
+    let lc = match w.lc_row(id) {
+        Ok(r) => r,
+        Err(e) => {
+            return fail(out, format!("cannot tell (spira-lc show: {e}; the machine must answer) — nothing was written"))
         }
-    } else {
-        None
     };
     let before = events::fold(id, &rows);
     let labelled = bead.labels.iter().any(|l| l == POISON_LABEL);
-    let poisoned = if o.enforce { lc.as_ref().is_some_and(LcRow::poisoned) } else { labelled };
+    let poisoned = lc.as_ref().is_some_and(LcRow::poisoned);
 
-    let assignee = bead.assignee.as_deref().filter(|a| !a.trim().is_empty());
-    let lc_holder = lc
-        .as_ref()
-        .filter(|r| r.state == BeadState::Working)
-        .and_then(|r| r.holder.as_deref())
-        .filter(|h| !h.trim().is_empty());
-    let held = match (bead.status.as_str(), assignee, lc_holder) {
-        ("in_progress", Some(a), _) => Some(format!("{a} (in_progress)")),
-        (_, _, Some(h)) => Some(format!("{h} (lifecycle WORKING)")),
-        _ => None,
-    };
+    // The live holder is the lifecycle row's WORKING holder — bd's status is never read
+    // (sp-mve9i).
+    let held = lc.as_ref().and_then(LcRow::working_holder);
     if let Some(h) = held {
         return fail(
             out,
@@ -233,14 +222,9 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
     }
     if o.dry_run {
         out.push_str(&format!(
-            "WOULD {id}: attempts {}, poisoned={} — write poison.cleared, reset ask history, {}, note, resolve ask\n",
+            "WOULD {id}: attempts {}, poisoned={} — write poison.cleared, reset ask history, release the lifecycle poison hold, note, resolve ask\n",
             before.attempts,
             u8::from(poisoned),
-            match (o.enforce, labelled) {
-                (true, _) => "release the lifecycle poison hold",
-                (false, true) => "remove the spira-poison label (lifecycle_enforce off)",
-                (false, false) => "no spira-poison label to remove (lifecycle_enforce off)",
-            }
         ));
         return Some(false);
     }
@@ -275,14 +259,9 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
             LcApply::CannotTell(e) => warns.push(format!("unhold: {e}")),
         }
     }
-    // 3b. The label: vestigial when enforcing (best effort, silent); THE poison when not
-    // (a failure is reported, and verify re-reads it).
+    // 3b. The legacy label: vestigial (best effort, silent) — the poison is the hold.
     if labelled {
-        if let Err(e) = w.remove_label(id, POISON_LABEL) {
-            if !o.enforce {
-                warns.push(format!("label remove: {e}"));
-            }
-        }
+        let _ = w.remove_label(id, POISON_LABEL);
     }
     // 4. Why — the next aeon reads this.
     let note = format!(
@@ -321,33 +300,17 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
         Ok(Some(b)) => b.labels.join(","),
         _ => bead.labels.join(","),
     };
-    let poisoned2 = if o.enforce {
-        match w.lc_row(id) {
-            Ok(r) => {
-                let p = r.as_ref().is_some_and(LcRow::poisoned);
-                if p {
-                    bad.push("lifecycle-hold-still-present".into());
-                }
-                p
+    let poisoned2 = match w.lc_row(id) {
+        Ok(r) => {
+            let p = r.as_ref().is_some_and(LcRow::poisoned);
+            if p {
+                bad.push("lifecycle-hold-still-present".into());
             }
-            Err(_) => {
-                bad.push("lifecycle-unreadable".into());
-                true
-            }
+            p
         }
-    } else {
-        match &bead2 {
-            Ok(Some(b)) => {
-                let p = b.labels.iter().any(|l| l == POISON_LABEL);
-                if p {
-                    bad.push("label-still-present".into());
-                }
-                p
-            }
-            _ => {
-                bad.push("bead-unreadable".into());
-                true
-            }
+        Err(_) => {
+            bad.push("lifecycle-unreadable".into());
+            true
         }
     };
     let (n2, decision) = match &after {
@@ -475,16 +438,9 @@ fn fmt_utc(epoch: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs % 3600 / 60, secs % 60)
 }
 
-/// Is the bead poisoned now, by this mode's own record? Err: cannot tell.
-fn poisoned_now(o: &Opts, w: &mut dyn World, id: &str) -> Result<bool, String> {
-    if o.enforce {
-        w.lc_row(id).map(|r| r.as_ref().is_some_and(LcRow::poisoned))
-    } else {
-        match w.bead(id)? {
-            Some(b) => Ok(b.labels.iter().any(|l| l == POISON_LABEL)),
-            None => Err("no such bead".into()),
-        }
-    }
+/// Is the bead poisoned now — the lifecycle row's poison hold? Err: cannot tell.
+fn poisoned_now(w: &mut dyn World, id: &str) -> Result<bool, String> {
+    w.lc_row(id).map(|r| r.as_ref().is_some_and(LcRow::poisoned))
 }
 
 fn watch(o: &Opts, w: &mut dyn World, cleared: &[Cleared], out: &mut String) -> bool {
@@ -516,7 +472,7 @@ fn watch(o: &Opts, w: &mut dyn World, cleared: &[Cleared], out: &mut String) -> 
         }
         // A hold back mid-watch is a failure at once.
         for c in cleared {
-            if let Ok(true) = poisoned_now(o, w, &c.id) {
+            if let Ok(true) = poisoned_now(w, &c.id) {
                 out.push_str(&format!("FAIL watch {}: re-poisoned by the pass\n", c.id));
                 return false;
             }
@@ -540,7 +496,7 @@ fn watch(o: &Opts, w: &mut dyn World, cleared: &[Cleared], out: &mut String) -> 
     }
     let mut ok = true;
     for c in cleared {
-        match poisoned_now(o, w, &c.id) {
+        match poisoned_now(w, &c.id) {
             Ok(true) => {
                 out.push_str(&format!("FAIL watch {}: re-poisoned by the pass\n", c.id));
                 ok = false;
@@ -788,7 +744,9 @@ impl World for Live {
 
     fn open_asks(&mut self) -> Result<Vec<AskRow>, String> {
         let label = self.ask_label.clone();
-        let out = self.bd_ok(&["list", "--status", "open", "--label", &label, "--limit", "0", "--json"], None)?;
+        // An ask is a non-work bead: its bd status is its state (spira_config::nonwork, sp-mve9i).
+        let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
+        let out = self.bd_ok(&["list", &flag, &open, "--label", &label, "--limit", "0", "--json"], None)?;
         parse_asks(&out)
     }
 
@@ -829,12 +787,6 @@ impl World for Live {
 // `Live`'s private `bd`/`bd_ok`/`land` helpers directly, the same split `deadlocked`
 // already draws ("the write is unpoison's Live, reused rather than duplicated").
 
-/// `bd reopen` only acts on a closed bead; a refused handoff reopens one still in_progress,
-/// which `bd ready` excludes, so the status is set explicitly as well.
-pub(crate) fn reopen_status_args(id: &str) -> [&str; 6] {
-    ["update", id, "--status", "open", "--assignee", ""]
-}
-
 impl crate::reopen::World for Live {
     fn write_ejected(&mut self, id: &str, suites: &str) {
         let Some(dir) = self.ejected_dir() else { return };
@@ -848,8 +800,8 @@ impl crate::reopen::World for Live {
     }
 
     fn bd_reopen(&mut self, id: &str) -> Result<(), String> {
-        let reopened = self.bd_ok(&["reopen", id], None);
-        self.bd_ok(&reopen_status_args(id), None).map(|_| ()).or(reopened.map(|_| ()))
+        // The bead's state is the machine's: bd status is inert (sp-mve9i).
+        self.bd_ok(&["reopen", id], None).map(|_| ())
     }
 
     fn remove_submitted_label(&mut self, id: &str, label: &str) {

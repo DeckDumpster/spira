@@ -203,20 +203,6 @@ pub fn merge_capacity_env(snap: &mut crate::seam::Snapshot, env: &BTreeMap<Strin
     }
 }
 
-/// `lifecycle_enforce`, resolved as conf.sh resolves it: the unit's environment wins (how a
-/// fixture pins it), else `spira.lifecycle_enforce` in the spira.toml conf.sh resolved, read
-/// through the spira-config library; else off. Binary presence is never consulted here.
-pub fn lifecycle_enforce(original_env: &BTreeMap<String, String>, toml_file: Option<&Path>) -> bool {
-    if let Some(v) = original_env.get("SPIRA_LIFECYCLE_ENFORCE") {
-        return v == "1" || v == "true";
-    }
-    let Some(p) = toml_file.filter(|p| p.is_file()) else { return false };
-    match spira_config::load(p) {
-        Ok(doc) => doc.spira.and_then(|s| s.lifecycle_enforce).unwrap_or(false),
-        Err(_) => false,
-    }
-}
-
 /// `persona_model`: `persona.<name>.model` from the resolved spira.toml, default
 /// `claude-opus-5`.
 pub fn persona_model(name: &str, toml_file: Option<&Path>) -> String {
@@ -353,16 +339,9 @@ mod tests {
     }
 
     #[test]
-    fn enforce_env_wins_and_binary_presence_is_irrelevant() {
+    fn persona_model_reads_the_toml_else_the_default() {
         let dir = testkit::TempDir::new("aeon-conf");
         let toml = dir.join("spira.toml");
-        std::fs::write(&toml, "[spira]\nlifecycle_enforce = true\n").unwrap();
-        assert!(lifecycle_enforce(&BTreeMap::new(), Some(&toml)));
-        assert!(!lifecycle_enforce(&vars(&[("SPIRA_LIFECYCLE_ENFORCE", "0")]), Some(&toml)));
-        std::fs::write(&toml, "[spira]\n").unwrap();
-        assert!(!lifecycle_enforce(&BTreeMap::new(), Some(&toml)));
-        assert!(lifecycle_enforce(&vars(&[("SPIRA_LIFECYCLE_ENFORCE", "1")]), Some(&toml)));
-        assert!(!lifecycle_enforce(&BTreeMap::new(), None));
         std::fs::write(&toml, "[persona.builder]\nmodel = \"claude-x\"\n").unwrap();
         assert_eq!(persona_model("builder", Some(&toml)), "claude-x");
         assert_eq!(persona_model("ops", Some(&toml)), "claude-opus-5");

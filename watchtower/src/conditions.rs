@@ -11,8 +11,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const OPEN: &str = "open,in_progress,blocked,deferred";
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cond {
     pub key: String,
@@ -34,6 +32,9 @@ pub struct Ctx<'a> {
     pub home_repo: &'a str,
     pub incident_sh: &'a str,
     pub bd: &'a str,
+    /// The lifecycle machine (`spira-lc`): an incident bead is a work bead, so whether it is
+    /// still unfinished is its lifecycle row's answer, never bd's status (sp-jgjvh).
+    pub lc_bin: &'a str,
 }
 
 fn safe(key: &str) -> String {
@@ -48,16 +49,35 @@ fn names(d: &Path) -> BTreeSet<String> {
     std::fs::read_dir(d).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default()
 }
 
-/// Ids of the unfinished beads holding `reference`; `None` when the store did not answer.
+/// Ids of the unfinished beads holding `reference`; `None` when the store or the lifecycle
+/// machine did not answer. bd supplies only which beads carry the reference (content); whether
+/// each is unfinished is its lifecycle row's (sp-jgjvh: incident beads are work beads).
 fn open_beads(ctx: &Ctx, reference: &str) -> Option<Vec<String>> {
     let out = crate::deadline::output(
-        "open beads by ref",
-        Command::new(ctx.bd).args(["-C", ctx.db, "list", "--external-ref", reference, "--status", OPEN, "--json", "--limit", "0", "--brief"]),
+        "beads by ref",
+        Command::new(ctx.bd).args(["-C", ctx.db, "list", "--external-ref", reference, "--all", "--json", "--limit", "0", "--brief"]),
     )
     .ok()
     .filter(|o| o.status.success())?;
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).ok()?;
-    Some(rows.iter().filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from)).collect())
+    let ids = rows.iter().filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from)).collect();
+    unfinished(ctx.lc_bin, ids)
+}
+
+/// The ids whose lifecycle row still owes builder work (READY, WORKING, REWORK) — what bd's
+/// open/in_progress meant for an incident. A bead the machine has no row for is not live work
+/// (it can never be claimed; CHECK-ROWLESS reports it). `None` when the machine did not
+/// answer: a control that cannot check must not read as "nothing holds it".
+pub(crate) fn unfinished(lc_bin: &str, ids: Vec<String>) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    for id in ids {
+        match spira_config::lc_state::row_with(lc_bin, &id) {
+            Ok(Some(r)) if !r.past_builder() => out.push(id),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(out)
 }
 
 fn close_bead(ctx: &Ctx, id: &str, why: &str) -> bool {
@@ -141,7 +161,9 @@ pub mod tests {
             std::fs::create_dir_all(dir.join("run")).unwrap();
             let bd = "#!/bin/bash\nS=\"$(dirname \"$0\")/store\"\ntouch \"$S\"\ncase \"$3\" in\nlist) ref=\"$5\"; ids=$(awk -v r=\"$ref\" '$2==r{print $1}' \"$S\"); printf '['; s=''; for i in $ids; do printf '%s{\"id\":\"%s\"}' \"$s\" \"$i\"; s=','; done; printf ']\\n';;\nclose) id=\"$4\"; cat > /dev/null; grep -v \"^$id \" \"$S\" > \"$S.n\"; mv \"$S.n\" \"$S\"; echo \"$id\" >> \"$(dirname \"$0\")/closed\";;\nesac\n";
             let inc = "#!/bin/bash\nD=\"$(dirname \"$0\")\"\ncat > /dev/null\nn=$(wc -l < \"$D/store\"); echo \"b$((n+1)) $SPIRA_INCIDENT_REF\" >> \"$D/store\"; echo \"$2\" >> \"$D/filed\"\n";
-            for (n, body) in [("bd", bd), ("inc.sh", inc)] {
+            // The lifecycle machine: every bead the store still lists is READY (unfinished).
+            let lc = "#!/bin/bash\n[ \"$1\" = show ] || exit 2\nprintf '{\"bead\":{\"bead_id\":\"%s\",\"state\":\"READY\",\"holds\":[]}}\\n' \"$2\"\n";
+            for (n, body) in [("bd", bd), ("inc.sh", inc), ("lc", lc)] {
                 let p = dir.join(n);
                 testkit::write_exe(&p, body);
             }
@@ -151,7 +173,7 @@ pub mod tests {
         pub fn ctx(&self) -> Ctx<'_> {
             let run: &'static Path = Box::leak(self.dir.join("run").into_boxed_path());
             let leak = |p: PathBuf| -> &'static str { Box::leak(p.to_string_lossy().into_owned().into_boxed_str()) };
-            Ctx { run, db: "db", home_repo: "harness", incident_sh: leak(self.dir.join("inc.sh")), bd: leak(self.dir.join("bd")) }
+            Ctx { run, db: "db", home_repo: "harness", incident_sh: leak(self.dir.join("inc.sh")), bd: leak(self.dir.join("bd")), lc_bin: leak(self.dir.join("lc")) }
         }
         pub fn filed(&self) -> usize {
             std::fs::read_to_string(self.dir.join("filed")).map(|s| s.lines().count()).unwrap_or(0)

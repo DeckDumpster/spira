@@ -188,7 +188,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         bdjson_fixture: path_opt("bdjson_fixture"),
         pr_refresh_max: num("pr_refresh_max", 5).max(0) as u32,
         toml: path_opt("toml"),
-        lifecycle_enforce: false,
         // Empty only when conf.sh itself did not run (a stand-in lib.sh in a unit test);
         // in production conf.sh always sets SPIRA_ASK_LABEL before this seam reads it, so
         // no fallback literal belongs here (law-schema-over-code).
@@ -373,7 +372,7 @@ impl<'a> Lib for RealLib<'a> {
 
         let row = self.beads.show(&[id.to_string()]).ok().and_then(|r| r.into_iter().next());
         let bead_title = row.as_ref().map(|r| r.title.as_str()).filter(|t| !t.is_empty());
-        let bead_status = row.as_ref().map(|r| r.status.as_str()).filter(|s| !s.is_empty());
+        let bead_status = row.as_ref().map(|r| r.state.as_str()).filter(|s| !s.is_empty());
 
         let (mut tip_short, mut ahead, mut nfiles) = (String::new(), String::new(), 0u32);
         if let (Some(rd), Some(base)) = (repo_dir, base) {
@@ -504,7 +503,7 @@ impl<'a> Lib for RealLib<'a> {
     /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
     fn close_on_land(&self, id: &str, sha: &str) {
         let row = self.beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
-        crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.home, &self.s.submitted_label, row.as_ref(), id, sha);
+        crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.home, row.as_ref(), id, sha);
     }
     fn prune_worktrees(&self, repo: &Path) {
         self.seam.call(Op::PruneWorktrees, &[&p(repo)]);
@@ -550,8 +549,10 @@ pub struct RealBeads {
     pub bd: String,
     pub timeout: u64,
     pub home_repo: String,
-    pub submitted_label: String,
     pub fixture: Option<PathBuf>,
+    /// The lifecycle machine every row's state is read from (sp-mve9i). None for a
+    /// content-only reader (a title): every row's state is then `-`, never handed on.
+    pub lc_bin: Option<PathBuf>,
 }
 
 /// `json_only`: bd can print warnings on stdout before the payload.
@@ -567,6 +568,30 @@ pub fn json_only(s: &str) -> &str {
 }
 
 impl RealBeads {
+    fn lc(&self) -> Result<String, String> {
+        self.lc_bin.as_ref().map(|b| b.display().to_string()).ok_or_else(|| "no spira-lc program".to_string())
+    }
+
+    /// Each row's state, from the lifecycle machine (sp-mve9i): one `spira-lc show` for a
+    /// single row, one `spira-lc list` for a scan. A machine that cannot answer is an Err —
+    /// the pass must not land on a state it could not read.
+    fn join_states(&self, rows: &mut [BeadRow]) -> Result<(), String> {
+        if rows.is_empty() || self.lc_bin.is_none() {
+            return Ok(());
+        }
+        let bin = self.lc()?;
+        let lc = if rows.len() == 1 {
+            spira_config::lc_state::row_with(&bin, &rows[0].id)?.into_iter().collect()
+        } else {
+            spira_config::lc_state::list_with(&bin)?
+        };
+        let lc = spira_config::lc_state::index(lc);
+        for r in rows.iter_mut() {
+            r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
+        }
+        Ok(())
+    }
+
     fn show_raw(&self, ids: &[String]) -> Result<String, String> {
         if let Some(fx) = &self.fixture {
             let mut c = command("bdsim.py");
@@ -643,21 +668,25 @@ impl Beads for RealBeads {
                 o @ serde_json::Value::Object(_) => vec![o],
                 _ => Vec::new(),
             };
-            out.extend(items.iter().filter_map(|i| BeadRow::from_json(i, &self.home_repo, &self.submitted_label)));
+            out.extend(items.iter().filter_map(|i| BeadRow::from_json(i, &self.home_repo)));
         }
+        self.join_states(&mut out)?;
         Ok(out)
     }
-    fn land_status(&self, id: &str) -> String {
-        match self.show(&[id.to_string()]) {
-            Ok(rows) => rows.into_iter().next().map(|r| r.status).unwrap_or_else(|| "-".into()),
-            Err(_) => "-".into(),
+    fn bead_lc_state(&self, id: &str) -> String {
+        let Ok(bin) = self.lc() else { return "-".into() };
+        match spira_config::lc_state::row_with(&bin, id) {
+            Ok(Some(r)) if !r.state.is_empty() => r.state,
+            _ => "-".into(),
         }
     }
     fn ask_open(&self, label: &str, subject: &str) -> bool {
         if subject.is_empty() {
             return false;
         }
-        let Ok(raw) = self.bdq_raw("list", &["--status", "open", "--label", label, "--limit", "0"]) else {
+        // An ask is not a work bead: its bd status is its only state (nonwork::Kind::Ask).
+        let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
+        let Ok(raw) = self.bdq_raw("list", &[&flag, &open, "--label", label, "--limit", "0"]) else {
             return false;
         };
         let js = json_only(&raw);
@@ -1214,5 +1243,70 @@ mod holder_alive_tests {
         std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
         let procs = RealProcs { run: run.to_path_buf() };
         assert!(!procs.holder_alive("sp-a1"), "a live pid that is not an aeon must not count");
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_join_tests {
+    use super::*;
+
+    /// A bd stand-in whose `show` answers every id with bd's own row: hand-closed, carrying
+    /// the retired submitted label — everything bd status used to say "done" with.
+    fn stub_bd(dir: &Path) -> String {
+        let p = dir.join("bd");
+        testkit::write_exe(
+            &p,
+            "#!/bin/bash\nshift 3; o=; for a in \"$@\"; do [ \"$a\" = --json ] && continue; o=\"$o${o:+,}{\\\"id\\\":\\\"$a\\\",\\\"status\\\":\\\"closed\\\",\\\"labels\\\":[\\\"spira-submitted\\\",\\\"repo:spira\\\"]}\"; done; echo \"[$o]\"\n",
+        );
+        p.display().to_string()
+    }
+
+    fn beads(dir: &Path) -> RealBeads {
+        RealBeads {
+            home: dir.to_path_buf(),
+            db: dir.display().to_string(),
+            bd: stub_bd(dir),
+            timeout: 5,
+            home_repo: "spira".into(),
+            fixture: None,
+            lc_bin: Some(stub_lc(dir)),
+        }
+    }
+
+    /// A spira-lc stand-in: `show`/`list` answer every bead WORKING.
+    fn stub_lc(dir: &Path) -> PathBuf {
+        let p = dir.join("spira-lc");
+        testkit::write_exe(
+            &p,
+            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\"}]' ;; esac\n",
+        );
+        p
+    }
+
+    /// sp-mve9i: whether a bead is handed on (ready for the landing pass) is its lifecycle
+    /// row's state, never bd's status or the submitted label.
+    #[test]
+    fn a_bead_bd_shows_closed_is_not_handed_on_while_the_machine_says_working() {
+        let d = testkit::TempDir::new("landing-pass-lcjoin");
+        let b = beads(&d);
+        let rows = b.show(&["sp-w".to_string()]).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, "WORKING");
+        assert!(!rows[0].handed_on(), "bd's hand-close decided it");
+        assert_eq!(b.bead_lc_state("sp-w"), "WORKING");
+        // A scan reads `spira-lc list` once; a bead it holds no row for is `-`.
+        let rows = b.show(&["sp-w".to_string(), "sp-x".to_string(), "sp-y".to_string()]).unwrap();
+        let st: Vec<(&str, bool)> = rows.iter().map(|r| (r.state.as_str(), r.handed_on())).collect();
+        assert_eq!(st, vec![("WORKING", false), ("SUBMITTED", true), ("-", false)]);
+    }
+
+    /// A machine that cannot answer is an Err, never a row read as handed on.
+    #[test]
+    fn an_unreachable_lifecycle_machine_is_an_error_not_a_guess() {
+        let d = testkit::TempDir::new("landing-pass-lcjoin-down");
+        let mut b = beads(&d);
+        b.lc_bin = Some(d.join("no-such-spira-lc"));
+        assert!(b.show(&["sp-w".to_string(), "sp-x".to_string()]).is_err());
+        assert_eq!(b.bead_lc_state("sp-w"), "-");
     }
 }

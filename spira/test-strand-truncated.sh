@@ -66,18 +66,23 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_TIMEOUT_SECONDS=3600
 FAYTH
 
-# Mock bd returns the fixture bead for any list/ready query.
-# bdq() prepends -C <db> to every call; strip it before matching the subcommand.
+# Mock bd returns the fixture bead for any list query (strand's store read, spira-claim's
+# content read, the lifecycle stand-in's own read). bdq() prepends -C <db> to every call;
+# strip it before matching the subcommand.
 cat > "$TMP/mock-bd" <<'MOCKBD'
 #!/usr/bin/env bash
 case "${1:-}" in -C) shift 2 ;; esac
 case "${1:-}" in
-    list)  printf '[{"id":"sp-t1","title":"test bead","status":"open","labels":["spira","test-plan"]}]\n' ;;
-    ready) printf '[{"id":"sp-t1","title":"test bead","status":"open","labels":["spira","test-plan"]}]\n' ;;
+    list)  printf '[{"id":"sp-t1","title":"test bead","status":"open","issue_type":"task","labels":["spira","test-plan"]}]\n' ;;
     *)     exit 0 ;;
 esac
 MOCKBD
 chmod +x "$TMP/mock-bd"
+# strand's ready set is spira-claim's, over the lifecycle machine's READY rows (sp-7g5q6;
+# sp-v62vn: the only mode) — not a bd ready query. The stand-in (testlib lc_mirror_bd)
+# answers spira-lc `list` from the mock bd's store, so the open bead is a READY row; it goes
+# first on PATH, where spira-claim finds spira-lc by name.
+lc_mirror_bd "$TMP/lc"
 
 # Sentinel log: one completed pass (state: open= line) followed by a "not evaluated"
 # line for test-watcher in that same pass.
@@ -87,7 +92,7 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 LOG
 
 out="$(
-    SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$PATH" \
+    SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
@@ -109,7 +114,7 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 LOG
 
 out="$(
-    SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$PATH" \
+    SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \

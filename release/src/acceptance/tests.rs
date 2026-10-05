@@ -33,6 +33,18 @@ fn bead_finished_is_closed_or_submitted_and_unreadable_is_not() {
     assert!(!bead_finished("[]"));
 }
 
+/// Local acceptance on d40bbb589: under the lifecycle cutover the model finishes with `work
+/// submit` and never closes the bead, so a bd-only stage 4 read "not closed" while the
+/// history already said SUBMITTED.
+#[test]
+fn lifecycle_submitted_is_any_state_past_the_model() {
+    let st = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert!(lifecycle_submitted(&st(&["READY", "WORKING", "SUBMITTED"])));
+    assert!(lifecycle_submitted(&st(&["READY", "WORKING", "SUBMITTED", "CERTIFIED"])));
+    assert!(!lifecycle_submitted(&st(&["READY", "WORKING", "READY"])));
+    assert!(!lifecycle_submitted(&[]));
+}
+
 #[test]
 fn ready_has_finds_the_probe_and_unreadable_is_not_claimable() {
     assert!(ready_has(r#"[{"id":"sp-a"},{"id":"sp-b"}]"#, "sp-b"));

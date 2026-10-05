@@ -50,8 +50,10 @@ rows=$(cockpit_beads) || {
 }
 
 found=0; closed=0
-# id<TAB>command, one per open escalated bead that declares a check.
-while IFS=$'\t' read -r id cmd; do
+# id<TAB>work-beads<TAB>command, one per open escalated bead that declares a check.
+# work-beads: the ask's `work-bead:<id>` labels (comma-joined, `-` for none) — `mail send`
+# writes them on the tracking bead of a question about a work bead.
+while IFS=$'\t' read -r id works cmd; do
   [ -n "$id" ] || continue
   found=$((found+1))
   out=$(timeout "${SPIRA_VERIFY_TIMEOUT:-120}" bash -c "$cmd" 2>&1); rc=$?
@@ -64,7 +66,24 @@ while IFS=$'\t' read -r id cmd; do
       # a stronger statement than the dependency graph's guess about ordering.
       BEADS_ACTOR=claude "$BD" -C "$db" close "$id" --force \
         --reason "Verified already done — its own VERIFY check now passes: ${cmd} → exit 0. Evidence: ${short}" \
-        >/dev/null 2>&1 && { echo "    closed"; closed=$((closed+1)); }
+        >/dev/null 2>&1 && {
+          echo "    closed"; closed=$((closed+1))
+          # A SATISFIED ASK IS A QUESTION CLOSED WITHOUT AN ANSWER (sp-v62vn follow-up).
+          # `work ask` held the asking bead and only a Reply or an AskWithdrawn lifts it, so
+          # the close withdraws the ask on every work bead it names. rc 1 (no row) and 3 (no
+          # ask hold) are not failures; anything else is said, and the close still stands.
+          if [ "$works" != "-" ]; then
+            IFS=',' read -ra _ws <<< "$works"
+            for w in "${_ws[@]}"; do
+              lc_out=$(spira-lc withdraw-ask "$w" claude 2>&1); lc_rc=$?
+              case "$lc_rc" in
+                0) echo "    withdrew the ask hold on $w" ;;
+                1|3) ;;
+                *) echo "    WARNING: the ask hold on $w was not lifted (spira-lc withdraw-ask exit $lc_rc): $lc_out" ;;
+              esac
+            done
+          fi
+        }
     fi
   else
     echo "  still open $id  (check exit $rc)"
@@ -87,7 +106,8 @@ for r in rows:
         continue
     m = re.search(r"^\s*VERIFY:\s*(.+)$", r.get("description") or "", re.M)
     if m:
-        print("%s\t%s" % (r.get("id"), m.group(1).strip()))
+        works = ",".join(l[len("work-bead:"):] for l in labels if l.startswith("work-bead:") and len(l) > len("work-bead:"))
+        print("%s\t%s\t%s" % (r.get("id"), works or "-", m.group(1).strip()))
 ')
 
 # STRUCTURALLY UN-ANSWERABLE ASKS. An epic is a container for a branch of work; it cannot be

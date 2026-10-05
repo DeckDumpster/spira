@@ -5,6 +5,7 @@ pub mod bead;
 pub mod cmds;
 pub mod env;
 pub mod kinds;
+pub mod lc;
 pub mod lint;
 pub mod maildir;
 pub mod message;

@@ -3,8 +3,8 @@
 # test-czar-pass.sh — czar fast pass: budget, flock, and acceptance detectors
 #
 # WHAT THIS SUITE CHECKS.
-#   0. cargo test -p czar-pass: every detect_* function's fire/silent boundary against a
-#      scratch Config, run as Rust #[test]s rather than through the binary.
+#   (the detectors' fire/silent boundaries are czar-pass's own #[test]s — `cargo test -p
+#   czar-pass`; this suite no longer compiles them in a scratch target on every run.)
 #   1. czar-pass is found on PATH and accepts --pass.
 #   2. Pass with an empty environment completes in under 5 s (budget).
 #   3. A concurrent pass is skipped (flock prevents overlap).
@@ -62,35 +62,6 @@ CZAR="$(command -v czar-pass 2>/dev/null || true)"
 [ -n "$CZAR" ] && [ -x "$CZAR" ] || { printf 'czar-pass not found on PATH\n' >&2; exit 2; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
-
-# Find or build the czar-pass binary (law-absence-needs-a-positive-control).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-czar-pass: cargo not found — czar-pass binary cannot be built"
-    exit 77
-fi
-CZAR_PASS_ROOT="$HERE/../czar-pass"
-
-# ==========================================================================================
-printf '\n%s\n' "0. cargo test -p czar-pass: every detector's fire/silent boundary (UC-ops-detection-remediation-23)"
-# ==========================================================================================
-# A separate, scratch CARGO_TARGET_DIR: this must never share the release build below (a
-# debug-profile test build and a release build of the same crate under one target dir just
-# means two full compiles instead of one, not a correctness problem, but there is no reason
-# to pay for the first one twice across runs).
-CARGO_TEST_LOG="$T/cargo-test-czar-pass.log"
-if CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/czar-pass-test-target" \
-    "$CARGO_BIN" test --manifest-path "$CZAR_PASS_ROOT/Cargo.toml" -p czar-pass \
-    >"$CARGO_TEST_LOG" 2>&1
-then
-    ok "cargo test -p czar-pass ($(grep -c '^test ' "$CARGO_TEST_LOG" 2>/dev/null || echo ?) tests)"
-else
-    bad "cargo test -p czar-pass (see $CARGO_TEST_LOG)"
-    tail -60 "$CARGO_TEST_LOG" >&2
-fi
 
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 
@@ -227,6 +198,16 @@ _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "act: incident filed with cause=deadlock" "cause=deadlock" "$_inc_log"
 
 # ==========================================================================================
+# THE SUMMON FROM HERE ON IS A RECORDING STUB. czar-pass execs the real `sentinel --summon
+# czar` on every act-mode fire (sp-gzmd2, so DRAIN/halt gating is the real one); section 7 above
+# keeps that real call. Every later fire only needs to prove the summon was asked for — a real
+# summon is ~6 s on testenv's build, and 14 of them were most of this suite's wall.
+SUMMON_STUB_DIR="$T/summon-stub"; mkdir -p "$SUMMON_STUB_DIR"
+SUMMON_LOG="$T/summon-calls.log"; export SUMMON_LOG
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SUMMON_LOG"\n' > "$SUMMON_STUB_DIR/sentinel"
+chmod +x "$SUMMON_STUB_DIR/sentinel"
+export PATH="$SUMMON_STUB_DIR:$PATH"
+
 printf '\n%s\n' "8. world halted: pass exits without acting"
 # ==========================================================================================
 touch "$SPIRA_RUN/world.halted"
@@ -436,9 +417,11 @@ FEOF17
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+rm -f "$SUMMON_LOG"
 SPIRA_CZAR_STAGE_BASE_RED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "base-red: the fire summons the czar (sentinel --summon czar)" "--summon czar" "$(cat "$SUMMON_LOG" 2>/dev/null || true)"
 want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
 want "base-red: bead filed with cause=base-red" "cause=base-red" "$_inc_log"
 want "base-red: filed at priority 0 (P0)" "priority=0" "$_inc_log"

@@ -1,0 +1,133 @@
+//! Lifting a work bead's `ask` hold when its question is answered (sp-v62vn follow-up).
+//!
+//! `work ask` (and `work blocked`) place `Hold { Ask }` on the asking session's own bead, and
+//! only a `Reply` or an `AskWithdrawn` event lifts it — so every path by which an answer
+//! arrives has to emit one, or the bead waits forever. mail owns two of those paths: a reply
+//! through `sendmail` (aerc's reply, its accept-default, any `In-Reply-To` answer) and the
+//! operator's dismissal that `sweep-dismissed` turns into "default taken". The work bead an
+//! ask is about travels on the ask mail as `X-Spira-Work-Bead` and in the index's sixth field.
+//!
+//! A refusal is not a failure here: a bead whose session never held (a question citing
+//! another bead, a stale answer to an ask already lifted) has no ask hold to lift, and the
+//! machine says so with exit 3 (or 1, no row). Only "cannot tell" is worth a warning.
+
+use std::process::{Command, Stdio};
+
+/// `spira-lc <args>` → (exit code, combined output).
+pub trait Lc {
+    fn call(&self, args: &[String]) -> (i32, String);
+}
+
+/// The live service, by bare name on the launcher's PATH (sp-gypjk), bounded at 5 s: a
+/// stalled machine must not hold an answer's delivery (`timeout`'s 124 reads as cannot-tell).
+pub struct LcCli;
+
+impl Lc for LcCli {
+    fn call(&self, args: &[String]) -> (i32, String) {
+        let out = Command::new("timeout").args(["5", "spira-lc"]).args(args).stdin(Stdio::null()).output();
+        match out {
+            Ok(o) => (o.status.code().unwrap_or(2), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (2, format!("running spira-lc: {e}")),
+        }
+    }
+}
+
+/// How a question ended: answered (a `Reply`, carrying the answer's message id) or closed
+/// without an answer (`AskWithdrawn`).
+pub enum Lift<'a> {
+    Reply { message_id: &'a str },
+    Withdraw,
+}
+
+/// Emit the lift for `work_bead`. `Some(warning)` only when the machine could not tell.
+pub fn lift_ask(lc: &dyn Lc, work_bead: &str, how: Lift, actor: &str) -> Option<String> {
+    if work_bead.is_empty() {
+        return None;
+    }
+    let args: Vec<String> = match how {
+        Lift::Reply { message_id } => vec!["reply".into(), work_bead.into(), message_id.into(), actor.into()],
+        Lift::Withdraw => vec!["withdraw-ask".into(), work_bead.into(), actor.into()],
+    };
+    match lc.call(&args) {
+        (0, _) | (1, _) | (3, _) => None,
+        (code, out) => Some(format!("mail: the ask hold on {work_bead} was not lifted (spira-lc {} exit {code}): {}", args[0], out.trim())),
+    }
+}
+
+/// The mailbox-style actor a reply's `From:` names (`Operator <operator@spira>` → `operator`).
+pub fn actor_of(from: &str, fallback: &str) -> String {
+    let inner = from.rsplit_once('<').map(|(_, r)| r).unwrap_or(from);
+    let local = inner.split('@').next().unwrap_or("").trim().trim_end_matches('>');
+    if local.is_empty() || local.contains(char::is_whitespace) {
+        fallback.to_string()
+    } else {
+        local.to_string()
+    }
+}
+
+#[cfg(test)]
+pub mod fake {
+    use super::Lc;
+    use std::sync::Mutex;
+
+    /// Records every call; answers each with `code`.
+    pub struct FakeLc {
+        pub code: i32,
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl FakeLc {
+        pub fn new(code: i32) -> FakeLc {
+            FakeLc { code, calls: Mutex::new(Vec::new()) }
+        }
+        pub fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl Lc for FakeLc {
+        fn call(&self, args: &[String]) -> (i32, String) {
+            self.calls.lock().unwrap().push(args.to_vec());
+            (self.code, String::new())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fake::FakeLc;
+    use super::*;
+
+    #[test]
+    fn a_reply_names_the_work_bead_and_the_answers_message_id() {
+        let lc = FakeLc::new(0);
+        assert_eq!(lift_ask(&lc, "sp-w1", Lift::Reply { message_id: "m-1@spira" }, "operator"), None);
+        assert_eq!(lc.calls(), vec![vec!["reply", "sp-w1", "m-1@spira", "operator"]]);
+    }
+
+    #[test]
+    fn a_withdraw_is_withdraw_ask() {
+        let lc = FakeLc::new(0);
+        lift_ask(&lc, "sp-w1", Lift::Withdraw, "claude");
+        assert_eq!(lc.calls(), vec![vec!["withdraw-ask", "sp-w1", "claude"]]);
+    }
+
+    #[test]
+    fn no_hold_or_no_row_is_quiet_but_cannot_tell_warns() {
+        for quiet in [1, 3] {
+            assert_eq!(lift_ask(&FakeLc::new(quiet), "sp-w1", Lift::Withdraw, "a"), None);
+        }
+        assert!(lift_ask(&FakeLc::new(2), "sp-w1", Lift::Withdraw, "a").unwrap().contains("sp-w1"));
+        assert!(FakeLc::new(0).calls().is_empty());
+        let lc = FakeLc::new(0);
+        assert_eq!(lift_ask(&lc, "", Lift::Withdraw, "a"), None);
+        assert!(lc.calls().is_empty(), "no work bead, no call");
+    }
+
+    #[test]
+    fn actor_of_reads_the_local_part() {
+        assert_eq!(actor_of("Operator <operator@spira>", "x"), "operator");
+        assert_eq!(actor_of("concierge@spira", "x"), "concierge");
+        assert_eq!(actor_of("", "operator"), "operator");
+    }
+}

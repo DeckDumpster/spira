@@ -20,7 +20,7 @@
 #     blocked only on a CERTIFIED-but-not-LANDED prerequisite is invisible to bd's own
 #     `ready` (bd has no concept of CERTIFIED, so an open blocker hides it) but is claimed
 #     end to end through aeon's ready set — the machine's READY rows, `spira-claim
-#     fayth-ready --json` — once `lifecycle_enforce` is on.
+#     fayth-ready --json`.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as
 # test-lifecycle-container.sh / test-work-container.sh; testenv-batch.sh already provides
@@ -33,14 +33,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
 unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN \
       TESTDB_MODE TESTDB_STARTED_SERVICE SPIRA_DB
@@ -259,10 +256,6 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-# The restricted path is an explicit config decision (sp-74gzo), not a fact discovered from
-# these binaries existing — without this, aeon.sh takes the legacy path even though
-# spira-lc and work are both on PATH (checked above).
-export SPIRA_LIFECYCLE_ENFORCE=1
 command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 
@@ -315,8 +308,6 @@ echo
 echo "Stacked dependents (sp-s9675.2): a dependent blocked only on a CERTIFIED-not-LANDED"
 echo "prerequisite is invisible to bd ready, but claimable through the machine's ready set:"
 # ===========================================================================
-# SPIRA_LIFECYCLE_ENFORCE is already 1 (set above, for $BID's own restricted-path run).
-
 bead_id_lines() {   # bead_id_lines <bd-json-on-stdin> -> one id per line
     python3 -c '
 import json, sys

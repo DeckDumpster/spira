@@ -27,8 +27,10 @@ pub mod deps;
 pub mod env_bootstrap;
 pub mod eval;
 pub mod legacy_map;
+pub mod lc_state;
 pub mod lifecycle_row;
 pub mod locate;
+pub mod nonwork;
 pub mod registry;
 pub mod release_env;
 pub mod release_skew;
@@ -129,8 +131,6 @@ pub fn load(path: &Path) -> Result<SpiraToml, String> {
     validate(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// The environment variable that pins `lifecycle_enforce` (a unit's `Environment=`, a
-/// fixture, or conf.sh, which exports it with a default of `0`).
 /// The one variable a launcher builds PATH from (brain `runtime-is-a-release-2026-09-29`):
 /// the root of the release the running system executes — `spira-releases/<sha>`, and until
 /// the release deploy lands (sp-gkfg1) the harness checkout's root, which has `bin/` and
@@ -228,36 +228,42 @@ pub fn release_path_from_env_with_tail(release: Option<&str>, tail: &str) -> Res
     Ok(format!("{base}:{tail}"))
 }
 
+/// The retired lifecycle switch (sp-v62vn): the lifecycle machine is the only mode, so
+/// neither this environment variable nor `spira.lifecycle_enforce` selects anything. Both are
+/// still READ, for one purpose — a value saying off is refused by name rather than silently
+/// ignored ([`lifecycle_switch_refusal`]), since a box that believes it runs off would be
+/// wrong about every decision it makes.
 pub const LIFECYCLE_ENFORCE_ENV: &str = "SPIRA_LIFECYCLE_ENFORCE";
 
-/// THE lifecycle switch's resolution rule (operator decision 2026-09-28: `lifecycle_enforce`
-/// is the one switch for everything that touches the lifecycle machine), identical to the
-/// aeon crate's `conf::lifecycle_enforce`: an environment value, when present, wins — `1` or
-/// `true` is on, anything else (including empty) is off; else the typed
-/// `spira.lifecycle_enforce`; else **off**. Whether a `spira-lc` binary exists is never an
-/// input.
-pub fn resolve_lifecycle_enforce(env_value: Option<&str>, configured: Option<bool>) -> bool {
-    match env_value {
-        Some(v) => v == "1" || v == "true",
-        None => configured.unwrap_or(false),
-    }
+/// Whether a value of the retired switch says on (`1`/`true`, the only spellings the old
+/// resolution rule accepted as on).
+fn lifecycle_switch_says_on(v: &str) -> bool {
+    matches!(v.trim(), "1" | "true")
 }
 
-/// [`resolve_lifecycle_enforce`] for this process: `$SPIRA_LIFECYCLE_ENFORCE`, else
-/// `spira.lifecycle_enforce` in `toml_file` (or, when `None`, the document [`discover`]
-/// finds), else off. An unreadable or invalid document is off, as in the aeon crate. A
-/// non-UTF-8 environment value is present-but-not-`1`, so off.
-pub fn lifecycle_enforce(toml_file: Option<&Path>) -> bool {
-    if let Some(v) = std::env::var_os(LIFECYCLE_ENFORCE_ENV) {
-        return resolve_lifecycle_enforce(Some(v.to_str().unwrap_or("")), None);
+/// The refusal for a retired lifecycle switch that says off — `who` names where the value was
+/// read (`$SPIRA_LIFECYCLE_ENFORCE`, `spira.lifecycle_enforce`, `spira.conf`) — naming the
+/// exit (law-a-refusal-names-its-exit).
+pub fn lifecycle_switch_refusal(who: &str, value: &str) -> String {
+    format!(
+        "{who} = {value:?} is refused: lifecycle_enforce is retired (sp-v62vn) and the lifecycle \
+         machine is the only mode, so there is no off. Exit: remove it (unset the variable, or \
+         delete the key from the config document); a fixture that needs bead state seeds \
+         lifecycle rows instead (spira/testlib/lc-fixture.sh)"
+    )
+}
+
+/// `$SPIRA_LIFECYCLE_ENFORCE` as `env_value` holds it: `Ok(None)` when absent or empty,
+/// `Ok(Some(warning))` when it says on (deprecated: remove it), `Err(refusal)` when it says
+/// anything else.
+pub fn check_lifecycle_switch_env(env_value: Option<&str>) -> Result<Option<String>, String> {
+    match env_value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(v) if lifecycle_switch_says_on(v) => Ok(Some(format!(
+            "{LIFECYCLE_ENFORCE_ENV} is retired (sp-v62vn): the lifecycle machine is always on — remove it"
+        ))),
+        Some(v) => Err(lifecycle_switch_refusal(&format!("${LIFECYCLE_ENFORCE_ENV}"), v)),
     }
-    let path = toml_file.map(Path::to_path_buf).or_else(|| discover(None));
-    let configured = path
-        .filter(|p| p.is_file())
-        .and_then(|p| load(&p).ok())
-        .and_then(|d| d.spira)
-        .and_then(|s| s.lifecycle_enforce);
-    resolve_lifecycle_enforce(None, configured)
 }
 
 /// The root of `spira.toml`.
@@ -501,6 +507,9 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "batcher_bin", bead: "sp-gypjk" },
     // Flaky suites are deleted, not quarantined, so nothing reactivates on clean runs.
     RetiredKey { key: "quarantine_clean_runs", bead: "sp-op2c2" },
+    // The lifecycle machine is the only mode (sp-v62vn): `true` is accepted with this warning;
+    // any other value is refused by [`validate_with_warnings`] before the strip.
+    RetiredKey { key: "lifecycle_enforce", bead: "sp-v62vn" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
@@ -677,6 +686,13 @@ pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), St
             warnings.push(
                 "batcher_bin is retired (sp-gypjk); its non-batcher value is read as batcher_enable = \"0\" — replace it with that".into(),
             );
+        }
+        // BEFORE the generic strip: the retired lifecycle switch saying off is refused, not
+        // dropped — a document that believes the box runs off is wrong (sp-v62vn).
+        if let Some(v) = spira.get("lifecycle_enforce") {
+            if v.as_bool() != Some(true) {
+                return Err(lifecycle_switch_refusal("spira.lifecycle_enforce", &v.to_string()));
+            }
         }
         for retired in RETIRED_SPIRA_KEYS {
             if spira.remove(retired.key).is_some() {
@@ -1108,36 +1124,20 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_enforce_resolution_matches_aeon() {
-        // The environment wins, both ways; set-but-empty is off.
-        assert!(resolve_lifecycle_enforce(Some("1"), Some(false)));
-        assert!(resolve_lifecycle_enforce(Some("true"), None));
-        assert!(!resolve_lifecycle_enforce(Some("0"), Some(true)));
-        assert!(!resolve_lifecycle_enforce(Some(""), Some(true)));
-        assert!(!resolve_lifecycle_enforce(Some("yes"), None));
-        assert!(!resolve_lifecycle_enforce(Some("TRUE"), None));
-        // No environment: the typed key, else off.
-        assert!(resolve_lifecycle_enforce(None, Some(true)));
-        assert!(!resolve_lifecycle_enforce(None, Some(false)));
-        assert!(!resolve_lifecycle_enforce(None, None));
-    }
-
-    #[test]
-    fn lifecycle_enforce_reads_the_typed_key_from_a_document() {
-        // Only meaningful when the process environment does not pin the switch.
-        if std::env::var_os(LIFECYCLE_ENFORCE_ENV).is_some() {
-            return;
+    fn the_retired_lifecycle_switch_refuses_off_and_warns_on() {
+        assert_eq!(check_lifecycle_switch_env(None), Ok(None));
+        assert_eq!(check_lifecycle_switch_env(Some("")), Ok(None));
+        assert!(check_lifecycle_switch_env(Some("1")).unwrap().unwrap().contains("retired"));
+        assert!(check_lifecycle_switch_env(Some("true")).unwrap().is_some());
+        for off in ["0", "false", "yes", "TRUE"] {
+            let e = check_lifecycle_switch_env(Some(off)).unwrap_err();
+            assert!(e.contains("sp-v62vn") && e.contains("Exit: remove it"), "{e}");
         }
-        let dir = testkit::TempDir::new("spira-config-lce");
-        let p = dir.join("spira.toml");
-        std::fs::write(&p, "[spira]\nid_prefix = \"sp\"\nlifecycle_enforce = true\n").unwrap();
-        assert!(lifecycle_enforce(Some(&p)));
-        std::fs::write(&p, "[spira]\nid_prefix = \"sp\"\nlifecycle_enforce = false\n").unwrap();
-        assert!(!lifecycle_enforce(Some(&p)));
-        std::fs::write(&p, "[spira]\nid_prefix = \"sp\"\nnot_a_key = 1\n").unwrap();
-        assert!(!lifecycle_enforce(Some(&p)), "an invalid document is off");
-        assert!(!lifecycle_enforce(Some(&dir.join("absent.toml"))), "a named but absent document is off");
-        let _ = std::fs::remove_dir_all(&dir);
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlifecycle_enforce = true\n").unwrap();
+        assert!(w.iter().any(|w| w.contains("lifecycle_enforce is retired (sp-v62vn)")), "{w:?}");
+        let e = validate("[spira]\nid_prefix = \"sp\"\nlifecycle_enforce = false\n").unwrap_err();
+        assert!(e.contains("spira.lifecycle_enforce") && e.contains("no off") && e.contains("Exit:"), "{e}");
+        assert!(validate("[spira]\nlifecycle_enforce = \"off\"\n").is_err());
     }
 
     #[test]
@@ -1329,8 +1329,8 @@ mod tests {
 
     #[test]
     fn set_path_coerces_a_bool_field() {
-        let doc = set_path(&SpiraToml::default(), "spira.lifecycle_enforce", "true").unwrap();
-        assert_eq!(doc.spira.unwrap().lifecycle_enforce, Some(true));
+        let doc = set_path(&SpiraToml::default(), "spira.mail_mute", "true").unwrap();
+        assert_eq!(doc.spira.unwrap().mail_mute, Some(true));
     }
 
     #[test]

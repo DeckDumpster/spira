@@ -95,6 +95,7 @@ landing() {
 
 seed() {
     testdb_reset
+    rm -rf "$LC_FIX/bead" "$LC_FIX/show"; mkdir -p "$LC_FIX/bead" "$LC_FIX/show"
     rm -rf "$RUN/tip-at-gate"; rm -f "$RUN/withhold-gate" "$RUN/claim-during-gate"
     testdb_seed <<'JSONL'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
@@ -109,6 +110,8 @@ branch() {
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
+    # The builder's hand-off is the bead's lifecycle row, not bd `closed` (sp-mve9i).
+    lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD 2>/dev/null)" 0
 }
 
 drop_branch() {
@@ -163,6 +166,12 @@ nowant "and nothing is landed on a withheld verdict"     "landed spira/sp-held" 
 inc="$(incidents)"
 is "one incident is filed for the repository" 1 "$(n_lines "$inc")"
 inc_id="$(printf '%s\n' "$inc" | head -1)"
+# sp-jgjvh: incident's dedup reads the incident bead's lifecycle row (incident beads are work
+# beads). The filing registers that row with the machine
+# (lifecycle_row::after_create); this suite's spira-lc is a fixture, so the row the machine
+# would hold is declared here as data. Without it the bead is rowless — not live work — and
+# the second pass below would file a second incident.
+[ -n "$inc_id" ] && lc_bead READY "$inc_id" "" 0
 if [ -n "$inc_id" ]; then
     shown="$(B show "$inc_id" 2>&1)"
     want "it names the failing suite"                  "$BASE_SUITE" "$shown"

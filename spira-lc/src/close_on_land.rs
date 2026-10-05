@@ -1,6 +1,9 @@
 //! `close-on-land <id> [sha]` — the only place a work bead is closed for a landed reason.
-//! A bead is acted on only while `open`/`in_progress` and carrying the submitted label: one
-//! already closed, or never submitted, is left alone. For one it acts on, the landing is
+//! A bead is acted on only once its builder has handed it on and it has not ended any other
+//! way — its lifecycle row SUBMITTED, CERTIFIED, IN_DELIVERY or LANDED (sp-mve9i: the
+//! machine's state, never bd's status or the retired submitted label); one still with a
+//! builder, one dropped or superseded, or one with no row is left alone. For one it acts
+//! on, the landing is
 //! recorded first on the lifecycle record (a `ContentOnBase` event whose proof is
 //! `landed:<sha>`) — the one record; nothing here writes a second ledger — then bd closes.
 //! Best-effort throughout and always exits 0, since every caller discards the answer.
@@ -16,8 +19,8 @@ use serde_json::Value;
 /// the same miss as one that failed: CHECK 5 and the Sending's sweep stay the backstops.
 const CALL_SECS: &str = "5";
 
+/// The bd content close-on-land reads: the labels naming the bead's repo and branch.
 pub struct Row {
-    pub raw_status: String,
     pub labels: Vec<String>,
 }
 
@@ -25,13 +28,23 @@ pub fn parse_row(text: &str) -> Option<Row> {
     let start = text.find(['[', '{'])?;
     let v: Value = serde_json::from_str(&text[start..]).ok()?;
     let item = v.as_array().map(|a| a.first().cloned().unwrap_or(Value::Null)).unwrap_or(v);
-    let raw_status = item.get("status")?.as_str()?.to_string();
+    item.get("id")?;
     let labels = item.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-    Some(Row { raw_status, labels })
+    Some(Row { labels })
 }
 
-pub fn should_close(row: &Row, submitted_label: &str) -> bool {
-    row.raw_status != "closed" && row.labels.iter().any(|l| l == submitted_label)
+/// Whether the lifecycle state `state` (None: the machine has no row) is a bead this verb
+/// closes for a landed reason: the builder handed it on and it has not been dropped,
+/// superseded or finished some other way. LANDED is included — a batch's own `land` may have
+/// recorded it already, and bd still needs closing. No row: nothing says it was ever
+/// submitted, so it is left alone.
+pub fn should_close(state: Option<&str>) -> bool {
+    matches!(state, Some("SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "LANDED"))
+}
+
+/// Whether the landing still needs recording: a LANDED row already carries it.
+pub fn should_record(state: Option<&str>) -> bool {
+    should_close(state) && state != Some("LANDED")
 }
 
 fn label_value<'a>(labels: &'a [String], prefix: &str) -> Option<&'a str> {
@@ -99,21 +112,24 @@ pub fn record_landing(id: &str, sha: &str, record: &mut dyn FnMut(&str, &str) ->
 /// `record(id, proof)` applies the `ContentOnBase` event on the lifecycle record (main.rs
 /// hands in the caller-verb path, so the switch and the machine are read exactly as
 /// `spira-lc content-on-base` reads them) and returns its exit code.
-pub fn run(args: &[String], record: &mut dyn FnMut(&str, &str) -> i32) -> i32 {
+/// `state(id)` reads the bead's lifecycle state (None: no row, or the machine cannot say).
+pub fn run(args: &[String], state: &mut dyn FnMut(&str) -> Option<String>, record: &mut dyn FnMut(&str, &str) -> i32) -> i32 {
     let Some(id) = args.first().filter(|s| !s.is_empty()) else {
         eprintln!("spira-lc close-on-land: usage: close-on-land <bead-id> [sha]");
         return 2;
     };
     let sha = args.get(1).map(String::as_str).unwrap_or("");
-    let label = spira_config::resolve::key_for_process("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "spira-submitted".into());
-    let Some(row) = show_row(id) else { return 0 };
-    if !should_close(&row, &label) {
+    let st = state(id);
+    if !should_close(st.as_deref()) {
         return 0;
     }
+    let Some(row) = show_row(id) else { return 0 };
     // A submitted bead whose work landed: the landing is recorded on the lifecycle record
     // first, so a failed bd close below cannot leave it unrecorded. A bead never submitted
     // (an ancestor branch with no work of its own, sp-cl0) records nothing, as before.
-    record_landing(id, sha, record);
+    if should_record(st.as_deref()) {
+        record_landing(id, sha, record);
+    }
     let shown = if sha.is_empty() { "unknown" } else { sha };
     if !bdq_close(id, &reason(sha)) {
         println!("land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)");
@@ -139,23 +155,39 @@ pub fn run(args: &[String], record: &mut dyn FnMut(&str, &str) -> i32) -> i32 {
 mod tests {
     use super::*;
 
-    fn row(status: &str, labels: &[&str]) -> Row {
-        Row { raw_status: status.into(), labels: labels.iter().map(|s| s.to_string()).collect() }
+    /// sp-mve9i: whether to close is the lifecycle row's call, never bd's status or the
+    /// retired submitted label.
+    #[test]
+    fn only_a_handed_on_bead_that_did_not_end_otherwise_is_closed() {
+        for s in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"] {
+            assert!(should_close(Some(s)), "{s}");
+        }
+        for s in ["READY", "WORKING", "REWORK", "DROPPED", "SUPERSEDED", "DONE"] {
+            assert!(!should_close(Some(s)), "{s}");
+        }
+        assert!(!should_close(None), "no row: nothing says it was submitted");
+        assert!(should_record(Some("CERTIFIED")) && !should_record(Some("LANDED")), "a LANDED row already carries the landing");
     }
 
+    /// The state is read before bd is: a bead the machine says is still WORKING is never
+    /// closed, whatever bd shows.
     #[test]
-    fn only_an_unclosed_submitted_bead_is_closed() {
-        assert!(should_close(&row("open", &["spira-submitted"]), "spira-submitted"));
-        assert!(should_close(&row("in_progress", &["spira-submitted"]), "spira-submitted"));
-        assert!(!should_close(&row("closed", &["spira-submitted"]), "spira-submitted"));
-        assert!(!should_close(&row("open", &["other"]), "spira-submitted"));
-        assert!(!should_close(&row("open", &["spira-submitted"]), "custom-label"));
+    fn run_reads_the_lifecycle_state_and_never_bd_status() {
+        let src = include_str!("close_on_land.rs");
+        let body = &src[src.find("pub fn run(").unwrap()..src.find("#[cfg(test)]").unwrap()];
+        assert!(body.find("state(id)").unwrap() < body.find("show_row(id)").unwrap());
+        let mut recorded = false;
+        let rc = run(&["sp-w".to_string()], &mut |_| Some("WORKING".to_string()), &mut |_, _| {
+            recorded = true;
+            0
+        });
+        assert_eq!(rc, 0);
+        assert!(!recorded, "a WORKING bead was treated as landed");
     }
 
     #[test]
     fn parses_bd_json_after_a_warning_line() {
-        let r = parse_row("warning: x\n[{\"status\":\"open\",\"labels\":[\"a\",\"repo:r\"]}]").unwrap();
-        assert_eq!(r.raw_status, "open");
+        let r = parse_row("warning: x\n[{\"id\":\"sp-a\",\"status\":\"open\",\"labels\":[\"a\",\"repo:r\"]}]").unwrap();
         assert_eq!(r.labels, vec!["a", "repo:r"]);
         assert!(parse_row("no json").is_none());
     }
@@ -173,7 +205,7 @@ mod tests {
         let src = include_str!("close_on_land.rs");
         let body = &src[src.find("pub fn run(").unwrap()..];
         let at = |n: &str| body.find(n).unwrap();
-        assert!(at("should_close(&row") < at("record_landing(") && at("record_landing(") < at("bdq_close(id"));
+        assert!(at("should_close(st") < at("record_landing(") && at("record_landing(") < at("bdq_close(id"));
         assert_eq!(seen, vec![("sp-x".to_string(), "landed:abc".to_string())]);
         assert_eq!(proof(""), "landed:unknown");
     }

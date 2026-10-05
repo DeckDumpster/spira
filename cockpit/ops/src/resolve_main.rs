@@ -43,6 +43,27 @@ impl Closer for RealBd {
             },
         }
     }
+
+    fn show_json(&self, db: &Path, id: &str) -> String {
+        Command::new("timeout")
+            .arg("5")
+            .arg(db::bd_bin())
+            .arg("-C")
+            .arg(db)
+            .args(["show", id, "--json"])
+            .stdin(Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    }
+
+    fn withdraw_ask(&self, work_bead: &str) -> (i32, String) {
+        // spira-lc by name on the launcher's PATH (sp-gypjk).
+        match Command::new("timeout").args(["5", "spira-lc", "withdraw-ask", work_bead, "claude"]).stdin(Stdio::null()).output() {
+            Ok(o) => (o.status.code().unwrap_or(2), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (2, format!("running spira-lc: {e}")),
+        }
+    }
 }
 
 fn main() -> ExitCode {

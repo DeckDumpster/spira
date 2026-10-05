@@ -29,12 +29,11 @@ It replaces the scattered bash: `_attempts_sql_query`, `attempts_of`, `reopens_o
 ### What it is deliberately NOT
 
 - **Not the brief.** sp-f0qhr was ejected twice because its aeon.sh change bypassed
-  sp-wmcvb's lifecycle-aware brief rendering (test-aeon-chamber-overlay "lifecycle_enforce=1
-  tells the model it has no bd") and the `lifecycle_enforce` misconfiguration refusal
-  (test-lifecycle-enforce-gate case C). Brief rendering, `{{FINISH}}` selection and the
-  enforce gate are about *how the claimed bead is worked*; this program only decides
-  *which bead*. It has no knowledge of `lifecycle_enforce`, briefs, chambers or `bd` in the
-  aeon environment, and its cutover touches none of those lines.
+  sp-wmcvb's lifecycle-aware brief rendering (test-aeon-chamber-overlay: the brief tells
+  the model it has no bd). Brief rendering and `{{FINISH}}` selection are about *how the
+  claimed bead is worked*; this program only decides *which bead*. It has no knowledge of
+  briefs, chambers or `bd` in the aeon environment, and its cutover touches none of those
+  lines.
 - **Not the claim itself.** The atomic `bd update --claim` and the lifecycle CAS
   (`lc_claim_bead`) stay where they are; `select` only orders candidates.
 - **Not a writer — with one named exception.** Every read verb (`attempts`, `requeues`,
@@ -70,7 +69,9 @@ Diagnostics go to stderr, one line, prefixed `spira-claim:`.
 - **Ready set** — bd `ready`/`list --json` rows, from `--ready FILE` or stdin. Never argv
   (law-payloads-go-on-stdin; sp-o4trx's E2BIG outage at 142 beads).
 - **Epic lookup** — `{"prio":{epic:prio}, "started":[epic,...]}`, from `--epics FILE` or
-  fetched (one `bd list --id` per ≤100 distinct epics, one `bd children` per distinct epic).
+  fetched (one `bd list --id` per ≤100 distinct epics, one `bd children` per distinct epic,
+  and the lifecycle rows a child's progress is read from — machine-mode `select`'s snapshot,
+  else one `spira-lc list`; see "Epic started" below).
 - **Lifecycle snapshot** (machine mode only) — `spira-lc list` rows, from `--lifecycle FILE`
   or fetched by running `spira-lc list`.
 - **Blocker records** (machine mode only) — bd rows for every `blocks` target, from
@@ -139,8 +140,19 @@ machine (stacked-dependents-2026-09-28 §1-2):
    | blocker | satisfied when |
    |---|---|
    | work bead (issue_type not epic/decision/event/molecule/gate), **same `repo:`**, has a lifecycle row, `stack_max_depth > 0` | CERTIFIED or IN_DELIVERY (stacked), or LANDED/DONE |
-   | anything else with a lifecycle row (epic, decision, other repo, or stacking off) | LANDED/DONE, or terminal and bd-closed |
-   | no lifecycle row | bd status `closed` |
+   | anything else with a lifecycle row (epic, decision, other repo, or stacking off) | terminal (LANDED/DONE/SUPERSEDED/DROPPED) |
+   | no lifecycle row, not a work bead (epic, decision, event, molecule, gate) | bd status `closed`, read through `spira_config::nonwork` naming the kind (`Epic`; a gate is a `Hold`) |
+   | no lifecycle row, a work bead | satisfied: not live work (below) |
+   | not in bd either | never (fail closed) |
+
+   sp-mve9i (design §3.4: bd holds content, spira-lc holds state) took bd status out of the
+   work-bead rows. A SUPERSEDED or DROPPED blocker used to wait for bd's close as well; the
+   machine's terminal word is the whole answer — nothing more will happen to it, so waiting
+   would wait forever. A rowless work bead is not live work: every work bead gets its row at
+   creation, the migration classifier seeded every `repo:`-labelled bead (closed ones
+   included), and CHECK-ROWLESS backfills a READY row for a live one that missed it, at
+   which point it blocks by its row. What is left rowless is legacy work that is over, which
+   is the reading the sentinel's backlog and the claim witness give a rowless bead.
 
 3. Stack depth = 1 + max(`stack_depth` of the stacked, not-yet-landed blockers), 0 when
    none are stacked. A candidate whose depth exceeds `stack_max_depth` is not claimable
@@ -364,44 +376,31 @@ sp-j1q6o commit).
   submitted, open bead (`cert-gate-red`, `closed-without-commit`) write no bd `reopened`
   row, so the old count never saw them.
 
-## 6a. Lifecycle switch: claim selection
+## 6a. The lifecycle machine is the only mode (sp-v62vn)
 
-**Finding (operator, 2026-09-28):** the lifecycle machine was never deployed on this host.
-There is no `spira_lifecycle` database, no `spira_lc` grant, and no service or socket.
-**Decision:** `lifecycle_enforce` is THE switch for everything that touches the lifecycle
-machine. `unpoison` records the same switch for itself in §8.7. This section covers
-`select`, and the two must agree: what off-mode unpoison clears (the `spira-poison` label)
-is exactly what off-mode `select` refuses.
+`lifecycle_enforce` was the switch for everything that touches the lifecycle machine
+(operator decision, 2026-09-28). After the cutover every decision reads spira-lc, and the off
+mode was a second, untested-in-production code path; sp-v62vn retired it. There is no switch
+to resolve: `select`, `ready-count`, `fayth-ready`, `bulk-ready-by-fayth`, `epics`, `audit`,
+`unpoison`, `deadlocked` and `reopen` read the machine, always. A config or environment that
+still says off is refused by spira-config (`spira_config::check_lifecycle_switch_env`,
+`validate`), naming the exit.
 
-**Resolution** (main.rs `lifecycle_on` → `spira_config::lifecycle_enforce`, the aeon
-crate's rule and unpoison's):
-- `SPIRA_LIFECYCLE_ENFORCE` wins: `1`/`true` is on, and anything else, including empty, is off.
-- Else `spira.lifecycle_enforce`.
-- Else **off**.
+| | behaviour |
+|---|---|
+| the poison | the lifecycle `poison` hold (machine mode, §2 rule 1); the `spira-poison` bd label is vestigial and never read |
+| `--blockers bd` (default) | the caller's rows, unchanged (§2) |
+| `--blockers machine` | `spira-lc list` (or `--lifecycle F`), `rank::claimable`, the stacked-dependents rule (§2) |
+| unreachable machine | `cannot tell` (exit 2, empty stdout): `… lifecycle snapshot: … (the machine must answer)` |
+| `attempts`/`requeues`/`counts`/`decide`/`poison-decide` | no lifecycle call. `poison-decide --poisoned` is the caller's read |
 
-`SPIRA_LC_BIN`'s existence is never consulted.
-
-| | **off** (production today) | **on** |
-|---|---|---|
-| spira-lc | **never run**; `--lifecycle F` is ignored with a stderr note | `spira-lc list` (or `--lifecycle F`) in machine mode |
-| the poison | the `spira-poison` bd label: a labelled row is dropped in **both** blockers modes | the lifecycle `poison` hold (machine mode, §2 rule 1) |
-| `--blockers bd` (default) | today's rows, less any `spira-poison`-labelled row. Normally that is none, because the caller's `bd ready` excludes the label already (`exclude_default`) | unchanged, bit for bit (§2) |
-| `--blockers machine` | `rank::claimable_legacy`. It uses legacy records: not labelled `spira-poison`, and every `blocks` target bd-`closed`. There is no stacking (depth 0), because stacking exists only in the machine | `rank::claimable`, the stacked-dependents rule (§2) |
-| unreachable machine | irrelevant | `cannot tell` (exit 2, empty stdout): `… lifecycle snapshot: … (lifecycle_enforce is on, so the machine must answer)` |
-| `attempts`/`requeues`/`counts`/`decide`/`poison-decide`/`epics` | no lifecycle call in any era. `poison-decide --poisoned` is the caller's read | same |
-
-**Tests** (tests.rs pins the switch per thread through `ENFORCE`, so neither the host's
-environment nor its spira.toml leaks in):
-- `off_machine_mode_is_the_legacy_rule_and_never_reads_the_lifecycle`: with no
-  `--lifecycle`, and with a garbage one, it still answers, so neither source was read.
-- `off_spira_poison_label_is_not_claimable_in_either_mode`
-- `on_bd_mode_is_unchanged_and_the_label_is_not_the_poison`
-- `on_machine_mode_unreachable_machine_is_cannot_tell`
-- The three earlier machine-mode tests now run with the switch on.
-
-**Cutover addition:** §5 item 11 (machine selection) is gated on `lifecycle_enforce` by the
-caller. Under off, `--blockers machine` is still safe: it gives the legacy answer and never
-contacts the machine.
+**Epic started (sp-mve9i).** An epic is started when any child's lifecycle row has left the
+queue: WORKING, or past the builder (SUBMITTED onwards, or terminal) — what bd's "in
+progress, closed, or open with the submitted label" meant. bd's status and the submitted
+label are no longer read for it (so `epics`/`select` take no `--submitted-label`). The rows
+are machine-mode `select`'s snapshot when it has one, else one `spira-lc list`. A
+machine that cannot answer is cannot-tell (`epics_with_no_machine_is_cannot_tell`); guessing
+the started tier from bd would be the read this replaces.
 
 ## 7. Decisions
 
@@ -436,8 +435,8 @@ clear).
 ### 8.1 Intent
 
 A poison is what CHECK 4 puts on a bead whose charged attempts reached `POISON_AT`: the
-lifecycle `poison` hold when `lifecycle_enforce` is on, the `spira-poison` bd label when it is
-off (§8.7 — the switch decides which record is the poison, and off never calls spira-lc). Clearing one by hand failed a different way every time: removing the label
+lifecycle `poison` hold (§8.7; the `spira-poison` bd label of the retired off mode is
+vestigial). Clearing one by hand failed a different way every time: removing the label
 left the count at the threshold and the next pass re-poisoned (2026-09-26, six beads);
 crediting attempts worked only when every step was remembered. `unpoison` is the one path.
 For each bead it:
@@ -529,8 +528,8 @@ reads the `OK` line, §8.6).
    machine must answer). **Off:** spira-lc is never invoked; poisoned ⇔ the bd labels carry
    `spira-poison` (unpoison.sh read a failed lc read as "not
    poisoned" and would SKIP or falsely verify).
-4. **Live work.** bd `status == in_progress` with an assignee, **or** (on only) a lifecycle
-   row in `WORKING` with a holder → `FAIL held by …`. Nothing is written.
+4. **Live work.** A lifecycle row in `WORKING` with a holder → `FAIL held by …`.
+   Nothing is written. bd's `in_progress` is not a holder (sp-mve9i).
 5. **Nothing to clear.** No poison hold and `attempts < P` → `SKIP`.
 
 **Writes, per bead, in order** (after the preconditions pass; each is its own store call):
@@ -540,8 +539,8 @@ reads the `OK` line, §8.6).
 | (credit) | bd events | `bd -C <db> sql "INSERT … 'requeued' … 'unjudged-<slug>' …"` | FAIL, stop |
 | 1 floor | bd events | `bd -C <db> sql "INSERT … 'poison.cleared' … '<bounded cause>' …"` | FAIL, stop — without the floor, releasing the hold only invites the next pass to re-poison |
 | 2 ask history | file | `rm $SPIRA_POISON_ASKED/<id>` (absent is fine) | reported by verify |
-| 3 hold (on only) | spira-lc | `spira-lc show` → `spira-lc event bead <id> --expect <state> --version <v> --actor <actor> --kind '{"Unhold":{"kind":"Poison"}}'`; a refusal (exit 3, lost CAS race) retries once from a fresh read | reported by verify |
-| 3b label | bd | `bd -C <db> label remove <id> spira-poison` (only when the bead carries it) | on: ignored (vestigial); **off: `warn`, and verify re-reads the label** |
+| 3 hold | spira-lc | `spira-lc show` → `spira-lc event bead <id> --expect <state> --version <v> --actor <actor> --kind '{"Unhold":{"kind":"Poison"}}'`; a refusal (exit 3, lost CAS race) retries once from a fresh read | reported by verify |
+| 3b label | bd | `bd -C <db> label remove <id> spira-poison` (only when the bead carries it) | ignored (vestigial) |
 | 4 note | bd | `bd -C <db> note <id> --stdin` ← `Poison cleared by spira-claim unpoison (<actor>; attempts were <n>): <cause>` | `warn` |
 | 5 ask | bd | `bd -C <db> list --status open --label <ask-label> --limit 0 --json`; for each title matching §8.3's rule, `bd -C <db> close <ask> --reason-file -` ← `Resolved by spira-claim unpoison: <id>'s poison was cleared — <cause>` | `warn` |
 
@@ -737,92 +736,19 @@ Line numbers against this branch's base (4764d03ec).
    whose interface does not change.
 9. Build/install: `spira-claim` is already on the workspace and §5 item 15's artifact list.
 
-### 8.7 The switch: `lifecycle_enforce` (operator decision, 2026-09-28)
+### 8.7 The lifecycle machine is the poison's record (sp-v62vn)
 
-The dry run in §8.4 found that the lifecycle machine was never deployed on this host: no
-`spira_lifecycle` database, no `spira_lc` grant, no `spira-lc` service or socket. So the
-operator made `lifecycle_enforce` the switch for unpoison.
+`lifecycle_enforce` was unpoison's switch too (operator decision, 2026-09-28, when the machine
+was not yet deployed). sp-v62vn retired it with the off mode (§6a): the poison is the lifecycle
+`poison` hold, the live holder is a lifecycle `WORKING` row with a holder (bd's status is never
+read, sp-mve9i), the clear is an Unhold retried once after a lost race, verify and watch
+re-read the lifecycle row (`lifecycle-hold-still-present` / `lifecycle-unreadable`), and an
+unreachable machine is `FAIL <id>: cannot tell (spira-lc show: …; the machine must answer) —
+nothing was written`. The legacy `spira-poison` label is removed best effort and never read.
 
-**Resolution** is the aeon crate's (`aeon/src/conf.rs` `lifecycle_enforce` on
-concierge/rw-aeon), exactly:
-- `SPIRA_LIFECYCLE_ENFORCE` in the environment wins: `1` or `true` is on, and any other value,
-  including empty, is off. A unit or fixture pins it this way; conf.sh exports it (`0` here).
-- Else `spira.lifecycle_enforce` from spira.toml, read through spira-config.
-- Else off.
-
-Whether the spira-lc binary exists is never consulted.
-
-| | **off** (production today) | **on** |
-|---|---|---|
-| the poison | the `spira-poison` bd label | the lifecycle `poison` hold |
-| spira-lc | **never invoked** (show, event, anything) | show before, Unhold, show in verify and watch |
-| live holder | bd `in_progress` with an assignee | that, or a lifecycle `WORKING` row with a holder |
-| clearing it | `bd label remove <id> spira-poison` (a failure is a `warn`) | Unhold, retried once after a lost race; the label is removed best effort |
-| verify | `decide(…, poisoned = label present)` — the legacy decision; fails on `label-still-present` / `bead-unreadable` | `decide(…, poisoned = hold present)`; fails on `lifecycle-hold-still-present` / `lifecycle-unreadable` |
-| watch, per poll and at the end | the bd labels (`bd show`) | the lifecycle row |
-| unreachable machine | irrelevant | `FAIL <id>: cannot tell (spira-lc show: …; lifecycle_enforce is on, so the machine must answer) — nothing was written` |
-
-These are the same in both modes: the `poison.cleared` floor is written first, then the
-ask-history reset, the note, the ask close, the attempt fold, `decide`, and the audit-log pass
-detection.
-
-**The shared contract with the sentinel's CHECK 4** is the label, the `poison.cleared` event
-and the `$SPIRA_RUN/poison-asked/<id>` file. The DESIGN.md on concierge/rw-sentinel (§1, "On
-lifecycle_enforce mode — there is none in the sentinel") records that sp-i2m7y moved CHECK 4
-onto spira-lc **unconditionally**. So today's sentinel has no off mode that writes the label.
-
-**What that does in production now:** CHECK 4's `lc_hold` fails silently against the missing
-machine. The pass still logs `ACT poisoned <id>`: 182 times in the current audit.log, sp-n9z
-among them, re-"poisoned" on every pass. Yet no label and no hold exist, so nothing stops
-dispatch. When the sentinel gains an off mode, it must write and read `spira-poison` for
-unpoison's off mode to be its inverse. Until then, off-mode unpoison finds no label, reports
-`poisoned=0`, and still writes the floor when attempts ≥ P, because that floor is what stops
-the next pass logging a poison.
-
-**Tests (§8.4 additions).**
-- `off_clear_removes_the_label_and_never_calls_spira_lc`: the fake world panics on any spira-lc
-  call and is also set to fail every lifecycle read.
-- `off_live_holder_is_bd_in_progress_with_assignee`
-- `off_skip_and_dry_run`
-- `off_verify_fails_when_label_stays`
-- `off_watch_reads_the_label_and_the_audit_log`
-- `on_unreachable_machine_is_a_loud_fail`
-- `tests::lifecycle_enforce_resolution_matches_aeon`
-- Every earlier §8.4 test runs with the switch on.
-
-**Read-only dry run, off (2026-09-28).** Run under conf.sh, which sets
-`SPIRA_LIFECYCLE_ENFORCE=0`, with `SPIRA_LC_BIN` pointed at a path that does not exist:
-
-```
-$ spira-claim unpoison --bead sp-n9z --cause "read-only dry-run smoke" --dry-run
-WOULD sp-n9z: attempts 26, poisoned=0 — write poison.cleared, reset ask history, no spira-poison label to remove (lifecycle_enforce off), note, resolve ask
-rc=0
-```
-
-With `SPIRA_LIFECYCLE_ENFORCE=1`, the same command gave `FAIL sp-n9z: cannot tell (spira-lc
-show: cannot start: …; lifecycle_enforce is on, so the machine must answer) — nothing was
-written`, rc=3.
-
-sp-n9z is `open`, has no assignee and has no `spira-poison` label. A real run would:
-- write the floor, taking attempts from 26 to 0;
-- remove `poison-asked/sp-n9z` (it holds `3`);
-- write the note.
-
-It would close no ask: no open ask titled for sp-n9z exists, because every CHECK 4 pass logs
-"the escalation path refused the ask".
-
-**Cutover addition.** None for the switch itself. conf.sh already exports
-`SPIRA_LIFECYCLE_ENFORCE`, and spira-config already has the typed key. Item 5 of §8.6
-(test-unpoison.sh) must export `SPIRA_LIFECYCLE_ENFORCE=1`, because it seeds a real spira-lc
-and asserts on the hold. A second e2e case with `SPIRA_LIFECYCLE_ENFORCE=0` and
-`SPIRA_LC_BIN=/nonexistent` asserts the label is removed and the bead verifies.
-
-## 9. `audit` and `deadlocked` — the board, and lifting a finished bead's poison
-
-Replaces **spira/attempts.sh** (290 lines; sp-rfodk, wave 3 of the Rust rewrite, world
-stopped). attempts.sh had five verbs: `audit`, `reclassify`, `prune-reclaims`, `deadlocked`,
-`clear`. Only `audit` and `deadlocked` are ported; the others are retired, not carried
-forward — §9.4 says why, with the evidence.
+The off claim record that the off path needed — `bd_claim::off_holder` and
+`off_release_args`, lifecycle-guard's former `OFF_CLAIM_RECORD` exceptions — went with it:
+a reopen writes no bd status.
 
 ### 9.1 `audit` — what every claimable bead is carrying, and why
 
@@ -853,19 +779,16 @@ for, for as long as sp-lzt has stood. This audit reads the same events-table fol
 are the ones actually charging the bead today. `counter_causes` and friends stay in lib.sh,
 read-only, for whatever a caller still finds on an old bead (§9.4).
 
-**Poisoned respects the switch (§6a), which attempts.sh's own `poisoned()` did not.**
-attempts.sh called `spira-lc held "$id" poison` unconditionally, on every bead, regardless
-of `lifecycle_enforce` — a latent defect that predates the switch and was never exercised in
-production, where `lifecycle_enforce` has been off throughout (§6a). `audit` reads the label
-off, and a `spira-lc list` snapshot on (`--lifecycle F`, or fetched), exactly as `select`
-does. This is a deliberate correction, named here rather than silently carried forward.
+**Poisoned is the lifecycle hold (§6a).** `audit` reads a `spira-lc list` snapshot
+(`--lifecycle F`, or fetched), exactly as `select` does; a machine that cannot answer is
+cannot-tell. The `spira-poison` label is never read.
 
 ### 9.2 `deadlocked` — lift a poison from finished, landable work
 
 ```
 spira-claim deadlocked [--apply] --merge-status F|- [--actor NAME]
     -> for every row {"id","ok","why","branch","base"}: if the bead is not poisoned right
-       now (label off, lifecycle hold on — §6a), silent, exactly as attempts.sh's own
+       now (the lifecycle hold — §6a), silent, exactly as attempts.sh's own
        `poisoned || continue`. Otherwise:
          ok=false -> "KEEP     <id> <why>"
          ok=true, held by a live claim -> "FAIL <id>: held by … — live work is never
@@ -941,9 +864,8 @@ be fed from the same query.
 - **`audit`'s causes come from the events fold, not the retired labels** (§9.1) — a
   correction, not a like-for-like port, because the labels it used to read have been silently
   empty since sp-lzt.
-- **`audit`'s and `deadlocked`'s poisoned check honours `lifecycle_enforce` (§6a)**, which
-  attempts.sh's own `poisoned()` did not — an unconditional `spira-lc held` call, live-tested
-  nowhere against production's actual (off) mode. Corrected here, not carried forward.
+- **`audit`'s and `deadlocked`'s poisoned check reads the lifecycle snapshot (§6a)**, one
+  read per pass rather than attempts.sh's per-bead `spira-lc held` call.
 - **`deadlocked` gains a live-work refusal** attempts.sh's own case did not have (§9.5) —
   cheap, since `unpoison`'s precondition already exists to copy, and it is the one guard
   standing between a wrong merge-status verdict (groomer.sh's git check, not proven infallible
@@ -954,8 +876,8 @@ be fed from the same query.
 
 ### 9.5 New: live work is never touched
 
-`deadlocked`'s precondition, copied from `unpoison`'s (§8.2 #4): a bead `bd`-`in_progress`
-with an assignee, or (lifecycle_enforce on) a lifecycle row in `WORKING` with a holder, is
+`deadlocked`'s precondition, copied from `unpoison`'s (§8.2 #4): a held bead — with
+a lifecycle row in `WORKING` with a holder — is
 refused rather than lifted — `FAIL <id>: held by … — live work is never touched: let that
 aeon finish (or stop it: spira/slay.sh --bead <id>), then re-run`. attempts.sh's own
 `deadlocked` had no such guard (a poisoned bead should never be claimed in the first place,
@@ -977,10 +899,9 @@ out to be wrong and a lift reaching work in progress.
   bd's bare `reopened` with its cause row. This is exactly §6's own "Count parity" finding
   (400 beads, "requeues differ on 116 … 45 to 20"), not a new discrepancy this bead
   introduced — cited here rather than re-measured.
-- **`deadlocked`'s decision and write**, proven against a fake `World` (12 unit tests,
+- **`deadlocked`'s decision and write**, proven against a fake `World` (unit tests,
   `deadlock_tests.rs`): silent skip when not poisoned, `KEEP` with reason, dry-run `WOULD`
-  writes nothing, `--apply` restores and leaves the attempt record standing (both
-  `lifecycle_enforce` on and off), a live-work claim refuses and writes nothing, a lost CAS
+  writes nothing, `--apply` restores and leaves the attempt record standing, a live-work claim refuses and writes nothing, a lost CAS
   race retries once, a lift that does not verify reports `REFUSED`, and the sp-wiyr2 mark is
   written with the count at the moment of the lift. The git half (`groomer.sh deadlocked`)
   is exercised end to end by the updated test-deadlock-sweep.sh and test-poison.sh (real

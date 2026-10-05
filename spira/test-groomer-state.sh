@@ -8,8 +8,9 @@
 # straight from git/landstate: landed-but-open (close), closed-no-branch (spira-dropped),
 # closed-never-landed conflict|batch-ready (reopen), then blocked-by-unlanded notes over
 # whatever got reopened. The 2026-10-04 lifecycle cutover deleted them: lifecycle LANDED
-# supersedes them, and the sentinel's CHECK5-LC reports the same three drifts from the
-# spira-lc rows. The landed-but-open sweep had closed the cutover bead (sp-sa8pn) itself.
+# supersedes them (the sentinel's CHECK5-LC, which reported the same drifts from the spira-lc
+# rows, went with sp-mve9i: bd status is inert, so there is nothing for the row to disagree
+# with). The landed-but-open sweep had closed the cutover bead (sp-sa8pn) itself.
 #
 # THE CASE. The exact fixture the old sweep acted on — an open bead whose commit is on the
 # base, a closed bead with no branch: label, two closed beads whose branches never landed
@@ -53,7 +54,13 @@ printf '%s | %s | push | main | |\n' "$REPONAME" "$REPO" > "$TMP/repo-map"
 # "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`:
 # a stub answers from $LCSTATE/<id>; no file is spira-lc's NO_ROW (rc 1).
 LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lcbin"
-printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
+# sp-jgjvh: the sweep's incident-needs-builder scan reads each incident bead's state from its
+# lifecycle row (incident beads are work beads), and a machine that does not answer fails the
+# sweep. A stand-in spira-lc tells this database's bd story in lifecycle terms (testlib.sh
+# lc_mirror_bd: open → READY, in_progress → WORKING, closed → LANDED).
+# `state` keeps answering from $LCSTATE; every other verb (`list`, `show`) goes to the mirror.
+lc_mirror_bd "$TMP/lcmirror"
+printf '#!/usr/bin/env bash\n[ "$1" = state ] || exec "%s" "$@"\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$SPIRA_LC_BIN" "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
 chmod +x "$TMP/lcbin/spira-lc"
 
 run_sweep() {

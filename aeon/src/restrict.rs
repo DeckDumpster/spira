@@ -1,4 +1,4 @@
-//! The model's restricted environment when `lifecycle_enforce` is on (design §3.5;
+//! The model's restricted environment (design §3.5;
 //! replaces `spira/work-env.sh`, sp-zpaq0). This bead's own acceptance criterion carries
 //! over unchanged: "in the provided aeon environment, `command -v bd` fails and no
 //! credential is readable."
@@ -126,10 +126,6 @@ pub fn restricted_env(bead_id: &str, base: &BTreeMap<String, String>, work_dir: 
     };
     env.insert("PATH".to_string(), path);
     env.insert("SPIRA_WORK_BEAD_ID".to_string(), bead_id.to_string());
-    env.insert(
-        "SPIRA_LIFECYCLE_ENFORCE".to_string(),
-        base.get("SPIRA_LIFECYCLE_ENFORCE").filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| "0".to_string()),
-    );
     for k in CONDITIONAL {
         if let Some(v) = base.get(*k).filter(|v| !v.is_empty()) {
             env.insert(k.to_string(), v.clone());
@@ -256,23 +252,10 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_enforce_defaults_to_0_when_absent() {
-        let e = restricted_env("sp-x", &BTreeMap::new(), "/rel/bin");
-        assert_eq!(e.get("SPIRA_LIFECYCLE_ENFORCE").unwrap(), "0");
-    }
-
-    #[test]
-    fn lifecycle_enforce_defaults_to_0_when_present_but_empty() {
-        let b = base(&[("SPIRA_LIFECYCLE_ENFORCE", "")]);
-        let e = restricted_env("sp-x", &b, "/rel/bin");
-        assert_eq!(e.get("SPIRA_LIFECYCLE_ENFORCE").unwrap(), "0");
-    }
-
-    #[test]
-    fn lifecycle_enforce_carries_through_when_set() {
+    fn the_retired_lifecycle_switch_never_reaches_the_model() {
         let b = base(&[("SPIRA_LIFECYCLE_ENFORCE", "1")]);
         let e = restricted_env("sp-x", &b, "/rel/bin");
-        assert_eq!(e.get("SPIRA_LIFECYCLE_ENFORCE").unwrap(), "1");
+        assert!(!e.contains_key("SPIRA_LIFECYCLE_ENFORCE"));
     }
 
     #[test]
@@ -332,7 +315,7 @@ mod tests {
         let b = base(&[("HOME", "/h"), ("PATH", "/whatever"), ("SHELL", "/bin/zsh"), ("SSH_AUTH_SOCK", "/tmp/sock"), ("AWS_SECRET_ACCESS_KEY", "leak")]);
         let e = restricted_env("sp-x", &b, "/rel/bin");
         let mut allowed: Vec<&str> = UNCONDITIONAL.to_vec();
-        allowed.extend(["PATH", "SPIRA_WORK_BEAD_ID", "SPIRA_LIFECYCLE_ENFORCE"]);
+        allowed.extend(["PATH", "SPIRA_WORK_BEAD_ID"]);
         allowed.extend(CONDITIONAL);
         for k in e.keys() {
             assert!(allowed.contains(&k.as_str()), "{k} is not on the allow-list");

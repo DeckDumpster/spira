@@ -15,12 +15,9 @@
 #    "## <section>" block) and $FAYTH.append.md (appended). A hand edit to the release
 #    checkout is reverted by the next skew refresh with nothing to say so (sp-r1ca2); an
 #    overlay survives it and doctor reports it by name.
-# 3. {{FINISH}} FOLLOWS lifecycle_enforce (sp-wmcvb). sp-xethq rewrote builder.md's Finishing
-#    section unconditionally for the restricted `work` path; sp-74gzo then made that path
-#    explicit and off by default. With the flag off, every builder was still told "You have
-#    no bd" / "work submit" against a daemon nothing starts — no builder session could ever
-#    submit. {{FINISH}} is now chosen by aeon.sh, the way {{LANDING}} is: this asserts both
-#    renderings, the off-by-default legacy bd-close text and the flag-on restricted text.
+# 3. {{FINISH}} IS THE RESTRICTED PATH'S (sp-wmcvb). The lifecycle machine is the only mode
+#    (sp-v62vn): the brief tells the model it has no bd and finishes through `work submit`,
+#    and never renders the retired bd-close Finishing text.
 #
 # POSITIVE CONTROL: the overlay assertions plant a section and an append file and require
 # both to appear in the rendered task file — an overlay directory nothing reads from would
@@ -93,48 +90,8 @@ make_bead() {
 # close driven around the lifecycle machine (sp-voip5).
 close_bead() { testdb_restate "$1" closed; }
 
-# ==========================================================================================
-echo "test-aeon-chamber-overlay.sh"
-echo
-echo "GOLDEN: the rendered builder brief has no gate-run.sh instruction, no overlay present"
-# ==========================================================================================
-BID_G="$(make_bead)"
-[ -n "$BID_G" ] || { printf 'test-aeon-chamber-overlay: could not create golden bead\n' >&2; exit 1; }
-aeon builder
-# system.md carries the persona identity and its Tests section — everything ahead of the
-# <!-- task --> marker in chamber/builder.md; task.md carries the bead body and the rest.
-# An aeon reads both, so a rendering assertion checks the pair together.
-task_g="$(cat "$SPIRA_RUN/$BID_G.system.md" "$SPIRA_RUN/$BID_G.task.md" 2>/dev/null)"
-
-nowant "SEEN RED CONTROL: no gate-run.sh anywhere in the rendered brief" "gate-run.sh" "$task_g"
-nowant "and no stray {{GATE}} placeholder"                                "{{GATE}}"    "$task_g"
-want   "the Tests section's own instruction is still there"       "DO NOT run the full landing" "$task_g"
-want   "and testenv is the verification path"                     "testenv"                     "$task_g"
-close_bead "$BID_G"
-
-# ==========================================================================================
-echo
-echo "GOLDEN (sp-wmcvb): {{FINISH}} follows lifecycle_enforce, not sp-xethq's fixed text"
-# ==========================================================================================
-# lifecycle_enforce=0 (the default in production until the sp-sa8pn cutover): the rendered
-# brief must name bd ... close and must never tell the model it has no bd — the defect this
-# bead reproduces was every builder since sp-xethq being told the opposite while
-# lifecycle_enforce was off (sp-74gzo), so nothing could ever submit.
-unset SPIRA_LIFECYCLE_ENFORCE
-BID_F0="$(make_bead)"
-[ -n "$BID_F0" ] || { printf 'test-aeon-chamber-overlay: could not create finish/legacy bead\n' >&2; exit 1; }
-aeon builder
-task_f0="$(cat "$SPIRA_RUN/$BID_F0.system.md" "$SPIRA_RUN/$BID_F0.task.md" 2>/dev/null)"
-nowant "SEEN RED CONTROL: lifecycle_enforce=0 never tells the model it has no bd" \
-       "You have no \`bd\`" "$task_f0"
-want   "lifecycle_enforce=0 renders the legacy bd-close Finishing section" \
-       "bd -C $SPIRA_DB close $BID_F0 --reason-file -" "$task_f0"
-want   "and the seven-outcome table is present" "OUTCOME: submitted" "$task_f0"
-nowant "and the restricted work-verb finishing text is absent" "work submit" "$task_f0"
-close_bead "$BID_F0"
-
-# lifecycle_enforce=1: the restricted path, exercised end to end against a stub spira-lc
-# (SPIRA_LC_BIN is retired, sp-gypjk — spira-lc is found by name on PATH, which is why this
+# THE LIFECYCLE MACHINE IS THE ONLY MODE (sp-v62vn), so every aeon run below takes the
+# restricted path, exercised end to end against a stub spira-lc (SPIRA_LC_BIN is retired, sp-gypjk — spira-lc is found by name on PATH, which is why this
 # stub is dropped ahead of the real binary on PATH rather than pointed to by env var) and a
 # stub `work` — this suite is about brief rendering, not lc_claim_bead's own protocol
 # correctness (test-aeon-lifecycle-cutover.sh covers that against a real spira-lc server), so
@@ -145,7 +102,8 @@ close_bead "$BID_F0"
 # absent from that array (DESIGN.md §7 "fails closed on a missing own row"), so the stub
 # must report this section's one candidate READY by its real id, not just any id. It reads
 # that id straight from bd — the same ready set aeon itself just claimed from — rather than
-# a hardcoded one, so it stays correct across every bead this section creates.
+# a hardcoded one, so it stays correct across every bead each section creates (close_bead
+# takes a section's bead out of that set).
 # work-env.sh is retired (sp-zpaq0): the aeon binary builds its own restricted environment.
 STUB_BIN="$TMP/lc-bin"; mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/spira-lc" <<'STUB'
@@ -169,20 +127,44 @@ STUB
 chmod +x "$STUB_BIN/spira-lc"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/work"
 chmod +x "$STUB_BIN/work"
-_PATH_BEFORE_STUB="$PATH"
-export SPIRA_LIFECYCLE_ENFORCE=1 PATH="$STUB_BIN:$PATH"   # the stubs, by name, ahead of the tree's build
+PATH="$STUB_BIN:$PATH"   # the stubs, by name, ahead of the tree's build
+
+# ==========================================================================================
+echo "test-aeon-chamber-overlay.sh"
+echo
+echo "GOLDEN: the rendered builder brief has no gate-run.sh instruction, no overlay present"
+# ==========================================================================================
+BID_G="$(make_bead)"
+[ -n "$BID_G" ] || { printf 'test-aeon-chamber-overlay: could not create golden bead\n' >&2; exit 1; }
+aeon builder
+# system.md carries the persona identity and its Tests section — everything ahead of the
+# <!-- task --> marker in chamber/builder.md; task.md carries the bead body and the rest.
+# An aeon reads both, so a rendering assertion checks the pair together.
+task_g="$(cat "$SPIRA_RUN/$BID_G.system.md" "$SPIRA_RUN/$BID_G.task.md" 2>/dev/null)"
+
+nowant "SEEN RED CONTROL: no gate-run.sh anywhere in the rendered brief" "gate-run.sh" "$task_g"
+nowant "and no stray {{GATE}} placeholder"                                "{{GATE}}"    "$task_g"
+want   "the Tests section's own instruction is still there"       "DO NOT run the full landing" "$task_g"
+want   "and testenv is the verification path"                     "testenv"                     "$task_g"
+close_bead "$BID_G"
+
+# ==========================================================================================
+echo
+echo "GOLDEN (sp-wmcvb): {{FINISH}} is the restricted work-verb finishing text"
+# ==========================================================================================
+# The rendered brief tells the model it has no bd and finishes through `work submit`; the
+# defect this bead reproduced was builders told the opposite of the path they ran (sp-74gzo).
 BID_F1="$(make_bead)"
 [ -n "$BID_F1" ] || { printf 'test-aeon-chamber-overlay: could not create finish/restricted bead\n' >&2; exit 1; }
 aeon builder
 task_f1="$(cat "$SPIRA_RUN/$BID_F1.system.md" "$SPIRA_RUN/$BID_F1.task.md" 2>/dev/null)"
-want   "lifecycle_enforce=1 tells the model it has no bd" "You have no \`bd\`" "$task_f1"
+want   "the brief tells the model it has no bd" "You have no \`bd\`" "$task_f1"
 want   "and the finishing verb is work submit" "work submit" "$task_f1"
 nowant "and the legacy bd-close instruction is absent" "bd -C $SPIRA_DB close" "$task_f1"
 # The stub model never calls `work submit`, so the bead is left claimed under the lifecycle
 # machine rather than closed through bd — take it out of ready, so it does not linger for a
 # later section's make_bead to reclaim.
 close_bead "$BID_F1"
-unset SPIRA_LIFECYCLE_ENFORCE; PATH="$_PATH_BEFORE_STUB"
 
 # ==========================================================================================
 echo

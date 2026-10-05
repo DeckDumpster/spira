@@ -3,6 +3,8 @@
 
 use crate::quoting::parse_iso8601;
 use serde_json::Value;
+pub use spira_config::lc_state::{self, Row};
+use std::collections::HashMap;
 use std::process::{Command, Stdio};
 
 pub struct LcRow {
@@ -49,6 +51,13 @@ pub fn list(state: Option<&str>) -> Option<Vec<LcRow>> {
         return None;
     }
     parse_rows(&String::from_utf8_lossy(&o.stdout))
+}
+
+/// Every lifecycle row as `spira_config::lc_state` reads it, keyed by bead id: a work bead's
+/// state, holder and holds for the probes that used to read bd `status` (sp-mve9i, design
+/// §3.4: "people and the cockpit read state from spira-lc"). `None` is CANNOT TELL.
+pub fn state_index() -> Option<HashMap<String, Row>> {
+    lc_state::list().ok().map(lc_state::index)
 }
 
 #[cfg(test)]

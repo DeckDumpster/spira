@@ -43,7 +43,13 @@ pub trait World {
     fn deliberate_py(&self, tabular: &str) -> String;
 
     // ---- bd, direct (a `list` read: bdq's guards apply only to create/reopen/update/close) ----
-    fn bd_list_json(&self, status: &str, label_pattern: &str) -> String;
+    /// Every bead carrying a label matching `label_pattern`, whatever bd says its status is
+    /// (`bd list --all`): bd holds the remedies' content, never their state (sp-mve9i).
+    fn bd_list_all_json(&self, label_pattern: &str) -> String;
+
+    // ---- the lifecycle machine ----
+    /// `spira-lc list`: every bead's lifecycle row. Err when the machine cannot answer.
+    fn lc_rows(&self) -> Result<Vec<spira_config::lc_state::Row>, String>;
 
     // ---- git ----
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool;

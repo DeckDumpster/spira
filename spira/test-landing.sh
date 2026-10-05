@@ -185,6 +185,7 @@ notes_of() { B show "$1" 2>/dev/null; }
 
 seed() {
     testdb_reset
+    rm -rf "$LC_FIX/bead" "$LC_FIX/show"; mkdir -p "$LC_FIX/bead" "$LC_FIX/show"
     rm -rf "$RUN/tip-at-gate"; rm -f "$RUN/withhold-gate" "$RUN/claim-during-gate"
     testdb_seed <<'JSONL'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
@@ -198,6 +199,8 @@ branch() {               # branch <id> [file] [content] — a closed bead with a
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
+    # The builder's hand-off is the bead's lifecycle row, not bd `closed` (sp-mve9i).
+    lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD 2>/dev/null)" 0
 }
 drop_branch() {
     local id="$1"
@@ -438,28 +441,33 @@ drop_branch sp-nolabel
 # that window must not be landed on a stale "closed" — the re-read at the point of action
 # catches it.
 # --------------------------------------------------------------------------------------
-# The gate stub reopens the bead during the gate, simulating a concurrent reopen.
-stub gate.sh '
-'"${SPIRA_BD:-bd}"' -C "'"$SPIRA_DB"'" reopen "$SPIRA_GATE_BEAD" >/dev/null 2>&1
+# The gate stub reopens the bead during the gate, simulating a concurrent reopen. Since
+# sp-mve9i a reopen is the bead's lifecycle row going back to REWORK (bd status is inert), so
+# that is what the stub moves; the re-read at the point of action reads the row.
+reopen_in_lc='rm -f "'"$LC_FIX"'"/bead/*/"$SPIRA_GATE_BEAD"; mkdir -p "'"$LC_FIX"'/bead/REWORK"
+printf "{\"bead_id\":\"%s\",\"state\":\"REWORK\",\"tip\":\"\",\"since\":0}" "$SPIRA_GATE_BEAD" > "'"$LC_FIX"'/bead/REWORK/$SPIRA_GATE_BEAD"
+printf "{\"bead\":{\"bead_id\":\"%s\",\"state\":\"REWORK\",\"tip\":\"\"}}" "$SPIRA_GATE_BEAD" > "'"$LC_FIX"'/show/$SPIRA_GATE_BEAD"'
+stub gate.sh "
+$reopen_in_lc"'
 echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
 seed; branch sp-stale
 out="$(landing)"
 nowant "a bead reopened during the gate is not landed" "landed spira/sp-stale" "$out"
-want   "the re-read catches the status change"        "bead is now open" "$out"
-is     "and the bead stays open"                      open "$(status_of sp-stale)"
+want   "the re-read catches the state change"         "bead is now REWORK" "$out"
+is     "and the bead stays in rework"                 REWORK "$(lc_state_of sp-stale)"
 drop_branch sp-stale
 
 # Same test but for the gate-failure path: a bead reopened during a failing gate must
 # not be reopened AGAIN (which would charge a second attempt).
-stub gate.sh '
-'"${SPIRA_BD:-bd}"' -C "'"$SPIRA_DB"'" reopen "$SPIRA_GATE_BEAD" >/dev/null 2>&1
+stub gate.sh "
+$reopen_in_lc"'
 echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'
 seed; branch sp-stalered
 out="$(landing)"
 nowant "a bead already reopened is not reopened again by the gate failure" \
        "Reopened by sentinel" "$out"
-want   "the re-read catches the status change on the failure path" \
-       "bead is now open" "$out"
+want   "the re-read catches the state change on the failure path" \
+       "bead is now REWORK" "$out"
 drop_branch sp-stalered
 
 # Restore the full gate stub for any future tests.

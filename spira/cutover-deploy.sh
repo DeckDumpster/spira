@@ -3,7 +3,7 @@
 # cutover-deploy.sh — design §5.3: the migration step of the cutover deploy, run between
 # drain and resume. Idempotent per step (schema.sql is IF NOT EXISTS throughout, grants.sql
 # is CREATE USER IF NOT EXISTS, classify skips a bead that already has a row, and the config
-# flip is a plain set), so a retry after a partial failure picks up where it left off.
+# step is a plain unset), so a retry after a partial failure picks up where it left off.
 #
 #   cutover-deploy.sh --repo NAME [--repo NAME]... [--dry-run]
 #
@@ -27,8 +27,9 @@
 #   3. run `spira-lc classify` once per --repo given, AS spira_lc (SPIRA_LC_PASSWORD_FILE) —
 #      the same restricted user everything else now writes through, so a grants.sql mistake
 #      fails this step instead of production's first real write
-#   4. flip lifecycle_enforce to true through spira-config — the only writer the config
-#      document admits (config-fence refuses any other)
+#   4. remove the retired lifecycle_enforce key through spira-config — the only writer the
+#      config document admits (config-fence refuses any other). The lifecycle machine is the
+#      only mode (sp-v62vn): there is no switch to flip, and a leftover `true` only warns.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
@@ -95,12 +96,12 @@ for name in "${REPOS[@]}"; do
         --landstate-dir "$SPIRA_RUN/landstate" --queue-dir "$SPIRA_QUEUE_DIR" --repo "$name" || exit 1
 done
 
-say "flipping lifecycle_enforce"
+say "retiring lifecycle_enforce"
 if [ "$DRY_RUN" != 1 ]; then
-    # spira_config_set (conf.sh) is the one place a [spira] key's dotted path is derived and
+    # spira_config_unset (conf.sh) is the one place a [spira] key's dotted path is derived and
     # spira-config invoked — never a direct write to the config document itself, which the
     # config-fence lint refuses (it is a multi-tenant store; spira-config is its only writer).
-    spira_config_set SPIRA_LIFECYCLE_ENFORCE true || exit 1
+    spira_config_unset SPIRA_LIFECYCLE_ENFORCE || exit 1
 fi
 
 say "done — resume spira-lc.socket and the timers"

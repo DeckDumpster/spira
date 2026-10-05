@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::bead::{self, Bd};
 use crate::env::Env;
 use crate::kinds;
+use crate::lc::{self, Lc, Lift};
 use crate::lint::{self, LintInput};
 use crate::maildir;
 use crate::message;
@@ -118,7 +119,14 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     }
 
     let db_configured = !env.db.is_empty();
-    let mut x_bead = args.bead.to_string();
+    let asks = args.kind == "question" || args.kind == "decision";
+    // The bead a question is ABOUT (the asking session's own, under `work ask`), carried as
+    // X-Spira-Work-Bead so whoever answers can lift its `ask` hold (sp-v62vn follow-up).
+    let work_bead = if asks { args.bead } else { "" };
+    // A rerouted question files no tracking bead, so X-Spira-Bead would name the WORK bead —
+    // and a reply's sendmail closes whatever X-Spira-Bead names. The work bead rides
+    // X-Spira-Work-Bead alone.
+    let mut x_bead = if rerouted && asks { String::new() } else { args.bead.to_string() };
 
     if (args.kind == "question" || args.kind == "decision") && db_configured && !rerouted {
         if env.ask_label.is_empty() {
@@ -127,7 +135,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
             }
             return Err("ask label does not resolve — refusing to file an ask under a guessed one".to_string());
         }
-        if let Some(dec_bead) = bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label) {
+        if let Some(dec_bead) = bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label, work_bead) {
             if !args.bead.is_empty() {
                 if env.allow_blocking {
                     if bead::dep_add(bd, args.bead, &dec_bead, "blocks") {
@@ -176,6 +184,9 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     if !x_bead.is_empty() {
         msg.push_str(&format!("X-Spira-Bead: {x_bead}\n"));
     }
+    if !work_bead.is_empty() {
+        msg.push_str(&format!("X-Spira-Work-Bead: {work_bead}\n"));
+    }
     if let Some(lc) = &env.lint_considered {
         msg.push_str(&format!("X-Spira-Lint-Override: {lc}\n"));
     }
@@ -194,24 +205,23 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     if is_operator {
         repeat::repeat_stamp(repeat_guard.take().unwrap());
 
-        if (args.kind == "question" || args.kind == "decision") && env.bead_id.is_some() {
-            let marker = env.run_dir.join(format!("{}.operator-wait", env.bead_id.as_ref().unwrap()));
-            let _ = fs::write(marker, env.session_epoch.clone().unwrap_or_default());
-        }
         if (args.kind == "question" || args.kind == "decision") && !x_bead.is_empty() {
-            let _ = index_record(&env.index_file, &mailbox, &format!("{msgid}@spira"), &x_bead, args.kind, args.default);
+            let _ = index_record(&env.index_file, &mailbox, &format!("{msgid}@spira"), &x_bead, args.kind, args.default, work_bead);
         }
     }
 
     Ok(SendOutcome { delivered_path, x_bead: if x_bead.is_empty() { None } else { Some(x_bead) } })
 }
 
-fn index_record(index_file: &Path, mailbox: &str, msgid: &str, bead: &str, kind: &str, default: &str) -> std::io::Result<()> {
+/// One TSV line: mailbox, message id, tracking bead, kind, default, and — sixth, possibly
+/// empty — the work bead the question is about (read by `sweep_dismissed` to lift its hold;
+/// a five-field line from before the column existed still parses).
+fn index_record(index_file: &Path, mailbox: &str, msgid: &str, bead: &str, kind: &str, default: &str, work_bead: &str) -> std::io::Result<()> {
     if let Some(parent) = index_file.parent() {
         fs::create_dir_all(parent)?;
     }
     let mut f = OpenOptions::new().create(true).append(true).open(index_file)?;
-    writeln!(f, "{}\t{}\t{}\t{}\t{}", mailbox, msgid, bead, kind, default.replace('\t', " "))
+    writeln!(f, "{}\t{}\t{}\t{}\t{}\t{}", mailbox, msgid, bead, kind, default.replace('\t', " "), work_bead)
 }
 
 pub fn template(kinds_dir: &Path, kind: &str) -> Result<String, String> {
@@ -363,7 +373,10 @@ pub enum SweepOutcome {
     Report(SweepReport),
 }
 
-pub fn sweep_dismissed(bd: &dyn Bd, db_configured: bool, mail_root: &Path, index_file: &Path, mailbox: &str, operator_actor: &str) -> Result<SweepOutcome, String> {
+/// A dismissal is the operator's answer — "the default" — so a dismissed question about a
+/// work bead (the index's sixth field) also lifts that bead's `ask` hold, with the dismissed
+/// question's own message id as the reply (sp-v62vn follow-up).
+pub fn sweep_dismissed(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, mail_root: &Path, index_file: &Path, mailbox: &str, operator_actor: &str) -> Result<SweepOutcome, String> {
     if !db_configured {
         return Err("bead store not configured — refusing to dismiss anything".to_string());
     }
@@ -387,7 +400,8 @@ pub fn sweep_dismissed(bd: &dyn Bd, db_configured: bool, mail_root: &Path, index
             Some(s) => s,
             None => continue,
         };
-        if status == "closed" {
+        // The index's beads are asks: bd's status is their state (spira_config::nonwork, sp-mve9i).
+        if spira_config::nonwork::is_closed(spira_config::nonwork::Kind::Ask, &status) {
             continue;
         }
         if find_message_by_id(mail_root, msgid).is_some() {
@@ -401,6 +415,9 @@ pub fn sweep_dismissed(bd: &dyn Bd, db_configured: bool, mail_root: &Path, index
         let reason = format!("dismissed by operator (mail deleted) — default taken: {}", if default.is_empty() { "<none given>" } else { default });
         if bead::close(bd, bead_id, &reason).is_ok() {
             report.dismissed += 1;
+            if let Some(w) = lc::lift_ask(lc, fields.get(5).copied().unwrap_or(""), Lift::Reply { message_id: msgid }, operator_actor) {
+                eprintln!("{w}");
+            }
         } else {
             eprintln!("sweep-dismissed: failed to close {bead_id}");
         }
@@ -427,5 +444,42 @@ mod class_tests {
         assert!(class_refusal("architecture", BASIS).is_some());
         assert!(class_refusal("policy", "## Question\nq\n").is_some());
         assert!(class_refusal("policy", "## Class basis\n\n").is_some());
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use crate::lc::fake::FakeLc;
+    use crate::bead::fake::FakeBd;
+    use crate::bead::BdOut;
+
+    /// An ask already closed in bd is skipped outright: no reply probe, no close (sp-mve9i:
+    /// the ask is a non-work bead, so its bd status is the state read here).
+    #[test]
+    fn a_closed_ask_is_neither_kept_nor_dismissed() {
+        let t = testkit::TempDir::new("mail-sweep-closed");
+        let idx = t.path().join("index");
+        std::fs::write(&idx, "ops\t<m1@x>\tsp-ask1\task\tgo\n").unwrap();
+        let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-ask1","status":"closed"}]"#)]);
+        let Ok(SweepOutcome::Report(r)) = sweep_dismissed(&bd, &FakeLc::new(0), true, t.path(), &idx, "ops", "ryan") else { panic!("no report") };
+        assert_eq!((r.dismissed, r.kept), (0, 0));
+        assert_eq!(bd.calls().len(), 1, "{:?}", bd.calls());
+    }
+
+    /// A dismissed question about a work bead takes its default AND lifts the work bead's
+    /// ask hold; a five-field line from before the work-bead column lifts nothing.
+    #[test]
+    fn a_dismissed_question_lifts_its_work_beads_ask_hold() {
+        let t = testkit::TempDir::new("mail-sweep-lift");
+        let idx = t.path().join("index");
+        std::fs::write(&idx, "ops\tm1@spira\tsp-ask1\tquestion\tgo\tsp-work1\nops\tm2@spira\tsp-ask2\tquestion\tgo\n").unwrap();
+        let open = || BdOut::ok(r#"[{"status":"open"}]"#);
+        // per line: status, history (no operator reply), close
+        let bd = FakeBd::new(vec![open(), BdOut::ok("[]"), BdOut::ok(""), open(), BdOut::ok("[]"), BdOut::ok("")]);
+        let lc = FakeLc::new(0);
+        let Ok(SweepOutcome::Report(r)) = sweep_dismissed(&bd, &lc, true, t.path(), &idx, "ops", "ryan") else { panic!("no report") };
+        assert_eq!(r.dismissed, 2, "{:?}", bd.calls());
+        assert_eq!(lc.calls(), vec![vec!["reply", "sp-work1", "m1@spira", "ryan"]]);
     }
 }

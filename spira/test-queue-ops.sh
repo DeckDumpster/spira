@@ -80,7 +80,7 @@ esac
 BDSTUB
 chmod +x "$SH/bd-stub.sh"
 
-LC_DOWN="SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT=1 SPIRA_LC_DB=spira_lifecycle SPIRA_LC_USER=root SPIRA_LIFECYCLE_ENFORCE=1"
+LC_DOWN="SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT=1 SPIRA_LC_DB=spira_lifecycle SPIRA_LC_USER=root"
 RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 

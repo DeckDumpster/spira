@@ -10,8 +10,11 @@
 #      pidfile only after it claims a bead) must not read a just-summoned aeon as free.
 #   C. ready-bucket.py's bucketing mirrors fayth_ready's predicate exactly (labels,
 #      excludes, fayth: preference) — checked directly, no database needed.
-#   D. sentinel.sh --summon-only, against a real fixture: ONE bd ready call (not one per
-#      partition), a summon happens, and none of the full pass's own checks run.
+#   D. sentinel --summon-only, against a real fixture: the ready set is spira-claim's, over
+#      the lifecycle machine's READY rows — ZERO bd ready calls (sp-v62vn: there is no off
+#      mode, so neither the sentinel nor spira-claim asks bd what is ready) — a summon
+#      happens, beads bd calls open but the machine does not call READY summon nothing, and
+#      none of the full pass's own checks run.
 #
 # B — ck7_summon_pass's summon.lock serializing two real contenders — MOVED (wave 4.27,
 #     family G, sp-gzmd2): `_ck7_summon_body`, bare and unlocked, used to be reachable as
@@ -225,7 +228,7 @@ ops 1" "$out"
 
 # ============================================================================
 echo
-echo "D — sentinel --summon-only against a real fixture: one bd ready call, no full pass:"
+echo "D — sentinel --summon-only against a real fixture: the machine's ready set, no bd ready call, no full pass:"
 # ============================================================================
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -263,12 +266,28 @@ exec "$REAL_BD" "\$@"
 EOF
 chmod +x "$DSTUBS/counting-bd"
 
+# THE READY SET IS THE MACHINE'S. spira-claim (bulk-ready-by-fayth, inside the summon pass)
+# reads the lifecycle machine's READY rows from `spira-lc list`, then bd only for those
+# beads' content. The stand-in (testlib lc_mirror_bd) answers `list` from the fixture's
+# real bd store — open beads are READY rows, unless $LCMIRROR/states pins a row otherwise —
+# and a counting wrapper ahead of it on PATH (spira-claim finds spira-lc by name) records
+# that the machine was asked at all.
+LCMIRROR="$T/lcmirror"; LCBIN="$T/lcbin"; LC_CALL_LOG="$T/lc-calls.log"
+lc_mirror_bd "$LCMIRROR"
+mkdir -p "$LCBIN"
+cat > "$LCBIN/spira-lc" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$LC_CALL_LOG"
+exec "$LCMIRROR/spira-lc" "\$@"
+EOF
+chmod +x "$LCBIN/spira-lc"
+
 run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
     local run="$1"; shift
     mkdir -p "$run"
     env -i \
         PATH="$PATH" HOME="$HOME" \
-        SPIRA_HOME="$DSTUBS" PATH="$DSTUBS:$PATH" \
+        SPIRA_HOME="$DSTUBS" PATH="$LCBIN:$DSTUBS:$PATH" \
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$DSTUBS/counting-bd" \
@@ -295,15 +314,31 @@ _drun="$T/run-summon-only"; mkdir -p "$_drun"
 run_summon_only "$_drun" >/dev/null 2>&1
 rm -f "$_drun/world.halted"
 
-rm -f "$SUMMON_LOG" "$BD_CALL_LOG"
+rm -f "$SUMMON_LOG" "$BD_CALL_LOG" "$LC_CALL_LOG"
 out_d1="$(run_summon_only "$_drun")"
 is "D: pool=2 -> exactly 2 summons (elastic fill, bounded by the pool)" "2" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
-is "D: exactly ONE bd call fetched the ready set" "1" "$(grep -c ' ready ' "$BD_CALL_LOG" 2>/dev/null || echo 0)"
-want "D: the one call was a ready query" "ready" "$(cat "$BD_CALL_LOG" 2>/dev/null)"
+want "D: the ready set was read from the lifecycle machine (spira-lc list)" "list" "$(cat "$LC_CALL_LOG" 2>/dev/null)"
+# POSITIVE CONTROL for the zero below: the counting wrapper does see this pass's bd reads
+# (spira-claim's content read of the READY beads), so a zero is not a dead log.
+want "D: positive control: the pass's bd reads reach the counting wrapper" "list" "$(cat "$BD_CALL_LOG" 2>/dev/null)"
+# grep -c prints 0 AND exits 1 on no match, so no `|| echo 0` here (that printed "0\n0"); the
+# positive control above already proved the log exists.
+is "D: ZERO bd ready calls — the summon pass's ready set is the machine's" "0" "$(grep -c ' ready ' "$BD_CALL_LOG" 2>/dev/null)"
 want "D: log reports the summon-only pass" "summon-only pass complete" "$out_d1"
 nowant "D: no full-pass state line" "state: open=" "$out_d1"
 nowant "D: no full-pass CHECK7c" "CHECK7c" "$out_d1"
 nowant "D: no Sending" "sending:" "$out_d1"
+
+echo
+echo "D — the machine, not bd, decides: beads bd calls open but the machine holds summon nothing:"
+# Same store, same pool; the machine now says both beads are WORKING. bd still calls them
+# open — a summoner reading bd's status would fill the pool again.
+printf 'sp-b1 WORKING\nsp-b2 WORKING\n' > "$LCMIRROR/states"
+rm -f "$SUMMON_LOG" "$BD_CALL_LOG"
+out_held="$(run_summon_only "$_drun")"
+is "held: no summon when the machine has no READY row" "0" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
+want "held: says nothing is ready" "nothing ready in its partition" "$out_held"
+rm -f "$LCMIRROR/states"
 
 echo
 echo "D — world.halted short-circuits before the live count or any bd call:"

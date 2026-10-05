@@ -19,10 +19,8 @@
 //! functions call, plus the direct target for `groomer`/`maechen-trigger`/`cockpit-collect`
 //! (they use this crate in-process instead):
 //!
-//!   strand detect-livelocked               strand detect-false-blockers <ids…>
-//!   strand detect-landed-but-open          strand detect-incident-needs-builder
-//!   strand detect-closed-unlanded-states    strand detect-invalid-closed
-//!   strand all-partition-members
+//!   strand detect-livelocked               strand detect-incident-needs-builder
+//!   strand detect-invalid-closed           strand all-partition-members
 
 use strand::{check, config, detectors, probe};
 
@@ -153,37 +151,6 @@ fn cmd_detect_livelocked(args: Vec<String>) -> i32 {
     0
 }
 
-/// `detect_landed_but_open` (lib.sh): one `STATE … landed-but-open …` line per row.
-fn cmd_detect_landed_but_open(args: Vec<String>) -> i32 {
-    if !args.is_empty() {
-        return die("detect-landed-but-open");
-    }
-    let cfg = config::Config::resolve(&config::Live::load());
-    print_lines(&detectors::detect_landed_but_open(&cfg));
-    0
-}
-
-/// `detect_closed_unlanded_states` (lib.sh): `closed-no-branch` / `closed-never-landed
-/// conflict|batch-ready` STATE lines.
-fn cmd_detect_closed_unlanded_states(args: Vec<String>) -> i32 {
-    if !args.is_empty() {
-        return die("detect-closed-unlanded-states");
-    }
-    let cfg = config::Config::resolve(&config::Live::load());
-    print_lines(&detectors::detect_closed_unlanded_states(&cfg));
-    0
-}
-
-/// `detect_false_blockers <blocker-ids…>` (lib.sh took one positional carrying a
-/// whitespace-separated list; the shim passes `"$@"` through, so every argv word is
-/// rejoined with a space — the same string the bash function would have received).
-fn cmd_detect_false_blockers(args: Vec<String>) -> i32 {
-    let cfg = config::Config::resolve(&config::Live::load());
-    let blockers = args.join(" ");
-    print_lines(&detectors::detect_false_blockers(&cfg, &blockers));
-    0
-}
-
 /// `detect_incident_needs_builder` (lib.sh): dies when `SPIRA_INCIDENT_LABEL` is unset,
 /// exactly as the bash `${SPIRA_INCIDENT_LABEL:?…}` did.
 fn cmd_detect_incident_needs_builder(args: Vec<String>) -> i32 {
@@ -234,9 +201,6 @@ fn main() {
             "aeons-live-total" => Some(cmd_aeons_live_total(rest())),
             "aeons-live-lanes" => Some(cmd_aeons_live_lanes(rest())),
             "detect-livelocked" => Some(cmd_detect_livelocked(rest())),
-            "detect-landed-but-open" => Some(cmd_detect_landed_but_open(rest())),
-            "detect-closed-unlanded-states" => Some(cmd_detect_closed_unlanded_states(rest())),
-            "detect-false-blockers" => Some(cmd_detect_false_blockers(rest())),
             "detect-incident-needs-builder" => Some(cmd_detect_incident_needs_builder(rest())),
             "detect-invalid-closed" => Some(cmd_detect_invalid_closed(rest())),
             "all-partition-members" => Some(cmd_all_partition_members(rest())),

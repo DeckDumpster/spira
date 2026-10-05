@@ -8,13 +8,12 @@
 use std::path::Path;
 
 use crate::bd;
-use crate::decide::{self, Eviction};
+use crate::decide;
 use crate::ports::{s, Bd, Exec, Git};
 use crate::run::Run;
 use crate::trace;
 use crate::util;
 
-pub const EVICTION_RACE: &str = "eviction-race";
 pub const PROD_DIRTY: &str = "prod-dirty";
 pub const DESC_CHANGED_SINCE_CLAIM: &str = "desc-changed-since-claim";
 pub const UNFINISHED_REASON: &str = "unfinished-reason";
@@ -25,15 +24,6 @@ pub const WORKFLOW_RUN_WRONG_BRANCH: &str = "workflow-run-wrong-branch";
 pub const WORKFLOW_RUN_STALE_SHA: &str = "workflow-run-stale-sha";
 pub const WORKFLOW_RUN_WRONG_FILE: &str = "workflow-run-wrong-file";
 pub const WORKFLOW_RUN_UNVERIFIABLE: &str = "workflow-run-unverifiable";
-
-/// Prior eviction-race reopens, from spira-claim's ledger of this bead's returns.
-pub fn eviction_race_count(ledger_json: &str) -> i64 {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(ledger_json.trim()) else { return 0 };
-    v.get("returns")
-        .and_then(|r| r.as_array())
-        .map(|a| a.iter().filter(|r| r.get("cause").and_then(|c| c.as_str()) == Some(EVICTION_RACE)).count() as i64)
-        .unwrap_or(0)
-}
 
 /// `verdict_committed <repo> <branch> <id> [window]` -> is a commit naming `id` already on
 /// the branch, or (failing that) on the landing refs? Walks the branch first (this session's
@@ -130,7 +120,7 @@ pub fn delivers_verdict(bd: &dyn Bd, exec: &dyn Exec, timeout_s: u64, id: &str, 
     (true, String::new())
 }
 
-/// `close_verdict <id> <status> <superseded> <delivers> <committed> <since-epoch>` ->
+/// `close_verdict <id> <closed> <superseded> <delivers> <committed> <since-epoch>` ->
 /// keep|committed, keep|superseded, keep|delivers, reopen|delivers-mismatch or
 /// reopen|closed-without-commit. Not-closed and committed=true both answer keep|committed —
 /// the caller only acts on this after it already knows the bead is closed.
@@ -145,8 +135,8 @@ pub struct CloseVerdict {
     pub msg: String,
 }
 
-pub fn close_verdict(bd: &dyn Bd, exec: &dyn Exec, delivers_timeout_s: u64, id: &str, status: &str, superseded: bool, delivers: &str, committed: bool, since: i64) -> CloseVerdict {
-    if status != "closed" || committed {
+pub fn close_verdict(bd: &dyn Bd, exec: &dyn Exec, delivers_timeout_s: u64, id: &str, closed: bool, superseded: bool, delivers: &str, committed: bool, since: i64) -> CloseVerdict {
+    if !closed || committed {
         return CloseVerdict { outcome: "keep".into(), reason: "committed".into(), msg: String::new() };
     }
     if superseded {
@@ -163,9 +153,49 @@ pub fn close_verdict(bd: &dyn Bd, exec: &dyn Exec, delivers_timeout_s: u64, id: 
 }
 
 impl Run<'_> {
+    /// This bead's lifecycle row (`spira-lc show`), through the exec port every other
+    /// spira-lc read here uses; `None` when the machine has no row or cannot answer.
+    pub(crate) fn lc_bead(&self, id: &str) -> Option<spira_config::lc_state::Row> {
+        let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None);
+        if !o.success() {
+            return None;
+        }
+        spira_config::lc_state::parse_show(&o.stdout).ok().flatten()
+    }
+
     fn ts_print(&self, msg: &str) {
         // aeon.sh printf'd these lines itself: `<ts> spira: <fayth>: <id> …`.
         self.d.sink.out(&util::log_line(self.now(), msg));
+    }
+
+    /// A guard refusing a restricted session's submission: the row it handed on goes back to
+    /// REWORK. A restricted session never closes in bd, so `bead_reopen` alone (bd status, the
+    /// submitted label) left the row SUBMITTED and the batcher would deliver refused work. The
+    /// verdict is the guard's, recorded as the certifier's PolicyViolation red on the submitted tip.
+    fn lc_rework(&self, id: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None);
+        let v: serde_json::Value = if o.success() { serde_json::from_slice(o.stdout.as_bytes()).unwrap_or_default() } else { serde_json::Value::Null };
+        let b = &v["bead"];
+        let txt = |k: &str| match &b[k] { serde_json::Value::String(x) => x.clone(), serde_json::Value::Number(n) => n.to_string(), _ => String::new() };
+        let (state, tip, version) = (txt("state"), txt("tip"), txt("version"));
+        if state != "SUBMITTED" || tip.is_empty() || version.is_empty() {
+            self.log(&format!("{}: {id} lifecycle row not returned to REWORK (state={state:?}, tip={tip:?}, version={version:?})", self.f()));
+            return;
+        }
+        let kind = serde_json::json!({"GateRed": {"tip": tip, "reason": "policy-violation"}}).to_string();
+        let r = self.d.exec.exec("spira-lc", &s(&["event", "bead", id, "--expect", &state, "--version", &version, "--actor", self.f(), "--kind", &kind]), None, None);
+        if !r.success() {
+            self.log(&format!("{}: {id} lifecycle row not returned to REWORK: spira-lc refused the event", self.f()));
+        }
+    }
+
+    /// `bead_reopen`, plus the lifecycle half when the session handed on by submitting.
+    fn refuse(&mut self, submitted: bool, cause: &str, note: &str) {
+        self.bead_reopen(cause, note);
+        if submitted {
+            let id = self.s.bead.clone();
+            self.lc_rework(&id);
+        }
     }
 
     fn requeue(&mut self, cause: &str, why: String) {
@@ -218,7 +248,13 @@ impl Run<'_> {
         let restricted = self.s.lc_model_restricted;
 
         let row = bd::show(self.d.bd, &id);
-        let mut st = row.as_ref().and_then(|r| r.status.clone()).unwrap_or_default();
+        // The close is the lifecycle row's, never bd's status (design §3.4, sp-mve9i).
+        let lc = self.lc_bead(&id);
+        let mut closed = decide::builder_closed(restricted, lc.as_ref());
+        // A restricted session hands on by `work submit`, never a bd close: the guards below
+        // judge that hand-on too, or every one of them is dead code (every session is restricted).
+        let submitted = decide::builder_submitted(restricted, lc.as_ref());
+        let st = decide::ledger_word(lc.as_ref());
         let superseded = row.as_ref().is_some_and(|r| r.superseded());
         let delivers = row.as_ref().map(|r| r.delivers()).unwrap_or_default();
         let issue_type = row.as_ref().and_then(|r| r.issue_type.clone()).unwrap_or_default();
@@ -234,57 +270,9 @@ impl Run<'_> {
         let sup = if superseded { "1" } else { "0" };
         self.log(&format!("{f}: {id} status={st} committed={cy} superseded={sup} delivers={}", if delivers.is_empty() { "none" } else { &delivers }));
 
-        // ---- eviction race ----
-        if !restricted && st == "closed" && committed && !superseded {
-            let lc = self.d.exec.exec("spira-lc", &s(&["show", &id]), None, None);
-            let row: serde_json::Value = if lc.success() { serde_json::from_str(lc.stdout.trim()).unwrap_or(serde_json::Value::Null) } else { serde_json::Value::Null };
-            let fld = |k: &str| row.get("bead").and_then(|b| b.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let (state, reason, tip) = (fld("state"), fld("reason"), fld("tip"));
-            let cap_at = self.conf.n("SPIRA_EVICTION_ESCALATE_AT", 3);
-            if decide::eviction_reopen(&state, &reason, &tip, "", 0, cap_at) != Eviction::None {
-                let seen_f = self.run_dir().join(format!("{id}.evict-seen"));
-                let seen = std::fs::read_to_string(&seen_f).unwrap_or_default();
-                let key = format!("{tip} {reason}");
-                if !seen.is_empty() && seen == key {
-                    self.log(&format!("{f}: {id} closed with lifecycle state={state} ({reason}) — tip+reason unchanged since the last eviction-race reopen, duplicate skipped"));
-                } else {
-                    let cur = self.d.git.git(&self.s.repo, &["rev-parse", &branch]);
-                    let cur = if cur.success() { cur.text() } else { String::new() };
-                    let count = {
-                        let o = self.d.exec.exec(&self.claim_bin, &s(&["requeues", &id, "--json"]), None, None);
-                        if o.success() {
-                            eviction_race_count(&o.stdout)
-                        } else {
-                            self.log(&format!("{f}: {id} spira-claim could not count prior eviction-race reopens (rc={}) — reading it as 0", o.code));
-                            0
-                        }
-                    };
-                    match decide::eviction_reopen(&state, &reason, &tip, &cur, count, cap_at) {
-                        Eviction::Stale => self.log(&format!("{f}: {id} closed with lifecycle state={state} — row tip {tip} ≠ branch tip {cur}, stale record, close stands")),
-                        Eviction::Cap => {
-                            let ask = self.conf.ask_label();
-                            let _ = self.d.bd.bd(&s(&["label", "add", &id, &ask]));
-                            let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("eviction-race guard capped: reopened {count} time(s) already"), &f]), None, None);
-                            self.note(&format!("Eviction-race guard capped: reopened {count} time(s) already. Recertify the branch by hand and clear the {ask} label; the guard will not reopen it again on its own."));
-                            self.log(&format!("{f}: {id} eviction-race escalated — {count} prior requeue(s) ≥ {cap_at}, labeled {ask} instead of reopening"));
-                            let _ = std::fs::write(&seen_f, &key);
-                        }
-                        Eviction::Reopen => {
-                            self.bead_reopen(EVICTION_RACE, &format!("Reopened by aeon.sh: bead closed while its lifecycle state is {state} ({reason}) — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."));
-                            self.log(&format!("{f}: {id} REOPENED — closed with lifecycle state={state} (eviction race)"));
-                            st = "open".into();
-                            self.requeue(EVICTION_RACE, "Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch.".into());
-                            let _ = std::fs::write(&seen_f, &key);
-                        }
-                        Eviction::None => {}
-                    }
-                }
-            }
-        }
-
         // ---- close_verdict: the same decision sentinel CHECK 5 makes, natively in each crate ----
         let delivers_timeout = self.conf.n("SPIRA_DELIVERS_CHECK_TIMEOUT", 60).max(1) as u64;
-        let cv = close_verdict(self.d.bd, self.d.exec, delivers_timeout, &id, &st, superseded, &delivers, committed, self.s.session_epoch);
+        let cv = close_verdict(self.d.bd, self.d.exec, delivers_timeout, &id, closed, superseded, &delivers, committed, self.s.session_epoch);
         match (cv.outcome.as_str(), cv.reason.as_str()) {
             ("keep", "delivers") => self.log(&format!("{f}: {id} closed with nothing committed and NOT reopened — {}", cv.msg)),
             ("keep", "superseded") => self.log(&format!("{f}: {id} closed with nothing committed and NOT reopened — superseded, so its work landed under another id")),
@@ -309,7 +297,7 @@ impl Run<'_> {
 
         // ---- own-worktree dirty guard ----
         let work = self.s.work.clone().unwrap_or_default();
-        if st == "closed" && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
+        if (closed || submitted) && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
             let dirty = self.d.git.git(&work, &["status", "--porcelain", "--untracked-files=no"]).stdout.trim_end().to_string();
             if !dirty.is_empty() {
                 let spd_base = if let Some(b) = spira_config::repos::landref(&self.conf.repos, &work.display().to_string()) {
@@ -330,8 +318,8 @@ impl Run<'_> {
                     n.push_str(&format!("\n\nPaths byte-for-byte identical to {spd_base} (hand-applied, not genuinely new):\n  {ids}\nRemedy: git -C {w} checkout -- {ids}"));
                 }
                 n.push_str("\n\nOverride (only when the modification is intentional and will be committed separately): SPIRA_ALLOW_PROD_DIRTY=1");
-                self.bead_reopen(PROD_DIRTY, &n);
-                st = "open".into();
+                self.refuse(submitted, PROD_DIRTY, &n);
+                closed = false;
                 let first5 = names.iter().take(5).map(|s| format!("{s} ")).collect::<String>();
                 self.log(&format!("{f}: {id} REOPENED — own worktree dirty: {first5}"));
                 self.requeue(PROD_DIRTY, format!("Bead closed while the aeon's own worktree ({w}) carried uncommitted tracked modifications. Commit or restore the staged/modified files, then resume this bead."));
@@ -339,7 +327,7 @@ impl Run<'_> {
         }
 
         // ---- description changed since claim, unacknowledged ----
-        if st == "closed" && !superseded {
+        if closed && !superseded {
             let shown = bd::json(self.d.bd, &["show", &id]);
             let claimed = bead::claimdesc::metadata_value(&shown, bead::claimdesc::HASH_KEY);
             if !claimed.is_empty() {
@@ -347,22 +335,22 @@ impl Run<'_> {
                 if now.is_some_and(|n| n != claimed) {
                     self.bead_reopen(DESC_CHANGED_SINCE_CLAIM, "Reopened by aeon: this bead's description changed after it was claimed and before it closed, and the change was never acknowledged (no --force-claimed re-stamp). The session worked from whatever it read at claim time, not from what the bead says now. Re-verify the close against the current description before re-closing.");
                     self.log(&format!("{f}: {id} REOPENED — description changed since claim, unacknowledged"));
-                    st = "open".into();
+                    closed = false;
                     self.requeue(DESC_CHANGED_SINCE_CLAIM, "This bead's description changed after this session claimed it and before it closed, unacknowledged. The session's work reflects the description as claimed, not as it now reads — re-verify against the current text before re-closing.".into());
                 }
             }
         }
 
         // ---- close-reason fence (law-no-close-reason-admits-unfinished) ----
-        if st == "closed" && committed {
+        if (closed || submitted) && committed {
             let cr = bd::show(self.d.bd, &id).and_then(|r| r.close_reason).unwrap_or_default();
             if !cr.is_empty() && !self.conf.set_nonempty("SPIRA_CLOSE_REASON_OVERRIDE") {
                 let o = self.d.exec.exec("close-reason-flags.py", &s(&[&cr]), None, None);
                 let hit = if o.success() { o.text() } else { String::new() };
                 if !hit.is_empty() {
-                    self.bead_reopen(UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
+                    self.refuse(submitted, UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
                     self.ts_print(&format!("{f}: {id} REOPENED — close reason contains statute phrase: {hit}. Override: SPIRA_CLOSE_REASON_OVERRIDE=<why>"));
-                    st = "open".into();
+                    closed = false;
                     self.requeue(UNFINISHED_REASON, format!("Close reason contained a statute phrase (\"{hit}\"). File the remainder as a bead, cite its id in the reason, then re-close."));
                 }
             }
@@ -370,7 +358,7 @@ impl Run<'_> {
 
         // ---- the groom escalation rule ----
         let mut groom_silent = false;
-        if self.fayth.groom_escalation_check && st == "closed" && !superseded {
+        if self.fayth.groom_escalation_check && (closed || submitted) && !superseded {
             let text = std::fs::read_to_string(self.run_dir().join("groom.log")).unwrap_or_default();
             let new: String = text.lines().skip(self.s.groom_lines_before).map(|l| format!("{l}\n")).collect();
             let new = new.trim_end_matches('\n').to_string();
@@ -382,8 +370,9 @@ impl Run<'_> {
                 let aj = if aj.is_empty() { "[]".to_string() } else { aj };
                 let unproven = trace::groom_claims_verified(&new, &aj, self.s.session_epoch);
                 if !unproven.is_empty() {
-                    self.bead_reopen("no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
+                    self.refuse(submitted, "no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
                     let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
+                    let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "poison", &format!("groom log claimed ESCALATED for {unproven} with no ask bead"), &f]), None, None);
                     self.ts_print(&format!("{f}: {id} REOPENED and POISONED — groom log claimed ESCALATED for {unproven} but no ask bead found in this session"));
                     groom_silent = true;
                     if committed {
@@ -396,7 +385,7 @@ impl Run<'_> {
         }
 
         // ---- close-time workflow-run fence (law-a-workflow-lands-on-its-own-run) ----
-        if st == "closed" && committed {
+        if closed && committed {
             if self.conf.set_nonempty("SPIRA_WORKFLOW_RUN_CONSIDERED") {
                 self.log(&format!("{f}: {id} workflow-run fence skipped (SPIRA_WORKFLOW_RUN_CONSIDERED={})", self.conf.s("SPIRA_WORKFLOW_RUN_CONSIDERED")));
             } else {
@@ -421,14 +410,14 @@ impl Run<'_> {
                     }
                     None => String::new(),
                 };
-                self.workflow_fence(&r, &mut st);
+                self.workflow_fence(&r, &mut closed);
             }
         }
 
         // ---- closed behind the base is not finished ----
         // A superseded close is not judged by whether its stale branch still replays: its
         // work landed under the successor's id, so a conflict is expected (sp-dz39p).
-        if st == "closed" && committed && !superseded && !groom_silent {
+        if closed && committed && !superseded && !groom_silent {
             if !self.s.base_remote.is_empty() && !self.d.git.git(&self.s.repo, &["fetch", "-q", &self.s.base_remote]).success() {
                 self.log(&format!("{f}: fetch of {} failed — judging currency against a possibly stale {base}", self.s.base_remote));
             }
@@ -487,7 +476,7 @@ impl Run<'_> {
         tree.success() && !merged.is_empty() && merged == tree.text().trim()
     }
 
-    fn workflow_fence(&mut self, r: &str, st: &mut String) {
+    fn workflow_fence(&mut self, r: &str, closed: &mut bool) {
         let id = self.s.bead.clone();
         let f = self.fayth.name.clone();
         let branch = self.s.branch.clone();
@@ -533,7 +522,7 @@ impl Run<'_> {
         };
         self.bead_reopen(cause, &note);
         self.log(&log);
-        *st = "open".into();
+        *closed = false;
         self.requeue(cause, why);
     }
 }
@@ -544,14 +533,6 @@ mod tests {
     use crate::util::Out;
     use std::collections::BTreeMap;
     use std::sync::Mutex;
-
-    #[test]
-    fn eviction_count_reads_only_eviction_race_returns() {
-        let j = r#"{"bead":"sp-a","returns":[{"at":"t","cause":"eviction-race","class":"harness-return"},{"at":"t","cause":"cert-gate-red","class":"judged"},{"at":"t","cause":"eviction-race","class":"harness-return"}]}"#;
-        assert_eq!(eviction_race_count(j), 2);
-        assert_eq!(eviction_race_count("not json"), 0);
-        assert_eq!(eviction_race_count("{}"), 0);
-    }
 
     // ---- verdict_committed -----------------------------------------------------------
 
@@ -669,21 +650,21 @@ mod tests {
         let bd = FakeBd(Mutex::new(String::new()));
         let exec = FakeExec;
         // Not closed, or committed: keep|committed, regardless of anything else.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", "open", false, "", true, 0);
+        let c = close_verdict(&bd, &exec, 5, "sp-a", false, false, "", true, 0);
         assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "committed"));
-        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "", true, 0);
+        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "", true, 0);
         assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "committed"));
         // Superseded wins over a missing commit.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", true, "", false, 0);
+        let c = close_verdict(&bd, &exec, 5, "sp-a", true, true, "", false, 0);
         assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "superseded"));
         // No delivers label at all: reopen.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "", false, 0);
+        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "", false, 0);
         assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("reopen", "closed-without-commit"));
         // delivers:action always verifies.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "action", false, 0);
+        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "action", false, 0);
         assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "delivers"));
         // delivers:check failing: reopen with the failure as the message.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "check:false", false, 0);
+        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "check:false", false, 0);
         assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("reopen", "delivers-mismatch"));
         assert!(c.msg.contains("exited non-zero"));
     }

@@ -124,6 +124,11 @@ REPO_MAP="$TMP/repo-map"
 printf 'spira|%s\n' "$SPIRA_DB" > "$REPO_MAP"
 
 RUN="$TMP/run"; mkdir -p "$RUN"
+# sp-jgjvh: incident's dedup reads each bead's state from its lifecycle row (incident beads
+# are work beads). With no lifecycle store here, a stand-in spira-lc tells this database's
+# bd story in lifecycle terms (testlib.sh lc_mirror_bd: open → READY); a machine that does
+# not answer would leave every escape spooled, never filed.
+lc_mirror_bd "$TMP/lc"
 # count_open <ref> -> open/in_progress beads carrying ref:<hash-of-ref> — the exact label
 # incident.sh's own dedupe (_dedup_incident, sub-path A) keys on, so this counts precisely
 # what the dedupe considers "already filed", independent of which labels this suite chose.
@@ -145,6 +150,8 @@ file_gap() {
     env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_DB="$SPIRA_DB" \
+        SPIRA_BD="${SPIRA_BD:-bd}" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_SPOOL="$RUN/spool" \
         SPIRA_INCIDENT_LOG="$RUN/incident.log" \
         SPIRA_INCIDENT_LOCK="$RUN/incident.lock" \

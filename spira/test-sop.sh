@@ -32,12 +32,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-sop.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-sop: cargo not found — sop binary cannot be built"
-    exit 77
-fi
 BD_BIN="$(command -v bd 2>/dev/null || true)"
 if [ -z "$BD_BIN" ]; then
     echo "SKIP test-sop: bd not found — cannot create a scratch store"
@@ -46,18 +40,8 @@ fi
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-CRATE_ROOT="$HERE/../sop"
-BUILD_LOG="$T/cargo-build.log"
-if ! CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/target" \
-    "$CARGO_BIN" build --manifest-path "$CRATE_ROOT/Cargo.toml" -p sop >"$BUILD_LOG" 2>&1
-then
-    bad "cargo build -p sop" "see $BUILD_LOG"
-    tail -60 "$BUILD_LOG" >&2
-    tl_summary
-fi
-ok "cargo build -p sop"
-SOP="$T/target/debug/sop"
-[ -x "$SOP" ] || bail "sop binary not found at $SOP"
+SOP="$(command -v sop 2>/dev/null || true)"
+[ -n "$SOP" ] || bail "sop is not on PATH (the tree's build provides it)"
 
 DB="$T/db"; mkdir -p "$DB"
 ( cd "$DB" && "$BD_BIN" init --prefix sptest >/dev/null 2>&1 )

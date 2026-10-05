@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 #
-# test-cockpit-unlanded.sh — closed beads: landed vs. anomaly (branch, no spira-lc row);
+# test-cockpit-unlanded.sh — finished beads: landed vs. done (SUBMITTED, branch, not landed);
 # the worked/landed row is 24h-scoped; landing detection uses subject forms only
 # (law-aeon-commits-name-their-bead).
 #
 #   ./test-cockpit-unlanded.sh
 #
 # SIX BEADS, FIVE SHAPES:
-#   sp-aaa  closed, branch exists, no spira-lc row → SP_UNLANDED_N anomaly
-#   sp-bbb  closed, "spira: land sp-bbb" on base  → landed (SP_LANDED)
-#   sp-ccc  closed, no branch, a commit BODY (not subject) mentions it → neither anomaly
+# A bead's state is its lifecycle row (sp-mve9i): "done" is a bead the builder handed on that
+# still awaits certification (SUBMITTED) with a branch and no landing commit.
+#   sp-aaa  SUBMITTED, branch exists                → SP_UNLANDED_N (done)
+#   sp-bbb  LANDED, "spira: land sp-bbb" on base    → landed (SP_LANDED)
+#   sp-ccc  SUBMITTED, no branch, a commit BODY (not subject) mentions it → neither anomaly
 #           nor landed (absorbed from test-cockpit-queue-section.sh case (b); cluster 2,
 #           coverage row 11 — the anomaly/body-mention rows in the queue suites moved here)
-#   sp-ddd  closed, branch in master-based repo, no spira-lc row → SP_UNLANDED_N anomaly
-#   sp-fff  closed, branch, a real spira-lc row (CERTIFIED) → NOT an anomaly. POSITIVE
-#           CONTROL for the cutover (sp-wenrl.2): the planted violation is "every
-#           closed+branched id counts as an anomaly", which a version that never actually
-#           asked spira-lc would still pass without this case.
-#   sp-oldd closed 48h ago with a landing-subject commit, but outside the 24h window →
+#   sp-ddd  SUBMITTED, branch in master-based repo   → SP_UNLANDED_N (done)
+#   sp-fff  CERTIFIED, branch → NOT done (the round's to deliver). POSITIVE CONTROL for the
+#           cutover (sp-wenrl.2): the planted violation is "every finished+branched id
+#           counts as done", which a version that never actually read the row's state
+#           would still pass without this case.
+#   sp-oldd LANDED, finished 48h ago with a landing-subject commit, but outside the 24h window →
 #           excluded from SP_CLOSED and SP_LANDED entirely (absorbed from
 #           test-cockpit-landed.sh; coverage row 10)
 #
@@ -39,11 +41,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
 # can overwrite PATH with the harness's own tool directories.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — needed to build spira-lc"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
 
@@ -51,7 +48,7 @@ TMP="$(mktemp -d)"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$BASE_PATH"
+export PATH="$(dirname "$DOLT_BIN"):$BASE_PATH"
 
 # spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
 # and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
@@ -86,11 +83,7 @@ done
 [ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
 
 REPO="$(cd "$HERE/.." && pwd)"
-CARGO_TARGET_DIR_FOR_LC="$TMP/lc-cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_LC" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
-LC_BIN="$CARGO_TARGET_DIR_FOR_LC/debug/spira-lc"
+LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
 SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
@@ -131,6 +124,8 @@ git -C "$ALPHA" checkout -q -b spira/sp-fff
 git -C "$ALPHA" commit --allow-empty -m "sp-fff work" -q
 git -C "$ALPHA" checkout -q main
 lc_seed_bead sp-fff CERTIFIED
+for b in sp-aaa sp-ccc; do lc_seed_bead "$b" SUBMITTED; done
+for b in sp-bbb sp-oldd sp-eee; do lc_seed_bead "$b" LANDED; done
 
 # Beta: master-based. sp-ddd has a branch but no spira-lc row (anomaly).
 git init -q -b master "$BETA"
@@ -138,6 +133,7 @@ git -C "$BETA" commit --allow-empty -m "init" -q
 git -C "$BETA" checkout -q -b spira/sp-ddd
 git -C "$BETA" commit --allow-empty -m "sp-ddd work" -q
 git -C "$BETA" checkout -q master
+lc_seed_bead sp-ddd SUBMITTED
 
 MAP="$TMP/repo-map"
 cat > "$MAP" <<MAP
@@ -193,7 +189,7 @@ val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 echo "--- counts ---"
 is "SP_CLOSED is 24h-scoped (sp-oldd excluded)" "5" "$(val SP_CLOSED)"
 is "SP_LANDED is 1 (sp-bbb via 'spira: land' subject)" "1" "$(val SP_LANDED)"
-is "SP_UNLANDED_N is 2 (sp-aaa and sp-ddd have branch, no spira-lc row)" "2" "$(val SP_UNLANDED_N)"
+is "SP_UNLANDED_N is 2 (sp-aaa and sp-ddd: SUBMITTED, branch, not landed)" "2" "$(val SP_UNLANDED_N)"
 # Both sp-aaa (5 min ago) and sp-ddd (20 min ago) are within the default 90-min cert window.
 is "SP_CERT_N is 2 (both within cert window)" "2" "$(val SP_CERT_N)"
 is "SP_STRANDED_N is 0 (none older than cert window)" "0" "$(val SP_STRANDED_N)"
@@ -205,7 +201,7 @@ nowant "sp-ccc is not in unlanded_n (no branch)" "SP_UNLANDED_N=3" "$out"
 # (b), absorbed from test-cockpit-queue-section.sh: sp-ccc's only mention is a commit body,
 # so it contributes to neither SP_LANDED nor SP_UNLANDED_N — the count above already proves
 # SP_LANDED stayed at 1 despite that commit existing in the log.
-nowant "sp-fff (real spira-lc row) is not in unlanded_n" "SP_UNLANDED_N=3" "$out"
+nowant "sp-fff (CERTIFIED) is not in unlanded_n" "SP_UNLANDED_N=3" "$out"
 
 echo "--- 24h scope, absorbed from test-cockpit-landed.sh ---"
 # sp-oldd carries a genuine "spira: land sp-oldd" subject on main, but closed 48h ago — it

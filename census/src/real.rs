@@ -51,6 +51,12 @@ impl Real {
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
+    /// SPIRA_LC_BIN (cockpit-collect's and queue-watch's own override) lets a suite pin the
+    /// record; nothing sets it in production, where spira-lc is found on PATH.
+    fn lc_bin(&self) -> String {
+        std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into())
+    }
+
     fn write_scratch(&self, name: &str, content: &str) -> PathBuf {
         let p = self.scratch.join(name);
         let _ = std::fs::write(&p, content);
@@ -157,9 +163,7 @@ impl World for Real {
     }
     fn lc_landed(&self, id: &str) -> i32 {
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        // SPIRA_LC_BIN (cockpit-collect's and queue-watch's own override) lets a suite pin the
-        // record; nothing sets it in production, where spira-lc is found on PATH.
-        let bin = std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into());
+        let bin = self.lc_bin();
         let out = Command::new(bin).args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => i32::from(String::from_utf8_lossy(&o.stdout).trim() != "LANDED"),
@@ -192,19 +196,37 @@ impl World for Real {
         self.run_py("deliberate.py", &[], Some(tabular))
     }
 
-    fn bd_list_json(&self, status: &str, label_pattern: &str) -> String {
+    fn bd_list_all_json(&self, label_pattern: &str) -> String {
         let db = self.env("SPIRA_DB").unwrap_or_default();
         let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
         Command::new(bd)
             .arg("-C")
             .arg(db)
-            .args(["list", "--status", status, "--label-pattern", label_pattern, "--limit", "0", "--json"])
+            .args(["list", "--all", "--label-pattern", label_pattern, "--limit", "0", "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
             .unwrap_or_default()
+    }
+
+    fn lc_rows(&self) -> Result<Vec<spira_config::lc_state::Row>, String> {
+        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
+        let bin = self.lc_bin();
+        // call-deadline: 5 s, like every other caller of the machine.
+        let o = Command::new("timeout")
+            .args(["5", &bin, "list"])
+            .envs(envs)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run {bin}: {e}"))?;
+        if !o.status.success() {
+            let why = String::from_utf8_lossy(&o.stderr);
+            let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message").to_string();
+            return Err(format!("{bin} list exited {}: {why}", o.status.code().unwrap_or(-1)));
+        }
+        spira_config::lc_state::parse_rows(&String::from_utf8_lossy(&o.stdout))
     }
 
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool {

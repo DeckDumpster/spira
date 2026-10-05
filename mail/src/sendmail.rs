@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 
 use crate::bead::{self, Bd};
+use crate::lc::{self, Lc, Lift};
 use crate::maildir;
 use crate::message;
 
@@ -94,7 +95,13 @@ pub struct SendmailOutcome {
 }
 
 /// Runs the whole `sendmail` pipeline against raw RFC 5322 text already read from stdin.
-pub fn sendmail(bd: &dyn Bd, db_configured: bool, home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<SendmailOutcome, String> {
+///
+/// An answer to a question about a work bead (the original carries `X-Spira-Work-Bead`)
+/// also lifts that bead's `ask` hold — `spira-lc reply <work-bead> <message-id>` — once the
+/// answer is delivered, so the bead becomes claimable again (sp-v62vn follow-up). When no
+/// tracking bead carried the verdict to the work bead (a question the concierge was routed),
+/// the answer is noted on the work bead itself, so the session that next claims it can read it.
+pub fn sendmail(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<SendmailOutcome, String> {
     let in_reply_to = strip_angle_brackets(&message::header_ci_before_blank(raw, "in-reply-to"));
     let first_para = first_paragraph(raw);
 
@@ -102,12 +109,16 @@ pub fn sendmail(bd: &dyn Bd, db_configured: bool, home: &Path, mail_root: &Path,
     let mut orig_file: Option<PathBuf> = None;
     let mut orig_bead = String::new();
     let mut orig_kind = String::new();
+    let mut work_bead = String::new();
+    let mut orig_subject = String::new();
 
     if !in_reply_to.is_empty() {
         if let Some(path) = find_message_by_id(mail_root, &in_reply_to) {
             let text = fs::read_to_string(&path).unwrap_or_default();
             orig_bead = message::header_ci_before_blank(&text, "x-spira-bead");
             orig_kind = message::header_ci_before_blank(&text, "x-spira-kind");
+            work_bead = message::header_ci_before_blank(&text, "x-spira-work-bead");
+            orig_subject = message::header_ci_before_blank(&text, "subject");
             let orig_from = message::header_ci_before_blank(&text, "from");
             dest_mailbox = reply_mailbox(&orig_from, home, mail_root);
             orig_file = Some(path);
@@ -130,6 +141,20 @@ pub fn sendmail(bd: &dyn Bd, db_configured: bool, home: &Path, mail_root: &Path,
     let msgid = maildir::mint_msgid();
     fs::write(dir.join("tmp").join(&msgid), raw).map_err(|e| format!("cannot write message: {e}"))?;
     let delivered_path = maildir::mail_deliver(&dir, &msgid, mute).map_err(|e| format!("cannot deliver message: {e}"))?;
+
+    if !work_bead.is_empty() {
+        let actor = lc::actor_of(&message::header_ci_before_blank(raw, "from"), "operator");
+        if orig_bead.is_empty() && db_configured {
+            if let Err(e) = bead::note(bd, &work_bead, &format!("Answer from {actor} to \"{orig_subject}\": {first_para}")) {
+                eprintln!("mail: could not note the answer on {work_bead}: {e}");
+            }
+        }
+        let own_id = strip_angle_brackets(&message::header_ci_before_blank(raw, "message-id"));
+        let answer_id = if own_id.is_empty() { format!("{msgid}@spira") } else { own_id };
+        if let Some(w) = lc::lift_ask(lc, &work_bead, Lift::Reply { message_id: &answer_id }, &actor) {
+            eprintln!("{w}");
+        }
+    }
 
     Ok(SendmailOutcome { dest_mailbox, delivered_path })
 }
@@ -156,6 +181,7 @@ mod tests {
     use super::*;
     use crate::bead::fake::FakeBd;
     use crate::bead::BdOut;
+    use crate::lc::fake::FakeLc;
 
     fn send_plain(mail_root: &Path, mailbox: &str, from: &str, subject: &str) -> String {
         maildir::mail_ensure(&mail_root.join(mailbox)).unwrap();
@@ -189,7 +215,7 @@ mod tests {
         maildir::mail_ensure(&d.path().join("gate")).unwrap();
         let msgid = send_plain(d.path(), "uc17-orig1", "Gate <gate@spira>", "routing test");
         let bd = FakeBd::new(vec![]);
-        let out = sendmail(&bd, false, &home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
+        let out = sendmail(&bd, &FakeLc::new(0), false, &home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
         assert_eq!(out.dest_mailbox, "gate");
     }
 
@@ -202,7 +228,7 @@ mod tests {
         maildir::mail_ensure(&d.path().join("builder")).unwrap();
         let msgid = send_plain(d.path(), "uc17-orig2", "Builder <builder@spira>", "routing test");
         let bd = FakeBd::new(vec![]);
-        let out = sendmail(&bd, false, &home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
+        let out = sendmail(&bd, &FakeLc::new(0), false, &home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
     }
 
@@ -213,7 +239,7 @@ mod tests {
         fs::create_dir_all(home.join("chamber")).unwrap();
         let msgid = send_plain(d.path(), "uc17-orig3", "Landing gate <nobox@spira>", "routing test");
         let bd = FakeBd::new(vec![]);
-        let out = sendmail(&bd, false, &home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
+        let out = sendmail(&bd, &FakeLc::new(0), false, &home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
     }
 
@@ -223,7 +249,7 @@ mod tests {
         let home = d.path().join("home");
         fs::create_dir_all(home.join("chamber")).unwrap();
         let bd = FakeBd::new(vec![]);
-        let out = sendmail(&bd, false, &home, d.path(), false, &reply_raw(None)).unwrap();
+        let out = sendmail(&bd, &FakeLc::new(0), false, &home, d.path(), false, &reply_raw(None)).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
     }
 
@@ -242,7 +268,7 @@ mod tests {
 
         let bd = FakeBd::new(vec![BdOut::ok(""), BdOut::ok("[]")]);
         let raw = format!("From: Operator <operator@spira>\nSubject: Re: Enable feature?\nIn-Reply-To: <{msgid}@spira>\n\nApprove it.\n");
-        sendmail(&bd, true, &home, d.path(), false, &raw).unwrap();
+        sendmail(&bd, &FakeLc::new(0), true, &home, d.path(), false, &raw).unwrap();
 
         let calls = bd.calls();
         assert_eq!(calls[0].0[0], "close");
@@ -263,6 +289,69 @@ mod tests {
         assert!(name.ends_with(":2,R"), "{name}");
     }
 
+    fn deliver_question(root: &Path, mailbox: &str, headers: &str) -> String {
+        maildir::mail_ensure(&root.join(mailbox)).unwrap();
+        let msgid = maildir::mint_msgid();
+        let orig = format!("From: Builder <builder@spira>\nSubject: May I?\nX-Spira-Kind: question\n{headers}Message-ID: <{msgid}@spira>\n\n## Question\nq\n");
+        fs::write(root.join(mailbox).join("tmp").join(&msgid), &orig).unwrap();
+        maildir::mail_deliver(&root.join(mailbox), &msgid, false).unwrap();
+        msgid
+    }
+
+    /// THE GAP THIS CLOSES (sp-v62vn follow-up): `work ask` holds the asking bead, and only a
+    /// Reply lifts the hold. The operator's answer to an operator ask closes the tracking
+    /// bead AND emits `spira-lc reply <work-bead> <answer's message id>`.
+    #[test]
+    fn an_answer_to_a_work_beads_question_lifts_its_ask_hold() {
+        let d = testkit::TempDir::new("mail-sendmail-lift");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        let q = deliver_question(d.path(), "operator", "X-Spira-Bead: sp-dec1\nX-Spira-Work-Bead: sp-work1\n");
+        let bd = FakeBd::new(vec![BdOut::ok(""), BdOut::ok("[]")]);
+        let lc = FakeLc::new(0);
+        let raw = format!("From: Operator <operator@spira>\nSubject: Re: May I?\nIn-Reply-To: <{q}@spira>\nMessage-ID: <ans-1@spira>\n\nYes.\n");
+        sendmail(&bd, &lc, true, &home, d.path(), false, &raw).unwrap();
+        assert_eq!(bd.calls()[0].0[..2], ["close".to_string(), "sp-dec1".to_string()]);
+        assert_eq!(lc.calls(), vec![vec!["reply", "sp-work1", "ans-1@spira", "operator"]]);
+        assert!(!bd.calls().iter().any(|c| c.0[0] == "note" && c.0[1] == "sp-work1"), "the tracking bead's verdict note covers it: {:?}", bd.calls());
+    }
+
+    /// A question routed to the concierge has no tracking bead: the concierge's reply must
+    /// not close anything, lifts the hold, and leaves the answer on the work bead itself.
+    #[test]
+    fn a_reply_to_a_routed_question_notes_the_work_bead_and_closes_nothing() {
+        let d = testkit::TempDir::new("mail-sendmail-routed");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        let q = deliver_question(d.path(), "concierge", "X-Spira-Work-Bead: sp-work1\n");
+        let bd = FakeBd::new(vec![BdOut::ok("")]);
+        let lc = FakeLc::new(0);
+        let raw = format!("From: Concierge <concierge@spira>\nSubject: Re: May I?\nIn-Reply-To: <{q}@spira>\n\nGo ahead.\n");
+        sendmail(&bd, &lc, true, &home, d.path(), false, &raw).unwrap();
+        let calls = bd.calls();
+        assert!(!calls.iter().any(|c| c.0[0] == "close"), "{calls:?}");
+        assert_eq!(calls[0].0[..2], ["note".to_string(), "sp-work1".to_string()]);
+        assert!(calls[0].0[2].contains("Go ahead."), "{calls:?}");
+        let lcc = lc.calls();
+        assert_eq!(lcc.len(), 1);
+        assert_eq!(lcc[0][..2], ["reply".to_string(), "sp-work1".to_string()]);
+        assert_eq!(lcc[0][3], "concierge");
+    }
+
+    /// No X-Spira-Work-Bead (a note, an old question): nothing to lift.
+    #[test]
+    fn a_reply_to_mail_with_no_work_bead_lifts_nothing() {
+        let d = testkit::TempDir::new("mail-sendmail-nolift");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        let q = deliver_question(d.path(), "operator", "X-Spira-Bead: sp-dec1\n");
+        let bd = FakeBd::new(vec![BdOut::ok(""), BdOut::ok("[]")]);
+        let lc = FakeLc::new(0);
+        let raw = format!("From: Operator <operator@spira>\nSubject: Re: May I?\nIn-Reply-To: <{q}@spira>\n\nYes.\n");
+        sendmail(&bd, &lc, true, &home, d.path(), false, &raw).unwrap();
+        assert!(lc.calls().is_empty());
+    }
+
     #[test]
     fn mute_sendmail_delivers_straight_into_cur_already_seen() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -270,7 +359,7 @@ mod tests {
         fs::create_dir_all(home.join("chamber")).unwrap();
         let bd = FakeBd::new(vec![]);
         let raw = "From: Someone <s@s>\nSubject: raw muted\n\nbody\n";
-        let out = sendmail(&bd, false, &home, d.path(), true, raw).unwrap();
+        let out = sendmail(&bd, &FakeLc::new(0), false, &home, d.path(), true, raw).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
         assert!(out.delivered_path.to_string_lossy().contains("/cur/"));
         assert!(out.delivered_path.to_string_lossy().ends_with(":2,S"));

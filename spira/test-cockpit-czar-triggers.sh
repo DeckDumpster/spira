@@ -23,12 +23,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
+# The lifecycle rows this world implies (sp-mve9i: the probes read state from spira-lc).
+lc_mirror_bd "$TMP/lc"
 BASE_PATH="$PATH"
 
 # Run just the czar_triggers probe against a given mock bd binary.
 run_czar() {
     local bd_path="$1"
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BD="$bd_path" \

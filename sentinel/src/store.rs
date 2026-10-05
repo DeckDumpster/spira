@@ -5,7 +5,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::cfg::{Cfg, Partition};
 use crate::host::{Host, Out, Spec};
-use crate::model::{parse_beads, Bead};
+use crate::model::{parse_beads, Bead, LcRow};
+use spira_config::lc_state;
 
 /// lib.sh `bdq`: `timeout $BD_TIMEOUT $SPIRA_BD -C $SPIRA_DB …`, retried while the failure
 /// is a dropped pooled connection; refuses outright with no SPIRA_DB.
@@ -146,6 +147,10 @@ pub struct Snapshot {
     pub ready: Option<Vec<Bead>>,
     pub ready_raw: String,
     index: HashMap<String, usize>,
+    /// Each work bead's lifecycle state (`spira-lc list`), keyed by id: the pass's state
+    /// view (design §3.4: bd holds content, spira-lc holds state). Empty when the machine
+    /// could not be read — then no bead has a state, and nothing is decided from one.
+    lc: HashMap<String, String>,
 }
 
 impl Snapshot {
@@ -165,7 +170,39 @@ impl Snapshot {
             ready,
             ready_raw,
             index,
+            lc: HashMap::new(),
         }
+    }
+
+    /// Attach the pass's one lifecycle read.
+    pub fn with_lc(mut self, rows: Option<&[LcRow]>) -> Snapshot {
+        self.set_lc(rows);
+        self
+    }
+
+    pub fn set_lc(&mut self, rows: Option<&[LcRow]>) {
+        self.lc = rows
+            .unwrap_or_default()
+            .iter()
+            .map(|r| (r.bead_id.clone(), r.state.clone()))
+            .collect();
+    }
+
+    /// The bead's lifecycle state, or None when the machine has no row for it.
+    pub fn lc_state(&self, id: &str) -> Option<&str> {
+        self.lc.get(id).map(String::as_str)
+    }
+
+    /// The builder still owes the bead work (READY, WORKING, REWORK). A bead with no
+    /// lifecycle row is not: every work bead gets its row at creation (CHECK-ROWLESS
+    /// backfills a ready one that missed it), so a rowless bead is not live work.
+    pub fn lc_open(&self, id: &str) -> bool {
+        self.lc_state(id).is_some_and(|s| !lc_state::past_builder(s))
+    }
+
+    /// The builder has handed the bead on (what bd `closed` meant for a work bead).
+    pub fn lc_past_builder(&self, id: &str) -> bool {
+        self.lc_state(id).is_some_and(lc_state::past_builder)
     }
 
     #[cfg(test)]
@@ -179,39 +216,25 @@ impl Snapshot {
         self.index.get(id).map(|&i| &self.list[i])
     }
 
-    /// The open plan backlog: every bead carrying `<scope,>plan` that is not closed and is
-    /// work (not an epic or event). Spira works this whole backlog continuously — there is
+    /// The open plan backlog: every bead carrying `<scope,>plan` whose lifecycle row still
+    /// owes builder work (READY/WORKING/REWORK) and is work (not an epic or event). Spira works this whole backlog continuously — there is
     /// no goal epic whose children stand for "the work" (sp-k6m1m) — so this is what the
     /// pass reports as `open` and what CHECK 3 and CHECK 8 reason about.
     pub fn plan_open(&self, cfg: &Cfg) -> Vec<String> {
         let need = cfg.plan_labels();
         self.list
             .iter()
-            .filter(|b| b.status != "closed" && !matches!(b.typ(), "epic" | "event") && has_all(b, &need))
+            .filter(|b| self.lc_open(&b.id) && !matches!(b.typ(), "epic" | "event") && has_all(b, &need))
             .map(|b| b.id.clone())
             .collect()
     }
 
-    /// ready_count "<scope,>plan" "spira-poison,<ask>" over the ready snapshot.
-    pub fn plan_ready(&self, cfg: &Cfg) -> Option<usize> {
-        let need = cfg.plan_labels();
-        let excl: Vec<String> = ["spira-poison".to_string(), cfg.ask.clone()]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect();
-        self.ready.as_ref().map(|r| {
-            r.iter()
-                .filter(|b| has_all(b, &need) && has_none(b, &excl))
-                .count()
-        })
-    }
-
-    /// `bd list --status in_progress --label <scope,>plan`.
+    /// Plan beads an aeon holds: lifecycle WORKING (was `bd list --status in_progress`).
     pub fn plan_inprog(&self, cfg: &Cfg) -> usize {
         let need = cfg.plan_labels();
         self.list
             .iter()
-            .filter(|b| b.status == "in_progress" && has_all(b, &need))
+            .filter(|b| self.lc_state(&b.id).is_some_and(lc_state::is_working) && has_all(b, &need))
             .count()
     }
 
@@ -236,17 +259,19 @@ impl Snapshot {
         out
     }
 
-    /// dispatchable_open: every non-closed, non-epic/event bead a partition can reach.
+    /// dispatchable_open: every non-epic/event bead a partition can reach whose lifecycle
+    /// row still owes builder work.
     pub fn dispatchable(&self, parts: &[Partition]) -> Vec<(String, String)> {
         self.per_partition(parts, |b, _| {
-            b.status != "closed" && !matches!(b.typ(), "epic" | "event")
+            self.lc_open(&b.id) && !matches!(b.typ(), "epic" | "event")
         })
     }
 
-    /// check4_closed_branched: closed beads in a partition that carry a `branch:` label.
+    /// check4_closed_branched: beads in a partition the builder has handed on (lifecycle
+    /// past WORKING) that carry a `branch:` label.
     pub fn closed_branched(&self, parts: &[Partition]) -> Vec<(String, String)> {
         self.per_partition(parts, |b, _| {
-            b.status == "closed"
+            self.lc_past_builder(&b.id)
                 && !matches!(b.typ(), "epic" | "event")
                 && b.labels.iter().any(|l| l.starts_with("branch:"))
         })
@@ -316,7 +341,41 @@ mod tests {
           {"id":"i2","status":"closed","labels":["incident","ref:ffff0000"]}
         ]"#;
         let ready = r#"[{"id":"a","labels":["spira","plan"]},{"id":"d","labels":["spira","plan","spira-poison"]},{"id":"z","labels":["plan"]}]"#;
-        Snapshot::from_json(list, Some(ready))
+        Snapshot::from_json(list, Some(ready)).with_lc(Some(&lc(&[
+            ("a", "READY"),
+            ("b", "SUBMITTED"),
+            ("c", "WORKING"),
+            ("d", "READY"),
+            ("e", "READY"),
+            ("f", "SUPERSEDED"),
+        ])))
+    }
+
+    fn lc(rows: &[(&str, &str)]) -> Vec<LcRow> {
+        rows.iter()
+            .map(|(id, st)| LcRow { bead_id: id.to_string(), state: st.to_string(), ..Default::default() })
+            .collect()
+    }
+
+    /// sp-mve9i: a work bead's state is its lifecycle row, never bd's `status` — bd says the
+    /// opposite of the machine for every bead here, and every set follows the machine.
+    #[test]
+    fn every_set_reads_the_lifecycle_row_not_bd_status() {
+        let list = r#"[
+          {"id":"w","status":"closed","labels":["spira","plan","branch:spira/w"],"issue_type":"task"},
+          {"id":"s","status":"open","labels":["spira","plan","branch:spira/s"],"issue_type":"task"},
+          {"id":"h","status":"open","labels":["spira","plan"],"issue_type":"task"},
+          {"id":"n","status":"open","labels":["spira","plan"],"issue_type":"task"}
+        ]"#;
+        let s = Snapshot::from_json(list, None).with_lc(Some(&lc(&[("w", "WORKING"), ("s", "SUBMITTED"), ("h", "LANDED")])));
+        assert_eq!(s.plan_open(&cfg("spira")), vec!["w"], "WORKING is backlog; SUBMITTED/LANDED and a rowless bead are not");
+        assert_eq!(s.plan_inprog(&cfg("spira")), 1, "WORKING, though bd says closed");
+        let d: Vec<String> = s.dispatchable(&parts()).into_iter().map(|x| x.0).collect();
+        assert_eq!(d, vec!["w"]);
+        let cb: Vec<String> = s.closed_branched(&parts()).into_iter().map(|x| x.0).collect();
+        assert_eq!(cb, vec!["s"], "handed on by the builder, though bd says open");
+        let none = Snapshot::from_json(list, None);
+        assert!(none.plan_open(&cfg("spira")).is_empty(), "no lifecycle read: no state, no backlog");
     }
 
     fn parts() -> Vec<Partition> {
@@ -344,22 +403,7 @@ mod tests {
             s.plan_open(&cfg("other")).is_empty(),
             "another scope's plan beads are not this backlog"
         );
-        assert_eq!(
-            s.plan_ready(&cfg("spira")),
-            Some(1),
-            "poisoned and out-of-scope rows do not count"
-        );
-        assert_eq!(
-            s.plan_ready(&cfg("")),
-            Some(2),
-            "no scope: the scope label is not required"
-        );
         assert_eq!(s.plan_inprog(&cfg("spira")), 1);
-        assert_eq!(
-            Snapshot::from_json("[]", None).plan_ready(&cfg("spira")),
-            None,
-            "unknown is not zero"
-        );
     }
 
     #[test]

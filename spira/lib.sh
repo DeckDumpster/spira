@@ -354,8 +354,8 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
 # READY_ARGS and ready_raw_args stay bash: drain.sh and aeon's seam read the array directly,
 # and computing them through a subprocess at source time corrupted the aeon's seam snapshot.
-# On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. With lifecycle_enforce
-# on, neither decides what is ready: spira-claim's counts and an aeon's ready set come from
+# On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. Neither decides what
+# is ready (the lifecycle machine is the only mode, sp-v62vn): spira-claim's counts and an aeon's ready set come from
 # the lifecycle machine's rows (spira-claim `ready-count`, `fayth-ready [--json]`).
 
 ready_raw_args() {
@@ -367,8 +367,7 @@ READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
-# ready_count <labels> [<exclude-labels>] — spira-claim's count, so with lifecycle_enforce on
-# it counts the lifecycle machine's claimable rows, the set an aeon claims from.
+# ready_count <labels> [<exclude-labels>] — spira-claim's count: it counts the lifecycle machine's claimable rows, the set an aeon claims from.
 ready_count() {
     _spira_claim ready-count "$1" "${2:-}"
 }
@@ -589,10 +588,9 @@ lc_bead_verified() {
 
 # release_own_claim <id> — an aeon hands back a bead it is still holding.
 #
-# ONE CALL, THROUGH THE MACHINE: `spira-lc unclaim`. With lifecycle_enforce on it releases the
-# lifecycle row only if <me> still holds it — a bead reaped and handed to another aeon in
-# between keeps its new holder — and writes nothing to bd, whose assignee nobody reads. Off,
-# it is bd's own `unclaim --if-assignee <me>`, the same compare-and-swap.
+# ONE CALL, THROUGH THE MACHINE: `spira-lc unclaim`. It releases the lifecycle row only if
+# <me> still holds it — a bead reaped and handed to another aeon in between keeps its new
+# holder — and writes nothing to bd, whose assignee nobody reads.
 #
 # THE NAME IS THE AEON'S, NOT THE FAYTH'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
 # the per-instance name — `aeon-mindy`, not `aeon-builder`. Release sites that derived the
@@ -1558,47 +1556,10 @@ detect_livelocked() {
     strand detect-livelocked
 }
 
-# detect_landed_but_open -> "STATE <id> landed-but-open — <evidence>" for every open or
-# in_progress bead in the WHOLE graph — no partition, no label filter — whose repository's
-# base already carries a commit landing it. A bead's landed-but-open state does not depend
-# on which partition it happens to carry, so a scan bounded to one partition cannot see one
-# filed under another (sp-0qp7s: the groomer's scan read only its own trigger partition).
-# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_landed_but_open`.
-detect_landed_but_open() {
-    strand detect-landed-but-open
-}
-
-# detect_closed_unlanded_states -> one STATE line per closed work bead, across every
-# partition this host watches (fayth_partitions — every persona's, not the caller's own),
-# that carries none of CHECK 5's recognised landing signals (supersedes, spira-dropped,
-# delivers:, content-landed) and whose lifecycle record is not LANDED. Two shapes:
-#
-#   STATE <id> closed-no-branch          — no branch: label (or the label names a ref that
-#                                           was never pushed): nothing was ever committed.
-#   STATE <id> closed-never-landed <verdict> <repo> <branch> <base> — a branch: label names
-#                                           a real ref ahead of base; <verdict> is `conflict`
-#                                           when it does not merge cleanly (needs a rebase) or
-#                                           `batch-ready` when it does (ready to requeue as-is).
-#
-# This is the same exclusion set sentinel.sh CHECK 5 applies before filing an Ops incident —
-# CHECK 5 reports; this classifies for the groomer to act on with judgement (reopen for
-# rebase, or reopen as batch-ready).
-# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_closed_unlanded_states`.
-detect_closed_unlanded_states() {
-    strand detect-closed-unlanded-states
-}
-
-# detect_false_blockers <blocker-ids> -> "STATE <id> blocked-by-unlanded <blocker> — <evidence>"
-# for every open or in_progress bead depending (type=blocks) on one of <blocker-ids> (newline
-# or space separated). detect_closed_unlanded_states names the blockers this reads: a closed
-# bead whose work never landed still counts as "done" to every dependent's `bd ready`, so its
-# dependents sit correctly-blocked forever on a false premise (sp-jzfog blocking sp-vsob2).
-# The remedy is the blocker's own — reopening it (task 2) is what clears this — so this
-# function only makes the false block visible on the bead it was holding shut.
-# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_false_blockers`.
-detect_false_blockers() {
-    strand detect-false-blockers "$@"
-}
+# detect_landed_but_open, detect_closed_unlanded_states and detect_false_blockers are gone:
+# their strand subcommands were deleted in sp-mve9i (each read a work bead's state from bd
+# status) and the groomer stopped calling them at sp-jnwbn, so the shims had no target and
+# no caller (test-landstate-checks-deleted.sh keeps them out).
 
 # detect_incident_needs_builder -> "STATE <id> incident-is-code — <evidence>" for every open
 # or in_progress bead carrying SPIRA_INCIDENT_LABEL whose recorded branch: already has a

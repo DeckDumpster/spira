@@ -92,6 +92,8 @@ branch() {
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":%s,"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$labels" "$id" | testdb_seed
+    # The builder's hand-off is the bead's lifecycle row, not bd `closed` (sp-mve9i).
+    lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD 2>/dev/null)" 0
 }
 
 drop_branch() {
@@ -102,6 +104,7 @@ drop_branch() {
 seed() {
     rm -rf "$RUN/submitted" "$RUN/landstate" "$RUN/tip-at-gate"
     testdb_reset
+    rm -rf "$LC_FIX/bead" "$LC_FIX/show"; mkdir -p "$LC_FIX/bead" "$LC_FIX/show"
     testdb_seed <<'JSONL'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
 JSONL

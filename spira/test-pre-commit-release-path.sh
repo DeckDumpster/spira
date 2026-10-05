@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-pre-commit-release-path.sh — the pre-commit hook finds the tools of the release it
-# sits in, even under lifecycle_enforce's restricted PATH (/usr/bin:/bin:<release>/bin),
+# sits in, even under the aeon's restricted PATH (/usr/bin:/bin:<release>/bin),
 # which omits <release>/spira (sp-tf7nt).
 #
 # covers: spira/hooks/pre-commit spira/worktree-hooks.sh aeon/src/restrict.rs

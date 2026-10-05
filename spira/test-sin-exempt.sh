@@ -46,6 +46,11 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log" MAIL_LOG="$TMP/mail.log"
+# sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from
+# its lifecycle row, never bd status. A stand-in spira-lc tells the stub store's story in
+# lifecycle terms (testlib.sh lc_mirror_bd: open → READY, closed → LANDED); with no machine
+# every filing would stay spooled.
+lc_mirror_bd "$TMP/lc"
 cat > "$TMP/home/mail" <<'M'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0
@@ -58,7 +63,7 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     printf '%s' "$payload" | \
         env -i HOME="$HOME" PATH="$PATH" \
-        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
+        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         MAIL_LOG="$MAIL_LOG" \
         SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \

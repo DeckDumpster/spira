@@ -47,6 +47,8 @@ pub struct Cfg {
     pub suites_sh: Option<String>,
     pub moot_sh: Option<String>,
     pub branch_guard_sh: Option<String>,
+    /// `spira-lc`: whether an incident bead is unfinished is its lifecycle row's answer.
+    pub lc_bin: String,
 }
 
 impl Cfg {

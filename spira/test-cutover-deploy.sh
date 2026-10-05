@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
 # test-cutover-deploy.sh — container-tier acceptance for sp-sa8pn's own deliverable: the
-# cutover deploy step (schema, grants, classify, flip) against a throwaway `dolt sql-server`
+# cutover deploy step (schema, grants, classify, config) against a throwaway `dolt sql-server`
 # this suite starts and tears down itself, standing in for acceptance criterion D ("runs the
 # cutover deploy on an aged install, and afterwards a manual write to spira_lifecycle as the
 # operator user is refused").
 #
 # classify's own correctness (every precedence tier) is test-lifecycle-classify.sh's job;
 # this suite proves the ORCHESTRATION — that cutover-deploy.sh calls schema, grants,
-# classify and the config flip in the right order, against the real grant set, and that the
+# classify and the config step in the right order, against the real grant set, and that the
 # result is what the grants are for.
 #
 # WHAT THIS PROVES:
 #   - a single run against a fixture with no spira.toml yet, an empty-of-matching-beads bd
 #     database (the degenerate "aged install with nothing to classify" case) and one
-#     repo-map row leaves: spira_lifecycle's schema in place, spira.lifecycle_enforce = true
-#     in a freshly created spira.toml, and classify's own event log non-empty (it ran);
+#     repo-map row leaves: spira_lifecycle's schema in place, a freshly created spira.toml
+#     carrying no spira.lifecycle_enforce (the switch is retired, sp-v62vn), and classify's own event log non-empty (it ran);
 #   - afterwards, a fresh 'operator'@'%' user this suite creates AFTER the grants — never
 #     named by grants.sql, so it holds no privilege on spira_lifecycle at all — is REFUSED
 #     an INSERT (SEEN RED as a positive control: the same INSERT succeeds as spira_lc,
@@ -33,16 +33,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 unset SPIRA_LC_SOCKET
 
 . "$HERE/testdb.sh"
@@ -91,15 +86,8 @@ done
 
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build-lc.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build-lc.log")"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-config/Cargo.toml" --quiet 2>"$TMP/build-cfg.log" \
-    || bail "spira-config failed to build: $(cat "$TMP/build-cfg.log")"
-LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
-CFG_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-config"
+LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
+CFG_BIN="$(command -v spira-config 2>/dev/null)"; [ -n "$CFG_BIN" ] || { echo "spira-config is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 echo "test-cutover-deploy.sh"
 
@@ -122,7 +110,7 @@ RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
 
 run_deploy() {
     env -i HOME="$HOME" \
-        PATH="$CARGO_TARGET_DIR_FOR_BUILD/debug:$PATH" SPIRA_REPO="$REPO" \
+        PATH="$PATH" SPIRA_REPO="$REPO" \
         SPIRA_HOME="$FIX" SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
         SPIRA_CONF="$CONF" SPIRA_CONFIG_HOME="${CFGHOME_OVERRIDE:-$CFGHOME}" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
@@ -144,16 +132,15 @@ echo "the deploy step runs end to end on an aged install:"
 out="$(run_deploy 2>&1)"; rc=$?
 [ "$rc" = 0 ] || printf '%s\n' "$out" >&2
 wantrc "cutover-deploy.sh exits 0" 0 "$rc"
-want "it reports the flip" "flipping lifecycle_enforce" "$out"
+want "it reports the retired switch's removal" "retiring lifecycle_enforce" "$out"
 want "it ran the classifier" "classifying the quiesced store" "$out"
 
 out_flag="$(run_deploy --remove-dropin /nonexistent 2>&1)"; wantrc "the retired --remove-dropin flag is refused" 2 $?
 
 echo
-echo "the flip landed in a freshly created spira.toml:"
+echo "the config step left a freshly created spira.toml with no lifecycle switch in it:"
 [ -f "$TOML" ] || bail "spira.toml was not created"
-got="$("$CFG_BIN" get spira.lifecycle_enforce "$TOML" 2>&1)"
-is "spira.lifecycle_enforce reads true" "true" "$got"
+nowant "spira.toml carries no lifecycle_enforce key" "lifecycle_enforce" "$(cat "$TOML")"
 
 echo
 echo "the classifier actually ran (its own event log is non-empty, or it had nothing to classify):"
@@ -185,10 +172,7 @@ wantrc "cutover-deploy.sh exits 0 again" 0 "$rc2"
 
 echo
 echo "a unit-rendered environment alone authenticates as spira_lc:"
-INSTALL_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/install/Cargo.toml" --bin render-unit --bin spira-install --quiet 2>"$TMP/build-install.log" \
-    || bail "render-unit failed to build: $(cat "$TMP/build-install.log")"
+INSTALL_BIN="$(dirname "$(command -v render-unit)")"
 rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --home "$FIX" --repo "$REPO" --run "$FIX/run" \
     --db "$SPIRA_DB" --cockpit "$FIX/cockpit" --dolt /bin/true --prod "$FIX/spira" --instance prod \
     --testdb-port 3308 --snap-stale-s 60 --lc-password-file "$CRED")"

@@ -35,21 +35,12 @@ printf 'test-tsd.sh\n'
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-# ── build tsd-write (law-absence-needs-a-positive-control: no binary, no suite) ────────────
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — tsd-write binary cannot be built"
+# ── tsd-write (law-absence-needs-a-positive-control: no binary, no suite) ──────────────────
 # tsd-write is the tree's own build, on the suite's PATH (sp-gypjk) — never built here.
 command -v tsd-write >/dev/null 2>&1 || bail "tsd-write is not on PATH"
 TSD_BIN=tsd-write
 
-# ── tsd's own #[test] units (tsd/src/lib.rs) ────────────────────────────────────────────────
-CARGO_TEST_LOG="$T/cargo-test-tsd.log"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/tsd-test-target" \
-    "$CARGO_BIN" test --locked -p tsd --manifest-path "$HERE/../Cargo.toml" \
-    --no-fail-fast > "$CARGO_TEST_LOG" 2>&1
-_cargo_test_rc=$?
-report_cargo "$CARGO_TEST_LOG" "$_cargo_test_rc"
+# (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 jpy() {  # jpy <file> <python-expr-on-"rows"> — rows is a list of parsed JSON lines
     python3 -c '

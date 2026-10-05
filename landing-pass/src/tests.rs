@@ -19,10 +19,23 @@ use std::path::{Path, PathBuf};
 // Fakes
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// The fixtures still name a bead the way bd did; the pass reads the lifecycle state
+/// (sp-mve9i), so each word is the machine's equivalent: done -> SUBMITTED, open -> READY,
+/// in progress -> WORKING. Anything else is already a lifecycle state.
+fn lc_word(bd_word: &str) -> String {
+    match bd_word {
+        "closed" => "SUBMITTED",
+        "open" => "READY",
+        "in_progress" => "WORKING",
+        other => other,
+    }
+    .to_string()
+}
+
 #[derive(Default)]
 struct FakeBeads {
     rows: RefCell<HashMap<String, BeadRow>>,
-    /// Status seen by a re-read (bead_land_status), when it differs from the scan.
+    /// Lifecycle state seen by a re-read (`bead_lc_state`), when it differs from the scan.
     reread: RefCell<HashMap<String, String>>,
     fail: Cell<bool>,
 }
@@ -35,11 +48,11 @@ impl Beads for FakeBeads {
         let r = self.rows.borrow();
         Ok(ids.iter().filter_map(|i| r.get(i).cloned()).collect())
     }
-    fn land_status(&self, id: &str) -> String {
+    fn bead_lc_state(&self, id: &str) -> String {
         if let Some(s) = self.reread.borrow().get(id) {
-            return s.clone();
+            return lc_word(s);
         }
-        self.rows.borrow().get(id).map(|b| b.status.clone()).unwrap_or_else(|| "-".into())
+        self.rows.borrow().get(id).map(|b| b.state.clone()).unwrap_or_else(|| "-".into())
     }
     fn ask_open(&self, _label: &str, _subject: &str) -> bool {
         false
@@ -398,14 +411,10 @@ impl Procs for FakeProcs {
 struct FakeLc {
     probes: Cell<u32>,
     down: RefCell<Option<String>>,
-    submitted: RefCell<HashMap<String, String>>,
     certified: RefCell<Vec<String>>,
     refuse_pass: Cell<bool>,
 }
 impl crate::lifecycle::Lc for FakeLc {
-    fn submitted(&self) -> Result<HashMap<String, String>, String> {
-        Ok(self.submitted.borrow().clone())
-    }
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
         if outcome == "pass" && self.refuse_pass.get() {
@@ -497,8 +506,7 @@ impl H {
     fn bead(&self, id: &str, status: &str, labels: &[&str]) -> BeadRow {
         let b = BeadRow {
             id: id.into(),
-            status: status.into(),
-            raw_status: status.into(),
+            state: lc_word(status),
             repo: "spira".into(),
             labels: labels.iter().map(|s| s.to_string()).collect(),
             superseded: false,
@@ -553,13 +561,16 @@ impl H {
 // Queue certification (§4.2)
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// sp-mve9i: a bd row is content. Neither bd's status nor the retired submitted label makes
+/// a bead handed on; its state is `-` until the lifecycle row is joined onto it.
 #[test]
-fn a_submitted_labelled_open_bead_reads_as_done() {
-    let v = serde_json::json!({"id":"sp-a","status":"open","labels":["spira-submitted","repo:spira"],"priority":1});
-    let b = BeadRow::from_json(&v, "home", "spira-submitted").unwrap();
-    assert_eq!((b.status.as_str(), b.raw_status.as_str(), b.repo.as_str()), ("closed", "open", "spira"));
+fn a_bd_row_is_content_and_carries_no_state() {
+    let v = serde_json::json!({"id":"sp-a","status":"closed","labels":["spira-submitted","repo:spira"],"priority":1});
+    let b = BeadRow::from_json(&v, "home").unwrap();
+    assert_eq!((b.state.as_str(), b.repo.as_str()), ("-", "spira"));
+    assert!(!b.handed_on());
     let sup = serde_json::json!({"id":"sp-b","status":"closed","dependencies":[{"type":"supersedes"}]});
-    let b = BeadRow::from_json(&sup, "home", "x").unwrap();
+    let b = BeadRow::from_json(&sup, "home").unwrap();
     assert!(b.superseded);
     assert_eq!((b.repo.as_str(), b.closed_at.as_str(), b.priority), ("home", "9999-99-99", 9999));
 }
@@ -592,8 +603,8 @@ fn a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified() {
     h.beads.reread.borrow_mut().insert("sp-b".into(), "open".into());
     h.run();
     assert!(!h.lib.has("reopen"));
-    assert!(h.logged("CHECK6 sp-a: bead is now in_progress (was closed at scan time) — not reopening spira/sp-a"));
-    assert!(h.logged("CHECK6 sp-b: bead is now open (was closed at scan time) — not certifying spira/sp-b"));
+    assert!(h.logged("CHECK6 sp-a: bead is now WORKING (was closed at scan time) — not reopening spira/sp-a"));
+    assert!(h.logged("CHECK6 sp-b: bead is now READY (was closed at scan time) — not certifying spira/sp-b"));
 }
 
 #[test]
@@ -770,8 +781,8 @@ fn every_early_exit_says_why() {
     h.closed("sp-content", "t6");
     h.git.content.borrow_mut().insert("spira/sp-content".into());
     h.run();
-    assert!(h.logged("CHECK6 sp-open: spira/sp-open not landed — its bead is in_progress, held by a live aeon"));
-    assert!(h.logged("CHECK6 sp-idle: spira/sp-idle not landed — its bead is open and no aeon holds it"));
+    assert!(h.logged("CHECK6 sp-open: spira/sp-open not landed — its bead is WORKING, held by a live aeon"));
+    assert!(h.logged("CHECK6 sp-idle: spira/sp-idle not landed — its bead is READY and no aeon holds it"));
     assert!(h.logged("CHECK6 sp-other: spira/sp-other is in spira but the bead names repo:elsewhere — not landing it here"));
     assert!(h.logged("CHECK6 sp-sup: spira/sp-sup is superseded"));
     assert!(h.logged("CHECK6 sp-cut: spira/sp-cut is labelled cutover-round — leaving it for the cutover round"));
@@ -1022,7 +1033,7 @@ fn a_merge_conflict_on_already_landed_work_does_not_reopen() {
     h.closed("sp-a", "t1");
     h.git.merge_conflict.borrow_mut().insert("spira/sp-a".into());
     h.run();
-    assert!(!h.lib.has("deliver_returned"), "lifecycle_enforce OFF");
+    assert!(h.lib.has("deliver_returned sp-a"), "a genuine conflict is a Returned delivery");
     assert!(h.lib.has("reopen sp-a rebase-conflict Reopened by sentinel: branch spira/sp-a conflicts with origin/main. The branch carries 2 commit(s)"));
 }
 
@@ -1158,7 +1169,8 @@ fn push_mode_lands_on_a_real_remote() {
     let fl = FakeLib::default();
     let lib = PushLib(&fl);
     let beads = FakeBeads::default();
-    let mut b = BeadRow::from_json(&serde_json::json!({"id":"sp-a","status":"closed","labels":["repo:spira"]}), "spira", "x").unwrap();
+    let mut b = BeadRow::from_json(&serde_json::json!({"id":"sp-a","labels":["repo:spira"]}), "spira").unwrap();
+    b.state = "SUBMITTED".into();
     b.priority = 1;
     beads.rows.borrow_mut().insert("sp-a".into(), b);
     let tools = FakeTools::default();
@@ -1317,9 +1329,7 @@ impl PrTools for FakePr {
 fn the_pr_pass_hands_done_branches_to_pr_branch_and_proves_content_landings() {
     let h = H::new(LandMode::Pr);
     h.closed("sp-done", "t1");
-    let mut sub = h.bead("sp-sub", "closed", &["spira-submitted"]);
-    sub.raw_status = "open".into();
-    h.beads.rows.borrow_mut().insert("sp-sub".into(), sub);
+    h.bead("sp-sub", "closed", &["spira-submitted"]);
     h.git.add("spira/sp-sub", "t2");
     h.closed("sp-merged", "t3");
     h.git.content.borrow_mut().insert("spira/sp-merged".into());
@@ -1351,7 +1361,7 @@ fn the_pr_pass_hands_done_branches_to_pr_branch_and_proves_content_landings() {
     // closed (never reaches it either). sp-done and sp-sub both reach pr_branch's rebase.
     assert!(h.lib.has("rebase spira/sp-done"));
     assert!(h.lib.has("rebase spira/sp-sub"), "submitted reads as done, so it is walked too");
-    assert!(h.logged("landing-pass spira: sp-wip not landed — its bead is in_progress"));
+    assert!(h.logged("landing-pass spira: sp-wip not landed — its bead is WORKING"));
 }
 
 #[test]
@@ -1478,7 +1488,7 @@ fn a_base_fix_that_becomes_ready_mid_pass_waits_for_the_walk_to_drain_then_runs_
     h.beads.rows.borrow_mut().insert("sp-fix".into(), fix);
     h.git.add("spira/sp-fix", "tf");
     let inj = Injecting { t: &h.tools, h: &h, at_done: 1, n: Cell::new(0), inject: &|h: &H| {
-        h.beads.rows.borrow_mut().get_mut("sp-fix").unwrap().status = "closed".into();
+        h.beads.rows.borrow_mut().get_mut("sp-fix").unwrap().state = "SUBMITTED".into();
     } };
     h.pass_with(&inj).run();
     let t = h.tools.trace();
@@ -1567,7 +1577,7 @@ fn a_p0_submitted_mid_pass_takes_the_next_free_slot() {
         hot.closed_at = "2026-09-29".into();
         h.beads.rows.borrow_mut().insert("sp-hot".into(), hot);
         h.git.add("spira/sp-hot", "th");
-        h.beads.rows.borrow_mut().get_mut("sp-late").unwrap().status = "closed".into();
+        h.beads.rows.borrow_mut().get_mut("sp-late").unwrap().state = "SUBMITTED".into();
     } };
     h.pass_with(&inj).run();
     assert_eq!(starts(&h), vec!["sp-a", "sp-b", "sp-hot", "sp-late", "sp-c", "sp-d"]);
@@ -1719,9 +1729,8 @@ fn pr_run(h: &H, tools: &FakePr) -> Vec<String> {
     p.loud.into_inner()
 }
 
-fn push_fixture(on: bool) -> H {
-    let mut h = H::new(LandMode::Push);
-    h.s.lifecycle_enforce = on;
+fn push_fixture() -> H {
+    let h = H::new(LandMode::Push);
     h.git.tree.set(true);
     h.closed("sp-a", "t1");
     h.closed("sp-b", "t2");
@@ -1730,17 +1739,8 @@ fn push_fixture(on: bool) -> H {
 }
 
 #[test]
-fn off_push_mode_never_invokes_spira_lc() {
-    let h = push_fixture(false);
-    h.run();
-    assert!(h.lib.has("reopen sp-b rebase-conflict"));
-    assert_eq!(h.lc.probes.get(), 0);
-    assert!(!h.lib.has("deliver_"), "{:?}", h.lib.calls.borrow());
-}
-
-#[test]
-fn on_push_mode_records_deliveries_through_the_machine() {
-    let h = push_fixture(true);
+fn push_mode_records_deliveries_through_the_machine() {
+    let h = push_fixture();
     h.run();
     assert!(h.lib.has("deliver_delivered sp-a head1"));
     assert!(h.lib.has("deliver_returned sp-b"));
@@ -1748,77 +1748,86 @@ fn on_push_mode_records_deliveries_through_the_machine() {
 }
 
 #[test]
-fn on_with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
-    let h = push_fixture(true);
+fn with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
+    let h = push_fixture();
     *h.lc.down.borrow_mut() = Some("Access denied".into());
     h.run();
-    assert!(h.logged("landing: lifecycle_enforce is on and spira-lc is unreachable (Access denied) — not landing spira/sp-a this pass"));
+    assert!(h.logged("landing: spira-lc is unreachable (Access denied) — not landing spira/sp-a this pass"));
 }
 
 #[test]
-fn on_a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
-    let mut h = H::new(LandMode::QueueLocal);
-    h.s.lifecycle_enforce = true;
-    h.bead("sp-a", "open", &[]);
+fn a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-a", "SUBMITTED", &[]);
     h.git.add("spira/sp-a", "t1");
-    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
     h.run();
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
 #[test]
 fn a_refused_gatepass_leaves_the_bead_uncertified() {
-    let mut h = H::new(LandMode::QueueLocal);
-    h.s.lifecycle_enforce = true;
-    h.bead("sp-a", "open", &[]);
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-a", "SUBMITTED", &[]);
     h.git.add("spira/sp-a", "t1");
-    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
     h.lc.refuse_pass.set(true);
     h.run();
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
+/// sp-vn19s, local acceptance on d40bbb589 (phase A, push-mode scratch repo): the model
+/// finishes with `work submit`, never a bd close, and the push gate's own GatePass moves the
+/// row SUBMITTED -> CERTIFIED before the land. CERTIFIED is past the builder (handed on), so
+/// the pass lands it rather than refusing it as "now open (was closed at scan time)".
 #[test]
-fn on_a_lifecycle_row_at_another_tip_is_not_certified() {
-    let mut h = H::new(LandMode::QueueLocal);
-    h.s.lifecycle_enforce = true;
-    h.bead("sp-a", "open", &[]);
-    h.git.add("spira/sp-a", "t2");
-    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
-    h.run();
-    assert!(h.lc.certified.borrow().is_empty());
-}
-
-#[test]
-fn off_an_unlabelled_open_bead_stays_uncertified_whatever_lifecycle_says() {
-    let h = H::new(LandMode::QueueLocal);
-    h.bead("sp-a", "open", &[]);
+fn on_push_mode_lands_a_lifecycle_certified_bead_without_a_close() {
+    let h = H::new(LandMode::Push);
+    h.git.tree.set(true);
+    h.bead("sp-a", "CERTIFIED", &[]);
     h.git.add("spira/sp-a", "t1");
-    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
+    h.run();
+    assert!(!h.logged("CHECK6 sp-a: spira/sp-a not landed — its bead is CERTIFIED and no aeon holds it"));
+    assert!(h.lib.has("deliver_delivered sp-a head1"), "{:?}", h.lib.calls.borrow());
+}
+
+/// sp-vn19s: a queued repository's CERTIFIED beads belong to the batcher: the pass must not
+/// certify them again (that would re-gate a certified tip every pass).
+#[test]
+fn on_queue_mode_a_certified_bead_is_not_walked_again() {
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-a", "CERTIFIED", &[]);
+    h.git.add("spira/sp-a", "t1");
     h.run();
     assert!(h.lc.certified.borrow().is_empty());
 }
 
+/// A SUBMITTED row whose branch moved on is offered for certification at the branch's live
+/// tip only: the machine's own tip check (TipMismatch) is the judge, never a tip remembered
+/// here.
 #[test]
-fn submitted_parse_keeps_only_submitted_rows_with_a_tip() {
-    let j = br#"[{"bead_id":"a","state":"SUBMITTED","tip":"t"},{"bead_id":"b","state":"WORKING","tip":"u"},{"bead_id":"c","state":"SUBMITTED","tip":""}]"#;
-    let m = crate::lifecycle::parse_submitted(j).unwrap();
-    assert_eq!(m.len(), 1);
-    assert_eq!(m["a"], "t");
-}
-
-#[test]
-fn off_queue_certification_never_invokes_spira_lc() {
+fn a_submitted_bead_is_certified_only_at_its_live_tip() {
     let h = H::new(LandMode::QueueLocal);
-    h.closed("sp-a", "t1");
+    h.bead("sp-a", "SUBMITTED", &[]);
+    h.git.add("spira/sp-a", "t2");
     h.run();
-    assert_eq!(h.lc.probes.get(), 0);
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t2 pass"]);
+}
+
+/// sp-mve9i: a bead still with its builder (READY, WORKING, REWORK) is never certified,
+/// whatever bd or a label says.
+#[test]
+fn a_bead_the_builder_still_holds_is_never_certified() {
+    for st in ["READY", "WORKING", "REWORK"] {
+        let h = H::new(LandMode::QueueLocal);
+        h.bead("sp-a", st, &["spira-submitted"]);
+        h.git.add("spira/sp-a", "t1");
+        h.run();
+        assert!(h.lc.certified.borrow().is_empty(), "{st}");
+    }
 }
 
 #[test]
-fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
-    let mut h = H::new(LandMode::Pr);
-    h.s.lifecycle_enforce = true;
+fn the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
+    let h = H::new(LandMode::Pr);
     h.closed("sp-merged", "t3");
     h.git.content.borrow_mut().insert("spira/sp-merged".into());
     h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "M".into());
@@ -1831,7 +1840,7 @@ fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails()
     let loud = pr_run(&h, &tools);
     assert_eq!(
         loud,
-        vec!["landing-pass: sp-merged: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
+        vec!["landing-pass: sp-merged: LIFECYCLE: the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
     );
 }
 

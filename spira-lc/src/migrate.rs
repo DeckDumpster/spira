@@ -186,16 +186,11 @@ pub fn table_columns_sql(table: &str) -> String {
     format!("SELECT column_name FROM information_schema.columns WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(table))
 }
 
-/// `--if-enforced` (sp-vf9iu): release pre-activate runs admin-migrate on every activation,
-/// including on installs with no lifecycle store (`lifecycle_enforce` off), where there is
-/// nothing to migrate. Returns the remaining arguments, or `None` when the flag is present
-/// and enforcement is off (nothing to do).
-pub fn gate_if_enforced(args: &[String], enforced: impl FnOnce() -> bool) -> Option<Vec<String>> {
-    let rest: Vec<String> = args.iter().filter(|a| *a != "--if-enforced").cloned().collect();
-    if rest.len() != args.len() && !enforced() {
-        return None;
-    }
-    Some(rest)
+/// `--if-enforced` (sp-vf9iu) once skipped the migration on an install with the lifecycle
+/// switch off. There is no off (sp-v62vn): the flag is accepted and ignored, so an older
+/// pre-activate that still passes it migrates like any other caller.
+pub fn strip_retired_flags(args: &[String]) -> Vec<String> {
+    args.iter().filter(|a| *a != "--if-enforced").cloned().collect()
 }
 
 /// The database a migration step is probed and applied through: a live [`Conn`] in
@@ -502,9 +497,7 @@ pub fn admin_from_env(get: impl Fn(&str) -> Option<String>) -> Result<Option<(St
 }
 
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
-    let Some(args) = gate_if_enforced(args, || spira_config::lifecycle_enforce(None)) else {
-        return (0, "admin-migrate: lifecycle_enforce is off — no lifecycle store to migrate".into());
-    };
+    let args = strip_retired_flags(args);
     let args = &args[..];
     if args.is_empty() {
         return (2, "admin-migrate: missing <migrations-dir-or-file>...".into());
@@ -548,12 +541,10 @@ mod tests {
     }
 
     #[test]
-    fn if_enforced_skips_only_when_enforcement_is_off() {
+    fn the_retired_if_enforced_flag_is_ignored() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(gate_if_enforced(&a(&["--if-enforced", "m"]), || false), None);
-        assert_eq!(gate_if_enforced(&a(&["--if-enforced", "m"]), || true), Some(a(&["m"])));
-        // Without the flag enforcement is never consulted: an explicit run always runs.
-        assert_eq!(gate_if_enforced(&a(&["m"]), || panic!("consulted")), Some(a(&["m"])));
+        assert_eq!(strip_retired_flags(&a(&["--if-enforced", "m"])), a(&["m"]));
+        assert_eq!(strip_retired_flags(&a(&["m"])), a(&["m"]));
     }
 
     #[test]

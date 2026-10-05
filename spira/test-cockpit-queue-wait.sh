@@ -12,6 +12,13 @@
 # THE FIX. cockpit-collect's NEXT query adds SPIRA_QUEUE_WAIT_LABEL to --exclude-label,
 # matching what fayth_exclude passes to bd ready for each aeon.
 #
+# Since sp-7g5q6 the NEXT rows come from `spira-claim ready-count <labels> <excl> --json`:
+# the lifecycle machine's READY rows (the only mode since sp-v62vn retired
+# lifecycle_enforce), filtered to the partition's labels and away from the exclude set. So
+# the fixture's beads carry the partition's labels (the scope label too, whatever it
+# resolves to), and a spira-lc stand-in (testlib.sh lc_mirror_bd) tells the mock bd's
+# story as lifecycle rows (sp-mve9i).
+#
 # WHAT THIS SUITE CHECKS (4 assertions).
 #   1. POSITIVE CONTROL: a normal bead (no wait label) appears in SP_NEXT.
 #   2. Queue-wait bead NOT in SP_NEXT: a bead carrying spira-queue-waiting is
@@ -22,7 +29,7 @@
 # defect: sp-rvoun
 # tier: T1
 # covers: cockpit-collect/src/*
-# hermetic-ok: mock bd binary, no systemd or database
+# hermetic-ok: mock bd and spira-lc binaries, no systemd or database
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -33,10 +40,18 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 : "${SPIRA_SCOPE_LABEL:=$(basename "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || printf '')")}"
 
-# run_core <bd-binary> <wait-label> -> stdout of cockpit-collect probe core (SP_NEXT* and SP_READY keys)
+# The partition's labels as a JSON list fragment: the scope label (when one resolved) and
+# plan — what the builder fayth's FAYTH_LABELS asks every NEXT row to carry.
+SCOPE_JSON="${SPIRA_SCOPE_LABEL:+\"$SPIRA_SCOPE_LABEL\",}\"plan\""
+lc_mirror_bd "$TMP/lc"
+
+# run_core <bd-binary> <wait-label> -> stdout of cockpit-collect probe core (SP_NEXT* and
+# SP_READY keys); spira-claim reads the lifecycle rows from the lc_mirror_bd stand-in
+# first on PATH.
 run_core() {
     local bd_path="$1" wait_label="${2:-spira-queue-waiting}"
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i PATH="$TMP/lc:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
@@ -48,8 +63,9 @@ run_core() {
 }
 
 # make_bd_wait <path> <wait-label> — a mock bd that returns a bead carrying the
-# wait label. It respects --exclude-label: if the label appears in the exclude
-# list the bead is filtered out, as the real bd would do.
+# wait label. Its ready respects --exclude-label: if the label appears in the exclude
+# list the bead is filtered out, as the real bd would do. Its list (the lifecycle
+# stand-in's source, and spira-claim's by-id read) returns the bead as stored.
 make_bd_wait() {
     local path="$1" wlabel="$2"
     cat > "$path" <<EOF
@@ -62,25 +78,23 @@ for arg in "\$@"; do
     fi
     prev_arg="\$arg"
 done
-if [ "\$is_ready" = 0 ]; then printf '[]\n'; exit 0; fi
-if [ "\$excluded" = 1 ]; then printf '[]\n'; exit 0; fi
-printf '[{"id":"sp-qw-test","title":"queue-wait bead","status":"open","issue_type":"task","priority":1,"labels":["plan","${SPIRA_SCOPE_LABEL}","$wlabel"]}]\n'
+case " \$* " in *" list "*) ;; *) [ "\$is_ready" = 0 ] && { printf '[]\n'; exit 0; } ;; esac
+if [ "\$is_ready" = 1 ] && [ "\$excluded" = 1 ]; then printf '[]\n'; exit 0; fi
+printf '[{"id":"sp-qw-test","title":"queue-wait bead","status":"open","issue_type":"task","priority":1,"labels":[$SCOPE_JSON,"$wlabel"]}]\n'
 EOF
     chmod +x "$path"
 }
 
-# make_bd_normal <path> — mock bd returning a normal (no-wait-label) bead.
+# make_bd_normal <path> — mock bd returning a normal (no-wait-label) bead from ready and
+# list alike.
 make_bd_normal() {
     local path="$1"
-    cat > "$path" <<'EOF'
+    cat > "$path" <<EOF
 #!/usr/bin/env bash
-is_ready=0
-for arg in "$@"; do [ "$arg" = "ready" ] && is_ready=1; done
-if [ "$is_ready" = 1 ]; then
-    printf '[{"id":"sp-normal","title":"normal bead","status":"open","issue_type":"task","priority":1,"labels":["plan"]}]\n'
-else
-    printf '[]\n'
-fi
+case " \$* " in
+    *" ready "*|*" list "*) printf '[{"id":"sp-normal","title":"normal bead","status":"open","issue_type":"task","priority":1,"labels":[$SCOPE_JSON]}]\n' ;;
+    *) printf '[]\n' ;;
+esac
 EOF
     chmod +x "$path"
 }
@@ -108,6 +122,5 @@ echo
 echo "4 — SP_READY is 0 when only bead has wait label"
 is "SP_READY=0 when all beads are queue-waiting" "SP_READY=0" \
     "$(printf '%s\n' "$out" | grep '^SP_READY=')"
-
 echo
 tl_summary

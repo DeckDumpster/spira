@@ -313,6 +313,17 @@ is "no attempt charged for a conflict requeue" "0" "$_att"
 _rqn="$(requeues_of "sp-z1")"
 is "requeues_of still counts the requeue event" "1" "$_rqn"
 
+# A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census splits the covers:
+# beads by `spira-lc list`. lc_rows <id>:<STATE>... sets what this stub answers.
+cat > "$TMP/spira-lc-stub" <<STUB
+#!/usr/bin/env bash
+[ "\${1:-}" = list ] || exit 2
+cat "$TMP/lc-rows.json" 2>/dev/null || echo '[]'
+STUB
+chmod +x "$TMP/spira-lc-stub"
+export SPIRA_LC_BIN="$TMP/spira-lc-stub"
+lc_rows() { local r out=""; for r in "$@"; do out="$out${out:+,}{\"bead_id\":\"${r%%:*}\",\"state\":\"${r#*:}\"}"; done; printf '[%s]\n' "$out" > "$TMP/lc-rows.json"; }
+
 # ======================================================================================
 echo
 echo "db-hn1t: covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict"
@@ -331,6 +342,7 @@ JSONL
 bump_requeue "sp-p1" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p3" merge-conflict >/dev/null 2>&1
+lc_rows sp-p4:READY   # the remedy is open in lifecycle terms
 
 _fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
 _fold_line="$(printf '%s\n' "$_fold_out" | grep 'sp-reopen-rebase-conflict' || true)"
@@ -345,6 +357,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-q2","title":"unrelated remedy","status":"open","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-recur-suite-red"],"updated_at":"2026-09-19T00:00:00Z"}
 JSONL
 bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
+lc_rows sp-q2:READY
 
 _unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
 _unrel_line="$(printf '%s\n' "$_unrel_out" | grep 'sp-reopen-rebase-conflict' || true)"
@@ -458,6 +471,7 @@ testdb_seed <<'JSONL'
 JSONL
 bead_reopen   "sp-ev2" eviction-race "Eviction race test" >/dev/null 2>&1
 bump_requeue  "sp-ev2" eviction-race >/dev/null 2>&1
+lc_rows sp-evr:WORKING   # the remedy is being worked
 
 _evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
 _evict_sup_line="$(printf '%s\n' "$_evict_sup_out" | grep 'sp-reopen-eviction-race' || true)"

@@ -507,7 +507,6 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_LC_TESTDB_PORT",
     "SPIRA_LC_UNIX_GROUP",
     "SPIRA_LC_UNIX_USER",
-    "SPIRA_LIFECYCLE_ENFORCE",
     "SPIRA_LOOM_ADDR",
     "SPIRA_LOOM_BUDGET_MS",
     "SPIRA_LOOM_CACHE_S",
@@ -826,6 +825,13 @@ fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> 
 
     let mut values: BTreeMap<String, String> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
+    // The retired lifecycle switch (sp-v62vn): on is a deprecation warning, off is refused —
+    // every conf.sh source and every in-process resolve goes through here.
+    if let Some(w) = crate::check_lifecycle_switch_env(env.get(crate::LIFECYCLE_ENFORCE_ENV).map(String::as_str))
+        .map_err(ResolveError::Registry)?
+    {
+        warnings.push(format!("spira: {w}"));
+    }
     macro_rules! set {
         ($key:expr, $val:expr) => {{
             let v = $val;
@@ -1277,6 +1283,23 @@ mod tests {
             .unwrap();
         assert_eq!(r.get("SPIRA_AGENT"), "my-claude");
         assert!(r.warnings.iter().any(|w| w.contains("SPIRA_CLAUDE is deprecated")), "{:?}", r.warnings);
+    }
+
+    #[test]
+    fn a_lifecycle_switch_saying_off_refuses_the_resolve() {
+        let ws = testkit::TempDir::new("spira-config-resolve-lce");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        let off = env(&[("HOME", "/h"), ("SPIRA_LIFECYCLE_ENFORCE", "0")]);
+        let e = resolve(ResolveInput { env: &off, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("sp-v62vn") && e.contains("Exit:"), "{e}");
+        let on = env(&[("HOME", "/h"), ("SPIRA_LIFECYCLE_ENFORCE", "1")]);
+        let r = resolve(ResolveInput { env: &on, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+            .unwrap();
+        assert!(r.warnings.iter().any(|w| w.contains("SPIRA_LIFECYCLE_ENFORCE is retired")), "{:?}", r.warnings);
+        assert!(!r.values.contains_key("SPIRA_LIFECYCLE_ENFORCE"));
     }
 
     #[test]

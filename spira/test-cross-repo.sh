@@ -48,6 +48,9 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up crossrepo || { echo "test-cross-repo: could not build a fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 
 # TWO REPOS: the home repo the harness is installed in, and the "second" repo that the
 # bead's repo: label names. A bead for "second" must never touch the home repo.
@@ -129,15 +132,14 @@ bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 SHIM
 chmod +x "$BIN/claude"
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+aeon_fixture_agent "$BIN/claude"
 
 # SPIRA_HOME_REPO names the home repo in the map. Without it, lib.sh derives the home from
 # the basename of SPIRA_REPO, and that must match a key in the repo-map.
 export SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
 
 B() { bd -C "$SPIRA_DB" "$@"; }
-status_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys; d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(d[0].get("status") or "")'; }
 
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
     SPIRA_REPO="$HOME_REPO" SPIRA_HOME_REPO=home \
@@ -162,13 +164,10 @@ BID="$(B list --status open --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}
 
 run_aeon
 
-# The shim closes the bead; a task bead's close is converted to open + spira-submitted at
-# teardown (sp-qsona) — only the landing pass closes a work bead.
-is "the bead's close was converted to submitted" open "$(status_of "$BID")"
-want "carrying the submitted label" "spira-submitted" \
-    "$(B show "$BID" --json 2>/dev/null | python3 -c '
-import json, sys; d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(",".join(d[0].get("labels") or []))')"
+# The shim closes the bead in bd; the lifecycle stand-in reads that close as the builder's
+# submit (sp-v62vn: every session is restricted, so the teardown's old conversion to
+# open + spira-submitted, sp-qsona, never runs — testlib lc_row_state).
+is "the session finished its bead (SUBMITTED)" SUBMITTED "$(lc_row_state "$BID")"
 
 # The commit landed in the SECOND repo. Check ALL local refs, not just origin/main — the
 # branch has not been pushed yet (that is the landing pass's job). The commit is on

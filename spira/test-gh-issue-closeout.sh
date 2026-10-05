@@ -82,12 +82,14 @@ MAILSTUB
 chmod +x "$TMP/bin/mail"
 export PATH="$TMP/bin:$PATH"
 
-# The lifecycle machine answers "no row" for every bead: exit 1 with `{}`, the shape
-# `spira-lc show` gives for an id it does not hold. An absent binary would read as no answer.
-cat > "$TMP/bin/spira-lc" <<'LCSTUB'
+# The lifecycle machine mirrors the throwaway store (sp-mve9i: which GitHub beads the
+# builder handed on is the lifecycle state, not bd status): a bead bd shows closed is one its
+# builder submitted — SUBMITTED, past the builder, with no delivery record — and an open one
+# is READY. Whether it landed is the git evidence each case plants, as before.
+lc_mirror_bd "$TMP/lcm"; unset SPIRA_LC_BIN   # the PATH stub below is the one gh-intake runs
+cat > "$TMP/bin/spira-lc" <<LCSTUB
 #!/usr/bin/env bash
-[ "${1:-}" = show ] && { echo '{}'; exit 1; }
-exit 2
+LC_MIRROR_CLOSED=SUBMITTED exec "$TMP/lcm/spira-lc" "\$@"
 LCSTUB
 chmod +x "$TMP/bin/spira-lc"
 
@@ -200,6 +202,9 @@ printf '\n6. gh-intake unlanded-scan asks about a truly unlanded bead, and the d
 testdb_seed <<JSONL
 {"id":"sp-scan1","title":"Truly unlanded","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#3","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
+# Its builder finished it and the machine has it over without a delivery (DONE): neither
+# landed nor in flight, which is what the scan asks about.
+echo "sp-scan1 DONE" >> "$TMP/lcm/states"
 : > "$GHLOG"; : > "$MAILLOG"
 scan_out="$(gh-intake unlanded-scan 2>&1)"
 want "direction 1 — a missed ask is actually sent" "asked operator about github:fixture/testrepo#3" "$scan_out"

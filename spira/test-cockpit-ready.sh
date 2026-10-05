@@ -23,9 +23,20 @@ trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
+# The ready set is the lifecycle machine's (sp-v62vn: there is no off mode). This machine
+# holds one READY row, so the probe always asks bd for that bead's content — an empty bd
+# answer is zero ready, a refusing bd is a refusal.
+PROBE_LC="$TMP/probe-lc"; mkdir -p "$PROBE_LC"
+cat > "$PROBE_LC/spira-lc" <<'LC'
+#!/usr/bin/env bash
+[ "$1" = list ] && printf '[{"bead_id":"sp-ck-none","state":"READY","holder":null,"lease_until":null,"holds":[]}]\n'
+exit 0
+LC
+chmod +x "$PROBE_LC/spira-lc"
+
 run_probe() {   # run_probe <SPIRA_BD=path> -> stdout of probe()
     local bd_path="$1"
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i PATH="$PROBE_LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
@@ -104,13 +115,13 @@ want "SP_NEXT_N is ? on refusal"  "SP_NEXT_N=?"  "$ref_out"
 want "SP_WAITING is ? on refusal" "SP_WAITING=?" "$ref_out"
 
 # ======================================================================================
-# UNDER lifecycle_enforce THE READY SET IS THE MACHINE'S (sp-7g5q6). The NEXT rows used to
+# THE READY SET IS THE MACHINE'S (sp-7g5q6). The NEXT rows used to
 # ask `bd ready` themselves, which reads bd's status and assignee — fields no claim writes
 # any more. bd below calls sp-ck-held ready and knows nothing of sp-ck-take; the machine
 # says sp-ck-held is WORKING and sp-ck-take is READY. The cockpit must show the machine's.
 
 echo ""
-echo "ready probe: lifecycle_enforce on, the set is spira-claim's machine set:"
+echo "ready probe: the set is spira-claim's machine set:"
 LCBIN="$TMP/lcbin"; mkdir -p "$LCBIN"
 cat > "$LCBIN/spira-lc" <<'LC'
 #!/usr/bin/env bash
@@ -133,7 +144,7 @@ lc_out="$(env -i PATH="$LCBIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL=spira \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_BD="$BD_LC" \
+    SPIRA_BD="$BD_LC" \
     cockpit-collect probe core 2>/dev/null)"
 is     "SP_READY counts the machine's one READY row"  "SP_READY=1" "$(printf '%s\n' "$lc_out" | grep '^SP_READY=')"
 want   "the machine's READY bead is in NEXT"          "sp-ck-take" "$lc_out"

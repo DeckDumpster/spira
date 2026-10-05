@@ -352,23 +352,16 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         cands = w.lib.sort_rows(&path, &base_sha, &prio, &rows);
     }
 
-    // Admission: closed, or open and carrying the submitted label. An unreadable bead is
-    // not admitted (DESIGN.md §8 D8).
-    let ids: Vec<String> = cands.iter().map(|(i, _)| i.clone()).collect();
-    let rows = if ids.is_empty() { Ok(Vec::new()) } else { w.bd.show(&ids) };
+    // Admission: the member's lifecycle row, read fresh, is still CERTIFIED — waiting for a
+    // round. Never bd's status (design §3.4, sp-mve9i: bd status is inert for work beads, and
+    // the work verbs never move it). A row the machine cannot read is not admitted
+    // (DESIGN.md §8 D8).
     let mut admitted = Vec::new();
     for (id, tip) in cands {
-        let row = rows.as_ref().ok().and_then(|rs| rs.iter().find(|r| r.id == id));
-        match row {
-            None => skips.push(format!("{id}: bead status unknown (bd read failed) — not admitted")),
-            Some(r) => {
-                let st = r.status.clone().unwrap_or_default();
-                if st != "closed" && !r.labels.iter().any(|l| l == &c.s.submitted_label) {
-                    skips.push(format!("{id}: bead status={st} (not closed, not submitted)"));
-                } else {
-                    admitted.push((id, tip));
-                }
-            }
+        match w.lc.bead_row(&id) {
+            None => skips.push(format!("{id}: no lifecycle row (spira-lc could not say) — not admitted")),
+            Some(r) if r.state == "CERTIFIED" => admitted.push((id, tip)),
+            Some(r) => skips.push(format!("{id}: lifecycle state={} (no longer CERTIFIED) — not admitted", r.state)),
         }
     }
 

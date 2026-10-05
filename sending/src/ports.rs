@@ -57,17 +57,13 @@ pub trait World {
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool;
     /// spira_prune_worktrees.
     fn prune(&self, repo: &Path);
-    /// `bdq label add <id> <label>`.
-    fn label_add(&self, id: &str, label: &str);
     /// `spira-lc state <id>` reads LANDED: the lifecycle record says the bead landed. An
     /// unreadable record or a missing row is not LANDED (cannot prove it landed).
     fn lc_landed(&self, id: &str) -> bool;
-    /// `spira-lc content-on-base <id> <proof> sending` (the machine reads its own switch).
+    /// `spira-lc content-on-base <id> <proof> sending`.
     fn content_on_base(&self, id: &str, proof: &str);
     /// The merged PR's head for `br`, if a PR for it is MERGED (`gh pr view`).
     fn pr_merged_tip(&self, repo: &Path, br: &str) -> Option<String>;
-    /// lifecycle_enforce.
-    fn enforce(&self) -> bool;
     /// One line of our own output, in order.
     fn emit(&self, line: &str);
     /// lib.sh `log`: one timestamped line of our own output.

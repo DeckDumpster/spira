@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use bead::claimdesc::notify_live_aeon;
 use bead::{
     branch_candidate, branch_label, chamber_partitions, incident_blocks_refusal, is_blocks_type,
-    lane_check, lint_judge, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    awaits_dispatch, lane_check, lint_judge, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -652,7 +652,8 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
         .collect();
     let partitions = chamber_partitions(&personas, &scope);
     let no_loop = env::var("SPIRA_NO_LOOP_LABEL").unwrap_or_default();
-    let (_, out) = lint_judge(&labels, "open", ty, &partitions.join(" "), &no_loop);
+    // A bead being filed is about to wait for dispatch.
+    let (_, out) = lint_judge(&labels, true, ty, &partitions.join(" "), &no_loop);
     if out.iter().any(|l| l.starts_with("no partition label")) {
         eprintln!(
             "{}; add one of: {}",
@@ -694,6 +695,9 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let mut bad = 0u32;
     let mut rc = 0;
     let mut label_cache: HashMap<String, Vec<String>> = HashMap::new();
+    // The lifecycle rows, read once on the first work bead that needs one (sp-mve9i: whether a
+    // bead awaits dispatch is the machine's answer, not bd's status).
+    let mut lc: Option<Result<HashMap<String, spira_config::lc_state::Row>, String>> = None;
 
     for id in &ids {
         if id.is_empty() {
@@ -772,9 +776,27 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
             }
         }
 
+        let awaits = if PARTITION_CHECK_TYPES.contains(&row.issue_type.as_str()) {
+            let first = lc.is_none();
+            match lc.get_or_insert_with(|| spira_config::lc_state::list().map(spira_config::lc_state::index)) {
+                Ok(rows) => awaits_dispatch(rows.get(id.as_str())),
+                Err(e) => {
+                    // A lint that cannot read the state cannot pass the bead (law-a-control-
+                    // that-cannot-check-must-refuse); said once, counted per bead.
+                    if first {
+                        eprintln!("bead: lifecycle state unreadable ({e}) — the partition check cannot be judged");
+                    }
+                    bad += 1;
+                    rc = 1;
+                    false
+                }
+            }
+        } else {
+            false
+        };
         let (_, lines) = lint_judge(
             &labels_joined,
-            &row.status,
+            awaits,
             &row.issue_type,
             &partitions_joined,
             &no_loop_label,

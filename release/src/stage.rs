@@ -6,8 +6,13 @@
 //! repository. Replaces `spira/stage.sh`; `crate::canary` is the caller that most needs it.
 //!
 //! ISOLATION IS ASSERTED AT BUILD TIME: [`up`] refuses to return an env block where any of
-//! `SPIRA_DB`, `SPIRA_RUN` or `SPIRA_HOME` resolves outside the stage root, so a
-//! misconfiguration fails closed rather than silently contaminating a real instance.
+//! `SPIRA_DB`, `SPIRA_RUN` or `SPIRA_HOME` — or the lifecycle credential, data dir or socket —
+//! resolves outside the stage root, so a misconfiguration fails closed rather than silently
+//! contaminating a real instance.
+//!
+//! THE LIFECYCLE MACHINE IS THE STAGE'S OWN (sp-880u4): a private Dolt sql-server under
+//! `<root>/lc` holding `spira_lifecycle`, built by [`crate::stage_lc`] with the code
+//! `spira-install` uses, and the `SPIRA_LC_*` env that sends every `spira-lc` call there.
 //!
 //! THE TWO HARNESS SEAMS:
 //!
@@ -239,15 +244,33 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     let stage_repomap_path = sh.join(STAGE_REPO_MAP_FILENAME);
     fs::write(&stage_repomap_path, repo_map_line(&repo)).map_err(|e| format!("cannot write the stage's repo map: {e}"))?;
 
-    // ---- isolation check.
-    for p in [&db, &root.join("run"), &sh] {
+    // ---- lifecycle store (sp-880u4): every claim goes through the lifecycle machine, so the
+    // stage gets a machine of its own, built from the release's lifecycle/ the way install
+    // builds one. The release root is the parent of its spira/ directory.
+    let path_env = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let lifecycle_dir = o.harness_spira.parent().map(|r| r.join("lifecycle")).unwrap_or_default();
+    let store = match crate::stage_lc::up(&root, &lifecycle_dir, &path_env) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = fsutil::remove_tree(&root);
+            return Err(format!("stage: lifecycle store: {e}"));
+        }
+    };
+    let lc_env = store.env();
+
+    // ---- isolation check: the stores, the run dir, the harness, and the lifecycle
+    // credential and socket every spira-lc call in the stage resolves.
+    let lc_paths: Vec<PathBuf> =
+        lc_env.iter().filter(|(k, _)| matches!(k.as_str(), "SPIRA_LC_PASSWORD_FILE" | "SPIRA_LC_SOCKET" | "SPIRA_LC_DATA_DIR")).map(|(_, v)| PathBuf::from(v)).collect();
+    for p in [&db, &root.join("run"), &sh].into_iter().chain(lc_paths.iter()) {
         if !p.starts_with(&root) {
+            crate::stage_lc::stop(&root);
             let _ = fsutil::remove_tree(&root);
             return Err(format!("isolation violated: {} is outside {}", p.display(), root.display()));
         }
     }
 
-    let env = vec![
+    let mut env = vec![
         ("STAGE_ROOT".to_string(), root.display().to_string()),
         ("SPIRA_HOME".to_string(), sh.display().to_string()),
         ("SPIRA_RUN".to_string(), root.join("run").display().to_string()),
@@ -260,21 +283,23 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         ("SPIRA_NOTIFY".to_string(), "/bin/true".to_string()),
         ("SPIRA_SUMMON".to_string(), sh.join("fake-summon.sh").display().to_string()),
         ("SPIRA_LAUNCH".to_string(), sh.join("fake-launch.sh").display().to_string()),
-        ("PATH".to_string(), format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default())),
+        ("PATH".to_string(), path_env),
         ("SPIRA_PATH".to_string(), bin.display().to_string()),
         ("SPIRA_SCOPE_LABEL".to_string(), o.scope_label.clone()),
     ];
+    env.extend(lc_env);
     Ok(Stage { root, env })
 }
 
 /// `release stage down <root>`. Refuses a path that does not look like a stage (no
 /// `spira/chamber/canary.fayth`) — the same safety check `stage.sh down` makes before an
-/// `rm -rf`.
+/// `rm -rf`. Stops the stage's lifecycle server first.
 pub fn down(root: &Path) -> Result<(), String> {
     let canon = fs::canonicalize(root).map_err(|_| format!("down: {} does not exist", root.display()))?;
     if !canon.join("spira/chamber/canary.fayth").is_file() {
         return Err(format!("down: {} does not look like a stage (no canary.fayth) — refusing rm -rf", canon.display()));
     }
+    crate::stage_lc::stop(&canon);
     fsutil::remove_tree(&canon)
 }
 

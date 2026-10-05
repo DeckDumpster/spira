@@ -21,6 +21,7 @@ use crate::host::{Io, Spec};
 use crate::model::{parse_beads, Bead, LcRow};
 use crate::pass::Sentinel;
 use crate::store;
+use spira_config::lc_state;
 
 /// Active queue blockers: spira-lc rows in CERTIFIED or IN_DELIVERY — the queue pipeline's
 /// states. A tipless design/diagnosis bead reaches a terminal state, never these.
@@ -58,6 +59,22 @@ pub fn decide(active: &HashSet<String>, labeled: &HashSet<String>, ready: &[Bead
     for id in labeled {
         if !by_id.contains_key(id.as_str()) {
             out.push((false, id.clone()));
+        }
+    }
+    out
+}
+
+/// `bd list --all --label <label>`: who carries the label, read as content.
+fn labeled_args(label: &str) -> Vec<String> {
+    ["list", "--all", "--label", label, "--limit", "0"].iter().map(|s| s.to_string()).collect()
+}
+
+/// The labeled beads whose lifecycle row is claimable (READY/REWORK).
+pub fn labeled_claimable(rows: &[LcRow], labeled: Vec<Bead>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for b in labeled {
+        if rows.iter().any(|r| r.bead_id == b.id && lc_state::is_claimable(&r.state)) {
+            out.insert(b.id);
         }
     }
     out
@@ -112,23 +129,17 @@ impl<'a> Sentinel<'a> {
         };
         let active = active_blockers_lc(&rows);
 
-        let labeled: HashSet<String> = {
-            let args = vec![
-                "list".into(),
-                "--status".into(),
-                "open".into(),
-                "--label".into(),
-                label.clone(),
-                "--limit".into(),
-                "0".into(),
-            ];
+        // The labeled beads still waiting for a builder: bd lists who carries the label
+        // (content), the lifecycle row says which are claimable — what `--status open` meant,
+        // never bd's status (design §3.4, sp-mve9i). A rowless one is left alone.
+        let labeled: HashSet<String> = labeled_claimable(
+            &rows,
             self.bd()
-                .json(self.h, &args)
+                .json(self.h, &labeled_args(&label))
                 .ok()
                 .and_then(|s| parse_beads(&s).ok())
-                .map(|v| v.into_iter().map(|b| b.id).collect())
-                .unwrap_or_default()
-        };
+                .unwrap_or_default(),
+        );
 
         // qblockers empty: skip the ready query entirely (lib.sh does the same), which
         // leaves `ready` empty and therefore removes every currently-labeled bead below —
@@ -185,16 +196,9 @@ impl<'a> Sentinel<'a> {
         if label.is_empty() {
             return;
         }
-        let args = vec![
-            "list".into(),
-            "--status".into(),
-            "open".into(),
-            "--label".into(),
-            label.clone(),
-            "--limit".into(),
-            "0".into(),
-        ];
-        let ids: Vec<String> = match self.bd().json(self.h, &args) {
+        // Every bead still carrying the label, whatever bd's status (sp-mve9i): the label is
+        // removed below with the close, so a closed-and-unlabeled bead is not revisited.
+        let ids: Vec<String> = match self.bd().json(self.h, &labeled_args(&label)) {
             Ok(s) => parse_beads(&s)
                 .map(|v| v.into_iter().map(|b| b.id).collect())
                 .unwrap_or_default(),
@@ -258,6 +262,15 @@ mod tests {
         let got = active_blockers_lc(&rows);
         assert_eq!(got, ["cert".to_string(), "deliv".to_string()].into());
         assert!(active_blockers_lc(&[]).is_empty());
+    }
+
+    /// sp-mve9i: the labeled set is the lifecycle row's claimable beads, never bd status —
+    /// bd calls `c` closed and `s` open; the machine has `c` READY and `s` SUBMITTED.
+    #[test]
+    fn labeled_set_is_claimable_by_the_lifecycle_row() {
+        let labeled = parse_beads(r#"[{"id":"c","status":"closed"},{"id":"s","status":"open"},{"id":"n","status":"open"}]"#).unwrap();
+        let rows = vec![lc_row("c", "READY"), lc_row("s", "SUBMITTED")];
+        assert_eq!(labeled_claimable(&rows, labeled), ["c".to_string()].into());
     }
 
     #[test]

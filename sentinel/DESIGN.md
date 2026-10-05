@@ -54,28 +54,17 @@ times.
   configuration through `spira-config` (law-config-through-the-cli-only). The binary receives
   the result from the context probe (§6, S0).
 
-### The lifecycle switch — one key, two record sets
+### The lifecycle machine — one mode
 
-The operator's decision (2026-09-29): `lifecycle_enforce` is **the one switch** for
-everything that touches the lifecycle machine. §2.9 is the per-CHECK contract.
+`lifecycle_enforce` was the one switch for everything that touches the lifecycle machine
+(operator decision 2026-09-29). After the cutover (2026-10-05) the machine is the only mode:
+the switch is retired (sp-v62vn), and a config or unit environment that still says off is
+refused by name at startup (`spira_config::check_lifecycle_switch_env`; `spira-config
+validate` refuses `spira.lifecycle_enforce = false`). The pre-lifecycle OFF mode — bd
+status, labels, assignee and lease as the claim record — is deleted, not kept as a fallback.
+§2.9 is the per-CHECK contract.
 
-The machine was never deployed on this host. There is no `spira_lifecycle` database, no
-`spira_lc` grant (every spira-lc call answers "Access denied for user 'spira_lc'"), and no
-spira-lc user, service or socket. So every path sp-ki12s, sp-mys5p and sp-i2m7y moved onto
-spira-lc unconditionally has been "cannot tell" in production. The poison hold, the wait
-hold, the stale-lease reap and the consistency sweep all silently did nothing.
-
-The two modes:
-
-- **OFF** is production today.
-  - The sentinel never calls spira-lc.
-  - Every CHECK runs on the records the harness kept before the lifecycle epic: bd
-    status, labels, assignee and lease, the landstate files, and the bd events trail read
-    by spira-claim.
-  - The behaviour is recovered from git history as intent (sentinel.sh and lib.sh at
-    `f3391c8ec^`, `f043dee14^` and `542b9445f^`), not as a line port.
-  - Nothing the sentinel starts is handed a live path to spira-lc (§2.9, "children").
-- **ON:** `lifecycle.rs` is authoritative.
+- `lifecycle.rs` is authoritative.
   - A machine that cannot answer is a loud error: one `LIFECYCLE UNREACHABLE — …` line per
     pass, no lifecycle decision, and exit 1 after the rest of the pass has run.
   - It is never a silent skip, and there is no fallback to labels.
@@ -104,7 +93,7 @@ other first argument, or none, means a full pass. The one second argument read i
 | exit | when |
 |---|---|
 | 0 | the pass ran to its end. That includes every `--summon-only` pass whether it summoned or declined, `--report`, and `--audit` |
-| 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also, with `lifecycle_enforce` ON, a full pass or audit run in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
+| 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also a full pass or audit run in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
 
 Nothing is printed on stdout except log lines, the verbatim output of the scripts it calls,
 and `--report`'s listing. The units append stdout and stderr to `$SPIRA_RUN/sentinel.log`,
@@ -272,61 +261,40 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_LAND_STALE` | 1800 | CHECK 6 |
 | `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
 | `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB check, STATE, CHECK 2/2c/3/7c/7d) |
-| `SPIRA_LIFECYCLE_ENFORCE` / `spira.lifecycle_enforce` | off | **the lifecycle switch** (§2.9). The unit's own environment wins (`1`/`true` = on, anything else = off). It is read from this process's original environment, not conf.sh's, which defaults it to 0. Else `spira.lifecycle_enforce` in the spira.toml conf.sh resolved (`SPIRA_TOML_FILE`), read with the spira-config library. Else off. This is the same resolution as the aeon crate (concierge/rw-aeon `aeon/src/conf.rs`). Binary presence is never consulted |
-| `SPIRA_RECLAIM_SKIP_LABEL` | `spira-waiting-operator` | OFF's CHECK 2 protection label. The key was retired by sp-i2m7y; this is its last default, kept as a literal |
+| `SPIRA_LIFECYCLE_ENFORCE` | — | **retired** (sp-v62vn). Unset or on: nothing (on prints a deprecation warning). Anything else: the sentinel refuses to start, naming the exit (remove it) |
 | `SPIRA_FAYTHS` | the chamber | the roster (lib.sh `spira_fayths`, via the probe) |
 | `SPIRA_SENTINEL_PASS_TARGET_SECS` | 60 | **new**: the full-pass budget WARN (§5) |
 | `SPIRA_SENTINEL_PASS_BUDGET_SECS` | 90 | CHECK 7's own budget, inside the seam |
 
-### 2.9 The lifecycle switch, per CHECK
+### 2.9 The lifecycle machine, per CHECK
 
-What each CHECK reads and writes in each mode. OFF is the pre-lifecycle behaviour; the
-source commits it was recovered from are named.
+What each CHECK reads and writes. There is one mode (sp-v62vn retired the OFF column this
+table used to carry).
 
-| CHECK | OFF (production today) | ON |
-|---|---|---|
-| **2 (protect waiting)** | Candidates are snapshot beads that are `in_progress` and either carry `$SPIRA_RECLAIM_SKIP_LABEL` or have dependencies. Dependency facts come from the snapshot join. Protect with `bd label add <id> spira-waiting-operator` (log `… — labeled <skip>, excluded from reclaim`). Release with `bd label remove` (log `… — removed <skip>, re-enters the reaper`). Source: `f043dee14^` lib.sh `check2_protect_waiting` | The same decision over the lifecycle `wait` hold. Hold and unhold go through `spira-lc event` (log `… — wait-held …` / `… — wait released …`) |
-| **2 (reap)** | One `bd reclaim --older-than <grace/60>m --label <partition> --exclude-label <skip>` per partition. `bd reclaim` resets status and assignee and records the recovery. Each `✓`/`Reclaimed` line is one reclaim, and its id gets a `reclaimed/stale-lease` events row. Then progress `reclaimed <n> stale lease(s)`. No partition logs `CHECK2 no persona in the chamber declares a partition — no lease is being reaped`. Source: `f043dee14^` `check2_reclaim_stale` + `parse_reclaimed` | WORKING rows past `SPIRA_RECLAIM_GRACE_SECS`, not wait-held, get a HolderDead event, an events row and a `bd note`. The protect step's successful writes apply before the reap |
-| **2b** | `strand check` with `SPIRA_LIFECYCLE_ENFORCE=0`. strand then reads no wait holds and fires no HolderDead (see the gap below) | `strand check` with `SPIRA_LIFECYCLE_ENFORCE=1` |
-| **2c** | Orphaned claims: snapshot beads per partition that are `open`, with an assignee, and whose lease is absent or past (an unparseable lease is left alone). Each gets `bd assign <id> ""`; only a successful assign prints `RELEASED\t<id>\t<assignee>`. Then progress `released <n> orphaned claim(s)`, and plan_ready is re-counted live for CHECK 3 and 8. Source: `542b9445f^` `release_orphan_claims_partitions` | Detect only: `INCONSISTENT` lines for rows whose holder and state disagree |
-| **3b / 3c** | The seam runs with `SPIRA_LIFECYCLE_ENFORCE=0`. `mark_queue_waiters` and `close_landed_queue_waiters` then write only the `spira-queue-waiting` label; their `lc_hold wait`/`lc_unhold` dual writes are no-ops. That is exactly their pre-sp-mys5p behaviour | The same seam with the switch on: label plus hold, as lib.sh has it |
-| **4 (poisoned?)** | The `spira-poison` bd label. Every partition excludes it, so a poisoned bead is not in the dispatchable set. `decide`'s `poisoned` argument is the label | The lifecycle `poison` hold |
-| **4 (poison)** | `bd label add <id> spira-poison`. The note ends `… no persona can claim it again while the label stands.` Source: `e08d8982b^` | Hold poison (`spira-lc event`). The note ends `… while the hold stands.` No bd label |
-| **4 (stale clear)** | Snapshot beads carrying `spira-poison`, not closed, not an epic or event. `clear` means `bd label remove <id> spira-poison` | Beads the lifecycle rows hold `poison` on. `clear` means Unhold poison |
-| **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail. Identical in both modes | ← |
-| **5, 6, 6b, 7, 7c, 7d, 8** | No lifecycle read or write of their own. Children run with `SPIRA_LIFECYCLE_ENFORCE=0` | Children run with it `1` |
+| CHECK | Lifecycle read/write |
+|---|---|
+| **2 (protect waiting)** | The lifecycle `wait` hold. Hold and unhold go through `spira-lc event` (log `… — wait-held …` / `… — wait released …`) |
+| **2 (reap)** | WORKING rows past `SPIRA_RECLAIM_GRACE_SECS`, not wait-held, get a HolderDead event, an events row and a `bd note`. The protect step's successful writes apply before the reap |
+| **2b** | `strand check` |
+| **2c** | Detect only: `INCONSISTENT` lines for rows whose holder and state disagree |
+| **3b / 3c** | The queue waiters: label plus hold |
+| **4 (poisoned?)** | The lifecycle `poison` hold |
+| **4 (poison)** | Hold poison (`spira-lc event`). The note ends `… while the hold stands.` No bd label |
+| **4 (stale clear)** | Beads the lifecycle rows hold `poison` on. `clear` means Unhold poison |
+| **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail |
+| **5, 6, 6b, 7, 7c, 7d, 8** | No lifecycle read or write of their own |
 
-**Children.** The switch reaches everything this process starts:
+**Children.** No child is handed a switch or a tool path (sp-gypjk); every `spira-lc`
+caller verb acts on the machine unconditionally.
 
-- Every child gets `SPIRA_LIFECYCLE_ENFORCE=0|1`. That covers seams, strand,
-  pilgrimage.sh, sending, watchtower, incident.sh and reflect.sh.
-- Both systemd-run workers get it as `--setenv`. The audit worker resolves the same mode
-  from it.
-- That switch is the whole of OFF (sp-gypjk). No child is handed a poisoned tool path;
-  `spira-lc`'s caller verbs gate each call on `SPIRA_LIFECYCLE_ENFORCE` (they replaced `lc.sh`,
-  sp-arpjt), never on whether `spira-lc` exists.
-
-**ON is loud.** Two things fail the unit:
+**The machine is loud.** Two things fail the unit:
 
 - a missing binary, or a failed or unparseable `spira-lc list`: one line,
-  `LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but <why>; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1 (…)`;
+  `LIFECYCLE UNREACHABLE — <why>; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1 (…)`;
 - an event that cannot be applied, `rc=2` (cannot tell) or `127`.
 
 After either, the rest of the pass (landing, summoning) still runs, and the process then
 exits 1. A CAS refusal (rc 3) is the normal race: a WARN, and it is retried next pass.
-
-**Gaps outside this crate** (they follow the same switch, but live in other components):
-
-- **strand (CHECK 2b), OFF.** Its ghost fix only fires HolderDead through spira-lc, and its
-  wait exemption reads only lifecycle holds. With the machine disabled a ghost gets the
-  counter, note and event, but its status is not reset. Before sp-i2m7y it was
-  `bd reclaim --id <id> --older-than 1s`, and the exemption read `spira-waiting-operator`.
-  The strand crate needs the same switch (it reads `SPIRA_LIFECYCLE_ENFORCE`, which the
-  sentinel now hands it).
-- **sending.sh:488, OFF.** It wrote only `lc_content_on_base`, a no-op when disabled.
-  Before `dc3e364bf` it was `bdq label add "$id" content-landed`, which CHECK 5's exemption
-  still reads. Cutover row 39 — closed by sp-arpjt: the `sending` binary writes the label
-  OFF and the ContentOnBase event ON (sending/DESIGN.md §2).
 
 ### 2.7 Finding the harness
 
@@ -363,8 +331,6 @@ lets the refill ExecStopPost, which has no environment, still work.
   WARN lines make "never ran" visible.
 - **G8. Temp files never outlive the process.** The snapshots and the cache are removed on
   every exit path, including the early exits: RAII guard plus a SIGTERM handler.
-- **G10. OFF never reaches spira-lc.** Not directly, and not through anything it starts (§2.9).
-  The unit tests assert this for every OFF-mode test.
 - **G11. Re-read before every write (sp-du8bv).** A decision comes from the pass-start
   snapshot; the write it leads to does not trust it. Before a snapshot-driven mutation, the
   check re-reads the beads it is about to touch — one `bd show <id>… --json` per check —
@@ -456,8 +422,9 @@ pass writes them. The audit worker writes none: the old one crashed with
 
 1. S1 (the world gate and capacity, with the same `summon-only: …` lines).
 2. `live` summed over the fayths, logged as `summon-only: live=<n> fayths=[…]`.
-3. One `bd ready` (raw), bucketed into the ready cache in-process (the port of
-   ready-bucket.py).
+3. The ready cache, from `spira-claim bulk-ready-by-fayth`: the lifecycle machine's
+   READY/REWORK rows, bucketed per fayth. No `bd ready` call at all — neither the
+   sentinel's nor spira-claim's (sp-v62vn); bd is read only for those beads' content.
 4. S2 (`ck7_summon_pass`).
 5. Log `summon-only pass complete — <a> action(s)` and exit 0.
 
@@ -476,12 +443,10 @@ pass writes them. The audit worker writes none: the old one crashed with
 - `open_plan` (`Snapshot::plan_open`): rows whose labels ⊇ {scope?, `plan`}, with
   `status ≠ closed` and type not `epic`/`event` — the whole open plan backlog, wherever a
   bead is parented. Logged as `open=`.
-- `plan_ready`: rows in the ready snapshot whose labels ⊇ {scope?, `plan`} and are disjoint
-  from {`spira-poison`, ask}. lifecycle_enforce on: `spira-claim ready-count "<scope,>plan"
+- `plan_ready`: `spira-claim ready-count "<scope,>plan"
   "spira-poison,<ask>"` — the machine's ready set, the one an aeon claims from; a refusal is
   unknown (`?`), never 0 (sp-7g5q6). CHECK 3's recount asks the same.
-- `plan_inprog`: `status == in_progress` and labels ⊇ {scope?, `plan`}. lifecycle_enforce on:
-  the machine's WORKING rows (the pass's one `spira-lc list`) whose bead carries those labels
+- `plan_inprog`: the machine's WORKING rows (the pass's one `spira-lc list`) whose bead carries those labels
   — bd's in_progress is written by no claim (sp-7g5q6).
 - `live`: as §2.5.
 
@@ -493,7 +458,7 @@ chamber fayth left out of SPIRA_FAYTHS, deduplicated by the stamp. `--report` th
 
 **CHECK 1 — completed pilgrimages.** Runs pilgrimage.sh as §2.5.
 
-**CHECK 2 — dead workers** (skipped under SKIP_RECLAIM). OFF: `legacy.rs`, the label and `bd reclaim` (§2.9). ON: `lifecycle.rs`, described below.
+**CHECK 2 — dead workers** (skipped under SKIP_RECLAIM). `lifecycle.rs`, described below (§2.9).
 
 `check2_protect_waiting`, ported:
 
@@ -522,7 +487,7 @@ chamber fayth left out of SPIRA_FAYTHS, deduplicated by the stamp. `--report` th
 
 **CHECK 2b — stranded work.** Runs `strand check` as §2.5.
 
-**CHECK 2c** (skipped under SKIP_RECLAIM). OFF: `legacy.rs` releases orphaned claims (§2.9). ON: `lifecycle.rs` checks lifecycle consistency, as below.
+**CHECK 2c** (skipped under SKIP_RECLAIM). `lifecycle.rs` checks lifecycle consistency, as below (§2.9).
 
 - A WORKING row with no holder prints `INCONSISTENT\t<id>\tWORKING with no holder`.
 - A non-WORKING row with a holder prints `INCONSISTENT\t<id>\t<state> with a holder still set`.
@@ -594,7 +559,7 @@ cost 302 s against a 60 s pass budget (§5).
 
 **CHECK 7.** S2.
 
-**CHECK 4 — the poison valve** (audit). The poisoned set, the poison write and the stale-clear lift follow the switch (§2.9): labels OFF, holds ON. Everything else below is common to both modes.
+**CHECK 4 — the poison valve** (audit). The poisoned set, the poison write and the stale-clear lift are lifecycle holds (§2.9).
 
 1. **Build the set.** `dispatchable` is every snapshot row, per partition in roster order,
    with:
@@ -675,38 +640,20 @@ cost 302 s against a 60 s pass budget (§5).
    env and body.
 9. **Summary lines**, identical to today's.
 
-**CHECK5-LC — the ON-path replacement, now standing alone** (audit;
-design sp-pswer.2: "design ON-path replacement for CHECK5 / groomer STATE sweeps"). CHECK 5
-and lib.sh's three groomer STATE sweeps (`detect_landed_but_open`,
-`detect_closed_unlanded_states`, `detect_false_blockers`) all prove the same three drifts —
-bd's own status disagreeing with what actually landed — from git log and a hand-maintained
-exclusion list, because `spira_lifecycle` had no equivalent record. It does now: a work
-bead's `spira-lc` row reaches `LANDED`/`SUPERSEDED`/`DROPPED`/`DONE` only through a
-proof-carrying transition (`content_on_base`, `delivered`, `done`, `supersede`, `drop`,
-never a bare bd close), so the row's own terminal-ness is the same fact CHECK 5 spends a
-`git log` walk proving, and comparing it against `bd`'s status is a lookup, not a walk.
+**CHECK5-LC is deleted (sp-mve9i).** Its three shapes — landed-but-open, closed-unlanded,
+blocked-by-unlanded — were each bd's `status` disagreeing with the `spira-lc` row. Design
+bead-lifecycle-state-machine §3.4 makes bd status inert for work beads ("bd holds content,
+spira-lc holds state"): nothing reads it, so there is nothing for the row to disagree with,
+and a `bd close` on a work bead affects nothing. What remains of the comparison is the
+lifecycle row itself.
 
-Only when `lifecycle_enforce` is ON (`lc_rows()`, the same one read CHECK 2/2c already share
-this pass), run in `Lifecycle::On` right after CHECK 4. Until the cutover it ran beside CHECK
-5 and never gated it (sp-pswer.1); sp-jnwbn deleted CHECK 5 and the groomer's three STATE
-sweeps, and `spira/test-landstate-checks-deleted.sh` now fails the build if either returns. `lifecycle.rs`'s `landed_but_open` / `closed_unlanded` / `false_blockers`:
-
-1. **landed-but-open** — a work bead `bd` shows open/in_progress whose `spira-lc` row is
-   `LANDED`. `STATE-LC <id> landed-but-open — spira-lc row is LANDED; close it`.
-2. **closed-unlanded** — a work bead `bd` shows closed whose `spira-lc` row is *not* one of
-   the four terminal states (`BeadState::is_terminal`, lifecycle crate) — replacing the
-   legacy sweep's whole hand-maintained exclusion list (`supersedes`, `spira-dropped`,
-   `delivers:*`, `content-landed`) with the one property those all encode. `STATE-LC <id>
-   closed-unlanded — spira-lc row is <state>, not a terminal state`.
-3. **false-blockers** — an open/in_progress bead with a `blocks` dependency on one of (2)'s
-   ids. `STATE-LC <id> blocked-by-unlanded <blocker> — depends on <blocker>, which is closed
-   but its spira-lc row is not a terminal state`.
-
-Detect, never repair — the same posture as CHECK 2c's `INCONSISTENT` lines, for the same
-reason: this is the side-by-side comparison the epic's scope needs before either legacy path
-is retired, not a fourth writer racing `bd_close_on_land`. Summary: `CHECK5-LC: <n> state
-drift line(s) from spira-lc`; act `surfaced <n> CHECK5-LC line(s)`;
-silent when `<n>` is 0.
+**State reads (sp-mve9i).** Every state decision the pass makes over its snapshot reads the
+bead's lifecycle row from the pass's one `spira-lc list`, never bd `status`/`assignee`: the plan backlog and
+dispatchable set are rows READY/WORKING/REWORK, in-progress is WORKING, closed-branched is
+past WORKING, CHECK 2's candidates are WORKING rows, CHECK 3c's open child is a non-terminal
+row, branch collisions are claimable rows, and CHECK-ROWLESS searches the ready set for a
+work bead with no row. Non-work beads (asks, epics) keep bd status as their only state and
+are read through `spira_config::nonwork`.
 
 **CHECK 6b — the Sending** (audit).
 
@@ -941,8 +888,8 @@ named unit tests.
 | 35 | `test-install-exec.sh:146,207` | drop `sentinel.sh` from the executable list; the render-fallback assertion becomes `ExecStart=$(dirname "$HERE")/bin/sentinel` |
 | 36 | `test-install-conflicts.sh:57` | the fake foreign unit becomes `ExecStart=$FOREIGN_HOME/../bin/sentinel` |
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
-| 39 | `spira/sending.sh:488` | `lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true` | `if [ "${SPIRA_LIFECYCLE_ENFORCE:-0}" = 1 ]; then lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true; else bdq label add "$id" content-landed >/dev/null 2>&1 \|\| true; fi` (restores CHECK 5's `content-landed` exemption in OFF mode) |
-| 40 | `strand` crate (`check.rs` `act_ghost`/`lc_holder_dead`; the wait-held exemption in `probe.rs`) | spira-lc only | behind `SPIRA_LIFECYCLE_ENFORCE`. OFF: `bd reclaim --id <id> --older-than 1s`, and the exemption reads the `spira-waiting-operator` label. That is strand's own change, not made here (§2.9 gaps) |
+| 39 | `spira/sending.sh:488` | `lc_content_on_base …` | the `sending` binary writes the ContentOnBase event (sending/DESIGN.md §2); the OFF-mode `content-landed` label went with the switch (sp-v62vn) |
+| 40 | `strand` crate (`check.rs` `act_ghost`; the wait-held exemption in `probe.rs`) | spira-lc only | deleted with the OFF mode (sp-v62vn): a dead holder is CHECK 2's stale-lease reaper's |
 | 38 | lib.sh functions left with no production caller | **DONE at sp-8itaf.** `check2_protect_waiting` (was 1363), `check2c_lc_consistency` (was 2335), `check2_reclaim_stale` (was 2348) — ported to `lifecycle.rs`; `check8_should_judge` (was 1697, → `audit::tests::judgement_table`); `check4_closed_branched` (was 5600); `ready_cache_populate` (was 1563); `roster_warnings` (was 1051, Rust port already in `pass.rs`) all deleted outright, along with `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-check8-progressed.sh`, `test-roster-warn.sh` and the `test-poison.sh`/`test-sentinel-store-reads.sh` references to them. **Correction:** this row's earlier note said `dispatchable_open` stays — re-grepped at sp-8itaf (whole tree, including Rust string literals), it had zero live callers too (`all_partition_members` already covers `groomer deadlocked`, as this row said before `groomer.sh` itself moved to Rust) and was deleted with the rest. |
 
 **Source greps that break when the file goes.** Each greps sentinel.sh's text; point it at
@@ -997,11 +944,9 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
   (a failed probe renders `?`). The bash `ready_count` printed `0` on failure. auron-classify
   and cockpit-metrics match `plan_ready=(\d+)`, so they skip that one pass's line rather than
   read a false zero, and CHECK 3 and CHECK 8 do not fire on it (G3).
-- **B11. The lifecycle switch (§2.9).** With `lifecycle_enforce` OFF, CHECK 2, 2c and 4
-  return to the bd records. The protect label, `bd reclaim`, orphan release and the poison
-  label all do real work again; since sp-i2m7y they had silently done nothing, because
-  spira-lc is not deployed. With it ON, the unreachable machine fails the unit instead of
-  logging `WARN` and moving on.
+- **B11. The lifecycle machine (§2.9).** An unreachable machine fails the unit instead of
+  logging `WARN` and moving on. The OFF mode that returned CHECK 2, 2c and 4 to the bd
+  records is retired (sp-v62vn).
 - **B12. CHECK 3c is Rust, and reads no bead store per candidate (sp-du8bv).** lib.sh
   `mark_open_children` and `bead_has_open_children` are deleted.
   `test-dispatch-open-children.sh` drives `sentinel --open-children`. The candidate set, the

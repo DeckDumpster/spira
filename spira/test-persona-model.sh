@@ -224,13 +224,21 @@ nowant "sweep launch path did not use the fayth's own FAYTH_MODEL" \
 testdb_require test-persona-model
 trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
 testdb_up personamodel || { echo "test-persona-model: could not build fixture database"; exit 1; }
+# The claim goes through the lifecycle (sp-860zj) and the session runs restricted (sp-v62vn):
+# the bd fixture is told to the aeon in lifecycle terms, and the shim gets back the T it records into.
+lc_aeon_mirror "$T/lcm"; export PATH="$T/lcm:$PATH"
+aeon_fixture_agent "$BIN/claude" T
 
 BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "persona-model bead launch" --type task \
     -l "test-persona-model-bead,repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID" ] || { printf 'test-persona-model: could not create bead\n' >&2; exit 1; }
 
 rm -f "$T/claude-argv"
-aeon builder
+# The claim ranks by the fayth's own predicate (spira-claim fayth-ready reads
+# $SPIRA_CHAMBER/<fayth>.fayth), so this one call points SPIRA_CHAMBER at the fixture chamber;
+# $TOML is touched first so it stays newer than the fayth and auto-convert leaves it alone.
+touch "$TOML"
+SPIRA_CHAMBER="$SH/chamber" aeon builder
 want "bead-claim launch path's --model came from persona.builder.model" \
      "toml-override-model" "$(cat "$T/claude-argv" 2>/dev/null || true)"
 nowant "bead-claim launch path did not use the fayth's own FAYTH_MODEL" \

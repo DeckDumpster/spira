@@ -177,6 +177,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         moot_sh: getenv("SPIRA_MOOT_SH"),
         bd: "bd".to_string(),
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
+        lc_bin: spira_config::lifecycle_row::lc_bin(),
     }
 }
 
@@ -393,13 +394,13 @@ fn main() {
             let db = getenv("SPIRA_DB").unwrap_or_default();
             let home_repo = getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string());
             let inc = resolved_incident_sh();
-            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bd: "bd" };
+            let lc_bin = spira_config::lifecycle_row::lc_bin();
+            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bd: "bd", lc_bin: &lc_bin };
             conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
             conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {
-                enforce: spira_config::lifecycle_enforce(None),
                 bd: "bd".to_string(),
                 db: db.clone(),
                 lc_bin: spira_config::lifecycle_row::lc_bin(),

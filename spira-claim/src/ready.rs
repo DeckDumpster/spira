@@ -1,8 +1,8 @@
 //! `READY_ARGS` / `ready_raw_args` / `ready_shared_exclude` / `fayth_exclude` /
 //! `bulk_ready_by_fayth`'s bucketing (`ready-bucket.py`) — lib.sh family F (wave 4
 //! decomposition row F, sp-obhv6). Pure argv-building and predicate logic lives here, with
-//! no I/O, so it is unit-testable with no database and no chamber directory. The bd calls
-//! (`ready_count`, the live `bulk-ready-by-fayth` fetch) are `Store` methods (store.rs);
+//! no I/O, so it is unit-testable with no database and no chamber directory. The store
+//! reads (the machine's claimable set) are `main.rs::machine_claimable` over `Store`;
 //! the chamber reads (`fayth_get`, `spira_fayths`) are `spira-config`'s own `chamber`
 //! module; the CLI wiring (env, flags, `SPIRA_HOME`) is `main.rs`.
 //!

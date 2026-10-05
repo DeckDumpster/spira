@@ -12,7 +12,8 @@ that makes a red cheap to attribute.
   below `TimeoutStartSec`: suites it could not start are deferred, and a run that could not get
   capacity ends as `SWEEP FAULT` carrying testenv's `VERDICT` line instead of being killed.
 
-Both read the tip of `--base` (default `local/main`) and label it with the
+Both read the tip of `--base` (default `local/main` when the repo has it, else the repo
+map's land ref for `--repo`; a repo with no `spira/test-*.sh` at that tip is a clean no-op) and label it with the
 `refs/archive/rounds/<n>` that points at it (`?` if none does).
 
 ## History and events

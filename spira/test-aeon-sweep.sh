@@ -75,6 +75,10 @@ command -v aeon >/dev/null 2>&1 \
     || { printf 'test-aeon-sweep: aeon is not on PATH — refusing to run the real model\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
+# `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
+# lifecycle terms, ahead of the tree's spira-lc on PATH.
+lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
 # The mock emits a tool_use + result event so that session_outcome classifies it as
 # `unlanded` (the outcome that charges an attempt). Without the tool_use, the session
 # looks like a refusal, which does NOT charge — and the positive control would not fire.

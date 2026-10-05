@@ -109,6 +109,7 @@ landing() {
 
 seed() {
     testdb_reset
+    rm -rf "$LC_FIX/bead" "$LC_FIX/show"; mkdir -p "$LC_FIX/bead" "$LC_FIX/show"
     testdb_seed <<'JSONL'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
@@ -122,6 +123,8 @@ branch() {
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id sp-1fm88 — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
+    # The builder's hand-off is the bead's lifecycle row, not bd `closed` (sp-mve9i).
+    lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD 2>/dev/null)" 0
 }
 
 main_tip()     { git -C "$REMOTE" rev-parse main 2>/dev/null; }
@@ -245,6 +248,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-push-a","title":"push-a","status":"closed","issue_type":"task","labels":["repo:push-fixture"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-push-a","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
+lc_bead SUBMITTED sp-push-a "$(git -C "$RUN/worktree-push/sp-push-a" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 
 push_before="$(git -C "$PUSHREMOTE" rev-parse main 2>/dev/null)"
 out="$(landing)"
@@ -281,6 +285,7 @@ printf 'branch-version\n' > "$RUN/worktree-local/sp-qlocal-cert/shared.txt"
 git -C "$RUN/worktree-local/sp-qlocal-cert" add -A
 git -C "$RUN/worktree-local/sp-qlocal-cert" commit -q -m "sp-qlocal-cert sp-1fm88 — the work"
 qlocal_tip="$(git -C "$LOCALREPO" rev-parse spira/sp-qlocal-cert)"
+lc_bead SUBMITTED sp-qlocal-cert "$qlocal_tip" 0   # the hand-off is the lifecycle row (sp-mve9i)
 
 # Advance local/main with a CONFLICTING edit to the same file, after the branch was cut.
 git -C "$LOCALREPO" checkout -q local/main

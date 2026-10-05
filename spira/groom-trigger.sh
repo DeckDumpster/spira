@@ -91,10 +91,14 @@ if [ -f "$_lp_file" ]; then
     esac
 fi
 
-_total_json="$("$BD" -C "$DB" list --status open,in_progress --json 2>/dev/null)" || _total_json="[]"
+# The open count is the lifecycle machine's: every work bead whose row still owes builder
+# work (READY, WORKING, REWORK — what bd's open,in_progress meant). bd status is inert for a
+# work bead (sp-mve9i, design §3.4); the dedup above reads the same rows. A machine that
+# cannot answer counts 0, so only landings can lift the score (never a spurious trigger).
+_total_json="$("${SPIRA_LC_BIN:-spira-lc}" list 2>/dev/null)" || _total_json="[]"
 [ -z "$_total_json" ] && _total_json="[]"
 _total_open="$(printf '%s\n' "$_total_json" \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null)" || _total_open=0
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d if r.get("state") in ("READY", "WORKING", "REWORK")))' 2>/dev/null)" || _total_open=0
 
 _land_count=0
 _hr="$(spira_home_repo 2>/dev/null)" || _hr=""

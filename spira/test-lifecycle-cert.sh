@@ -5,7 +5,6 @@
 # spira_lifecycle database.
 #
 # WHAT THIS PROVES:
-#   - inert by default: with SPIRA_LIFECYCLE_ENFORCE off, nothing here writes anything.
 #   - a GatePass whose tip does not match the row's own is refused — the mechanism the tip
 #     invariant leans on (bead.rs's own TipMismatch, exercised through the shell wrapper).
 #   - THE TIP INVARIANT ITSELF: lc_resubmit on a CERTIFIED row with a moved tip — a harness
@@ -73,10 +72,8 @@ done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk);
-# lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
+# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk).
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-export SPIRA_LIFECYCLE_ENFORCE=1
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -115,17 +112,7 @@ else:
 
 echo "test-lifecycle-cert.sh"
 
-# ---------------------------------------------------------------------------------------
-# INERT BY DEFAULT — lifecycle off (SPIRA_LIFECYCLE_ENFORCE unset), no lifecycle write at all.
-# ---------------------------------------------------------------------------------------
-echo
-echo "inert by default (lifecycle off):"
-export SPIRA_LIFECYCLE_ENFORCE=0
-spira-lc certify sp-inert deadbeef pass k1 >/dev/null 2>&1; is "spira-lc certify is cannot-tell, not applied, with lifecycle off" "2" "$?"
-is "and nothing reached the machine" "" "$(row_field sp-inert state)"
-
-export SPIRA_LIFECYCLE_ENFORCE=1
-spira-lc state sp-inert >/dev/null 2>&1; is "POSITIVE CONTROL: once lifecycle is on the machine answers (no row: 1)" "1" "$?"
+spira-lc state sp-inert >/dev/null 2>&1; is "the machine answers a bead with no row (1)" "1" "$?"
 
 # ---------------------------------------------------------------------------------------
 # A GatePass FOR A STALE TIP IS REFUSED (acceptance criterion 1).
@@ -212,7 +199,7 @@ printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
 TIP_PASS="$(git -C "$REPO" rev-parse spira/sp-gpass)"
 seed_bead sp-gpass WORKING - -
 gout="$(gate_fixture_run spira/sp-gpass repo PATH="$PATH" \
-    SPIRA_GATE_BEAD=sp-gpass SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
+    SPIRA_GATE_BEAD=sp-gpass SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
     SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
 want "gate.sh: reports PASS" "VERDICT=PASS" "$gout"
 is "gate.sh PASS: row is CERTIFIED" "CERTIFIED" "$(row_field sp-gpass state)"
@@ -230,7 +217,7 @@ gate_fixture_branch spira/sp-gred bad.txt trip
 printf 'repo | %s | push | origin/main |  | test ! -f bad.txt\n' "$REPO" > "$MAP"
 seed_bead sp-gred WORKING - -
 gout2="$(gate_fixture_run spira/sp-gred repo PATH="$PATH" \
-    SPIRA_GATE_BEAD=sp-gred SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
+    SPIRA_GATE_BEAD=sp-gred SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
     SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
 want "gate.sh: reports FAIL" "VERDICT=FAIL" "$gout2"
 is "gate.sh FAIL: row is REWORK, not CERTIFIED" "REWORK" "$(row_field sp-gred state)"

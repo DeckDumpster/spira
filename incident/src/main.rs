@@ -422,22 +422,53 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
         None => return require_db(env),
     };
     // `bd list` in its OWN default (non-JSON) rendering — the bash's `list` prints bd's
-    // human-readable table for an operator to read, not the machine `--json` shape the
-    // dedup scan needs. Filters the same four leading-character classes the bash's
+    // human-readable table for an operator to read. Which incidents are open is each bead's
+    // lifecycle row (sp-jgjvh: incident beads are work beads): the labelled beads come from
+    // bd as content, the unfinished ones (READY/WORKING/REWORK) are kept, and bd renders
+    // those by id. Filters the same four leading-character classes the bash's
     // `grep -vE '^💡|^warning|^  Fix|^  Or'` drops (bd's own tip/warning chrome).
-    match std::process::Command::new(std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()))
-        .args(["-C", db, "list", "--status", "open,in_progress", "--limit", "0", "--label", &env.labels])
-        .output()
-    {
-        Ok(out) => {
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
-                if line.starts_with("💡") || line.starts_with("warning") || line.starts_with("  Fix") || line.starts_with("  Or") {
-                    continue;
-                }
-                println!("{line}");
-            }
+    let bd_bin = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into());
+    let lc = match spira_config::lc_state::list().map(spira_config::lc_state::index) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("incident: list: cannot tell which incidents are open: {e}");
+            return ExitCode::FAILURE;
         }
-        Err(e) => eprintln!("incident: list: {e}"),
+    };
+    // Both reads are bounded (spira-lint call-deadline): an operator's `list` waits 5 s at most.
+    let labelled = std::process::Command::new("timeout")
+        .arg("5")
+        .arg(&bd_bin)
+        .args(["-C", db, "list", "--all", "--limit", "0", "--json", "--label", &env.labels])
+        .output();
+    let ids: Vec<String> = match labelled {
+        Ok(out) if out.status.success() => {
+            let v: serde_json::Value = serde_json::from_str(incident::real::json_only_pub(&String::from_utf8_lossy(&out.stdout))).unwrap_or(serde_json::Value::Null);
+            v.as_array()
+                .map(|a| a.iter().filter_map(|b| b.get("id").and_then(|x| x.as_str())).filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder())).map(str::to_string).collect())
+                .unwrap_or_default()
+        }
+        Ok(_) => {
+            eprintln!("incident: list: bd list failed");
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("incident: list: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if !ids.is_empty() {
+        match std::process::Command::new("timeout").arg("5").arg(&bd_bin).args(["-C", db, "list", "--all", "--limit", "0", "--id", &ids.join(",")]).output() {
+            Ok(out) => {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    if line.starts_with("💡") || line.starts_with("warning") || line.starts_with("  Fix") || line.starts_with("  Or") {
+                        continue;
+                    }
+                    println!("{line}");
+                }
+            }
+            Err(e) => eprintln!("incident: list: {e}"),
+        }
     }
     let spooled = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten().filter(|e| e.path().extension().map(|x| x != "bad").unwrap_or(true)).count();
     if spooled > 0 {

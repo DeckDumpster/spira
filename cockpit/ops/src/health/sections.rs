@@ -867,7 +867,7 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
     ));
     out.push(format!(
         "        {DIM}{}{RST}",
-        fit("done = closed, has branch, not landed", cols - 8)
+        fit("done = submitted, has branch, not landed", cols - 8)
     ));
 
     let verdict = snap.get("SP_ACCEPT_VERDICT").unwrap_or("?");

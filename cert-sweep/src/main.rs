@@ -18,7 +18,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cert_sweep::{
-    bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, parse_members, parse_result_file,
+    bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, still_open, parse_members, parse_result_file,
     parse_testenv_stdout, pick_subset, runner_verdict, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
 };
 use serde_json::Value;
@@ -82,6 +82,19 @@ fn num(f: &Flags, k: &str, default: u64) -> Result<u64, String> {
 
 fn run_dir(f: &Flags) -> Result<PathBuf, String> {
     flag(f, "run").map(str::to_string).or_else(|| std::env::var("SPIRA_RUN").ok()).filter(|s| !s.is_empty()).map(PathBuf::from).ok_or("--run or SPIRA_RUN is required".into())
+}
+
+/// The ref a pass certifies when `--base` is absent: `local/main` when `repo` has it (the
+/// harness under `queue.local`, unchanged), else the repo map's land ref for `repo`
+/// (`spira_landref`). A hard-coded `local/main` exited 2 on every tick in a repo that lands
+/// on `origin/main` (acceptance phase B, after sp-xp0u2's re-render mapped `--repo` to it).
+fn landing_ref(repo: &str) -> String {
+    if git(repo, &["rev-parse", "--verify", "-q", "local/main^{commit}"]).is_ok() {
+        return "local/main".into();
+    }
+    let home = std::env::var("SPIRA_HOME").unwrap_or_default();
+    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), Path::new(&home));
+    spira_config::repos::landref(&reg, repo).unwrap_or_else(|| "local/main".into())
 }
 
 fn now() -> u64 {
@@ -192,8 +205,11 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
         return Err("--mode must be full or subset".into());
     }
     let repo = flag(f, "repo").map(str::to_string).or_else(|| std::env::var("SPIRA_REPO").ok()).ok_or("--repo or SPIRA_REPO is required")?;
-    let base = flag(f, "base").unwrap_or("local/main");
-    let tip = git(&repo, &["rev-parse", base])?;
+    let base = match flag(f, "base") {
+        Some(b) => b.to_string(),
+        None => landing_ref(&repo),
+    };
+    let tip = git(&repo, &["rev-parse", &base])?;
     let round = git(&repo, &["for-each-ref", "--points-at", &tip, "--format=%(refname:short)", "refs/archive/rounds"])?
         .lines()
         .next()
@@ -206,6 +222,13 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
         .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
         .map(str::to_string)
         .collect();
+    // A repository with no harness suites at its tip (a mapped checkout that is not the
+    // harness) has nothing to certify; that is not a failure (sp-xp0u2's re-render maps
+    // `--repo` to the home repo's checkout, whatever repo that is).
+    if all.is_empty() {
+        println!("cert-sweep: no spira/test-*.sh suites at {base} ({tip}) in {repo} — nothing to certify");
+        return Ok(ExitCode::SUCCESS);
+    }
     let picks = if mode == "full" { all } else { pick_subset(&all, num(f, "subset-div", 4)? as usize, now() ^ u64::from(std::process::id()) << 32) };
     let start = now();
     let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0) };
@@ -320,7 +343,7 @@ impl Rt<'_> {
         let db = std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()).ok_or("SPIRA_DB is required to look for an open duplicate")?;
         let bd = std::env::var("SPIRA_BD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "bd".into());
         let out = Command::new(&bd)
-            .args(["-C", &db, "list", "--status", "open,in_progress,blocked,deferred", "--limit", "0", "--brief", "--json"])
+            .args(["-C", &db, "list", "--all", "--limit", "0", "--brief", "--json"])
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("{bd}: {e}"))?;
@@ -329,10 +352,13 @@ impl Rt<'_> {
         }
         let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{bd} list: {e}"))?;
         let rows = v.as_array().ok_or_else(|| format!("{bd} list: not a JSON array"))?;
-        Ok(rows
+        let all = rows
             .iter()
             .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string())))
-            .collect())
+            .collect();
+        // Which of them are still open is the lifecycle machine's answer (sp-mve9i).
+        let lc = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        Ok(still_open(all, &spira_config::lc_state::index(lc)))
     }
 
     /// A red is rerun on its own commit: a green among the reruns is a flip. A red that

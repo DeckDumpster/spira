@@ -11,8 +11,8 @@
 # aeon.sh run is needed here — the "deadlock" is a branch that already merges cleanly, built
 # with one real commit on a throwaway origin, never a live session.
 #
-# THE HOLD, NOT THE LABEL (sp-i2m7y): `spira-claim deadlocked` reads a real spira-lc hold
-# when lifecycle_enforce is on, so this suite starts its own throwaway `dolt sql-server` for
+# THE HOLD, NOT THE LABEL (sp-i2m7y): `spira-claim deadlocked` reads a real spira-lc hold,
+# so this suite starts its own throwaway `dolt sql-server` for
 # spira_lifecycle and calls a real `spira-lc` binary (on PATH, testenv --with-bins), the same
 # shape test-lc-hold.sh and test-check2-reaper.sh use — a stub `spira-lc hold`/`held` would
 # only prove this suite's own model of spira-lc agrees with itself.
@@ -79,8 +79,6 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 
 # spira-lc is the tree under test's own build, by name on the suite's PATH (sp-gypjk).
-# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
-export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle

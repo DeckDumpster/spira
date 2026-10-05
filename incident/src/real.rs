@@ -6,7 +6,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::decide::{BeadRow, BeadStatus};
+use crate::decide::{status_of_lc, BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
 
 pub struct RealBd {
@@ -78,13 +78,9 @@ fn json_only(s: &str) -> &str {
     &s[s.len()..]
 }
 
-fn parse_status(s: &str) -> BeadStatus {
-    match s {
-        "open" => BeadStatus::Open,
-        "in_progress" => BeadStatus::InProgress,
-        "closed" => BeadStatus::Closed,
-        _ => BeadStatus::Other,
-    }
+/// [`json_only`] for `main.rs`'s operator `list`.
+pub fn json_only_pub(s: &str) -> &str {
+    json_only(s)
 }
 
 fn rows_from_json(text: &str) -> Vec<BeadRow> {
@@ -99,7 +95,6 @@ fn rows_from_json(text: &str) -> Vec<BeadRow> {
     arr.into_iter()
         .filter_map(|b| {
             let id = b.get("id")?.as_str()?.to_string();
-            let status = parse_status(b.get("status").and_then(|v| v.as_str()).unwrap_or(""));
             let external_ref = b.get("external_ref").and_then(|v| v.as_str()).map(str::to_string);
             let labels = b
                 .get("labels")
@@ -107,28 +102,64 @@ fn rows_from_json(text: &str) -> Vec<BeadRow> {
                 .map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect())
                 .unwrap_or_default();
             let closed_at = b.get("closed_at").and_then(|v| v.as_str()).map(str::to_string);
-            Some(BeadRow { id, status, external_ref, labels, closed_at })
+            // The state is the lifecycle row's, filled in by `join_lc` (sp-jgjvh).
+            Some(BeadRow { id, status: BeadStatus::Other, external_ref, labels, closed_at })
         })
         .collect()
 }
 
+/// bd rows with each bead's state from its lifecycle row, kept when it is in `scope`.
+pub fn join_lc(rows: Vec<BeadRow>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>, scope: Scope) -> Vec<BeadRow> {
+    rows.into_iter()
+        .map(|mut r| {
+            r.status = status_of_lc(lc.get(&r.id));
+            r
+        })
+        .filter(|r| scope.holds(r.status))
+        .collect()
+}
+
 impl Bd for RealBd {
-    fn list(&self, db: &str, statuses: &[&str], label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
-        let mut args: Vec<String> = vec!["list".into(), "--status".into(), statuses.join(","), "--limit".into(), "0".into(), "--json".into()];
-        if let Some(l) = label {
-            args.push("--label".into());
-            args.push(l.into());
-        }
+    fn list(&self, db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        // The state first: a machine that cannot answer is Err, never "no incident".
+        let lc = spira_config::lc_state::list().map(spira_config::lc_state::index)?;
+        let mut base: Vec<String> = vec!["list".into(), "--all".into(), "--limit".into(), "0".into(), "--json".into()];
         if let Some(c) = closed_after {
-            args.push("--closed-after".into());
-            args.push(c.into());
+            base.push("--closed-after".into());
+            base.push(c.into());
         }
-        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (rc, out, _err) = self.run(db, &arg_refs)?;
-        if rc != 0 {
-            return Err(format!("bd list exited {rc}"));
+        let mut queries: Vec<Vec<String>> = Vec::new();
+        match label {
+            Some(l) => {
+                let mut q = base.clone();
+                q.push("--label".into());
+                q.push(l.into());
+                queries.push(q);
+            }
+            // The unlabelled fallback over every unfinished bead: those ids from the machine,
+            // their content from bd by id, chunked (never the whole store).
+            None if scope == Scope::Unfinished => {
+                let mut ids: Vec<&String> = lc.values().filter(|r| !r.past_builder()).map(|r| &r.bead_id).collect();
+                ids.sort();
+                for chunk in ids.chunks(100) {
+                    let mut q = base.clone();
+                    q.push("--id".into());
+                    q.push(chunk.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","));
+                    queries.push(q);
+                }
+            }
+            None => queries.push(base),
         }
-        Ok(rows_from_json(&out))
+        let mut rows = Vec::new();
+        for q in queries {
+            let arg_refs: Vec<&str> = q.iter().map(String::as_str).collect();
+            let (rc, out, _err) = self.run(db, &arg_refs)?;
+            if rc != 0 {
+                return Err(format!("bd list exited {rc}"));
+            }
+            rows.extend(rows_from_json(&out));
+        }
+        Ok(join_lc(rows, &lc, scope))
     }
 
     fn create(
@@ -205,6 +236,9 @@ impl Bd for RealBd {
     fn reopen(&self, db: &str, id: &str) -> bool {
         self.run(db, &["reopen", id]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
+    fn relate(&self, db: &str, a: &str, b: &str) -> bool {
+        self.run(db, &["dep", "relate", a, b]).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    }
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String> {
         let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
         if rc != 0 {
@@ -268,6 +302,24 @@ impl Clock for RealClock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// sp-jgjvh: the dedup's open/closed is the lifecycle row's, whatever bd's status says;
+    /// a rowless bead is in neither pass.
+    #[test]
+    fn join_lc_reads_state_from_the_lifecycle_row_not_bd_status() {
+        use spira_config::lc_state::Row;
+        let rows = rows_from_json(
+            r#"[{"id":"a","status":"closed","external_ref":"r"},{"id":"b","status":"open","external_ref":"r"},
+                {"id":"c","status":"open","external_ref":"r"},{"id":"d","status":"open"}]"#,
+        );
+        let lc = [("a", "WORKING"), ("b", "SUBMITTED"), ("c", "REWORK")]
+            .iter()
+            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
+            .collect();
+        let ids = |v: Vec<BeadRow>| v.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(join_lc(rows.clone(), &lc, Scope::Unfinished)), vec!["a", "c"]);
+        assert_eq!(ids(join_lc(rows, &lc, Scope::HandedOn)), vec!["b"]);
+    }
 
     #[test]
     fn json_only_strips_a_leading_warning_line() {

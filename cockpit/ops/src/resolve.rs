@@ -18,6 +18,19 @@ pub struct BdResult {
 
 pub trait Closer {
     fn close(&self, db: &Path, id: &str, reason: &str) -> BdResult;
+    /// `bd show <id> --json`'s text, for the `work-bead:` labels the ask carries.
+    fn show_json(&self, db: &Path, id: &str) -> String;
+    /// `spira-lc withdraw-ask <work-bead> claude` → its exit code and output.
+    fn withdraw_ask(&self, work_bead: &str) -> (i32, String);
+}
+
+/// The work beads an ask names on its `work-bead:<id>` labels (written by `mail send` on
+/// the tracking bead of a question about a work bead), read out of `bd show --json`.
+pub fn work_beads(show_json: &str) -> Vec<String> {
+    let re = regex::Regex::new(r#""work-bead:([A-Za-z0-9][A-Za-z0-9.\-]*)""#).expect("static regex");
+    let mut out: Vec<String> = re.captures_iter(show_json).map(|c| c[1].to_string()).collect();
+    out.dedup();
+    out
 }
 
 pub enum Outcome {
@@ -38,7 +51,20 @@ pub fn run(id: &str, reason: &str, db: &Path, closer: &dyn Closer) -> Outcome {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     if r.success {
-        Outcome::Closed(format!("resolved {id} ({db_name})"))
+        // A RESOLVED ASK IS A QUESTION CLOSED WITHOUT THE OPERATOR'S ANSWER (sp-v62vn
+        // follow-up): the agent established it, or moot-sweep found its condition cleared.
+        // `work ask` held the asking bead and only a Reply or an AskWithdrawn lifts it, so a
+        // resolve emits withdraw-ask for every work bead the ask names. Exit 1 (no row) and 3
+        // (no ask hold) are not failures; a cannot-tell is reported, the close still stands.
+        let mut msg = format!("resolved {id} ({db_name})");
+        for w in work_beads(&closer.show_json(db, id)) {
+            match closer.withdraw_ask(&w) {
+                (0, _) => msg.push_str(&format!("\nwithdrew the ask hold on {w}")),
+                (1, _) | (3, _) => {}
+                (code, out) => msg.push_str(&format!("\nWARNING: the ask hold on {w} was not lifted (spira-lc withdraw-ask exit {code}): {}", out.trim())),
+            }
+        }
+        Outcome::Closed(msg)
     } else {
         // Unlike the bash original, bd's own output is included in the returned message
         // rather than printed separately — see ../DESIGN.md Decisions.
@@ -65,6 +91,53 @@ mod tests {
         fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
             BdResult { success: self.success, combined: self.combined.to_string() }
         }
+        fn show_json(&self, _db: &Path, _id: &str) -> String {
+            String::new()
+        }
+        fn withdraw_ask(&self, _w: &str) -> (i32, String) {
+            panic!("no work bead, no withdraw")
+        }
+    }
+
+    struct AskFake {
+        labels: &'static str,
+        code: i32,
+        withdrawn: std::cell::RefCell<Vec<String>>,
+    }
+    impl Closer for AskFake {
+        fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
+            BdResult { success: true, combined: String::new() }
+        }
+        fn show_json(&self, _db: &Path, _id: &str) -> String {
+            format!(r#"[{{"id":"sp-ask1","labels":[{}]}}]"#, self.labels)
+        }
+        fn withdraw_ask(&self, w: &str) -> (i32, String) {
+            self.withdrawn.borrow_mut().push(w.to_string());
+            (self.code, "cannot tell: socket".into())
+        }
+    }
+
+    /// THE GAP THIS CLOSES (sp-v62vn follow-up): resolving an ask about a work bead —
+    /// the question closed without the operator's answer — withdraws that bead's ask hold.
+    #[test]
+    fn resolving_an_ask_about_a_work_bead_withdraws_its_ask_hold() {
+        let c = AskFake { labels: r#""overseer","work-bead:sp-w1""#, code: 0, withdrawn: Default::default() };
+        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!() };
+        assert_eq!(*c.withdrawn.borrow(), vec!["sp-w1".to_string()]);
+        assert!(s.contains("withdrew the ask hold on sp-w1"), "{s}");
+    }
+
+    #[test]
+    fn a_refused_withdraw_is_quiet_and_a_cannot_tell_is_reported() {
+        let c = AskFake { labels: r#""work-bead:sp-w1""#, code: 3, withdrawn: Default::default() };
+        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!() };
+        assert_eq!(s, "resolved sp-ask1 (db)");
+        let c = AskFake { labels: r#""work-bead:sp-w1""#, code: 2, withdrawn: Default::default() };
+        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!() };
+        assert!(s.contains("WARNING: the ask hold on sp-w1 was not lifted"), "{s}");
+        let c = AskFake { labels: r#""overseer""#, code: 0, withdrawn: Default::default() };
+        run("sp-ask1", "moot", Path::new("/db"), &c);
+        assert!(c.withdrawn.borrow().is_empty());
     }
 
     #[test]

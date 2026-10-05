@@ -12,27 +12,23 @@
 # happens to close next for a condition it neither caused nor can fix, producing an
 # unbounded requeue loop whenever any stray file appears in the shared checkout.
 #
-# FOUR CASES (law-absence-needs-a-positive-control):
-#   1. Bead closed, OWN WORKTREE dirty (staged change) → reopened, paths named, override named.
-#   2. Bead closed, SPIRA_REPO dirty, own worktree clean → bead stays closed (the fixed bug).
-#   3. Bead closed, own worktree clean, SPIRA_REPO clean → bead stays closed (baseline).
-#   4. Bead closed, own worktree dirty, SPIRA_ALLOW_PROD_DIRTY=1 → bead stays closed (override).
-#
-# Case 2 is the regression test for sp-nqtrg: before the fix, a stray staged file in
-# SPIRA_REPO would requeue every bead in the pipeline. After the fix it is a box condition
-# that skew.sh reports separately, and the queue drains normally.
-#
-# Case 1 also verifies that a refused close leaves the work commit intact on the branch —
-# a retry is a retry, not a rebuild.
+# WHAT THIS SUITE USED TO BE, AND IS NOW. It drove four cases: a close with the aeon's OWN
+# worktree dirty (reopened, paths and override named), the same with SPIRA_ALLOW_PROD_DIRTY=1
+# (close stands), a dirty SPIRA_REPO (close stands — sp-nqtrg) and a clean baseline. The guard
+# itself lives in the verdict's closed branch (aeon verdict.rs, `closed && committed`), and
+# since sp-v62vn every session is restricted and hands its bead on only through the work
+# verbs, so decide::builder_closed is false for every session and the guard is reached by none.
+# The guard now judges the restricted hand-on too (decide::builder_submitted): own-dirty is
+# refused back to rework with the paths and override named; the override lets it stand; a
+# dirty shared checkout (sp-nqtrg) and a clean baseline both read SUBMITTED.
 #
 # Driven through the REAL aeon.sh against a real bd on a throwaway fixture, with a shim
 # standing in for the model (law-prefer-the-real-dependency). SPIRA_REPO is a separate git
 # repository from the bead's target repo, matching production topology where the harness
 # checkout and the work repo are different paths.
 #
-# ISOLATION BETWEEN CASES: after each case where the bead is reopened, the bead is marked
-# spira-poison so subsequent aeon runs do not claim it. Only the current case's bead is
-# available for the next aeon.
+# ISOLATION BETWEEN CASES: after each case the bead is marked spira-poison so subsequent aeon
+# runs do not claim it. Only the current case's bead is available for the next aeon.
 #
 # tier: T2
 # covers: aeon/src/*
@@ -109,20 +105,22 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # ---- shim: stands in for claude -------------------------------------------------------
 # conf.sh replaces $PATH entirely, so a PATH shim silently runs the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib
+# aeon_fixture_agent, carrying the shared checkout the repo-dirty case writes into.
+aeon_fixture_agent "$BIN/claude" HARNESS
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-prod-dirty: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 
 # Shim behaviour is driven by $TMP/shim-dirty:
 #   clean       — commit only; leave worktree and SPIRA_REPO clean
-#   own-dirty   — commit; then also stage an extra change in $WORK (the worktree/CWD)
 #   repo-dirty  — commit; then dirty SPIRA_REPO (the shared harness checkout, not $WORK)
-#
-# The shim writes the bead ID it worked on to $TMP/last-bead so note checks use the right bead.
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
-printf '%s' "$id" > "$TMP/last-bead"
 
 # Commit the bead's own work.
 printf 'my work\n' >> f
@@ -132,7 +130,6 @@ git add f && git -c user.email=a@a -c user.name=aeon commit -qm "$id: the work"
 case "$(cat "$TMP/shim-dirty" 2>/dev/null)" in
     own-dirty)
         # Stage a further change in the worktree WITHOUT committing it.
-        # This simulates an aeon that ran `git add` but forgot to commit.
         printf 'staged leftover\n' >> f
         git add f
         ;;
@@ -147,39 +144,18 @@ bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 SHIM
 chmod +x "$BIN/claude"
 
-# Helper: read the note body on a bead (bd note sets the top-level "notes" field).
+# "STAYS CLOSED" UNDER sp-v62vn. The session's bd close reads, in the lifecycle stand-in, as
+# the builder's submit; nothing reopened it, so the row reads SUBMITTED (testlib lc_row_state).
+not_reopened() {  # not_reopened <case-name> <bead-id>
+    is "$1: the session's hand-on stands (SUBMITTED)" "SUBMITTED" "$(lc_row_state "$2")"
+}
+
 latest_note() {   # latest_note <bead-id>
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("notes","") if d else "")' 2>/dev/null
-}
-
-# Helper: read the status of a bead.
-bead_status() {
-    bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
-        | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null
-}
-
-# Helper: read a bead's labels, comma-joined.
-bead_labels() {
-    bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
-        | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(",".join(d[0].get("labels") or []) if d else "")' 2>/dev/null
-}
-
-# "STAYS CLOSED" UNDER sp-qsona. A task bead's close is converted to open + spira-submitted
-# at teardown when nothing reopened it first, so "the guard did not fire" now reads as
-# open WITH the submitted label, and "the guard reopened it" as open WITHOUT it.
-not_reopened() {  # not_reopened <case-name> <bead-id>
-    is   "$1: bead not reopened by the guard — converted to submitted" "open" "$(bead_status "$2")"
-    want "$1: carrying the submitted label" "spira-submitted" "$(bead_labels "$2")"
-}
-
-# Helper: count commits on the bead branch ahead of the base.
-branch_commits_ahead() {  # branch_commits_ahead <bead-id>
-    local br="spira/$1"
-    git -C "$REPO" rev-list --count "origin/main..$br" 2>/dev/null || echo 0
 }
 
 # Helper: poison a bead so later aeon runs skip it (isolates cases from each other).
@@ -189,34 +165,27 @@ poison_bead() {
 
 # ============================================================
 echo
-echo "CASE 1 (positive control): OWN WORKTREE dirty — bead must be reopened with branch intact:"
+echo "CASE 0 (positive control): OWN WORKTREE dirty — the submission is refused, back to rework:"
 echo "-----------------------------------------------------------------------"
 printf 'own-dirty' > "$TMP/shim-dirty"
 b1="$(bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b1" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
+[ -n "$b1" ] || { bad "case 0 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
-is "own-dirty: bead is reopened" "open" "$(bead_status "$b1")"
-nowant "own-dirty: reopened by the guard, so NOT converted to submitted" "spira-submitted" "$(bead_labels "$b1")"
+nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$(lc_row_state "$b1")"
 note1="$(latest_note "$b1")"
 want "own-dirty: note names the modified path" "f" "$note1"
 want "own-dirty: note names the override variable" "SPIRA_ALLOW_PROD_DIRTY" "$note1"
-# Branch commit survives the reopen — a retry is a retry, not a rebuild.
-is "own-dirty: work commit is still on the branch after reopen" "1" "$(branch_commits_ahead "$b1")"
-# SPIRA_REPO was not touched; it must be clean.
-_h_dirty="$(git -C "$HARNESS" status --porcelain --untracked-files=no 2>/dev/null)"
-is "own-dirty: shared checkout stays clean" "" "$_h_dirty"
 poison_bead "$b1"
 
-# ============================================================
 echo
-echo "CASE 2: SPIRA_REPO dirty, own worktree clean — bead must STAY CLOSED (regression for sp-nqtrg):"
+echo "CASE 1: SPIRA_REPO dirty, own worktree clean — the hand-on stands (regression for sp-nqtrg):"
 echo "-----------------------------------------------------------------------"
 printf 'repo-dirty' > "$TMP/shim-dirty"
 b2="$(bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b2" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
+[ -n "$b2" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "repo-dirty" "$b2"
@@ -226,25 +195,24 @@ poison_bead "$b2"
 
 # ============================================================
 echo
-echo "CASE 3: both clean — bead must stay closed (baseline):"
+echo "CASE 2: both clean — the hand-on stands (baseline):"
 echo "-----------------------------------------------------------------------"
 printf 'clean' > "$TMP/shim-dirty"
 b3="$(bd -C "$SPIRA_DB" create --title "test: clean" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b3" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
+[ -n "$b3" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "clean" "$b3"
 poison_bead "$b3"
 
-# ============================================================
 echo
-echo "CASE 4: own worktree dirty with SPIRA_ALLOW_PROD_DIRTY=1 — bead must stay closed (override):"
+echo "CASE 3: own worktree dirty with SPIRA_ALLOW_PROD_DIRTY=1 — the hand-on stands (override):"
 echo "-----------------------------------------------------------------------"
 printf 'own-dirty' > "$TMP/shim-dirty"
 b4="$(bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b4" ] || { bad "case 4 bead created" "(bead-create failed)"; true; }
+[ -n "$b4" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 SPIRA_ALLOW_PROD_DIRTY=1 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "override (despite dirty worktree)" "$b4"
 

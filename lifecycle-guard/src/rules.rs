@@ -63,10 +63,18 @@ pub const ORACLE_SUBCOMMANDS: &[&str] = &["mark", "state", "landed", "cited-comm
 /// reintroduction is a red — and every way around the machine to a bead's state (sp-hyo5e):
 /// a bd/bdq lifecycle write, directly or through a wrapper, a verb the analyser cannot
 /// resolve, and a bd status read feeding a decision. Each was cleared by routing it through
-/// spira-lc (`unclaim`, `close-epic`, `show`) before it joined this list. The rest — the
-/// credential rule (over-broad: it flags every `spira-lc` CLI call and comment) and bd named
-/// in a brief — are still reported by a plain run, counted on the gate's one summary line,
-/// and join this list in the commit that clears them.
+/// spira-lc (`unclaim`, `close-epic`, `show`) before it joined this list.
+///
+/// The Rust bd-status read (`bd-status-read`, sp-mve9i, design §3.4: bd holds content,
+/// spira-lc holds state; `bd_status.rs`) joined this list in the commit that cleared its last
+/// findings — spira-claim's select, epic and holder paths (sp-mve9i) and the incident
+/// family's dedup (sp-jgjvh). Every Rust decision on a work bead reads
+/// `spira_config::lc_state`; a bead that is not a work bead names its kind through
+/// `spira_config::nonwork`; the rule's named exceptions (the rowless controls) are argued
+/// in DESIGN.md. The rest — the credential rule (over-broad: it
+/// flags every `spira-lc` CLI call and comment) and bd named in a brief — are still reported
+/// by a plain run, counted on the gate's one summary line, and join this list in the commit
+/// that clears them.
 pub const GATE_CLASSES: &[Class] = &[
     Class::LandstateCall,
     Class::LandstatePath,
@@ -74,6 +82,7 @@ pub const GATE_CLASSES: &[Class] = &[
     Class::WrapperWrite,
     Class::DynamicVerb,
     Class::LifecycleRead,
+    Class::BdStatusRead,
 ];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or

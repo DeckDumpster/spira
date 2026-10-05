@@ -20,6 +20,7 @@ use std::process::ExitCode;
 use mail::bead::BdCli;
 use mail::cmds::{self, SendArgs};
 use mail::env::Env;
+use mail::lc::LcCli;
 use mail::{sendmail, tidy};
 
 fn main() -> ExitCode {
@@ -213,7 +214,7 @@ fn run_sendmail(_args: &[String]) -> ExitCode {
     let env = Env::load();
     let bd = bd_cli(&env);
     let db_configured = !env.db.is_empty();
-    match sendmail::sendmail(&bd, db_configured, &env.home, &env.mail_root, env.mute, &raw) {
+    match sendmail::sendmail(&bd, &LcCli, db_configured, &env.home, &env.mail_root, env.mute, &raw) {
         Ok(_) => ExitCode::SUCCESS,
         Err(e) => fail(format!("sendmail: {e}")),
     }
@@ -270,7 +271,7 @@ fn run_sweep_dismissed(args: &[String]) -> ExitCode {
     }
     let bd = bd_cli(&env);
     let db_configured = !env.db.is_empty();
-    match cmds::sweep_dismissed(&bd, db_configured, &env.mail_root, &env.index_file, &mailbox, &env.operator_actor) {
+    match cmds::sweep_dismissed(&bd, &LcCli, db_configured, &env.mail_root, &env.index_file, &mailbox, &env.operator_actor) {
         Ok(cmds::SweepOutcome::NothingToDismiss) => {
             println!("sweep-dismissed: nothing to dismiss");
             ExitCode::SUCCESS

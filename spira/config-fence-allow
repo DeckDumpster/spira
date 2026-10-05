@@ -156,7 +156,6 @@ spira/test-land-mode-local.sh
 spira/testlib/gate-fixture.sh
 spira/testlib.sh
 spira/test-lifecycle-classify.sh
-spira/test-lifecycle-enforce-gate.sh
 spira/test-livelock.sh
 spira/test-maechen-trigger.sh
 spira/test-mail-aeon.sh
@@ -198,8 +197,6 @@ spira/test-skew-foreign.sh
 spira/test-skew-refresh.sh
 spira/test-slay.sh
 spira/test-spike.sh
-spira/test-spira-config.sh
-spira/test-spira-lc-crate.sh
 spira/test-strand-truncated.sh
 spira/test-submitted-lands.sh
 spira/test-superseded.sh

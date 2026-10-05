@@ -62,7 +62,12 @@ FAYTH
     printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$FA_HOME/chamber/builder.md"
 
     FA_BIN="$FA_TMP/bin"; mkdir -p "$FA_BIN"
+    # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; a
+    # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+    lc_aeon_mirror "$FA_TMP/lcm"; export PATH="$FA_TMP/lcm:$PATH"
     export SPIRA_AGENT="$FA_BIN/claude" TMP="$FA_TMP"
+    # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+    aeon_fixture_agent "$FA_BIN/claude"
     command -v aeon >/dev/null 2>&1 \
         || { printf 'full-aeon-fixture: aeon is not on PATH — refusing to run\n' >&2; exit 1; }
 }

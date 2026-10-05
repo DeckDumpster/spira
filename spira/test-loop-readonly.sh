@@ -143,6 +143,17 @@ BEADS_ACTOR=aeon-test-loop-readonly \
 STUB
 chmod +x "$STUB_SUMMON"
 
+# The lifecycle machine is the only ready set (sp-v62vn): a spira-lc stub whose `list`
+# seeds sp-lr-work READY, so the sentinel's fill reads the machine as production does.
+LC_STUBS="$SCRATCH/lc-stubs"
+mkdir -p "$LC_STUBS"
+cat > "$LC_STUBS/spira-lc" <<'LCSTUB'
+#!/bin/sh
+[ "$1" = list ] && printf '[{"bead_id":"sp-lr-work","state":"READY","holder":null,"lease_until":null,"holds":[]}]\n'
+exit 0
+LCSTUB
+chmod +x "$LC_STUBS/spira-lc"
+
 # SPIRA_LAUNCH stub: no-op so the landing leg does not attempt systemd-run.
 STUB_LAUNCH="$SCRATCH/launch.sh"
 printf '#!/bin/sh\nexit 0\n' > "$STUB_LAUNCH"; chmod +x "$STUB_LAUNCH"
@@ -178,7 +189,7 @@ SENTINEL_OUT="$(
     SPIRA_SYSTEMCTL="$MOCK_SC" \
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_INFERENCE_EVERY=99999 \
-    PATH="$CURRENT/bin:$CURRENT/spira:$PATH" \
+    PATH="$CURRENT/bin:$CURRENT/spira:$LC_STUBS:$PATH" \
         sentinel 2>&1
 )"
 SENTINEL_RC=$?

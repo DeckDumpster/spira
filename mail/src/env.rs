@@ -29,7 +29,6 @@ pub struct Env {
     pub lint_considered: Option<String>,
     pub repeat_considered: Option<String>,
     pub allow_blocking: bool,
-    pub session_epoch: Option<String>,
     pub bead_id: Option<String>,
     pub lock_timeout_ms: u64,
 }
@@ -83,7 +82,6 @@ impl Env {
             lint_considered: var("SPIRA_MAIL_LINT_CONSIDERED"),
             repeat_considered: var("SPIRA_MAIL_REPEAT_CONSIDERED"),
             allow_blocking: var("SPIRA_MAIL_ALLOW_BLOCKING").is_some(),
-            session_epoch: var("SESSION_EPOCH"),
             bead_id: var("BEAD_ID"),
             lock_timeout_ms: var_u64("SPIRA_MAIL_LOCK_TIMEOUT_MS", 30_000),
         }

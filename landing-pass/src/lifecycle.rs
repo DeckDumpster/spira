@@ -1,18 +1,10 @@
 //! The lifecycle machine is the only record: spira-lc is authoritative, and one that cannot
 //! be reached is a loud refusal of the step that needed it.
 
-/// Pin the switch into this process's environment before any child starts, so the bash
-/// this binary still runs (the lib.sh seams) resolves the same mode.
-pub fn pin_for_children(on: bool) {
-    std::env::set_var("SPIRA_LIFECYCLE_ENFORCE", if on { "1" } else { "0" });
-}
-
 /// The lifecycle machine, as far as this pass needs it: is it there?
 pub trait Lc {
-    /// `spira-lc list --state IN_DELIVERY`, parsed. Only ever called with the switch ON.
+    /// `spira-lc list --state IN_DELIVERY`, parsed.
     fn probe(&self) -> Result<(), String>;
-    /// `spira-lc list --state SUBMITTED`: bead id → the tip the row was submitted at.
-    fn submitted(&self) -> Result<std::collections::HashMap<String, String>, String>;
     /// `spira-lc certify <id> <tip> <pass|red|infra> <detail>`: the gate outcome as an event.
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String>;
 }
@@ -36,17 +28,6 @@ impl Lc for RealLc {
         serde_json::from_slice::<serde_json::Value>(&so).map(|_| ()).map_err(|e| format!("spira-lc list: {e}"))
     }
 
-    fn submitted(&self) -> Result<std::collections::HashMap<String, String>, String> {
-        let mut c = crate::util::command(self.bin()?);
-        c.args(["list", "--state", "SUBMITTED"]).stdin(std::process::Stdio::null());
-        let (rc, so, se) = crate::util::run_capture(c);
-        if rc != 0 {
-            let e = String::from_utf8_lossy(&se);
-            return Err(format!("spira-lc list exited {rc}: {}", e.lines().next().unwrap_or("")));
-        }
-        parse_submitted(&so)
-    }
-
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String> {
         let mut c = crate::util::command(self.bin()?);
         c.args(["certify", id, tip, outcome, detail, "landing-pass"]).stdin(std::process::Stdio::null());
@@ -66,18 +47,6 @@ impl RealLc {
     }
 }
 
-pub fn parse_submitted(json: &[u8]) -> Result<std::collections::HashMap<String, String>, String> {
-    let v: serde_json::Value = serde_json::from_slice(json).map_err(|e| format!("spira-lc list: {e}"))?;
-    let rows = v.as_array().ok_or("spira-lc list: not an array")?;
-    let field = |r: &serde_json::Value, k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-    Ok(rows
-        .iter()
-        .filter(|r| field(r, "state") == "SUBMITTED")
-        .map(|r| (field(r, "bead_id"), field(r, "tip")))
-        .filter(|(id, tip)| !id.is_empty() && !tip.is_empty())
-        .collect())
-}
-
 pub fn unreachable_line(why: &str, what: &str) -> String {
-    format!("landing: lifecycle_enforce is on and spira-lc is unreachable ({why}) — {what}; fix the lifecycle machine or turn lifecycle_enforce off")
+    format!("landing: spira-lc is unreachable ({why}) — {what}; fix the lifecycle machine (it is the only record of a delivery)")
 }
