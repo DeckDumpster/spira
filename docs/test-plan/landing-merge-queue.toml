@@ -134,7 +134,7 @@ statement = "Every land mode declared in the header is handled in `land_repo`. `
 [[use_case]]
 id = "UC-landing-merge-queue-27"
 tier = "T1"
-statement = "`submit` accepts only `spira/<id>` and `spira-suite-state/*` branches. It runs the gate against the named repo (or the home repo) and certifies the branch with a queue record. A refusal writes no state. A gate fail writes no landstate. `suites.sh` quarantine/disable/activate each submit a transition branch."
+statement = "`submit` accepts only `spira/<id>` branches. It runs the gate against the named repo (or the home repo) and certifies the branch on spira-lc, keeping no queue record of its own. A refusal writes no state. A gate fail writes no landstate. `testenv suites` quarantine/disable/activate each submit a change bead's `spira/<bead>` branch."
 
 [[use_case]]
 id = "UC-landing-merge-queue-28"

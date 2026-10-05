@@ -27,8 +27,10 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
         return FAIL;
     };
     let mode = c.r.mode;
-    if mode.is_queued() && !(branch.starts_with("spira/") || branch.starts_with("spira-suite-state/")) {
-        w.err(format!("queue.sh submit: {branch}: queue mode requires a branch under spira/ or spira-suite-state/"));
+    // Every change in a queued mode is a bead on spira/<id> with a lifecycle row — a
+    // suite-state edit included (sp-lck63: `testenv suites` files or is handed one).
+    if mode.is_queued() && !branch.starts_with("spira/") {
+        w.err(format!("queue.sh submit: {branch}: queue mode requires a branch under spira/"));
         return FAIL;
     }
     if idents(w, "submit", &[("branch", branch), ("repo", &name)]).is_err() {
@@ -55,12 +57,9 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
 
     match mode {
         LandMode::Queue | LandMode::QueueLocal => {
+            // The lifecycle row is the one certification record; the queue keeps none of
+            // its own (sp-lck63).
             if lc_certify(w, &id, &tip).is_err() {
-                return FAIL;
-            }
-            let entry = c.s.queue_dir.join(&id);
-            if write_atomic(&entry, &format!("CERTIFIED {tip} {}\n", w.clock.now())).is_err() {
-                w.err(format!("queue.sh submit: failed to write queue entry for {branch}"));
                 return FAIL;
             }
             w.out(format!("queue.sh submit: certified {branch}"));
@@ -103,11 +102,7 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
 }
 
 /// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
-/// A `spira-suite-state/` transition branch is no bead and has no lifecycle row to certify.
 fn lc_certify(w: &World, id: &str, tip: &str) -> Result<(), ()> {
-    if id.starts_with("spira-suite-state/") {
-        return Ok(());
-    }
     w.lc.certify(id, tip, "queue-submit", &super::actor(w)).map_err(|(rc, e)| {
         w.err(format!("queue.sh submit: spira-lc certify refused for {id} (rc={rc}): {e}"));
     })

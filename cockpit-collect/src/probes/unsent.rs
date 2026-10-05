@@ -161,7 +161,9 @@ fn branch_backlog_section(out: &mut Kv) {
             None => fail = true,
         }
 
-        for ns in ["refs/heads/spira/queue/", "refs/heads/spira-suite-state/"] {
+        // The batch PR branches only: a suite-state edit is a bead on spira/<id> like any
+        // other change since sp-lck63, so no `spira-suite-state/*` namespace is protected.
+        for ns in ["refs/heads/spira/queue/"] {
             if let Some(refs) = io::git(rp_path, &["for-each-ref", "--format=%(refname:short)", ns]) {
                 for pb in refs.lines() {
                     if pb.is_empty() {

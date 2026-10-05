@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-cockpit-unsent.sh — the unsent backlog counts across repositories, not just the first,
-# and harness-owned namespaces (queue/*, suite-state/*) are never counted as orphans.
+# and the harness-owned queue/* namespace is never counted as an orphan.
 #
 # THE FAILURE THIS SUITE EXISTS FOR. SP_BRANCH_DONE was echoed inside the per-repo loop and
 # write_snapshot's first-wins dedup pinned it to the first repository's count, which was always
@@ -162,7 +162,9 @@ git -C "$ALPHA" branch spira/sp-true-stray   # same commit as main; no new work
 QSTAMP="20260917T173304Z"
 git -C "$ALPHA" branch "spira/queue/$QSTAMP"
 
-# spira-suite-state/<name> — written by the quarantine path. Same shape: tip on main.
+# spira-suite-state/<name> — the retired bead-less quarantine route (sp-lck63: a suite-state
+# edit is a bead on spira/<id> now). Same shape: tip on main. It is outside refs/heads/spira/,
+# so it is neither a bead branch nor protected — it is simply not the probe's business.
 SUITE_BR="test-reclaim-slay-branch-guard-20260917T164605Z"
 git -C "$ALPHA" branch "spira-suite-state/$SUITE_BR"
 
@@ -238,8 +240,8 @@ git -C "$ALPHA" branch -D spira/round-81 >/dev/null 2>&1 || true
 nowant "SP_UNADOPTED_NAMES excludes queue branch"       "queue/"              "$(val SP_UNADOPTED_NAMES)"
 nowant "SP_UNADOPTED_NAMES excludes suite-state branch" "spira-suite-state/"  "$(val SP_UNADOPTED_NAMES)"
 want "SP_PROTECTED_NAMES names the queue branch"        "queue/$QSTAMP"                "$(val SP_PROTECTED_NAMES)"
-want "SP_PROTECTED_NAMES names the suite-state branch"  "spira-suite-state/$SUITE_BR"  "$(val SP_PROTECTED_NAMES)"
-is   "SP_PROTECTED counts exactly the two namespaced branches" "2" "$(val SP_PROTECTED)"
+nowant "SP_PROTECTED_NAMES no longer names a suite-state branch" "spira-suite-state/" "$(val SP_PROTECTED_NAMES)"
+is   "SP_PROTECTED counts exactly the queue branch" "1" "$(val SP_PROTECTED)"
 
 # ======================================================================================
 # THE POSITIVE CONTROL: the probe found SOMETHING. An empty output would pass all the

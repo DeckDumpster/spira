@@ -6,9 +6,11 @@
 # REPO/RMAP/run() scaffolding both files built independently.
 #
 # In queue mode, batch.sh builds only from refs/heads/spira/<id>. A branch not
-# in that form must be refused before any state is written. The queue-dir write's
-# exit status must also be checked so a write failure does not silently produce
-# a "certified" result (gap G6).
+# in that form must be refused before any state is written. The lifecycle row is the one
+# certification record: submit keeps no queue record of its own (sp-lck63 retired the
+# per-branch `$SPIRA_QUEUE_DIR/<id>` file, and with it gap G6's write check), and a
+# suite-state transition is a change bead on spira/<id> like any other — the bead-less
+# `spira-suite-state/*` route is refused.
 #
 # tier: T3
 # covers: queue/src/* testenv/src/suites/* spira/conf.sh
@@ -23,7 +25,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 echo "test-queue-submit.sh"
 TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
 lcfix_up || { echo "test-queue-submit: could not build a lifecycle fixture"; exit 1; }
-for _b in sp-abc01 sp-g6-01 sp-cso01 sp-def02 sp-ghi03; do lcfix_seed "$_b" WORKING; done
+for _b in sp-abc01 sp-cso01 sp-def02 sp-ghi03; do lcfix_seed "$_b" WORKING; done
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 GATE_LOG="$TMP/gate-calls.log"
@@ -78,8 +80,8 @@ out="$(run submit spira/sp-abc01)"; rc=$?
 want "gate stub was called for valid branch" "gate-called" "$(cat "$GATE_LOG")"
 want "exit 0 for valid branch" "certified" "$out"
 is "bead-less: the lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-abc01)"
-[ -f "$TMP/run/queue/sp-abc01" ] && ok "bead-less: queue record written" \
-    || bad "bead-less: queue record written" "file missing: $TMP/run/queue/sp-abc01"
+[ ! -e "$TMP/run/queue/sp-abc01" ] && ok "the queue keeps no certification record of its own" \
+    || bad "the queue keeps no certification record of its own" "found: $TMP/run/queue/sp-abc01"
 rm -rf "$TMP/run"
 
 echo
@@ -107,29 +109,16 @@ chmod +x "$TMP/spira/gate.sh"
 rm -rf "$TMP/run"
 
 echo
-echo "gap G6: queue-dir write fails — no 'certified', no silent success:"
-mkdir -p "$TMP/run/queue"
-git -C "$REPO" branch "spira/sp-g6-01" main 2>/dev/null || true
-# Pre-create the queue-dir target AS A DIRECTORY: the write is `printf ... > path`,
-# which fails against a directory the same way a full disk or a permissions error
-# would — the write's own exit status is what submit must check, not "did gate pass".
-mkdir -p "$TMP/run/queue/sp-g6-01"
-: > "$GATE_LOG"
-out="$(run submit spira/sp-g6-01)"; rc=$?
-[ "$rc" -ne 0 ] && ok "G6: exits non-zero when the queue-dir write fails" \
-    || bad "G6: exits non-zero" "got rc=$rc out=$out"
-nowant "G6: never prints certified on a failed write" "certified" "$out"
-want   "G6: names the failure" "failed to write queue entry" "$out"
-rm -rf "$TMP/run"
-
-echo
-echo "spira-suite-state/... transition branch is accepted (not refused like non-spira/):"
+echo "a bead-less spira-suite-state/* branch is refused (sp-lck63: no route around spira-lc):"
 mkdir -p "$TMP/run/queue"
 : > "$GATE_LOG"
 out="$(run submit spira-suite-state/test-foo-20260101000000)"; rc=$?
-want "gate stub was called for suite-state branch" "gate-called" "$(cat "$GATE_LOG")"
-want "suite-state branch certified" "certified" "$out"
-[ "$rc" -eq 0 ] && ok "exit 0 for suite-state branch" || bad "exit 0 for suite-state branch" "got rc=$rc"
+[ "$rc" -ne 0 ] && ok "suite-state branch: exits non-zero" || bad "suite-state branch: exits non-zero" "got rc=$rc out=$out"
+want   "suite-state branch: names the required form" "requires a branch under spira/" "$out"
+nowant "suite-state branch: never says certified" "certified" "$out"
+is     "suite-state branch: the gate never ran" "" "$(cat "$GATE_LOG")"
+[ ! -e "$TMP/run/queue/spira-suite-state" ] && ok "suite-state branch: no queue record" \
+    || bad "suite-state branch: no queue record" "found $TMP/run/queue/spira-suite-state"
 rm -rf "$TMP/run"
 
 echo
@@ -143,16 +132,6 @@ nowant "never says certified" "certified"   "$out"
 [ ! -e "$TMP/run/queue/concierge" ] \
     && ok "no queue subdir created" \
     || bad "no queue subdir created" "directory exists"
-rm -rf "$TMP/run"
-
-echo
-echo "submit allows a spira-suite-state/* transition branch:"
-mkdir -p "$TMP/run/queue"
-git -C "$REPO" branch "spira-suite-state/test-q.sh" main
-: > "$GATE_LOG"
-out="$(run submit spira-suite-state/test-q.sh)"; rc=$?
-want "exit 0 for transition branch" "certified" "$out"
-want "gate was called for transition branch" "gate-called" "$(cat "$GATE_LOG")"
 rm -rf "$TMP/run"
 
 echo
@@ -272,10 +251,22 @@ transition() {
         SPIRA_TESTENV_HARNESS="$TREPO" \
         testenv suites "$@" 2>&1
 }
-tqueue_rec()  { cat "$TRUN/queue/${1:-}" 2>/dev/null; }
+
+# sp-lck63: the transition files its change bead through bead.sh (a stub here: no beads
+# store in this fixture), claims it through lib.sh's lc_claim_bead against the lifecycle
+# fixture, and submits spira/<bead>.
+TBEAD_LOG="$TMP/tbead-calls.log"
+cat > "$TSH/bead.sh" <<TBEAD
+#!/usr/bin/env bash
+n=\$(( \$(cat "$TMP/tbead-n" 2>/dev/null || echo 0) + 1 ))
+printf '%s\n' "\$n" > "$TMP/tbead-n"
+printf '%s\n' "\$*" >> "$TBEAD_LOG"
+printf 'advisory: similar to sp-decoy1\n{"id":"sp-ssc%02d","title":"t"}\n' "\$n"
+TBEAD
+chmod +x "$TSH/bead.sh"
 
 echo
-echo "quarantine: creates a branch, commits, and submits it (certified via queue submit):"
+echo "quarantine: files a change bead, claims it, commits on spira/<bead> and certifies it on spira-lc:"
 mkdir -p "$TRUN/queue"
 : > "$TGATE_LOG"
 git -C "$TREPO" checkout -q main 2>/dev/null || true
@@ -284,35 +275,39 @@ out="$(transition quarantine test-q.sh sp-xyz "flaky test")"
 is "quarantine: the fixture checkout's HEAD did not move (D2: no checkout)" \
    "$_thead" "$(git -C "$TREPO" rev-parse HEAD)"
 is "quarantine: gate was called" "1" "$(wc -l < "$TGATE_LOG" | tr -d ' ')"
-_qid="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
-case "$_qid" in
-    spira-suite-state/*) ok "quarantine: branch name on stdout" ;;
-    *) bad "quarantine: branch name on stdout" "got: [$_qid]" ;;
-esac
-git -C "$TREPO" rev-parse --verify -q "refs/heads/$_qid" >/dev/null \
-    && ok "quarantine: the transition branch exists in the fixture repo" \
-    || bad "quarantine: the transition branch exists in the fixture repo" "no ref refs/heads/$_qid"
-want "quarantine: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_qid")"
-[ -f "$TRUN/queue/$_qid" ] && ok "quarantine: queue record written" \
-    || bad "quarantine: queue record written" "file missing: $TRUN/queue/$_qid"
+_qbr="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
+is "quarantine: the change bead's branch on stdout" "spira/sp-ssc01" "$_qbr"
+want "quarantine: the bead was filed --submitted for ops in the home repo" \
+    "file suite-state: test-q.sh -> quarantined --for ops --repo tfixq --submitted" "$(cat "$TBEAD_LOG" 2>/dev/null)"
+_qtip="$(git -C "$TREPO" rev-parse -q --verify "refs/heads/$_qbr" 2>/dev/null)"
+[ -n "$_qtip" ] && ok "quarantine: spira/<bead> exists in the fixture repo" \
+    || bad "quarantine: spira/<bead> exists in the fixture repo" "no ref refs/heads/$_qbr"
+want "quarantine: the commit carries the suite's new row" "test-q.sh | quarantined" \
+    "$(git -C "$TREPO" show "$_qtip:spira/suite-state" 2>/dev/null)"
+want "quarantine: the commit cites the change bead" "sp-ssc01: suite-state: test-q.sh -> quarantined" \
+    "$(git -C "$TREPO" log -1 --format=%s "$_qtip" 2>/dev/null)"
+is "quarantine: the change bead's lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-ssc01)"
+is "quarantine: certified at the branch tip" "$_qtip" "$(lcfix_tip sp-ssc01)"
+[ ! -e "$TRUN/queue/sp-ssc01" ] && ok "quarantine: the queue keeps no record of its own" \
+    || bad "quarantine: the queue keeps no record of its own" "found $TRUN/queue/sp-ssc01"
+is "quarantine: no bead-less spira-suite-state/* branch" "" \
+    "$(git -C "$TREPO" for-each-ref --format='%(refname)' refs/heads/spira-suite-state/)"
 
 echo
-echo "disable: same pattern:"
+echo "disable: a handed change bead (--change-bead) is claimed and certified; none is filed:"
 : > "$TGATE_LOG"
+: > "$TBEAD_LOG"
 git -C "$TREPO" checkout -q main 2>/dev/null || true
-out="$(transition disable test-d.sh "unsafe in CI")"
+out="$(transition disable test-d.sh "unsafe in CI" --change-bead sp-sshand1)"
 is "disable: gate was called" "1" "$(wc -l < "$TGATE_LOG" | tr -d ' ')"
-_did="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
-case "$_did" in
-    spira-suite-state/*) ok "disable: branch name on stdout" ;;
-    *) bad "disable: branch name on stdout" "got: [$_did]" ;;
-esac
-want "disable: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_did")"
-[ -f "$TRUN/queue/$_did" ] && ok "disable: queue record written" \
-    || bad "disable: queue record written" "file missing: $TRUN/queue/$_did"
+_dbr="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
+is "disable: the handed bead's branch on stdout" "spira/sp-sshand1" "$_dbr"
+is "disable: no bead was filed" "" "$(cat "$TBEAD_LOG")"
+is "disable: the handed bead's lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-sshand1)"
+is "disable: certified at the branch tip" "$(git -C "$TREPO" rev-parse "refs/heads/$_dbr" 2>/dev/null)" "$(lcfix_tip sp-sshand1)"
 
 echo
-echo "activate: same pattern:"
+echo "activate: same pattern, a second filed bead:"
 git -C "$TREPO" checkout -q main 2>/dev/null || true
 printf 'test-a.sh | disabled | 2026-01-01T00:00:00Z | | fixture\n' >> "$TSH/suite-state"
 git -C "$TREPO" add "$TSH/suite-state"
@@ -320,14 +315,9 @@ git -C "$TREPO" commit -q --no-gpg-sign -m "fixture: disable test-a.sh for activ
 : > "$TGATE_LOG"
 out="$(transition activate test-a.sh)"
 is "activate: gate was called" "1" "$(wc -l < "$TGATE_LOG" | tr -d ' ')"
-_aid="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
-case "$_aid" in
-    spira-suite-state/*) ok "activate: branch name on stdout" ;;
-    *) bad "activate: branch name on stdout" "got: [$_aid]" ;;
-esac
-want "activate: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_aid")"
-[ -f "$TRUN/queue/$_aid" ] && ok "activate: queue record written" \
-    || bad "activate: queue record written" "file missing: $TRUN/queue/$_aid"
+_abr="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
+is "activate: the change bead's branch on stdout" "spira/sp-ssc02" "$_abr"
+is "activate: the change bead's lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-ssc02)"
 
 echo
 tl_summary

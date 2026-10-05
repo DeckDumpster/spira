@@ -321,11 +321,30 @@ impl Transition {
     }
 }
 
-/// Create `spira-suite-state/<suite>-<stamp>` in the home repository on `base` (default:
-/// its landing ref, else HEAD) with the suite's row changed, and submit it to the queue.
-/// Touches no checkout (DESIGN-suites.md §6 D2). Ok(branch) or Err(exit code); every
-/// refusal is printed.
-pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) -> Result<String, i32> {
+/// The writer's claim on the change bead: long enough to outlast the gate `queue submit`
+/// runs, short enough that a writer that dies mid-transition is reaped (sentinel's
+/// stale-lease sweep) rather than holding the bead forever.
+pub const CHANGE_LEASE_SECS: u64 = 3600;
+/// The holder (and event actor) the change bead's claim names.
+pub const CHANGE_HOLDER: &str = "suites";
+
+/// A bead id the edit may land as: it becomes `spira/<id>`, so it must be a plain ref
+/// component.
+fn valid_bead_id(id: &str) -> bool {
+    !id.is_empty()
+        && !id.starts_with(['-', '.'])
+        && !id.contains("..")
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Change the suite's row in the home repository's lifecycle file on `base` (default: its
+/// landing ref, else HEAD) as a change bead — `change` when the caller hands one, else a bead
+/// this filed through `bead.sh file` — claim the bead's lifecycle row, put the commit on
+/// `spira/<bead>` and submit it to the queue, which certifies it on the lifecycle machine like
+/// any work bead (sp-lck63: no bead-less `spira-suite-state/*` branch, no certification the
+/// queue keeps of its own). Touches no checkout (DESIGN-suites.md §6 D2). Ok(branch) or
+/// Err(exit code); every refusal is printed.
+pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>, change: Option<&str>) -> Result<String, i32> {
     let label = t.state().as_str();
     if w.s.aeon {
         w.err(format!("suites {label}: aeons may not write suite-state transitions; submit a branch from an operator or Ops session"));
@@ -366,6 +385,12 @@ pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) ->
             return Err(USAGE);
         }
     }
+    if let Some(c) = change {
+        if !valid_bead_id(c) {
+            w.err(format!("suites {label}: --change-bead {c:?} is not a bead id (it names the branch spira/<id>)"));
+            return Err(USAGE);
+        }
+    }
     let conf = match w.lib.conf() {
         Ok(c) => c,
         Err(e) => {
@@ -403,7 +428,29 @@ pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) ->
         },
     };
     let new = model::rewrite_state(&current, suite, Some(&entry));
-    let msg = format!("suite-state: {suite} -> {label}  sp-emvlk\n");
+
+    // The change bead: handed, else filed. Filed --submitted, so no persona claims it out
+    // from under the writer before the lifecycle claim below.
+    let id = match change {
+        Some(c) => c.to_string(),
+        None => match w.change.file(&format!("suite-state: {suite} -> {label}"), &conf.home_repo, &conf.db) {
+            Ok(id) if valid_bead_id(&id) => id,
+            Ok(id) => {
+                w.err(format!("suites {label}: bead.sh file returned {id:?}, not a bead id"));
+                return Err(FAIL);
+            }
+            Err(e) => {
+                w.err(format!("suites {label}: cannot file the change bead: {e}"));
+                return Err(FAIL);
+            }
+        },
+    };
+    let branch = format!("spira/{id}");
+    if w.git.commit_of(&repo, &format!("refs/heads/{branch}")).is_some() {
+        w.err(format!("suites {label}: {branch} already exists — the change bead {id} already carries a branch"));
+        return Err(FAIL);
+    }
+    let msg = format!("{id}: suite-state: {suite} -> {label}\n");
     let commit = match w.git.commit_file(&repo, &parent, path, &new, &msg, (&w.s.git_name, &w.s.git_email)) {
         Ok(c) => c,
         Err(e) => {
@@ -411,8 +458,10 @@ pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) ->
             return Err(FAIL);
         }
     };
-    let stem = suite.strip_suffix(".sh").unwrap_or(suite);
-    let branch = format!("spira-suite-state/{stem}-{}", model::compact_stamp(now));
+    if let Err(e) = w.change.claim(&id, CHANGE_HOLDER, now + CHANGE_LEASE_SECS) {
+        w.err(format!("suites {label}: cannot claim the change bead {id} on the lifecycle machine: {e}"));
+        return Err(FAIL);
+    }
     if !w.git.create_branch(&repo, &branch, &commit) {
         w.err(format!("suites {label}: cannot create branch {branch}"));
         return Err(FAIL);
@@ -424,8 +473,8 @@ pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) ->
     Ok(branch)
 }
 
-pub fn run_transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) -> i32 {
-    match transition(w, t, suite, base) {
+pub fn run_transition(w: &World, t: &Transition, suite: &str, base: Option<&str>, change: Option<&str>) -> i32 {
+    match transition(w, t, suite, base, change) {
         Ok(b) => {
             w.out(&b);
             OK

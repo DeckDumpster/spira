@@ -46,7 +46,10 @@ literally named `suites`, write `testenv -- suites` (the parser already ends opt
    (dedupe ref `flake:<suite>`). It never quarantines anything.
 4. **Change a suite's lifecycle only through the queue** (`quarantine|disable|activate`):
    the state file is tracked code read from the tree under test, so a change to it is a
-   commit on a `spira-suite-state/*` branch, certified and landed by `queue submit`.
+   change bead like any other (sp-lck63): the transition files one through `bead.sh file`
+   (or is handed one with `--change-bead`), claims its lifecycle row through lib.sh's
+   `lc_claim_bead`, commits on `spira/<bead>` and runs `queue submit`, which certifies it on
+   spira-lc; a round lands it. No bead-less branch, no certification outside spira-lc.
 5. **Keep hand-placed quarantines honest** (`hygiene`): mail the operator once when one
    outlives its max age. It never lifts one.
 
@@ -62,10 +65,16 @@ testenv suites status
 testenv suites hygiene
 testenv suites lint
 testenv suites observe-flake <suite> <run-id>
-testenv suites quarantine <suite> <bead> (<reason> | --reason-file <F|->) [--base <rev>]
-testenv suites disable    <suite>        (<reason> | --reason-file <F|->) [--base <rev>]
-testenv suites activate   <suite>                                         [--base <rev>]
+testenv suites quarantine <suite> <bead> (<reason> | --reason-file <F|->) [--base <rev>] [--change-bead <id>]
+testenv suites disable    <suite>        (<reason> | --reason-file <F|->) [--base <rev>] [--change-bead <id>]
+testenv suites activate   <suite>                                         [--base <rev>] [--change-bead <id>]
 ```
+
+`<bead>` (quarantine) is the defect the row is held against; `--change-bead` is the bead the
+edit itself lands as. Without it the transition files one: `bead.sh file "suite-state:
+<suite> -> <state>" --for ops --repo <home> --submitted --priority 1 --json` (5 s wall; the
+`--submitted` label keeps every persona off it). Either way it is claimed (holder `suites`,
+a one-hour lease) before `spira/<id>` is created, and the branch name is printed on stdout.
 
 `--reason-file` is new: the stdin/file form of a free-text reason (law-payloads-go-on-stdin);
 the positional form stays for the callers and runbooks that exist. `--base` is new (§2.4).
@@ -83,7 +92,7 @@ unknown subcommand (exit 2), as it already was.
 | hygiene | always | — | — |
 | lint | clean, or the lifecycle file is absent (nothing to lint) | any parse/existence/state/reason/bead violation (§6b) | — |
 | observe-flake | recorded (filed, below threshold, or filing failed — all say so on stdout) | — | suite or run id missing, no such suite |
-| quarantine/disable/activate | branch created, committed and submitted; branch name on stdout | refused under `SPIRA_AEON`; git or queue failure | suite/bead/reason missing or malformed, no such suite |
+| quarantine/disable/activate | change bead filed or handed, claimed; `spira/<bead>` created, committed and submitted; branch name on stdout | refused under `SPIRA_AEON`; filing, claim, git or queue failure; `spira/<bead>` already exists | suite/bead/reason missing or malformed, no such suite, `--change-bead` not a ref component |
 
 ### 2.3 Output (callers parse these)
 
@@ -164,7 +173,9 @@ empty rather than a fault).
 | `STATE/<suite>.result` | list, status | nothing any more (§7 F1) |
 | `STATE/<suite>.flakeobs` | observe-flake | observe-flake (append) |
 | `STATE/<suite>.maxage-mailed` | hygiene | hygiene (created after a sent mail) |
-| home repo: `refs/heads/spira-suite-state/<suite-sans-.sh>-<YYYYmmddTHHMMSSZ>` | — | transitions (created, never moved) |
+| home repo: `refs/heads/spira/<change-bead>` | — | transitions (created, never moved) |
+| beads store: the change bead | — | transitions without `--change-bead` (`bead.sh file`) |
+| spira_lifecycle: the change bead's row | — | transitions (lib.sh `lc_claim_bead`: READY row if absent, then Claim) |
 | home repo objects: one blob, one tree, one commit | — | transitions |
 
 Transitions build the commit **without a checkout** (§6 D2): the file at `<base>` is read
@@ -323,6 +334,8 @@ incident.sh, mail, host-check.sh and the queue (whole programs, §5).
 | `mail send operator --from … --subject … [--bead …]` | hygiene | body on stdin |
 | `host-check.sh --count-undeclared` / `--count-copying` | status | one number on stdout; 30 s wall |
 | `queue submit <branch>` | transitions | `queue submit`, by name on the launcher's PATH (sp-gypjk; formerly `$SPIRA_QUEUE_BIN`, a sibling of this binary, or `queue.sh`); stdout+stderr to our stderr |
+| `bead.sh file … --json` | transitions without `--change-bead` | `timeout 5 bead.sh`, by name on the launcher's PATH; the id is parsed from the JSON, never scanned from the noise |
+| lib.sh `lc_claim_bead <id> suites <lease>` | transitions | S2: `timeout 5 bash`, a fixed script on stdin then lib.sh's directory, the id, the holder and the lease, NUL-terminated; exit 0 claimed, 3 refused, 2 cannot tell |
 
 ## 6. Decisions (behaviour deliberately changed)
 
@@ -332,7 +345,7 @@ incident.sh, mail, host-check.sh and the queue (whole programs, §5).
   form on stdout: that *is* its output.)
 * **D2 — a transition never checks anything out.** suites.sh ran `git checkout -b` in the
   harness checkout (the production checkout, for Ops) and on success never switched back,
-  leaving that checkout's HEAD on `spira-suite-state/*` (test-queue-submit.sh runs
+  leaving that checkout's HEAD on its transition branch (test-queue-submit.sh runs
   `git checkout -q main` before every transition to undo exactly this). The commit is now built with
   plumbing on `<base>` (default: the landing ref, not whatever HEAD happened to be) in the
   home repository — the one `queue submit` resolves, so the branch is where the queue
