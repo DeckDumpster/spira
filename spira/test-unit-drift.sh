@@ -65,7 +65,7 @@ inst() {
     # A run dir, as every real install has: without one units-install now refuses rather than
     # render StandardOutput=append:/<name>.log (sp-xp0u2).
     env -i PATH="$FIXTURE/bin:$PATH" HOME="$TMP/home" \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_RUN="$TMP/home/run" \
         SPIRA_CONF=/nonexistent \
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
@@ -132,7 +132,7 @@ tinstall_write_dest "$DEST" "$rendered"
 
 skew_units() {
     env -i PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_RUN="$TMP/home/run" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$FIXTURE/spira" SPIRA_REPO="$FIXTURE" \
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
