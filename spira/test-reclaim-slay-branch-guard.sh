@@ -54,6 +54,14 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
 export SPIRA_REPO="$REPO"
+# THE HOME IS NAMED, NEVER INFERRED. slay and `sending destroy-branch` find lib.sh through
+# $SPIRA_HOME, else by walking up from their own canonical exe path. conf.sh sets SPIRA_HOME
+# but never exports it, so without this line the walk is all they have — and it only works
+# when the build target sits inside a checkout (a testenv slot). The gate builds into a
+# tmpfs target symlinked out of the tree, the walk finds no lib.sh, and slay reads that as
+# "no bead <id> — refusing to act" (exit 2) while destroy-branch dies with exit 2: red on
+# every tree, base included. test-sending.sh names SPIRA_HOME="$HERE" the same way.
+export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$TMP/no-such-conf"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 export SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
