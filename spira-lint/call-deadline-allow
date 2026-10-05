@@ -106,7 +106,6 @@
 1 spira-world/src/round.rs
 1 spira-world/src/seam.rs
 4 spira-world/src/sysctl.rs
-1 spira/acceptance-agent.sh
 7 spira/acceptance-ci.sh
 7 spira/acceptance-local.sh
 1 spira/acceptance-prev-tag.sh

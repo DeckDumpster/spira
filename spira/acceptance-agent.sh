@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # acceptance-agent.sh — deterministic stub for acceptance CI.
 # Set SPIRA_AGENT to this path. Replaces claude in aeon.sh: drains stdin
-# (the aeon prompt), commits acceptance-probe-<bead-id>.txt, closes the bead, and
+# (the aeon prompt), commits acceptance-probe-<bead-id>.txt, finishes the bead with
+# `work submit` exactly as the builder's {{FINISH}} brief tells a real model to, and
 # prints the minimal JSON result aeon.sh expects.
+#
+# IT RUNS IN THE MODEL'S RESTRICTED ENVIRONMENT AND MAY USE NOTHING A MODEL CANNOT. Under
+# lifecycle enforcement that environment has no bd, no SPIRA_DB and no release bin/ — PATH
+# holds model-bin/ (only `work`, sp-zf4q3) and every bead operation is a `work` verb
+# (sp-st0mm). The stub used to source conf.sh (which printed "spira-config not found on
+# PATH" and resolved nothing) and `bd close` via SPIRA_DB; it died on "SPIRA_DB: unbound
+# variable", so the probe bead cycled READY -> WORKING -> READY and never SUBMITTED
+# (local acceptance phases A and D, 2026-10-05).
 # covers: spira/aeon.sh
 set -uo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 cat >/dev/null  # drain the aeon prompt from stdin
 
@@ -17,10 +25,6 @@ if [ -z "${BEAD_ID:-}" ]; then
     exit 0
 fi
 
-# Source conf.sh to get SPIRA_DB (not exported by aeon.sh).
-unset SPIRA_CONF_LOADED
-. "$HERE/conf.sh"
-
 # aeon.sh cd'd to the worktree before invoking us; PWD is the worktree.
 # ONE FILE PER BEAD, WITH THE BEAD IN IT. A fixed empty acceptance-probe.txt was committed
 # once, in phase A, and phase D's bead (same scratch repo, surviving state) then had nothing
@@ -29,8 +33,10 @@ printf '%s\n' "$BEAD_ID" > "acceptance-probe-${BEAD_ID}.txt"
 git add "acceptance-probe-${BEAD_ID}.txt"
 git commit -m "${BEAD_ID}: acceptance probe"
 
-BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB}" close "${BEAD_ID}" \
-    --reason "Acceptance stub: proves sentinel→summon→claim→commit→land." \
-    >/dev/null 2>&1
+# The tip is read from this worktree's HEAD; the bead is the one `work` is bound to.
+if ! work submit; then
+    echo "acceptance-agent.sh: work submit failed for ${BEAD_ID}" >&2
+    exit 1
+fi
 
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":100,"num_turns":1,"total_cost_usd":0}\n'
