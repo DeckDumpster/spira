@@ -41,10 +41,14 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 RUN="$TMP/run"; mkdir -p "$RUN"
 # SP_POISON is the lifecycle machine's poison holds (sp-mve9i); this world's machine mirrors
 # the real store (spira-poison label → poison hold, closed → LANDED), read through real bd.
+# SP_READY is spira-claim's ready set (sp-7g5q6), the machine's READY/REWORK rows, and
+# spira-claim finds spira-lc by name on PATH (sp-gypjk), not through SPIRA_LC_BIN — so the
+# mirror goes first on PATH as well, or the count asks the tree's real spira-lc, which has no
+# machine here to answer, and renders ?.
 lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd-embedded}" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
