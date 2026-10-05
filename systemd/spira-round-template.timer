@@ -1,0 +1,14 @@
+[Unit]
+Description=Check every ten minutes whether the round VM template holds the landing ref's image
+
+[Timer]
+OnCalendar=*-*-* *:0/10:00
+AccuracySec=1min
+Persistent=true
+Unit=spira-round-template.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

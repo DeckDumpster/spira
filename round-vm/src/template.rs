@@ -1,6 +1,7 @@
 //! `round-vm template` (DESIGN.md §2.2b, sp-dvfea): a new round template whose test image
 //! is BUILT on the template, so the template keeps podman's layer cache and a later
-//! closure change rebuilds only the layers it touches. It never repoints `pve.env`.
+//! closure change rebuilds only the layers it touches. A finished build is recorded
+//! (`template.json`) and `pve.env` repointed at it by the caller, so no person types a VMID.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -11,11 +12,13 @@ use crate::provider::{boot, destroy_fenced, DestroyError, Provider, ProvisionSpe
 use crate::run::{shell_quote, SshRemote};
 
 pub const TEMPLATE_USAGE: &str =
-    "round-vm template: usage: round-vm template <tree-dir> [--toolchain <ver>]";
+    "round-vm template: usage: round-vm template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TemplateArgs {
     pub tree_dir: PathBuf,
+    /// The revision of `tree_dir` to build from; HEAD when absent.
+    pub rev: Option<String>,
     /// sp-xjnzl: the toolchain `rustup` must have installed on the template so a round can
     /// pin to it (`run --toolchain`) and match the host's own rustc byte-for-byte — sccache
     /// hashes the compiler's version string, so an unpinned "stable" drifting out of step
@@ -26,7 +29,7 @@ pub struct TemplateArgs {
 pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
     let mut it = args.iter();
     let tree = it.next().filter(|a| !a.starts_with("--")).ok_or(TEMPLATE_USAGE)?;
-    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), toolchain: None };
+    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), rev: None, toolchain: None };
     while let Some(a) = it.next() {
         let (key, inline) = match a.split_once('=') {
             Some((k, v)) if k.starts_with("--") => (k, Some(v.to_string())),
@@ -39,6 +42,10 @@ pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
             "--vmid" => {
                 return Err("round-vm template: --vmid is not accepted — the hypervisor assigns every VM id (/cluster/nextid)".into());
             }
+            "--ref" => {
+                let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --ref needs a value")?;
+                r.rev = Some(v).filter(|v| !v.is_empty());
+            }
             "--toolchain" => {
                 let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --toolchain needs a value")?;
                 r.toolchain = Some(v).filter(|v| !v.is_empty());
@@ -47,6 +54,68 @@ pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
         }
     }
     Ok(r)
+}
+
+/// What the current template holds, written only by a finished build: `<state>/template.json`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Record {
+    pub vmid: String,
+    pub image: String,
+}
+
+impl Record {
+    pub fn path(state_dir: &Path) -> PathBuf {
+        state_dir.join("template.json")
+    }
+
+    pub fn read(state_dir: &Path) -> Option<Record> {
+        serde_json::from_str(&std::fs::read_to_string(Self::path(state_dir)).ok()?).ok()
+    }
+
+    pub fn write(&self, state_dir: &Path) -> Result<(), String> {
+        let path = Self::path(state_dir);
+        let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+        let body = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// True when the image this template holds is the one named by `tag`.
+    pub fn holds(&self, tag: &str) -> bool {
+        self.image.rsplit(':').next() == Some(tag)
+    }
+}
+
+/// `text` with `key=value` set: the first assignment of `key` replaced in place, else appended.
+pub fn set_env_key(text: &str, key: &str, value: &str) -> String {
+    let mut done = false;
+    let mut out: Vec<String> = text
+        .lines()
+        .map(|l| {
+            let bare = l.trim().strip_prefix("export ").map(str::trim_start).unwrap_or(l.trim());
+            if !done && bare.split_once('=').map(|(k, _)| k.trim()) == Some(key) {
+                done = true;
+                format!("{key}={value}")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    if !done {
+        out.push(format!("{key}={value}"));
+    }
+    out.join("\n") + "\n"
+}
+
+/// Points `pve.env`'s PVE_TEMPLATE_VMID at `vmid`, atomically and keeping the file's mode.
+pub fn repoint(pve_env: &Path, vmid: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let text = std::fs::read_to_string(pve_env).map_err(|e| format!("{}: {e}", pve_env.display()))?;
+    let mode = std::fs::metadata(pve_env).map_err(|e| e.to_string())?.permissions().mode();
+    let tmp = pve_env.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&tmp, set_env_key(&text, "PVE_TEMPLATE_VMID", vmid)).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, pve_env).map_err(|e| format!("{}: {e}", pve_env.display()))
 }
 
 /// The name a template build gives its clone. Never `round-<vmid>`, so no acquire, release or
@@ -343,7 +412,7 @@ mod tests {
     fn args_take_a_tree_and_a_toolchain_and_refuse_a_chosen_vmid() {
         assert_eq!(
             parse_template_args(&s(&["/t"])).unwrap(),
-            TemplateArgs { tree_dir: "/t".into(), toolchain: None }
+            TemplateArgs { tree_dir: "/t".into(), rev: None, toolchain: None }
         );
         assert!(parse_template_args(&s(&["/t", "--vmid", "9120"])).unwrap_err().contains("hypervisor assigns"));
         assert!(parse_template_args(&s(&["/t", "--vmid=9121"])).unwrap_err().contains("hypervisor assigns"));
@@ -484,5 +553,48 @@ mod tests {
         assert!(!TEMPLATE_SCRIPT.contains("rustup toolchain install"), "rustup's own toolchain-install refuses on this template (measured: \"rustup is not installed at ...\") — never reintroduce it here");
         assert!(TEMPLATE_SCRIPT.contains("sccache\" --stop-server"), "the template never ships a running sccache server baked into its disk image");
         assert!(!TEMPLATE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    use crate::testutil::TempDir;
+
+    #[test]
+    fn set_env_key_replaces_in_place_and_appends_when_absent() {
+        let t = "A=1\n# c\nexport PVE_TEMPLATE_VMID=101\nB=2\n";
+        assert_eq!(set_env_key(t, "PVE_TEMPLATE_VMID", "130"), "A=1\n# c\nPVE_TEMPLATE_VMID=130\nB=2\n");
+        assert_eq!(set_env_key("A=1\n", "PVE_TEMPLATE_VMID", "130"), "A=1\nPVE_TEMPLATE_VMID=130\n");
+        assert_eq!(set_env_key("PVE_TEMPLATE_VMID_X=1\n", "PVE_TEMPLATE_VMID", "9"), "PVE_TEMPLATE_VMID_X=1\nPVE_TEMPLATE_VMID=9\n");
+    }
+
+    #[test]
+    fn repoint_rewrites_the_file_keeping_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = TempDir::new();
+        let f = d.path().join("pve.env");
+        std::fs::write(&f, "PVE_TOKEN_SECRET=s\nPVE_TEMPLATE_VMID=101\n").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        repoint(&f, "130").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "PVE_TOKEN_SECRET=s\nPVE_TEMPLATE_VMID=130\n");
+        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_record_round_trips_and_names_the_tag_it_holds() {
+        let d = TempDir::new();
+        assert!(Record::read(d.path()).is_none());
+        let r = Record { vmid: "130".into(), image: "localhost/spira-testenv:6b90b8194ee4".into() };
+        r.write(d.path()).unwrap();
+        assert_eq!(Record::read(d.path()), Some(r.clone()));
+        assert!(r.holds("6b90b8194ee4"));
+        assert!(!r.holds("deadbeef0000"));
+    }
+
+    #[test]
+    fn template_args_take_a_ref() {
+        let a = parse_template_args(&["/t".to_string(), "--ref".into(), "local/main".into()]).unwrap();
+        assert_eq!(a.rev.as_deref(), Some("local/main"));
     }
 }

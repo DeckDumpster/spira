@@ -216,11 +216,15 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.units.push(t("spira-cert-sweep-full.timer", true));
         m.units.push(t("spira-cert-sweep-sample.service", false));
         m.units.push(t("spira-cert-sweep-sample.timer", true));
+        m.units.push(t("spira-round-template.service", false));
+        m.units.push(t("spira-round-template.timer", true));
     } else {
         m.optional.push("spira-cert-sweep-full.service".into());
         m.optional.push("spira-cert-sweep-full.timer".into());
         m.optional.push("spira-cert-sweep-sample.service".into());
         m.optional.push("spira-cert-sweep-sample.timer".into());
+        m.optional.push("spira-round-template.service".into());
+        m.optional.push("spira-round-template.timer".into());
         m.notes.push("SPIRA_REPO is not a git checkout — not installing the cert-sweep units.".into());
         m.notes.push("Map a real harness checkout (SPIRA_REPO_MAP) and re-run install to enable continuous certification.".into());
     }
@@ -386,7 +390,7 @@ mod tests {
     /// before this bead, which installs them unconditionally.
     #[test]
     fn cert_sweep_units_are_installed_only_when_the_repo_is_a_git_checkout() {
-        let cert_sweep_names = ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer"];
+        let cert_sweep_names = ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "spira-round-template.service", "spira-round-template.timer"];
 
         let m = build(&inputs()).unwrap();
         for n in cert_sweep_names {

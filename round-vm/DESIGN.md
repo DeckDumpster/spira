@@ -149,8 +149,20 @@ podman's layer cache. A later closure change then rebuilds only the steps it tou
 equals the template's builds nothing. The cargo registry is warmed with the tree's
 `Cargo.lock` too.
 
-It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_VMID` in
+`round-vm template` **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_VMID` in
 `pve.env` is the operator's infrastructure change, and so is destroying the old template.
+
+**`round-vm refresh <tree-dir> --ref <rev>`** is the unattended form, run by
+`spira-round-template.timer`. It computes the image tag `<rev>` needs; if `<state>/template.json`
+records a template that holds it and `pve.env` names that template, it exits 0 having done
+nothing. Otherwise it builds a template as above, then — in this order — writes
+`template.json`, repoints `PVE_TEMPLATE_VMID` at the new id, and recycles the warm pool (the
+ready VM and any provision in flight were cloned from the old template; leased VMs finish).
+`round-vm run` reads `template.json` before acquiring a VM and exits 3 `TEMPLATE-STALE` when
+the recorded image is not the tree's; a record for a template `pve.env` no longer names is
+ignored. The VM-side `IMAGE-ABSENT` check remains the backstop. Every run reports
+`setup Ns, suites Ns` and `SETUP-SLOW` past `SPIRA_ROUND_VM_SETUP_ALARM_SECS` (default 180: a
+healthy warm round measured 108 s of setup, a cold image build 1314 s).
 
 1. Preflight (exit 2): `<tree-dir>` is a git checkout; `SPIRA_ROUND_VM_HOST_PUBKEY` and
    `SPIRA_ROUND_VM_HOST_KEY` are readable; `SPIRA_ROUND_VM_CACHE_HOME` is set (sp-xjnzl-2:
