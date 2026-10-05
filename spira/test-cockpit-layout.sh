@@ -74,7 +74,7 @@ FIXTURE_UP=1
 RUN="$TMP/run"; mkdir -p "$RUN"
 # This fixture never runs `layout.sh up`, so there is no `@cockpit` pane anywhere and
 # `ensure` would otherwise read that as the cockpit having crashed and try to rebuild it
-# from scratch (see test-cockpit-down-marker.sh) — noise this suite has no fixture for.
+# from scratch — noise this suite has no fixture for.
 # The down marker is what a real deliberate absence looks like, and is not what this test
 # is about, so mark it and let `ensure` skip past that branch.
 : > "$RUN/cockpit.down"
