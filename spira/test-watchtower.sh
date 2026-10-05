@@ -370,19 +370,33 @@ FAYTH_NAME=builder
 FAYTH_LABELS=plan
 FAYTH_EXCLUDE_LABELS=""
 FAYTH
+# READY WORK IS spira-claim's ANSWER (sp-860zj: bulk-ready-by-fayth asks the lifecycle for READY
+# rows and bd for their labels; the old SPIRA_READY_SNAPSHOT is read by nothing). Readiness itself
+# is spira-claim's subject, tested there; here a stub first on PATH answers bulk-ready-by-fayth
+# from a fixture file and hands every other verb to the real spira-claim. The watchtower's probe
+# sources $SPIRA_HOME/lib.sh, so the fixture home gets the real one.
+printf '. "%s/lib.sh"\n' "$HERE" > "$IWR_HOME/lib.sh"
+ln -sf "$HERE/conf.d" "$IWR_HOME/conf.d"
+IWR_BIN="$TMP/iwr-bin"; mkdir -p "$IWR_BIN"
+_iwr_real_claim="$(command -v spira-claim)"
+cat > "$IWR_BIN/spira-claim" <<STUB
+#!/usr/bin/env bash
+[ "\${1:-}" = bulk-ready-by-fayth ] && { cat "\$IWR_READY" 2>/dev/null; exit 0; }
+exec "$_iwr_real_claim" "\$@"
+STUB
+chmod +x "$IWR_BIN/spira-claim"
+iwr_ready_nonempty="$TMP/iwr-ready-nonempty.txt"
+printf 'builder 1\n' > "$iwr_ready_nonempty"
+iwr_ready_empty="$TMP/iwr-ready-empty.txt"
+: > "$iwr_ready_empty"
 
-iwr_ledger_idle5() {   # write 5 consecutive "awake builder idle" lines
-    : > "$TMP/run/aeon-ledger.log"
-    for i in 1 2 3 4 5; do
-        printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
-    done
-}
-iwr_ready_nonempty="$TMP/iwr-ready-nonempty.json"
-printf '[{"id":"sp-iwr1","status":"open","labels":["plan"]}]' > "$iwr_ready_nonempty"
-
-# The real spira-claim / lib.sh fixture, end to end; the other cases are collect::tests.
+# Five idle summons of a fayth that has ready work is the escalation; the other cases are
+# collect::tests.
 fresh
-iwr_ledger_idle5
+: > "$TMP/run/aeon-ledger.log"
+for i in 1 2 3 4 5; do
+    printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
+done
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
