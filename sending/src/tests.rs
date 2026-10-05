@@ -242,7 +242,7 @@ fn fixture() -> (Fx, Fake) {
 }
 
 fn opts() -> Opts {
-    Opts { dry: false, fetch: false, only: None, scope: Scope::All }
+    Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None }
 }
 
 fn repo(fx: &Fx) -> Repo {
@@ -250,7 +250,7 @@ fn repo(fx: &Fx) -> Repo {
 }
 
 fn sweep(f: &Fake, o: Opts, repos: &[Repo]) -> i32 {
-    let mut s = Sweep { w: f, opts: o, submitted_label: "spira-submitted".into(), tally: Default::default() };
+    let mut s = Sweep { w: f, opts: o, submitted_label: "spira-submitted".into(), tally: Default::default(), deadline: None, truncated: false };
     s.run(repos)
 }
 
@@ -497,4 +497,24 @@ fn the_store_is_read_in_one_batch_however_many_branches_there_are() {
     let prefetches = f.calls.borrow().iter().filter(|c| c.as_str() == "prefetch").count();
     assert_eq!(prefetches, 1, "one store read per repository, not per branch");
     assert!(n > 1);
+}
+
+#[test]
+fn a_spent_budget_stops_the_sweep_clean_and_leaves_the_rest() {
+    let (fx, f) = fixture();
+    let rc = sweep(&f, Opts { budget: Some(std::time::Duration::ZERO), ..opts() }, &[repo(&fx)]);
+    assert_eq!(rc, 0, "running out of time is not a failure");
+    assert!(!f.out().contains("SENT"), "nothing is judged once the budget is spent");
+    assert!(exists(&fx, "spira/sp-cl1"));
+    let rc = sweep(&f, Opts { budget: Some(std::time::Duration::from_secs(3600)), ..opts() }, &[repo(&fx)]);
+    assert_eq!(rc, 0);
+    assert!(f.out().contains("SENT sp-cl1"), "an ample budget sweeps as before");
+}
+
+#[test]
+fn budget_flag_parses() {
+    let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(crate::parse(&a(&["--budget-secs", "480"])).unwrap().0.budget, Some(std::time::Duration::from_secs(480)));
+    assert!(crate::parse(&a(&["--budget-secs", "soon"])).is_err());
+    assert!(crate::parse(&a(&["--budget-secs"])).is_err());
 }
