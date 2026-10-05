@@ -755,7 +755,43 @@ pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, file
     let listed = if files.is_empty() { "unknown".to_string() } else { files.join(", ") };
     let reason = format!("set aside for conflict with {} in {rounds} consecutive rounds; conflicting files: {listed}", repo.base);
     bead_reopen(env, id, "rebase-conflict", &format!("spira/{id} was {reason} — withdrawn by the batcher for rebase."));
+    lc_withdraw(env, id);
     conflict_streak_clear(env, id);
+}
+
+/// Takes a member the batcher withdraws out of CERTIFIED on the lifecycle machine (sp-mve9i).
+/// The pool is the machine's CERTIFIED rows alone — bd's reopen no longer keeps a withdrawn
+/// member out of the next round — so the withdrawal is the machine's too, by queue eject's
+/// own route: `Deliver`, then `Returned(batch-ejected)`, to REWORK, where the builder's next
+/// submit starts a fresh trial. A member not CERTIFIED there (resubmitted since, already
+/// returned) is left alone; a refusal is said on stderr and never blocks the round.
+pub fn lc_withdraw(env: &Env, id: &str) {
+    let fail = |why: String| eprintln!("batcher: LIFECYCLE: {id} not returned to REWORK on spira-lc: {why}");
+    let row = match lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o)) {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return fail(format!("show: unparsed reply: {e}")),
+        Err(e) => return fail(format!("show: {e}")),
+    };
+    let bead = row.get("bead").cloned().unwrap_or_default();
+    let mut state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let Some(mut version) = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))) else {
+        return fail("show: no version".into());
+    };
+    if state == "CERTIFIED" {
+        let v = version.to_string();
+        if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "CERTIFIED", "--version", &v, "--actor", "batcher", "--kind", "\"Deliver\""]) {
+            return fail(format!("Deliver: {e}"));
+        }
+        state = "IN_DELIVERY".into();
+        version += 1;
+    }
+    if state != "IN_DELIVERY" {
+        return;
+    }
+    let v = version.to_string();
+    if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "IN_DELIVERY", "--version", &v, "--actor", "batcher", "--kind", "{\"Returned\":{\"reason\":\"batch-ejected\"}}"]) {
+        fail(format!("Returned: {e}"));
+    }
 }
 
 /// Suites present at `member_tip` but gone from `base_sha` — reported only for a member set
@@ -1011,8 +1047,8 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
     }
 }
 
-/// Eject one member from the round before it ever reaches CI: reopen its bead (which, being
-/// CERTIFIED, withdraws that certification — bead_reopen's own contract) with a note naming
+/// Eject one member from the round before it ever reaches CI: reopen its bead and withdraw its
+/// certification on the lifecycle machine ([`lc_withdraw`]) with a note naming
 /// every suite it turned red, with a distinct cause so census can tell a local ejection from a CI one. `queue-eject-local` is a distinct reopen cause from the retired verdict.sh's `queue-eject`,
 /// so census.sh can tell the two apart.
 ///
@@ -1027,6 +1063,7 @@ pub fn eject_member(env: &Env, repo_name: &str, id: &str, suites: &[String], fir
         first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
     let _ = lib_call(env, "bead_reopen", [id, "queue-eject-local", note.as_str(), suites_csv.as_str()]);
+    lc_withdraw(env, id);
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(env.run.join("landing.log")) {
         use std::io::Write;
         let _ = writeln!(f, "QUEUE LOCAL-EJECT {} repo={repo_name} id={id} suites={suites_csv}", now());
@@ -2234,6 +2271,69 @@ mod eject_tests {
         assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
         assert!(lines[0][3].contains("test-a.sh: FAIL widget"), "the reason names the suite's first FAIL line: {}", lines[0][3]);
         let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod lc_withdraw_tests {
+    use super::*;
+
+    /// A spira-lc stand-in whose `show` answers the given state at version 4 and whose
+    /// `event` calls are logged, one argv per line.
+    fn lc_stub(d: &Path, state: &str) -> PathBuf {
+        let log = d.join("lc-calls");
+        let bin = d.join("spira-lc");
+        testkit::write_exe(
+            &bin,
+            &format!(
+                "#!/bin/bash\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"bead_id\":\"'$2'\",\"state\":\"{state}\",\"version\":4}}}}' ;; esac\nexit 0\n",
+                log.display()
+            ),
+        );
+        bin
+    }
+
+    /// sp-mve9i: membership is the machine's CERTIFIED state alone, so a member the batcher
+    /// withdraws (reopened for rebase after consecutive base conflicts, or ejected by local
+    /// attribution) must leave CERTIFIED on the machine too — bd's reopen no longer keeps it
+    /// out of the next round. The machine's route is queue eject's: Deliver, then
+    /// Returned(batch-ejected), to REWORK.
+    #[test]
+    fn a_withdrawn_or_ejected_member_is_returned_to_rework_on_the_machine() {
+        for (tag, eject) in [("conflict", false), ("eject", true)] {
+            let d = testkit::TempDir::new(&format!("batcher-cut-lcw-{tag}"));
+            fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
+            let mut e = super::lifecycle_tests_env(&d);
+            e.lc_bin = Some(lc_stub(&d, "CERTIFIED"));
+            if eject {
+                eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[]);
+            } else {
+                let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
+                withdraw_for_conflict(&e, &repo, "sp-a", 2, &["x.rs".into()]);
+            }
+            let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
+            assert!(
+                calls.contains("event bead sp-a --expect CERTIFIED --version 4 --actor batcher --kind \"Deliver\""),
+                "{tag}: {calls}"
+            );
+            assert!(
+                calls.contains("event bead sp-a --expect IN_DELIVERY --version 5 --actor batcher --kind {\"Returned\":{\"reason\":\"batch-ejected\"}}"),
+                "{tag}: {calls}"
+            );
+        }
+    }
+
+    /// A member the machine no longer holds CERTIFIED (resubmitted since, or already
+    /// returned) is left alone: nothing to withdraw.
+    #[test]
+    fn a_member_not_certified_on_the_machine_is_not_touched() {
+        let d = testkit::TempDir::new("batcher-cut-lcw-rework");
+        fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
+        let mut e = super::lifecycle_tests_env(&d);
+        e.lc_bin = Some(lc_stub(&d, "REWORK"));
+        eject_member(&e, "spira", "sp-a", &[], &[]);
+        let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
+        assert!(!calls.contains("event "), "{calls}");
     }
 }
 
