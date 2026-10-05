@@ -676,8 +676,7 @@ impl Lc for RealLc {
         if rc != 0 {
             return Err((rc, out.trim().to_string()));
         }
-        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or(serde_json::Value::Null);
-        Ok(json_str(&v, "version").unwrap_or_default())
+        Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
     }
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["abandon-batch", batch_id, "--expect", state, "--version", version, "--actor", actor, "--reason", reason]);
