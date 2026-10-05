@@ -116,7 +116,12 @@ is     "SEEN GREEN (c): no mailbox created"  "" \
 # ==========================================================================
 # (d) mailbox created while the aeon runs, removed after the aeon exits
 # ==========================================================================
-fixture_beads closed closed   # out of (d)'s way: its stub agent works the first in_progress bead
+# Out of (d)'s way — its stub agent works the first in_progress bead. The fixture rows are
+# removed outright (test cleanup, not a lifecycle transition): a re-seed as closed loses to
+# the amend's own newer updated_at, and the upsert is skipped.
+bdq delete sp-amend2 sp-amend3 --force >/dev/null 2>&1
+is "the amend fixtures are gone before (d)" "" \
+    "$(bdq list --json 2>/dev/null | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; print(" ".join(x["id"] for x in r if x["id"] in ("sp-amend2","sp-amend3")))' 2>/dev/null)"
 
 echo
 echo "(d) mailbox seen during the run, then gone after the aeon exits"
