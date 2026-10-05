@@ -139,6 +139,14 @@ git init -q -b main "$LREPO"
 git -C "$LREPO" config user.email t@t; git -C "$LREPO" config user.name t
 git -C "$LREPO" remote add origin "$TMP/unused.git"
 git -C "$LREPO" commit -q --allow-empty -m base
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): drift.sh asks `spira-lc state <bead>`.
+# The stub answers from $LCSTATE/<id> (no file: SUBMITTED, known and not landed).
+LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE" "$TMP/lcbin"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
+    "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
+chmod +x "$TMP/lcbin/spira-lc"
+PATH="$TMP/lcbin:$PATH"
+
 land_base() {
     git -C "$LREPO" update-ref refs/remotes/origin/main HEAD
     git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
@@ -179,8 +187,7 @@ want "undeclared file: marked UNSHIPPED" "UNSHIPPED" "$out"
 nowant "undeclared file: declared ones still accepted" "refuse-manual-stop" "$out"
 rm -f "$UNITDIR/test-stray.service"
 
-git -C "$LREPO" commit -q --allow-empty -m "spira: land sp-local-guard"
-land_base
+echo LANDED > "$LCSTATE/sp-local-guard"
 out="$(ldrift)"; rc=$?
 is "declared override whose bead landed: exits 1" "1" "$rc"
 want "landed bead: marked RETIRE-NOW" "RETIRE-NOW" "$out"

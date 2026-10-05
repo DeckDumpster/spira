@@ -212,8 +212,16 @@ git init -q "$FIXTURE_REPO" \
        GIT_COMMITTER_EMAIL=t@t \
        git -C "$FIXTURE_REPO" commit --allow-empty -q -m "initial" 2>/dev/null
 
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): census asks `spira-lc state <id>`.
+# The stub answers from $LCSTATE/<id> (a bead with no file is SUBMITTED: known, not landed).
+LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
+    "$LCSTATE" "$LCSTATE" > "$TMP/spira-lc-stub"
+chmod +x "$TMP/spira-lc-stub"
+
 run_census_fixture() {
     env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
@@ -232,12 +240,9 @@ lack "closed-unlanded: still suppressed" "sp-recur-remedy-class" "$out5_pre"
 want "closed-unlanded: annotated [suppressed: remedy closed, not landed]" \
     "[suppressed: remedy closed, not landed]" "$(run_census_fixture --with-suppressed)"
 
-# Land the remedy: a landing-record commit naming the bead on the base. landed() trusts
-# only two subject shapes (law-a-matcher-reads-code-not-prose / sp-dgaig); a
-# cross-reference like "fix: <id> closes <class>" is a mention, not a landing record.
-GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
-    git -C "$FIXTURE_REPO" commit --allow-empty -q \
-    -m "spira: land $remedy_id" 2>/dev/null
+# Land the remedy: its lifecycle record reaches LANDED (a commit subject alone no longer
+# counts — the record is the one answer, sp-oqf8c).
+echo LANDED > "$LCSTATE/$remedy_id"
 
 out5="$(run_census_fixture)"
 want "landed: class reappears" "sp-recur-remedy-class" "$out5"

@@ -157,7 +157,10 @@ impl World for Real {
     }
     fn landed(&self, id: &str) -> i32 {
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let out = Command::new("spira-lc").args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        // SPIRA_LC_BIN (cockpit-collect's and queue-watch's own override) lets a suite pin the
+        // record; nothing sets it in production, where spira-lc is found on PATH.
+        let bin = std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into());
+        let out = Command::new(bin).args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => i32::from(String::from_utf8_lossy(&o.stdout).trim() != "LANDED"),
             _ => 2,
