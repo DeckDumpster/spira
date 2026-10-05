@@ -169,9 +169,9 @@ cat > "$FA_BIN/claude" <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 _bd="${SPIRA_BD:-bd}"
-id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+# The bound bead is BEAD_ID, from the aeon: since sp-v62vn the claim is the lifecycle
+# row's, and bd's status no longer reads in_progress for it.
+id="${BEAD_ID:-}"
 if [ -n "$id" ]; then
     BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" create \
         "Operator question about $id" \
@@ -210,9 +210,9 @@ cat > "$FA_BIN/claude" <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 _bd="${SPIRA_BD:-bd}"
-id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+# The bound bead is BEAD_ID, from the aeon: since sp-v62vn the claim is the lifecycle
+# row's, and bd's status no longer reads in_progress for it.
+id="${BEAD_ID:-}"
 if [ -n "$id" ]; then
     # COMMITS (sp-1zxru): this row proves the own-closeout ask is not a decision-blocker,
     # which needs the session to reach the real unlanded/charged path to show — a session
@@ -308,9 +308,9 @@ cat > "$FA_BIN/claude" <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 _bd="${SPIRA_BD:-bd}"
-id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+# The bound bead is BEAD_ID, from the aeon: since sp-v62vn the claim is the lifecycle
+# row's, and bd's status no longer reads in_progress for it.
+id="${BEAD_ID:-}"
 if [ -n "$id" ]; then
     printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
     git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
@@ -497,9 +497,7 @@ cat > "$FA_BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 cat /dev/stdin > /dev/null 2>&1
-id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+id="${BEAD_ID:-}"   # the bound bead (sp-v62vn: bd status no longer reads in_progress)
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
 BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
@@ -541,9 +539,7 @@ cat > "$FA_BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 cat /dev/stdin > /dev/null 2>&1
-id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+id="${BEAD_ID:-}"   # the bound bead (sp-v62vn: bd status no longer reads in_progress)
 BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "graph-only: dependency re-pointed, nothing to commit" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
