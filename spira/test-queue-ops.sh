@@ -172,7 +172,7 @@ st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
 # NOT bd reopen ANY MORE (sp-rlyl0): a batch member's eject is a lifecycle Returned event
 # now, not a bd write — the stub records no bd argv for it at all.
 nowant "bd reopen is no longer called for an in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
-want   "lifecycle on: the eject is a spira-lc Returned event (the caller verb, sp-arpjt)" "returned sp-ej01" "$(cat "$LCSTUB_LOG")"
+want   "lifecycle on: the eject is a spira-lc Returned event (the caller verb, sp-arpjt)" "event bead sp-ej01" "$(cat "$LCSTUB_LOG")"
 
 echo
 echo "eject: lifecycle_enforce OFF (the default) — an in-batch eject hands the bead back through bd:"
