@@ -87,7 +87,8 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    /// --summon-only: the gate, the live count, ONE bd ready (spira-claim's), then CHECK 7.
+    /// --summon-only: the gate, the live count, the machine's ready set (spira-claim's), then
+    /// CHECK 7 — no `bd ready` call (sp-v62vn).
     pub fn summon_only(&self) -> i32 {
         // S1 — the world (halt/drain), checked once here as a fast exit ahead of every
         // other cost `summon_fayth` would otherwise pay per fayth; each `summon_fayth`
@@ -116,9 +117,9 @@ impl<'a> Sentinel<'a> {
             "summon-only: live={live} fayths=[{}]",
             self.cfg.fayths_str
         ));
-        // ONE bd ready: spira-claim's own, inside bulk-ready-by-fayth. Since sp-uqrdn the
-        // sentinel no longer counts from bd itself, so fetching the ready set here as well
-        // was a second, unused call (test-summon-fast-path D, round r-cutover-15).
+        // The ready set is spira-claim's, inside bulk-ready-by-fayth: the machine's READY rows,
+        // never a bd ready query (sp-uqrdn stopped the sentinel's own; sp-v62vn retired
+        // spira-claim's). test-summon-fast-path D asserts zero.
         self.export_ready_cache();
         self.ck7_summon_pass();
         crate::temps::cleanup_under(&self.cfg.run);

@@ -422,8 +422,9 @@ pass writes them. The audit worker writes none: the old one crashed with
 
 1. S1 (the world gate and capacity, with the same `summon-only: …` lines).
 2. `live` summed over the fayths, logged as `summon-only: live=<n> fayths=[…]`.
-3. One `bd ready` (raw), bucketed into the ready cache in-process (the port of
-   ready-bucket.py).
+3. The ready cache, from `spira-claim bulk-ready-by-fayth`: the lifecycle machine's
+   READY/REWORK rows, bucketed per fayth. No `bd ready` call at all — neither the
+   sentinel's nor spira-claim's (sp-v62vn); bd is read only for those beads' content.
 4. S2 (`ck7_summon_pass`).
 5. Log `summon-only pass complete — <a> action(s)` and exit 0.
 
