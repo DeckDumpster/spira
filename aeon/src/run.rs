@@ -1231,7 +1231,11 @@ pub fn aeon_settings(home: &Path) -> String {
     }
     let mut hooks = format!("\"PostToolUse\": [{{\"hooks\": [{}]}}]", post.join(", "));
     let mut pre = Vec::new();
-    for p in [home.join("hooks").join("aeon-fence.sh"), home.join("bd-close-unacked-guard.sh")] {
+    for p in [
+        home.join("hooks").join("aeon-fence.sh"),
+        home.join("bd-close-unacked-guard.sh"),
+        home.join("script-running-guard.sh"),
+    ] {
         if is_executable(&p) {
             pre.push(hook(&p));
         }
