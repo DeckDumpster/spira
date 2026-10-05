@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-aeon-eviction-race.sh — a bead closed while its landstate carries a live batch-
-#   eviction record is reopened; a gate-red, a stale tip or a record past the reopen cap is
-#   not. The pure decision (reopen/stale/cap/none) is aeon::decide::eviction_reopen
+# test-aeon-eviction-race.sh — a bead closed in bd while its lifecycle row carries a live
+#   batch eviction is not taken as closed: since sp-mve9i the aeon reads the close from the
+#   row (REWORK), so the race below has nothing left to reopen. (History follows.) The pure decision (reopen/stale/cap/none) is aeon::decide::eviction_reopen
 #   (aeon/src/decide.rs) — eviction_reopen (lib.sh) retired dead (sp-j89pd, wave 4.2: zero
 #   live callers); its T1 table is deleted with it. aeon's own block is only the side
 #   effects (idempotence sidecar, the reopen/escalate calls), proved below by T3.
@@ -123,11 +123,17 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 notes() { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 
+# THE RACE IS GONE WITH bd STATUS (sp-mve9i, design §3.4). The aeon reads its bead's close
+# from the lifecycle row, never bd status. An evicted builder's bd close is inert: the row
+# stays REWORK (the machine refuses a submit from a holder it no longer has), so the aeon
+# never takes that close as the builder's, never converts it to submitted, and has nothing to
+# reopen — the bead re-enters dispatch from its REWORK row. What the original defect lost
+# (the work stranded behind a close) cannot happen, and this run proves the aeon reads the
+# row: the same story that used to need the eviction-race reopen now needs none.
 testdb_reset; seed sp-er-1
 run_aeon
-is   "bead is open after eviction-race detection"     open "$(field sp-er-1 status)"
-is   "and the claim is released"                       ""   "$(field sp-er-1 assignee)"
-want "aeon log shows eviction-race reopen"             "REOPENED — closed with lifecycle state=REWORK" "$(cat "$TMP/out")"
-want "and the reopen note names the cause"             "eviction-race" "$(notes sp-er-1)"
+want   "the aeon reads the evicted bead's state from its row (REWORK: open), not bd's closed" "sp-er-1 status=open" "$(cat "$TMP/out")"
+nowant "so the bd close is never converted to submitted"  "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" "$(field sp-er-1 labels)"
+nowant "and there is no stale close for the eviction-race guard to reopen" "REOPENED — closed with lifecycle state" "$(cat "$TMP/out")"
 
 tl_summary
