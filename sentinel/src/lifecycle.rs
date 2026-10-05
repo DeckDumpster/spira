@@ -142,24 +142,25 @@ pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
         .collect()
 }
 
-/// Ready work beads with no `spira_lifecycle` row: they can never be claimed. The ready
-/// set (`bd ready`) is where a bead that missed its row at creation shows the harm, so it
-/// is the set searched — never bd `status`, which is inert for work beads (design §3.4,
-/// sp-mve9i): a rowless bead bd calls closed is not backfilled to READY and claimed.
+/// Open work beads with no `spira_lifecycle` row: they can never be claimed.
 ///
-/// The CHECK5-LC shapes (landed-but-open, closed-unlanded, blocked-by-unlanded) are gone
-/// with this: each was a disagreement between bd `status` and the lifecycle row, and with
-/// bd status inert there is nothing for the row to disagree with.
+/// NAMED EXCEPTION to lifecycle-guard's bd-status-read rule (lifecycle-guard/DESIGN.md,
+/// "The rowless controls"; the Concierge's ruling on sp-mve9i): this is the positive control
+/// for "no bead is rowless". A bead with no lifecycle row has no state but bd's, so the only
+/// way to find one is to ask bd which beads it considers live and look for each in the
+/// machine — reading bd status here audits the machine's coverage, it decides nothing about
+/// a bead the machine holds. The rule names this function; nothing else may do this.
+///
+/// The CHECK5-LC shapes (landed-but-open, closed-unlanded, blocked-by-unlanded) are gone:
+/// each was a disagreement between bd `status` and the lifecycle row, and with bd status
+/// inert for work beads (design §3.4, sp-mve9i) there is nothing for the row to disagree with.
 pub fn rowless(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<String> {
     let have: HashSet<&str> = rows.iter().map(|r| r.bead_id.as_str()).collect();
-    let mut seen = HashSet::new();
-    snap.ready
-        .as_deref()
-        .unwrap_or_default()
+    snap.list
         .iter()
+        .filter(|b| matches!(b.status.as_str(), "open" | "in_progress"))
         .filter(|b| work_types.iter().any(|t| t == b.typ()))
         .filter(|b| !have.contains(b.id.as_str()))
-        .filter(|b| seen.insert(b.id.clone()))
         .map(|b| b.id.clone())
         .collect()
 }
@@ -650,19 +651,17 @@ mod tests {
         vec!["task".into(), "bug".into(), "feature".into()]
     }
 
-    /// sp-mve9i: the rowless search is the ready set, never bd status. c is closed in bd
-    /// and rowless — not backfilled (a READY row would make it claimable); r is in the ready
-    /// set and rowless — backfilled whatever bd's status says; an epic is not work.
+    /// The rowless control (a named exception, see `rowless`): open and in-progress work
+    /// beads bd holds with no lifecycle row; a closed bead or an epic is not one.
     #[test]
-    fn rowless_flags_ready_work_beads_with_no_row_and_never_reads_bd_status() {
+    fn rowless_flags_live_work_beads_with_no_row() {
         let s = Snapshot::from_json(
             r#"[{"id":"a","status":"open","issue_type":"task"},{"id":"c","status":"closed","issue_type":"task"},
-                {"id":"r","status":"closed","issue_type":"task"},{"id":"g","status":"open","issue_type":"epic"}]"#,
-            Some(r#"[{"id":"a","issue_type":"task"},{"id":"r","issue_type":"task"},{"id":"g","issue_type":"epic"}]"#),
+                {"id":"r","status":"in_progress","issue_type":"task"},{"id":"g","status":"open","issue_type":"epic"}]"#,
+            None,
         );
         let rows = vec![lc5_row("a", "READY")];
         assert_eq!(rowless(&s, &rows, &wt()), vec!["r"]);
         assert!(rowless(&s, &[lc5_row("a", "READY"), lc5_row("r", "READY")], &wt()).is_empty());
-        assert!(rowless(&Snapshot::from_json("[]", None), &[], &wt()).is_empty(), "no ready read: nothing decided");
     }
 }

@@ -142,7 +142,7 @@ fn gate_verdict(scanned: usize, findings: &[Finding]) -> ExitCode {
          bead-lifecycle-state-machine §3.6(3)), and this gate has no allow-list. Exits: (1) read \
          or change the state through spira-lc (show / list / state / the lifecycle verbs; from Rust, \
          spira_config::lc_state) instead, or for a bead that is not a work bead (an ask, alert, \
-         incident, epic) read its bd status through spira_config::nonwork, naming its kind; \
+         insight, epic) read its bd status through spira_config::nonwork, naming its kind; \
          (2) if the analyser is wrong, correct its rule in lifecycle-guard/ on this branch — the \
          tree owns its gate, so the branch is judged by the rule it carries; (3) to land without \
          a certificate, an operator sets SPIRA_LAND_UNGATED=<reason> (queue/DESIGN.md D12).",

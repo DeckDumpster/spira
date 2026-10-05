@@ -24,7 +24,7 @@
 //! file, or what follows a `#[cfg(test)]` module header) decides nothing in production; the
 //! `lifecycle` crate is the machine; and spira-lc's `bd_facts.rs` is the one-time migration
 //! classifier's reader of bd (design §4), which seeds the machine from bd once and goes with
-//! the classifier. A bead that is not a work bead — an ask, an alert, an incident, an epic —
+//! the classifier. A bead that is not a work bead — an ask, an alert, an insight, an epic —
 //! has no lifecycle row, and its bd status is its only state; a decision over those names
 //! the kind it reads through `spira_config::nonwork` (spira-config/src/nonwork.rs), whose one module is the
 //! scope that carries bd status for non-work beads.
@@ -123,6 +123,16 @@ fn compares_status(r: &Res, n: &str) -> bool {
     false
 }
 
+/// The rowless controls — the rule's two NAMED exceptions (DESIGN.md "The rowless
+/// controls", the Concierge's ruling on sp-mve9i): `(file, function)`. Each is the positive
+/// control for "no bead is rowless": a bead with no lifecycle row has no state but bd's, so
+/// finding one means asking bd which beads it considers live and looking for each in the
+/// machine. That read audits the machine's coverage; it decides nothing about a bead the
+/// machine holds. Named here, by file and function, and argued at each definition — not an
+/// allow-list file, and a third entry is a design change, not a configuration.
+pub const ROWLESS_CONTROLS: &[(&str, &str)] =
+    &[("sentinel/src/lifecycle.rs", "rowless"), ("watchtower/src/probes.rs", "rowless_beads")];
+
 /// Test code decides nothing in production: a file under a `tests/` directory, or named
 /// `tests.rs` / `*_tests.rs`.
 fn is_test_file(rel: &str) -> bool {
@@ -187,14 +197,28 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
     // The status-named `match` heads still open: (brace depth at the head, line).
     let mut depth: i64 = 0;
     let mut heads: Vec<i64> = Vec::new();
+    let controls: Vec<&str> = ROWLESS_CONTROLS.iter().filter(|(f, _)| *f == rel).map(|(_, n)| *n).collect();
+    // Inside a rowless control: the brace depth its `fn` line opened from.
+    let mut control: Option<i64> = None;
     for (idx, n) in lines.iter().enumerate() {
         if n.trim_start().starts_with("#[cfg(test)]")
             && lines.get(idx + 1).is_some_and(|l| l.trim_start().starts_with("mod ") || l.contains(" mod "))
         {
             break;
         }
+        if control.is_none()
+            && controls.iter().any(|name| {
+                n.split("fn ").skip(1).any(|rest| rest.starts_with(name) && rest[name.len()..].trim_start().starts_with(['(', '<']))
+            })
+        {
+            control = Some(depth);
+        }
+        let in_control = control.is_some();
         let has_status = r.status_tok.is_match(n);
         let mut push = |shape: &str, detail: String| {
+            if in_control {
+                return;
+            }
             out.push(Finding {
                 class: Class::BdStatusRead,
                 file: rel.to_string(),
@@ -224,6 +248,9 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
             heads.push(depth);
         }
         depth += opens - closes;
+        if control.is_some_and(|d| depth <= d && opens + closes > 0) {
+            control = None;
+        }
         while heads.last().is_some_and(|&d| depth <= d) {
             heads.pop();
         }
@@ -302,6 +329,22 @@ mod tests {
 }
 "#;
         assert_eq!(shapes(src), vec![(3, "match".into())]);
+    }
+
+    /// The rowless controls are exempt by file and function, and only there: the same body
+    /// in another function, or in another file, is a finding.
+    #[test]
+    fn the_rowless_controls_are_named_exceptions_and_nothing_else_is() {
+        let body = |name: &str| {
+            format!(
+                "pub fn {name}(snap: &Snapshot) -> Vec<String> {{\n    snap.list.iter().filter(|b| matches!(b.status.as_str(), \"open\" | \"in_progress\")).map(|b| b.id.clone()).collect()\n}}\nfn after(b: &Bead) -> bool {{ b.status == \"closed\" }}\n"
+            )
+        };
+        let lines = |rel: &str, name: &str| scan_text(rel, &body(name)).into_iter().map(|f| f.line).collect::<Vec<_>>();
+        assert_eq!(lines("sentinel/src/lifecycle.rs", "rowless"), vec![4], "the control is exempt, the fn after it is not");
+        assert_eq!(lines("watchtower/src/probes.rs", "rowless_beads"), vec![4]);
+        assert_eq!(lines("sentinel/src/lifecycle.rs", "rowless_too"), vec![2, 4], "a name that only starts the same");
+        assert_eq!(lines("sentinel/src/store.rs", "rowless"), vec![2, 4], "the same name in another file");
     }
 
     #[test]
