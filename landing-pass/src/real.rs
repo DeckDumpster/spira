@@ -498,8 +498,11 @@ impl<'a> Lib for RealLib<'a> {
     fn closeout(&self, id: &str, sha: &str, repo: &Path) {
         run_bin(self.seam.out, "gh-intake", &["closeout", id, sha, &p(repo)]);
     }
+    /// lib.sh `bead_close_on_land` — ported natively (sp-81t4d, "wave 4.17": family R; was
+    /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
     fn close_on_land(&self, id: &str, sha: &str) {
-        run_bin(self.seam.out, "spira-lc", &["close-on-land", id, sha]);
+        let row = self.beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
+        crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.run, &self.s.home, &self.s.submitted_label, row.as_ref(), id, sha);
     }
     fn prune_worktrees(&self, repo: &Path) {
         self.seam.call(Op::PruneWorktrees, &[&p(repo)]);
@@ -768,6 +771,17 @@ impl Git for RealGit {
         c.args(["rev-list", "--count", range]);
         git_out(c).and_then(|s| s.trim().parse().ok())
     }
+    /// lib.sh `landed`/`landed_sha`'s one search: `--grep` only narrows to candidates; the
+    /// subject is what `land_verify::landed` trusts (law-a-matcher-reads-code-not-prose).
+    fn log_grep(&self, repo: &Path, grep: &str, refs: &[String]) -> Option<String> {
+        if refs.is_empty() {
+            return None;
+        }
+        let mut c = git(repo);
+        c.args(["log", "--format=%H%x09%s", &format!("--grep={grep}"), "-F"]);
+        c.args(refs);
+        git_out(c)
+    }
     fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String> {
         let mut c = git(repo);
         c.args(["merge-base", a, b]);
@@ -780,6 +794,11 @@ impl Git for RealGit {
             c.arg("--");
             c.args(paths);
         }
+        git_out(c)
+    }
+    fn commit_body(&self, repo: &Path, sha: &str) -> Option<String> {
+        let mut c = git(repo);
+        c.args(["log", "-1", "--format=%B", &format!("{sha}^{{commit}}")]);
         git_out(c)
     }
     fn fetch(&self, repo: &Path, remote: &str) {

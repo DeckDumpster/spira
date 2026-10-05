@@ -2436,6 +2436,14 @@ bead_is_decision_type() {
     esac
 }
 
+# bead_close_on_land <bead-id> <landed-sha> — close a submitted work bead whose work landed,
+# citing the sha, and reap its branch (`spira-lc close-on-land`; best-effort, always 0). Kept
+# only because the queue crate's seam still types this name (sp-du6dl moves it); every other
+# caller reaches spira-lc directly. Not the landing pass's subcommand any more (sp-oqf8c.3).
+bead_close_on_land() {
+    spira-lc close-on-land "$1" "${2:-}" || true
+}
+
 # _gh_close_ask_unblock/gh_issue_ask_unlanded/_gh_resolve_stale_asks/_gh_unlanded_scan
 # retired (sp-j3fim, wave 4.31, family AB): ported natively into gh-intake/src/closeout.rs
 # as gh_close_ask_unblock/gh_issue_ask_unlanded/gh_resolve_stale_asks/gh_unlanded_scan.

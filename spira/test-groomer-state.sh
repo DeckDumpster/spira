@@ -25,7 +25,7 @@
 #   4. FALSE BLOCKER — an open bead that depends (type=blocks) on the conflict-case bead
 #      above is noted once that blocker is reopened.
 #
-# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): landed()/content_landed()
+# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): landed()/spira-lc content-landed
 # read git ancestry and merge-tree, which a stub cannot stand in for without becoming a
 # second implementation of git.
 #

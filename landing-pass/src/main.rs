@@ -58,11 +58,14 @@ fn main() -> ExitCode {
         Cmd::AskRebaseLoop(args) => ask_rebase_loop_cmd(&args),
         Cmd::Mark { id, state, tip, reason, extra } => mark_cmd(&id, &state, &tip, &reason, &extra),
         Cmd::State { id } => state_cmd(&id),
+        Cmd::Landed { id, repo } => landed_cmd(&id, &repo),
         Cmd::LandSubject { id } => land_subject_cmd(&id),
         Cmd::PrMerged { repo, branch } => pr_merged_cmd(&repo, &branch),
         Cmd::ConflictNote(args) => conflict_note_cmd(&args),
         Cmd::OtherBeads { repo, branch, base, files } => other_beads_cmd(&repo, &branch, &base, &files),
         Cmd::IsWorkType { ty } => is_work_type_cmd(&ty),
+        Cmd::CitedCommit { id, repo, base } => cited_commit_cmd(&id, &repo, &base),
+        Cmd::CloseOnLand { id, sha } => close_on_land_cmd(&id, &sha),
     };
     ExitCode::from(code as u8)
 }
@@ -506,6 +509,27 @@ fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
     })
 }
 
+/// `landing-pass landed <id> <repo>`: lib.sh `landed`/`landed_sha` alone. Prints the
+/// landing sha on a found exit; exit 1 not found; exit 2 cannot tell (an unresolvable land
+/// ref, OR `$SPIRA_HOME` itself could not be resolved — both are the same named refusal,
+/// never folded into "not landed").
+fn landed_cmd(id: &str, repo: &str) -> i32 {
+    let Ok(home) = resolve_home() else { return 2 };
+    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+    let Some((base, local)) = spira_config::repos::landrefs(&reg, repo) else { return 2 };
+    let mut refs = vec![base];
+    if let Some(l) = local {
+        refs.push(l);
+    }
+    match land_verify::landed(&RealGit, Path::new(repo), id, &refs) {
+        Some(sha) => {
+            print!("{sha}");
+            0
+        }
+        None => 1,
+    }
+}
+
 /// `landing-pass land-subject <id>`: lib.sh `land_subject` alone. A bead that cannot be
 /// read (bd unreachable, or `$SPIRA_HOME` itself unresolved) falls back to the bare form —
 /// the same fallback the bash function's own `bdjson` failure took.
@@ -558,6 +582,35 @@ fn is_work_type_cmd(ty: &str) -> i32 {
     } else {
         1
     }
+}
+
+/// `landing-pass cited-commit <id> <repo> <base>`: lib.sh `bead_cited_commit_on_base`
+/// alone. Prints "<sha> <rule>" on a found exit; exit 1 not found (including a bead or
+/// `$SPIRA_HOME` that could not be read at all — there is nothing to cite without notes).
+fn cited_commit_cmd(id: &str, repo: &str, base: &str) -> i32 {
+    let Ok(home) = resolve_home() else { return 1 };
+    let Ok(beads) = resolve_beads(&home) else { return 1 };
+    let Some(row) = beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next()) else { return 1 };
+    match land_verify::bead_cited_commit_on_base(&RealGit, Path::new(repo), base, id, &row.notes) {
+        Some((sha, rule)) => {
+            print!("{sha} {rule}");
+            0
+        }
+        None => 1,
+    }
+}
+
+/// `landing-pass close-on-land <id> [sha]`: lib.sh `bead_close_on_land` alone. Always
+/// exits 0 — every caller (including lib.sh's own shim) already discards this function's
+/// exit code (`|| true`), so there is no exit-code contract to preserve beyond "ran".
+fn close_on_land_cmd(id: &str, sha: &str) -> i32 {
+    let Ok(home) = resolve_home() else { return 0 };
+    let Ok(run) = run_dir() else { return 0 };
+    let Ok(beads) = resolve_beads(&home) else { return 0 };
+    let row = beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
+    let out = Reporter::stdout(None);
+    land_verify::close_on_land(&RealGit, &out, &run, &home, &beads.submitted_label, row.as_ref(), id, sha);
+    0
 }
 
 #[cfg(test)]

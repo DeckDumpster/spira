@@ -2,9 +2,9 @@
 #
 # test-submitted-lands.sh — a work bead's close becomes open + spira-submitted (sp-qsona), and
 #   in a NON-QUEUE repository that submitted bead must still land and close: aeon close ->
-#   submitted -> landing pass lands it -> bead_close_on_land closes it.
+#   submitted -> landing pass lands it -> spira-lc close-on-land closes it.
 #
-# THE DEFECT THIS REPRODUCES. sp-qsona made bead_close_on_land the only thing that closes a
+# THE DEFECT THIS REPRODUCES. sp-qsona made spira-lc close-on-land the only thing that closes a
 # work bead, called when the work reaches the base. Queue mode reaches it through the batch
 # verdict. Every other mode reaches the base through landing.sh's CHECK 6 (push merges it,
 # pr opens a pull request, hold gates it) — and CHECK 6 skipped, refused to certify and

@@ -12,7 +12,7 @@
 # garbage-collected within minutes, with no error and no log line from landing.
 # sp-w6bw filed the assertion requirement; sp-kq8l implemented it; sp-hl72 wrote this test.
 #
-# The fence uses content_landed (diff-based), not merge-base --is-ancestor
+# The fence uses spira-lc content-landed (diff-based), not merge-base --is-ancestor
 # (ancestry-based). The distinction matters for squash repositories: a squash
 # merge replays the branch's diff as one new commit that is NOT an ancestor of
 # the branch tip, so ancestry alone says "not landed" about work that is
@@ -109,7 +109,7 @@ fi
 
 # ======================================================================================
 # UNLANDED BRANCH — the fence must refuse. The branch carries a file that is not on
-# origin/main. content_landed returns false, destroy must return 1.
+# origin/main. spira-lc content-landed returns false, destroy must return 1.
 # ======================================================================================
 echo
 echo "unlanded branch (fence must refuse):"
@@ -117,11 +117,11 @@ echo "unlanded branch (fence must refuse):"
 make_branch sp-db2
 if branch_exists spira/sp-db2; then ok "unlanded branch exists before destroy"; else bad "unlanded branch exists" "branch was not created"; fi
 
-# Confirm content_landed sees it as unlanded (positive control for content_landed itself).
+# Confirm spira-lc content-landed sees it as unlanded (positive control for spira-lc content-landed itself).
 if spira-lc content-landed "$REPO" spira/sp-db2 origin/main; then
-    bad "content_landed sees unlanded branch as unlanded" "returned 0 — branch content appears landed already"
+    bad "spira-lc content-landed sees unlanded branch as unlanded" "returned 0 — branch content appears landed already"
 else
-    ok "content_landed correctly refuses the unlanded branch"
+    ok "spira-lc content-landed correctly refuses the unlanded branch"
 fi
 
 out="$(spira_destroy_branch sp-db2 spira/sp-db2 "$REPO" "test: unlanded" 2>&1)"
@@ -137,13 +137,13 @@ want "reaplog records REFUSED" "REFUSED" "$(cat "$SPIRA_REAPLOG" 2>/dev/null)"
 git -C "$REPO" branch -D spira/sp-db2 >/dev/null 2>&1 || true
 
 # ======================================================================================
-# SQUASH-LANDED BRANCH — ancestry check would refuse this, but content_landed approves.
+# SQUASH-LANDED BRANCH — ancestry check would refuse this, but spira-lc content-landed approves.
 # The key property: after a squash merge, merge-base --is-ancestor returns non-zero for
-# the original branch tip. content_landed answers "yes, landed" because the trees match.
+# the original branch tip. spira-lc content-landed answers "yes, landed" because the trees match.
 # destroy must succeed.
 # ======================================================================================
 echo
-echo "squash-landed branch (content_landed approves, ancestry would refuse):"
+echo "squash-landed branch (spira-lc content-landed approves, ancestry would refuse):"
 
 make_branch sp-db3
 squash_land sp-db3
@@ -152,14 +152,14 @@ squash_land sp-db3
 if git -C "$REPO" merge-base --is-ancestor spira/sp-db3 origin/main 2>/dev/null; then
     bad "ancestry alone refuses squash-landed branch" "branch IS an ancestor — fixture is wrong, squash did not land"
 else
-    ok "ancestry alone refuses the squash-landed branch (this is the defect content_landed fixes)"
+    ok "ancestry alone refuses the squash-landed branch (this is the defect spira-lc content-landed fixes)"
 fi
 
-# content_landed must approve it.
+# spira-lc content-landed must approve it.
 if spira-lc content-landed "$REPO" spira/sp-db3 origin/main; then
-    ok "content_landed approves squash-landed branch"
+    ok "spira-lc content-landed approves squash-landed branch"
 else
-    bad "content_landed should approve squash-landed branch" "returned non-zero — fence would incorrectly refuse"
+    bad "spira-lc content-landed should approve squash-landed branch" "returned non-zero — fence would incorrectly refuse"
 fi
 
 out2="$(spira_destroy_branch sp-db3 spira/sp-db3 "$REPO" "test: squash-landed" 2>&1)"

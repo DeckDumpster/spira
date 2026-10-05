@@ -173,7 +173,7 @@ is     "and nothing was written to the event log" "" "$(last_event sp-norow)"
 # --------------------------------------------------------------------------------------
 # A SQUASH-MERGED PR IS DELIVERED BY CONTENT PROOF. Ancestry alone would say no — proven
 # below — because a squash merge never records the branch as a parent; the merge-tree
-# comparison content_landed performs is what lc_deliver_pr_merged actually relies on.
+# comparison spira-lc content-landed performs is what lc_deliver_pr_merged actually relies on.
 # --------------------------------------------------------------------------------------
 mk_pr_branch sp-squash
 seed_delivery sp-squash pr PR_OPEN 101

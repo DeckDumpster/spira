@@ -32,12 +32,14 @@ pub enum Op {
     /// `spira_db_reachable` + `spira_bead_status`, in one process: the one bd question the
     /// native `holder_witnesses` (reap.rs) still cannot answer itself (families A/B).
     Status,
+    /// `spira-lc close-on-land`: close a submitted bead at the landed sha and reap its branch.
+    CloseOnLand,
     LabelAdd,
     LabelRemove,
 }
 
 #[cfg(test)]
-pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::Status, Op::LabelAdd, Op::LabelRemove];
+pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
 
 const PRELUDE: &str = r#"{
 set -uo pipefail
@@ -93,6 +95,7 @@ fn body(op: Op) -> &'static str {
         Op::Bead => BEAD,
         Op::Beads => BEADS,
         Op::Status => STATUS,
+        Op::CloseOnLand => "spira-lc close-on-land \"$1\" \"$2\" || true\nexit 0\n",
         Op::LabelAdd => "bdq label add \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
         Op::LabelRemove => "bdq label remove \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
     }
@@ -133,6 +136,13 @@ mod tests {
             assert!(!s.contains('\0'), "{op:?}");
             assert!(body(*op).contains("exit"), "{op:?} must exit inside the braces");
         }
+    }
+
+    /// sp-oqf8c.3: the landed-close reaches spira-lc directly, never the lib.sh function
+    /// that only shimmed onto the landing-pass oracle of the same name (being deleted).
+    #[test]
+    fn close_on_land_goes_to_spira_lc_not_the_landing_pass_oracle() {
+        assert_eq!(body(Op::CloseOnLand), "spira-lc close-on-land \"$1\" \"$2\" || true\nexit 0\n");
     }
 
     #[test]

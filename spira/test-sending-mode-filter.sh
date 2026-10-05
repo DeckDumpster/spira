@@ -7,7 +7,7 @@
 #   ./test-sending-mode-filter.sh
 #
 # WHY THIS EXISTS (sp-jci6o). A queue-mode repository's landed batch members are now reaped
-# at landing itself (bead_close_on_land -> spira_reap_landed_branch, lib.sh), so re-scanning
+# at landing itself (spira-lc close-on-land -> sending reap-landed-branch), so re-scanning
 # every one of its branches in the per-pass sentinel Sending every two minutes rediscovers,
 # by ancestry, what already left. --skip-queue removes that repository from the per-pass
 # walk entirely; --queue-only is the daily straggler sweep that replaces it. This suite
@@ -27,7 +27,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 export SPIRA_CONF="$TMP/no-such-conf"
 
 # THE STUB BD. Every branch built below is a zero-ahead ancestor of its base, so
-# content_landed approves the reap before send_disposition ever reads a bead — this suite
+# spira-lc content-landed approves the reap before send_disposition ever reads a bead — this suite
 # needs no bead fixture at all, only a bd that answers quickly and does nothing destructive.
 STUB_BD="$TMP/bd-stub"
 cat > "$STUB_BD" <<'EOF'
@@ -104,7 +104,7 @@ nowant "queue-mode repo's branch is not mentioned under --skip-queue" "sp-skip-q
 is   "queue-mode branch still exists after --skip-queue" 0 \
     "$(branch_exists "$QREPO" spira/sp-skip-q; echo $?)"
 
-# sp-ksmdb: queue.local reaps via bead_close_on_land exactly like queue mode, so the
+# sp-ksmdb: queue.local reaps via spira-lc close-on-land exactly like queue mode, so the
 # per-pass sentinel sweep (--skip-queue) must leave its branches alone too — landed-but-
 # unpublished work there is still needed by publish-red attribution.
 nowant "queue.local repo's branch is not mentioned under --skip-queue" "sp-skip-ql" "$out1"

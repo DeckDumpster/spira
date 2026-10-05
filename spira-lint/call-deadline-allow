@@ -93,7 +93,6 @@
 3 spira-ctrl/src/main.rs
 3 spira-lc/src/bd.rs
 2 spira-lc/src/bd_facts.rs
-1 spira-lc/src/callers.rs
 1 spira-lc/src/classify_cmd.rs
 1 spira-lc/src/client.rs
 2 spira-lc/src/git_evidence.rs
@@ -306,7 +305,7 @@
 4 spira/verify-landed.sh
 1 spira/warden-trigger.sh
 1 spira/wiki-commit.sh
-8 strand/src/detectors.rs
+5 strand/src/detectors.rs
 1 strand/src/probe.rs
 1 suite-select/src/io.rs
 1 supervise/src/main.rs

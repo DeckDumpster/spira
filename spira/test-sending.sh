@@ -15,7 +15,7 @@
 # `bdq label add/remove`, so a stub answering those two shapes is the seam contract, not a
 # model that can drift — the same argument test-held.sh already made for held.sh).
 #
-# ZERO AHEAD. content_landed returns true for ANY branch with zero commits ahead of the
+# ZERO AHEAD. spira-lc content-landed returns true for ANY branch with zero commits ahead of the
 # base ("zero ahead" and "ancestor" are the same fact, sp-bf31a), so such a branch is SENT
 # through the content-landed arm, with no event; there is no separate fast-forward arm.
 #
@@ -217,7 +217,7 @@ seed_lc sp-cl0 WORKING
 
 # sp-cl1: content-landed via merge-tree equality, ahead=1 — an empty commit that names the
 # bead but changes no files (sp-kq8l). Ancestry alone would refuse this (the branch is not
-# reachable from origin/main); content_landed approves it because merging changes nothing.
+# reachable from origin/main); spira-lc content-landed approves it because merging changes nothing.
 git -C "$REPO" checkout -q -b spira/sp-cl1 main
 git -C "$REPO" commit -q --allow-empty -m "sp-cl1: review only, no file changes"
 git -C "$REPO" checkout -q main
@@ -236,7 +236,7 @@ bead sp-clnoassert closed
 
 # spira/round-54: a Concierge round-merge branch, an ancestor of main and with no bead of
 # its own — the same content-landed shape as sp-clnoassert, and with no landstate record
-# either, but it must never reach content_landed or the ASSERT at all: it is not a bead
+# either, but it must never reach spira-lc content-landed or the ASSERT at all: it is not a bead
 # branch (sp-dxntp).
 git -C "$REPO" branch spira/round-54 main
 
@@ -262,7 +262,7 @@ bead sp-supunsafe closed '[{"issue_id":"sp-supunsafe","depends_on_id":"sp-succ",
 git -C "$REPO" worktree add -q "$RUN/worktree/sp-supunsafe" spira/sp-supunsafe >/dev/null 2>&1
 
 # sp-sq: squash-merged. The PR's headRefOid equals the branch's current tip; the base moved
-# on past the squash point, so content_landed is false. REAP squash-merged.
+# on past the squash point, so spira-lc content-landed is false. REAP squash-merged.
 git -C "$REPO" checkout -q -b spira/sp-sq main
 printf 'line1\n' > "$REPO/shared-sq.txt"
 git -C "$REPO" add shared-sq.txt && git -C "$REPO" commit -q -m "sp-sq: commit A"
@@ -290,7 +290,7 @@ GHEOF
 chmod +x "$STUB_GH"
 
 # sp-otherpr: a batch commit named this bead on the base (landed()=true), but the base has
-# since diverged so content_landed is false; every commit on the branch is already
+# since diverged so spira-lc content-landed is false; every commit on the branch is already
 # patch-equivalent upstream (git cherry finds nothing unapplied). SEND other-pr.
 git -C "$REPO" checkout -q -b spira/sp-otherpr main
 printf 'v1\n' > "$REPO/shared-otherpr.txt"
@@ -334,7 +334,7 @@ git -C "$REPO" checkout -q main
 SP_NOONE_TIP="$(git -C "$REPO" rev-parse spira/sp-noone)"
 
 # sp-stray: no bead, and the tip is already an ancestor of main — nothing on it the base
-# does not already have. content_landed's ancestor shortcut catches this before the
+# does not already have. spira-lc content-landed's ancestor shortcut catches this before the
 # bead lookup ever runs (bead or not), so it is SENT via the content-landed arm, not the
 # ORPHAN one below — the "unadopted, ancestor of base -> delete" half of sp-hwhnw's split
 # that was already correct.
@@ -381,7 +381,7 @@ touch "$RUN/sp-cl1.log"
 # repo-map's base column is deliberately unset above), but every base-side commit the
 # fixture branches above were built against — sp-supsafe's conflict, sp-sq's squash and
 # advance, sp-otherpr's and sp-cherry's "spira: land ..." commits — was made on the LOCAL
-# main only. Without this, content_landed and landed() would judge every branch against a
+# main only. Without this, spira-lc content-landed and landed() would judge every branch against a
 # base frozen at the very first commit.
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
@@ -394,24 +394,24 @@ echo "test-sending.sh"
 echo
 echo "fixture confirmation:"
 if spira-lc content-landed "$REPO" spira/sp-cl0 origin/main; then
-    ok "sp-cl0: content_landed true via the ancestor shortcut (ahead=0)"
+    ok "sp-cl0: spira-lc content-landed true via the ancestor shortcut (ahead=0)"
 else
-    bad "sp-cl0: content_landed true via the ancestor shortcut" "returned non-zero — fixture is wrong"
+    bad "sp-cl0: spira-lc content-landed true via the ancestor shortcut" "returned non-zero — fixture is wrong"
 fi
 if git -C "$REPO" merge-base --is-ancestor spira/sp-cl1 origin/main 2>/dev/null; then
     bad "sp-cl1: ancestry alone would NOT catch this (fixture is wrong)" "branch IS an ancestor"
 else
-    ok "sp-cl1: ancestry alone refuses it (the defect content_landed exists to fix)"
+    ok "sp-cl1: ancestry alone refuses it (the defect spira-lc content-landed exists to fix)"
 fi
 if spira-lc content-landed "$REPO" spira/sp-cl1 origin/main; then
-    ok "sp-cl1: content_landed approves the empty-commit branch"
+    ok "sp-cl1: spira-lc content-landed approves the empty-commit branch"
 else
-    bad "sp-cl1: content_landed approves the empty-commit branch" "returned non-zero"
+    bad "sp-cl1: spira-lc content-landed approves the empty-commit branch" "returned non-zero"
 fi
 if spira-lc content-landed "$REPO" spira/sp-sq origin/main; then
-    bad "sp-sq: content_landed must be false (base diverged past the squash)" "returned 0"
+    bad "sp-sq: spira-lc content-landed must be false (base diverged past the squash)" "returned 0"
 else
-    ok "sp-sq: content_landed correctly false"
+    ok "sp-sq: spira-lc content-landed correctly false"
 fi
 
 # ---- the pass ---------------------------------------------------------------------------

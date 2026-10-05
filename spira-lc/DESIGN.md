@@ -37,8 +37,9 @@ it existed).
 **Two verbs touch no lifecycle state and ignore the switch.** `content-landed <repo> <branch> <base>`
 (0 base holds every change the branch makes · 1 not · 2 usage) and `close-on-land <id> [sha]` (closes a
 submitted, unclosed work bead citing the sha, marks the ledger LANDED, reaps the branch through
-`sending`; best-effort, always 0). They replace lib.sh `content_landed` / `bead_close_on_land` and
-`landing-pass landed` / `cited-commit` / `close-on-land`.
+`sending`; best-effort, always 0). The first replaces lib.sh's bash merge-tree check; the second
+is what every landing path calls to close a landed bead (sending's seam directly; the queue still
+through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's own subcommand.
 
 **The switch is read before anything else.** `lifecycle_enforce` (`SPIRA_LIFECYCLE_ENFORCE`,
 else `spira.lifecycle_enforce`, else off — spira-config's one resolver). Off, every caller

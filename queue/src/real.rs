@@ -413,7 +413,7 @@ impl Lib for RealLib {
         self.call(Op::ReleaseClaim, &[id], false);
     }
     fn bead_close_on_land(&self, id: &str, sha: &str) {
-        let _ = Command::new("spira-lc").args(["close-on-land", id, sha]).status();
+        self.call(Op::CloseOnLand, &[id, sha], false);
     }
     /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
     /// moved natively into gh-intake; this crate shells to the compiled binary by bare

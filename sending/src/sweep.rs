@@ -87,7 +87,7 @@ pub struct Ctx<'a> {
 pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     let g = Git(c.repo);
     let lr = c.base.landref.as_str();
-    if g.content_landed(br, lr) {
+    if g.content_on_base(br, lr) {
         return Disp::SendContentLanded;
     }
     let bead = c.w.bead(id);

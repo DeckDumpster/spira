@@ -10,6 +10,10 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
+/// Every subprocess here runs under `timeout` (call-deadline). A close or reap cut short is
+/// the same miss as one that failed: CHECK 5 and the Sending's sweep stay the backstops.
+const CALL_SECS: &str = "5";
+
 pub struct Row {
     pub raw_status: String,
     pub labels: Vec<String>,
@@ -38,7 +42,7 @@ pub fn reason(sha: &str) -> String {
 }
 
 fn bdq_close(id: &str, reason: &str) -> bool {
-    let Ok(mut child) = Command::new("bdq").args(["close", id, "--reason-file", "-"]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
+    let Ok(mut child) = Command::new("timeout").args([CALL_SECS, "bdq", "close", id, "--reason-file", "-"]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
         return false;
     };
     if let Some(mut si) = child.stdin.take() {
@@ -50,17 +54,17 @@ fn bdq_close(id: &str, reason: &str) -> bool {
 fn show_row(id: &str) -> Option<Row> {
     let db = spira_config::resolve::key_for_process("SPIRA_DB").ok().filter(|d| !d.is_empty())?;
     let bd = spira_config::resolve::key_for_process("SPIRA_BD").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "bd".into());
-    let out = Command::new(bd).args(["-C", &db, "show", id, "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let out = Command::new("timeout").arg(CALL_SECS).arg(bd).args(["-C", &db, "show", id, "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| parse_row(&String::from_utf8_lossy(&out.stdout))).flatten()
 }
 
 fn branch_exists(root: &str, branch: &str) -> bool {
-    Command::new("git").args(["-C", root, "show-ref", "--verify", "-q", &format!("refs/heads/{branch}")]).status().map(|s| s.success()).unwrap_or(false)
+    Command::new("timeout").args([CALL_SECS, "git", "-C", root, "show-ref", "--verify", "-q", &format!("refs/heads/{branch}")]).status().map(|s| s.success()).unwrap_or(false)
 }
 
 fn reap(id: &str, branch: &str, root: &str, why: &str) -> Result<(), String> {
-    let mut c = Command::new("sending");
-    c.arg("reap-landed-branch");
+    let mut c = Command::new("timeout");
+    c.args([CALL_SECS, "sending", "reap-landed-branch"]);
     if let Ok(f) = std::env::var("SPIRA_STATUS_FILE") {
         c.arg("--status-from").arg(f);
     }
@@ -92,7 +96,7 @@ pub fn run(args: &[String]) -> i32 {
         return 0;
     }
     println!("land-close {id}: closed at {shown} (submitted -> landed)");
-    let _ = Command::new("landing-pass").args(["mark", id, "LANDED", if sha.is_empty() { "none" } else { sha }, "Closed by the landing pass"]).stdin(Stdio::null()).status();
+    let _ = Command::new("timeout").args([CALL_SECS, "landing-pass", "mark", id, "LANDED", sha, "Closed by the landing pass"]).stdin(Stdio::null()).status();
 
     let (Some(repo_label), Some(branch)) = (label_value(&row.labels, "repo:"), label_value(&row.labels, "branch:")) else { return 0 };
     let Ok(home) = spira_config::resolve::locate_home_for_process() else { return 0 };
