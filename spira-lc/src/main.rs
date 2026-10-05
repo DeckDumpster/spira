@@ -47,7 +47,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("close-on-land") => std::process::exit(close_on_land::run(&args[1..])),
         Some("content-landed") if args.len() == 4 => {
-            std::process::exit(if callers::content_landed(std::path::Path::new(&args[1]), &args[2], &args[3]) { 0 } else { 1 })
+            std::process::exit(if git_evidence::content_on_base(std::path::Path::new(&args[1]), &args[2], &args[3]) { 0 } else { 1 })
         }
         Some("content-landed") => {
             eprintln!("spira-lc content-landed: usage: content-landed <repo> <branch> <base>");

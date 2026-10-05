@@ -335,8 +335,8 @@ fn deliver_pr_merged_proves_by_merge_tree_when_the_squash_holds_the_diff() {
     git(r, &["commit", "-q", "-m", "sp-u: work"]);
     let repo = r.to_str().unwrap();
 
-    assert!(content_landed(r, "spira/sp-s", &squash), "squash holds the diff");
-    assert!(!content_landed(r, "spira/sp-u", &squash), "a branch with work outstanding is not landed");
+    assert!(crate::git_evidence::content_on_base(r, "spira/sp-s", &squash), "squash holds the diff");
+    assert!(!crate::git_evidence::content_on_base(r, "spira/sp-u", &squash), "a branch with work outstanding is not landed");
     for (id, br, proof) in [("sp-s", "spira/sp-s", "merge-tree"), ("sp-u", "spira/sp-u", "gh-merged")] {
         let mut f = Fake::default();
         f.bead(id, BeadState::InDelivery);
