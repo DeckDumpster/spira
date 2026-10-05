@@ -400,6 +400,8 @@ done
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+dbg="$(env -i PATH="$TMP/iwr-bin:$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/iwr-bin/bd" SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" SPIRA_INCIDENT_SH=/bin/true SPIRA_WATCH_PROMPT_FILE="$TMP/p2" watchtower 2>&1 | tail -15; which lib.sh watchtower spira-claim; ls $IWR_HOME $IWR_HOME/chamber)"
+bad "DEBUG" "$dbg"
 want "5 idles + ready work fires the idle-while-ready escalation" "IDLE-WHILE-READY:" "$subjects"
 want "it names the fayth" "builder" "$subjects"
 
