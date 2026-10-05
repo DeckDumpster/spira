@@ -87,6 +87,11 @@ pub fn parse_testenv_stdout(text: &str) -> Vec<Outcome> {
     out
 }
 
+/// The runner's own `VERDICT` line, so a pass that got no results says why.
+pub fn runner_verdict(text: &str) -> Option<&str> {
+    text.lines().rev().map(str::trim).find(|l| l.starts_with("VERDICT "))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub commit: String,
