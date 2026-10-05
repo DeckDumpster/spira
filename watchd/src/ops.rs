@@ -192,7 +192,14 @@ impl Ops for Real {
     }
 
     fn mail_health(&self) -> i32 {
-        Command::new("mail-health.sh").envs(spira_config::release_env::child_path_env_for_process()).stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(3)
+        // A spawn failure was a silent 3 ("could not check") — name it (sp-xp0u2).
+        match Command::new("mail-health.sh").envs(spira_config::release_env::child_path_env_for_process()).stdin(Stdio::null()).status() {
+            Ok(s) => s.code().unwrap_or(3),
+            Err(e) => {
+                eprintln!("watchd: cannot run mail-health.sh: {e}");
+                3
+            }
+        }
     }
 
     fn list_watch_units(&self, instance: &str) -> Vec<String> {

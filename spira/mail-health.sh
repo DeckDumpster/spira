@@ -36,7 +36,7 @@ while IFS= read -r _line; do
     _mb="${_mb%"${_mb##*[![:space:]]}"}"
     [ -z "$_mb" ] && continue
 
-    age="$(mail unread-age "$_mb")" || { err=1; continue; }  # stderr reaches the journal: "could not check" must say why (sp-xp0u2)
+    age="$(mail unread-age "$_mb")" || { echo "mail-health: mail unread-age $_mb failed" >&2; err=1; continue; }  # stderr reaches the journal: "could not check" must say why (sp-xp0u2)
 
     sf="${_state_dir}/${_mb}"
 
@@ -65,7 +65,7 @@ while IFS= read -r _line; do
       mail send operator \
         --from "Mail health <health@spira>" \
         --subject "$_mb is not reading its mail" \
-        2>/dev/null || { err=1; continue; }
+        || { echo "mail-health: could not mail the operator about $_mb (see mail's error above)" >&2; err=1; continue; }
 
     printf '%s\n' "$key" > "$sf"
     found=1
