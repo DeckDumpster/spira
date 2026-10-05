@@ -87,7 +87,7 @@ MOCK_SUMMON="$T/summon"
 SUMMONED="$T/summoned"
 printf '#!/bin/sh\necho summoned >> "%s"\nexit 0\n' "$SUMMONED" > "$MOCK_SUMMON"
 chmod +x "$MOCK_SUMMON"
-summons() { grep -c . "$SUMMONED" 2>/dev/null || true; }
+summons() { if [ -f "$SUMMONED" ]; then grep -c . "$SUMMONED"; else echo 0; fi; }   # no file: none yet
 export SPIRA_SUMMON="$MOCK_SUMMON"
 
 # ==========================================================================================

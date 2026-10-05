@@ -27,7 +27,7 @@
 #
 # defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd sp-wnsks
 # tier: T3
-# covers: aeon/src/* spira/lib.sh mail/src/* UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
+# covers: aeon/src/* spira/lib.sh mail/src/* UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-18
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -89,18 +89,12 @@ lib() { bash -c ". \"$HERE/lib.sh\"; $1" 2>/dev/null; }
 count_of()   { local c; c="$(lib "attempts_of $1")"; printf '%s' "${c:-0}"; }
 requeue_of() { local c; c="$(lib "requeues_of $1")"; printf '%s' "${c:-0}"; }
 
-fa_reset; fa_seed sp-rq-1; shim 1 1 1; fa_run_aeon >/dev/null
-is     "reopened over a rebase conflict — the bead is open again" open "$(field sp-rq-1 status)"
-want   "and the log says why"                  "REOPENED — closed behind" "$(fa_out)"
-is     "no attempt is charged"                 "0" "$(count_of sp-rq-1)"
-is     "it is counted as a requeue instead"    "1" "$(requeue_of sp-rq-1)"
-want   "the teardown says no attempt was charged" "no attempt charged" "$(fa_out)"
-want   "the bead carries the decision"         "Requeue 1 (rebase-conflict)" "$(fa_notes sp-rq-1 | tr -s ' ')"
-want   "and the ledger carries the outcome"    "status=requeue-rebase-conflict" "$(fa_ledger_line sp-rq-1)"
-# THE BRANCH SURVIVES THE REQUEUE. The aeon committed before closing; the rebase failed
-# after close and was aborted, leaving the branch at its pre-abort tip.
-_nc="$(git -C "$FA_REPO" rev-list --count "$(git -C "$FA_REPO" rev-parse origin/main)..spira/sp-rq-1" 2>/dev/null || echo 0)"
-is     "the branch still carries the aeon's commit after the requeue" "1" "$_nc"
+# THE REBASE-CONFLICT REOPEN AT CLOSE (sp-rq-1) IS GONE with sp-v62vn: every session runs
+# restricted, and a restricted session hands its bead on only through the work verbs —
+# teardown's closed branch (aeon decide::builder_closed, "never took this path and still
+# does not") is where the rebase check at close lived, so a session's close now reads as
+# submitted and the conflict is the gate's and the landing pass's to find. The row asserted
+# a path no session reaches; it is deleted, not rewritten.
 
 # ALSO the exit-code positive control (UC-18): a bead left open with claude's own rc=1 must
 # make aeon itself exit non-zero — reusing this run rather than a dedicated one, since the
