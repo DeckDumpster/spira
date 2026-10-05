@@ -140,16 +140,21 @@ pub fn unfinished_members(per_spec: Vec<Vec<String>>, lc: &std::collections::Has
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// lib.sh `detect_incident_needs_builder`: one `STATE <id> incident-is-code — …` line for
-/// every open/in_progress bead carrying the incident label whose recorded `branch:` already
-/// has a commit ahead of the repo's base.
+/// every unfinished bead carrying the incident label whose recorded `branch:` already has a
+/// commit ahead of the repo's base. An incident bead is a work bead (sp-jgjvh): bd supplies
+/// the labelled beads' content, and "unfinished" (what bd's open/in_progress meant) is the
+/// lifecycle row's READY/WORKING/REWORK — [`unfinished_incidents`]. A machine that cannot
+/// answer is an Err, never "no incident".
 pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
     if cfg.incident_label.is_empty() {
         return Err("SPIRA_INCIDENT_LABEL is unset — source conf.sh".into());
     }
+    let lc = spira_config::lc_state::list().map(spira_config::lc_state::index).map_err(|e| format!("cannot tell: {e}"))?;
     let reg = registry(cfg);
     let home = reg.home_repo().to_string();
     let mut out = Vec::new();
-    for b in list_beads(cfg, &["--status", "open,in_progress", "--label", cfg.incident_label.as_str()]) {
+    let labelled = list_beads(cfg, &["--all", "--label", cfg.incident_label.as_str()]);
+    for b in unfinished_incidents(labelled, &lc) {
         let Some(br) = label_value(&b.labels, "branch:") else { continue };
         let br = br.to_string();
         let repo = label_value(&b.labels, "repo:").unwrap_or("").to_string();
@@ -170,6 +175,12 @@ pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
         out.push(format!("STATE {} incident-is-code — {} commit(s) already on {} ahead of {}; remaining work is a code change, not operational", b.id, ahead, br, base));
     }
     Ok(out.join("\n"))
+}
+
+/// The incident beads whose lifecycle row still owes builder work; a bead with no row is not
+/// live work (it can never be claimed; CHECK-ROWLESS reports it).
+pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> Vec<Bead> {
+    beads.into_iter().filter(|b| lc.get(&b.id).is_some_and(|r| !r.past_builder())).collect()
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -402,6 +413,23 @@ mod tests {
             .collect();
         let per = vec![vec!["b".into(), "c".into(), "a".into()], vec!["a".into(), "d".into(), "e".into(), "z".into()]];
         assert_eq!(unfinished_members(per, &lc), vec!["b", "a", "d"]);
+    }
+
+    /// sp-jgjvh: an incident is unfinished by its lifecycle row, whatever bd's status says;
+    /// a rowless bead is not live work.
+    #[test]
+    fn incidents_needing_a_builder_are_the_unfinished_lifecycle_rows() {
+        use spira_config::lc_state::Row;
+        let beads = model::parse_beads(
+            r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c","status":"in_progress"},{"id":"d","status":"open"}]"#,
+        )
+        .unwrap();
+        let lc = [("a", "WORKING"), ("b", "SUBMITTED"), ("c", "REWORK")]
+            .iter()
+            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
+            .collect();
+        let ids: Vec<String> = unfinished_incidents(beads, &lc).into_iter().map(|b| b.id).collect();
+        assert_eq!(ids, vec!["a", "c"]);
     }
 
     #[test]

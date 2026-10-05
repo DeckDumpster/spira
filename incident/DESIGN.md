@@ -160,3 +160,14 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
 - **The age-in-hours clause in the Sin ask now actually fires** (see "Retired" above) —
   reads `created_at`, the real bd field, instead of the bash's dead `"created"` grep.
 - **Delivered at P1** (bead priority).
+- **The dedup reads an incident's state from its lifecycle row (sp-jgjvh).** An incident bead
+  is a work bead (Ops claims it), so design §3.4 holds: bd holds content, spira-lc holds
+  state. The four passes ask by scope — unfinished (READY/WORKING/REWORK) or handed on (past
+  the builder) — and `real.rs` takes each bead's state from one `spira-lc list`, with bd
+  supplying only content (labels, `external_ref`, and `closed_at` for the lookback window).
+  A bead with no row is in neither pass. A pass that cannot read bd **or** the machine is
+  not "nothing found": the event stays spooled (law-a-control-that-cannot-check-must-refuse),
+  where the bash skipped a failed pass and filed a fresh bead. Open: a recurrence of a
+  handed-on incident still only reopens it in bd; the machine has no move out of a terminal
+  state, so until recurrence files a fresh bead (or the machine gains one), every event
+  inside the lookback window finds the bead handed on and reopens it again.

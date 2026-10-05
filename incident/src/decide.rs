@@ -56,8 +56,10 @@ pub fn reopen_cause(closed_epoch: i64, now_epoch: i64, interval_s: i64) -> &'sta
     }
 }
 
-/// A bead's status as `_dedup_incident` needs it: whether it counts as open-ish
-/// (open/in_progress) or closed, plus the fields the decision depends on.
+/// A bead as `_dedup_incident` needs it: its lifecycle state, read as open-ish (READY/REWORK
+/// or WORKING) or closed (past the builder), plus the bd content the decision depends on. An
+/// incident bead is a work bead (sp-jgjvh): `status` is its lifecycle row's answer
+/// ([`status_of_lc`]), never bd's `status`; `closed_at` is bd content, kept for the lookback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeadRow {
     pub id: String,
@@ -65,6 +67,35 @@ pub struct BeadRow {
     pub external_ref: Option<String>,
     pub labels: Vec<String>,
     pub closed_at: Option<String>,
+}
+
+/// Which incidents a dedup pass reads: the unfinished ones (the builder still owes work) or
+/// the ones the builder has handed on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Unfinished,
+    HandedOn,
+}
+
+impl Scope {
+    pub fn holds(self, status: BeadStatus) -> bool {
+        match self {
+            Scope::Unfinished => matches!(status, BeadStatus::Open | BeadStatus::InProgress),
+            Scope::HandedOn => status == BeadStatus::Closed,
+        }
+    }
+}
+
+/// A bead's [`BeadStatus`] from its lifecycle row: WORKING is in progress, READY/REWORK open,
+/// anything past the builder closed. No row is `Other` — a bead the machine has no row for is
+/// not live work (it can never be claimed), and neither dedup pass matches it.
+pub fn status_of_lc(row: Option<&spira_config::lc_state::Row>) -> BeadStatus {
+    match row {
+        Some(r) if r.working() => BeadStatus::InProgress,
+        Some(r) if r.claimable() => BeadStatus::Open,
+        Some(r) if r.past_builder() => BeadStatus::Closed,
+        _ => BeadStatus::Other,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,10 +127,10 @@ pub fn dedup_scan(rows: &[BeadRow], open: bool, skip_ref_labeled: bool, referenc
             continue;
         }
         if open {
-            if matches!(row.status, BeadStatus::Open | BeadStatus::InProgress) {
+            if Scope::Unfinished.holds(row.status) {
                 return Some(DedupHit::Open { id: row.id.clone() });
             }
-        } else if matches!(row.status, BeadStatus::Closed) {
+        } else if Scope::HandedOn.holds(row.status) {
             return Some(DedupHit::Closed { id: row.id.clone(), closed_at: row.closed_at.clone() });
         }
     }
@@ -273,6 +304,19 @@ mod tests {
         assert_eq!(reopen_cause(1000, 3000, 1800), "recurrence");
         // Exactly at the boundary is NOT still-live (bash: `-lt`, strictly less than).
         assert_eq!(reopen_cause(1000, 2800, 1800), "recurrence");
+    }
+
+    /// sp-jgjvh: an incident's open/closed is its lifecycle row's state.
+    #[test]
+    fn status_reads_the_lifecycle_row() {
+        use spira_config::lc_state::Row;
+        let r = |st: &str| Row { bead_id: "a".into(), state: st.into(), ..Default::default() };
+        assert_eq!(status_of_lc(Some(&r("READY"))), BeadStatus::Open);
+        assert_eq!(status_of_lc(Some(&r("REWORK"))), BeadStatus::Open);
+        assert_eq!(status_of_lc(Some(&r("WORKING"))), BeadStatus::InProgress);
+        assert_eq!(status_of_lc(Some(&r("SUBMITTED"))), BeadStatus::Closed);
+        assert_eq!(status_of_lc(Some(&r("LANDED"))), BeadStatus::Closed);
+        assert_eq!(status_of_lc(None), BeadStatus::Other);
     }
 
     fn row(id: &str, status: BeadStatus, ext_ref: Option<&str>, labels: &[&str], closed_at: Option<&str>) -> BeadRow {

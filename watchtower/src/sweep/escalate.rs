@@ -38,19 +38,23 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
     incident::is_usable(&cfg.incident_sh).then_some(cfg.incident_sh.as_str())
 }
 
-/// True unless the store positively answers that no open bead holds the unit. A failed
-/// query counts as tracked: re-filing on a probe that did not answer is noise.
+/// True unless the store positively answers that no unfinished bead holds the unit. bd
+/// names the beads carrying the reference; whether one is unfinished is its lifecycle row's
+/// (sp-jgjvh: an incident bead is a work bead). A failed query — bd's or the machine's —
+/// counts as tracked: re-filing on a probe that did not answer is noise.
 fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
     let out = Command::new(&cfg.bd)
         .args(["-C", &cfg.db, "list", "--external-ref", &format!("incident:failed-unit-{unit}")])
-        .args(["--status", "open,in_progress,blocked,deferred", "--json", "--limit", "0", "--brief"])
+        .args(["--all", "--json", "--limit", "0", "--brief"])
         .output();
-    match out {
-        Ok(o) if o.status.success() => serde_json::from_slice::<Vec<serde_json::Value>>(&o.stdout)
-            .map(|v| !v.is_empty())
-            .unwrap_or(true),
-        _ => true,
-    }
+    let ids: Vec<String> = match out {
+        Ok(o) if o.status.success() => match serde_json::from_slice::<Vec<serde_json::Value>>(&o.stdout) {
+            Ok(v) => v.iter().filter_map(|r| r.get("id").and_then(|x| x.as_str()).map(String::from)).collect(),
+            Err(_) => return true,
+        },
+        _ => return true,
+    };
+    crate::conditions::unfinished(&cfg.lc_bin, ids).map_or(true, |live| !live.is_empty())
 }
 
 fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
@@ -426,6 +430,7 @@ mod tests {
             suites_sh: None,
             moot_sh: Some("/does/not/exist/moot-sweep.sh".into()),
             branch_guard_sh: None,
+            lc_bin: "/does/not/exist/spira-lc".into(),
         }
     }
 
@@ -435,11 +440,29 @@ mod tests {
         bd.to_str().unwrap().to_string()
     }
 
+    /// A spira-lc whose `show` answers `state` for every bead (`""`: no row, rc 1), or
+    /// refuses outright when `state` is `None`.
+    fn fake_lc(d: &std::path::Path, state: Option<&str>) -> String {
+        let lc = d.join("lc.sh");
+        let body = match state {
+            None => "exit 2".to_string(),
+            Some("") => "exit 1".to_string(),
+            Some(st) => format!("printf '{{\"bead\":{{\"bead_id\":\"%s\",\"state\":\"{st}\",\"holds\":[]}}}}\\n' \"$2\""),
+        };
+        testkit::write_exe(&lc, &format!("#!/usr/bin/env bash\n{body}\n"));
+        lc.to_str().unwrap().to_string()
+    }
+
     fn refile_case(tag: &str, bd_out: &str, bd_rc: i32) -> bool {
+        refile_case_lc(tag, bd_out, bd_rc, Some("WORKING"))
+    }
+
+    fn refile_case_lc(tag: &str, bd_out: &str, bd_rc: i32, lc_state: Option<&str>) -> bool {
         let d = testkit::TempDir::new(tag);
         let inc = fake_incident(&d);
         let mut cfg = cfg_with(&d, inc);
         cfg.bd = fake_bd(&d, bd_out, bd_rc);
+        cfg.lc_bin = fake_lc(&d, lc_state);
         std::fs::write(d.join("failed-units.state"), "a.service 1700000000 1\n").unwrap();
         let mut data = SweepData::fixture_nominal(1_700_100_000);
         data.failed_units = Some(vec!["a.service".into()]);
@@ -460,6 +483,18 @@ mod tests {
     #[test]
     fn a_failed_bead_query_does_not_refile() {
         assert!(!refile_case("wt-fu-bdfail", "", 1));
+    }
+
+    /// sp-jgjvh: the bead is unfinished by its lifecycle row, whatever bd's status says —
+    /// a bead past the builder (or with no row) no longer tracks the unit, and a machine
+    /// that does not answer counts as tracked.
+    #[test]
+    fn whether_the_incident_bead_still_tracks_the_unit_is_its_lifecycle_rows_answer() {
+        assert!(refile_case_lc("wt-fu-lc-submitted", "[{\"id\":\"sp-x\"}]", 0, Some("SUBMITTED")));
+        assert!(refile_case_lc("wt-fu-lc-landed", "[{\"id\":\"sp-x\"}]", 0, Some("LANDED")));
+        assert!(refile_case_lc("wt-fu-lc-rowless", "[{\"id\":\"sp-x\"}]", 0, Some("")));
+        assert!(!refile_case_lc("wt-fu-lc-rework", "[{\"id\":\"sp-x\"}]", 0, Some("REWORK")));
+        assert!(!refile_case_lc("wt-fu-lc-down", "[{\"id\":\"sp-x\"}]", 0, None));
     }
 
     #[test]

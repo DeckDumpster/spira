@@ -4,7 +4,7 @@
 //! judgement call `decide.rs` could have made instead — table-driven parity against the
 //! bash is easiest when every "should this fire" answer has exactly one place it is typed.
 
-use crate::decide::{self, DedupHit};
+use crate::decide::{self, DedupHit, Scope};
 use crate::ports::{self, Bd, Clock, Mailer};
 
 pub struct FileConfig<'a> {
@@ -71,29 +71,28 @@ pub fn epoch_to_date(epoch: i64) -> String {
 /// from `bd list`'s own `2>/dev/null`.
 fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, now: i64) -> Result<Option<DedupHit>, ()> {
     let ref_label = format!("ref:{}", decide::ref_hash(reference));
-
-    if let Ok(rows) = bd.list(db, &["open", "in_progress"], Some(&ref_label), None) {
-        if let Some(hit) = decide::dedup_scan(&rows, true, false, reference) {
-            return Ok(Some(hit));
-        }
-    }
-    if let Ok(rows) = bd.list(db, &["open", "in_progress"], None, None) {
-        if let Some(hit) = decide::dedup_scan(&rows, true, true, reference) {
-            return Ok(Some(hit));
-        }
-    }
     let since = since_date(now, lookback_days);
-    if let Ok(rows) = bd.list(db, &["closed"], Some(&ref_label), Some(&since)) {
-        if let Some(hit) = decide::dedup_scan(&rows, false, false, reference) {
-            return Ok(Some(hit));
+    // Open/closed is each bead's lifecycle row (sp-jgjvh: incident beads are work beads);
+    // the closed lookback keeps bd's `closed_at` as content. A pass that could not read —
+    // bd or the machine — is not "nothing found": the event stays spooled.
+    let passes: [(Scope, Option<&str>, Option<&str>, bool); 4] = [
+        (Scope::Unfinished, Some(ref_label.as_str()), None, false),
+        (Scope::Unfinished, None, None, true),
+        (Scope::HandedOn, Some(ref_label.as_str()), Some(since.as_str()), false),
+        (Scope::HandedOn, None, Some(since.as_str()), true),
+    ];
+    let mut blind = false;
+    for (scope, label, closed_after, skip_ref_labeled) in passes {
+        match bd.list(db, scope, label, closed_after) {
+            Ok(rows) => {
+                if let Some(hit) = decide::dedup_scan(&rows, scope == Scope::Unfinished, skip_ref_labeled, reference) {
+                    return Ok(Some(hit));
+                }
+            }
+            Err(_) => blind = true,
         }
     }
-    if let Ok(rows) = bd.list(db, &["closed"], None, Some(&since)) {
-        if let Some(hit) = decide::dedup_scan(&rows, false, true, reference) {
-            return Ok(Some(hit));
-        }
-    }
-    if bd.reachable(db) {
+    if !blind && bd.reachable(db) {
         Ok(None)
     } else {
         Err(())
@@ -351,6 +350,8 @@ mod tests {
     struct FakeBd {
         rows: RefCell<Vec<BeadRow>>,
         reachable: bool,
+        /// The lifecycle machine does not answer: every dedup pass is blind.
+        lc_down: bool,
         created: RefCell<Vec<(String, String)>>,
         labels: RefCell<HashMap<String, Vec<String>>>,
         notes: RefCell<HashMap<String, Vec<String>>>,
@@ -364,20 +365,15 @@ mod tests {
     }
 
     impl Bd for FakeBd {
-        fn list(&self, _db: &str, statuses: &[&str], label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        // A row's `status` stands for its lifecycle row's state (decide::status_of_lc).
+        fn list(&self, _db: &str, scope: Scope, label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+            if self.lc_down {
+                return Err("spira-lc: down".into());
+            }
             let rows = self.rows.borrow();
             Ok(rows
                 .iter()
-                .filter(|r| {
-                    let status_ok = statuses.iter().any(|s| match *s {
-                        "open" => r.status == BeadStatus::Open,
-                        "in_progress" => r.status == BeadStatus::InProgress,
-                        "closed" => r.status == BeadStatus::Closed,
-                        _ => false,
-                    });
-                    let label_ok = label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true);
-                    status_ok && label_ok
-                })
+                .filter(|r| scope.holds(r.status) && label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true))
                 .cloned()
                 .collect())
         }
@@ -540,6 +536,20 @@ mod tests {
     #[test]
     fn unreachable_database_stays_spooled() {
         let bd = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Unreachable));
+        assert_eq!(bd.created.borrow().len(), 0);
+    }
+
+    /// sp-jgjvh: a lifecycle machine that does not answer cannot say no incident holds the
+    /// reference — the event stays spooled, never filed as a fresh bead.
+    #[test]
+    fn an_unanswering_lifecycle_machine_stays_spooled() {
+        let bd = FakeBd { reachable: true, lc_down: true, next_id: RefCell::new(1), ..Default::default() };
         let mailer = FakeMailer { sent: RefCell::new(vec![]) };
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];

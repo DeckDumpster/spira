@@ -667,32 +667,14 @@ pub fn dup_refs_keys() -> Kv {
         return out;
     };
     let rows = io::bd_rows(io::bdjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
-    let Some(rows) = rows else {
+    // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
+    let Some((rows, lc)) = rows.zip(lc::state_index()) else {
         push(&mut out, "SP_DUP_REFS", "?");
         push(&mut out, "SP_DUP_BEADS", "?");
         push(&mut out, "SP_DUP_N", "0");
         return out;
     };
-    let mut by_ref: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for i in &rows {
-        let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
-        if ref_.is_empty() {
-            continue;
-        }
-        let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        if labels.iter().any(|l| l.starts_with("duplicate-of:")) {
-            continue;
-        }
-        if i.get("status").and_then(Value::as_str) == Some("closed") {
-            let closed_at = i.get("closed_at").and_then(Value::as_str).unwrap_or("");
-            let closed_date = closed_at.get(..10).unwrap_or("");
-            if closed_date < since.as_str() {
-                continue;
-            }
-        }
-        let id = i.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-        by_ref.entry(ref_.to_string()).or_default().push(id);
-    }
+    let by_ref = incidents_by_ref(&rows, &lc, &since);
     let mut dup: Vec<(String, Vec<String>)> = by_ref.into_iter().filter(|(_, ids)| ids.len() > 1).collect();
     push(&mut out, "SP_DUP_REFS", dup.len().to_string());
     push(&mut out, "SP_DUP_BEADS", dup.iter().map(|(_, ids)| ids.len() - 1).sum::<usize>().to_string());
@@ -1175,6 +1157,37 @@ pub fn sending_keys() -> Kv {
     }
 }
 
+/// SP_DUP_*: incident bead ids grouped by `external_ref`, over the incidents that still
+/// count — read from each bead's lifecycle row, never bd status (sp-jgjvh). Unfinished or
+/// in delivery (not terminal) counts; a terminal one counts only while its `closed_at`
+/// (bd content) falls inside the dedup lookback (`since`, `YYYY-MM-DD`); a bead with no
+/// lifecycle row is not live work and is not counted. A `duplicate-of:` bead is already
+/// accounted for.
+pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &str) -> HashMap<String, Vec<String>> {
+    let mut by_ref: HashMap<String, Vec<String>> = HashMap::new();
+    for i in rows {
+        let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
+        if ref_.is_empty() {
+            continue;
+        }
+        let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        if labels.iter().any(|l| l.starts_with("duplicate-of:")) {
+            continue;
+        }
+        let id = i.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        let Some(row) = lc.get(&id) else { continue };
+        if row.terminal() {
+            let closed_at = i.get("closed_at").and_then(Value::as_str).unwrap_or("");
+            let closed_date = closed_at.get(..10).unwrap_or("");
+            if closed_date < since {
+                continue;
+            }
+        }
+        by_ref.entry(ref_.to_string()).or_default().push(id);
+    }
+    by_ref
+}
+
 /// SP_POISON: work beads the machine holds for poison, not yet over (the `spira-poison`
 /// label is retired; holds replace it, design §3.4).
 pub fn poison_count(lc: &HashMap<String, lc::Row>) -> usize {
@@ -1240,6 +1253,25 @@ mod tests {
                 (id.to_string(), lc::Row { bead_id: id.to_string(), state: st.to_string(), holds: holds.iter().map(|h| h.to_string()).collect(), ..Default::default() })
             })
             .collect()
+    }
+
+    /// sp-jgjvh: duplicate incident refs are counted from the lifecycle row: live and in
+    /// delivery count, terminal counts only inside the lookback, rowless never.
+    #[test]
+    fn dup_refs_count_by_lifecycle_state_not_bd_status() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"a","status":"closed","external_ref":"r1"},
+                {"id":"b","status":"open","external_ref":"r1"},
+                {"id":"c","status":"open","external_ref":"r1","closed_at":"2026-01-01T00:00:00Z"},
+                {"id":"d","status":"open","external_ref":"r1","closed_at":"2026-10-04T00:00:00Z"},
+                {"id":"e","status":"open","external_ref":"r1"},
+                {"id":"f","status":"open","external_ref":"r1","labels":["duplicate-of:a"]}]"#,
+        )
+        .unwrap();
+        let lc = lcmap(&[("a", "WORKING", &[]), ("b", "SUBMITTED", &[]), ("c", "LANDED", &[]), ("d", "DONE", &[]), ("f", "READY", &[])]);
+        let mut got = incidents_by_ref(&rows, &lc, "2026-09-28").remove("r1").unwrap();
+        got.sort();
+        assert_eq!(got, vec!["a", "b", "d"]);
     }
 
     /// sp-mve9i: the counts follow the lifecycle row, whatever bd's status says.
