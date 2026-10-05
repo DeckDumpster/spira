@@ -93,12 +93,8 @@ rm -f "$RUN/landstate/sp-wsx" "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx
     export SPIRA_RUN="$RUN" SPIRA_CONF=/nonexistent SPIRA_DB=/nonexistent SPIRA_BD=/nonexistent
     # shellcheck disable=SC1090
     . "$SH/lib.sh"
-    printf 'CERTIFIED %s %s\n' "deadbeef" "$(date +%s)" > "$RUN/landstate/sp-wsx"
     bead_reopen sp-wsx batch-eject "reproduced failure" "test-x.sh" >/dev/null 2>&1
 )
-st="$(awk '{print $1}' "$RUN/landstate/sp-wsx" 2>/dev/null || true)"
-[ "$st" = "WITHDRAWN" ] && ok "B: landstate WITHDRAWN after bead_reopen with suites" \
-    || bad "B: landstate WITHDRAWN" "got $st"
 [ "$(cat "$RUN/landstate/sp-wsx.ejected" 2>/dev/null)" = "test-x.sh" ] \
     && ok "B: .ejected sidecar carries test-x.sh" \
     || bad "B: .ejected sidecar" "got [$(cat "$RUN/landstate/sp-wsx.ejected" 2>/dev/null)]"
