@@ -223,7 +223,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
 
     for m in &ms {
         w.lib.gh_issue_closeout(&m.id, &head, &path);
-        w.lib.bead_close_on_land(&m.id, &head);
+        super::helpers::close_on_land(w, &c.s.submitted_label, &m.id, &head);
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
     }
     let lc_faults = ms.iter().filter(|m| !lc_deliver(w, &path, &head, m)).count();

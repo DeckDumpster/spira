@@ -394,8 +394,45 @@ impl Lib for RealLib {
     fn release_claim(&self, id: &str) {
         self.call(Op::ReleaseClaim, &[id], false);
     }
-    fn bead_close_on_land(&self, id: &str, sha: &str) {
-        self.call(Op::CloseOnLand, &[id, sha], false);
+    fn bead_close(&self, id: &str, reason: &str) -> bool {
+        let timeout = std::env::var("BD_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "180".into());
+        let Ok(mut child) = Command::new("timeout")
+            .arg(timeout)
+            .args(["bdq", "close", id, "--reason-file", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            return false;
+        };
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(reason.as_bytes());
+        }
+        child.wait().map(|s| s.success()).unwrap_or(false)
+    }
+    fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
+        let Some(root) = self.repo_registry().root(repo) else { return Ok(false) };
+        if !RealGit.ref_exists(Path::new(&root), &format!("refs/heads/{branch}")) {
+            return Ok(false);
+        }
+        // batch-job: the Sending's verified branch+worktree deletion (a content fence over
+        // the branch's diff), bounded by its own SPIRA_REAP_TIMEOUT below.
+        let timeout = std::env::var("SPIRA_REAP_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "300".into());
+        let mut c = Command::new("timeout");
+        c.arg(timeout).arg("sending").arg("reap-landed-branch");
+        if let Ok(f) = std::env::var("SPIRA_STATUS_FILE") {
+            c.arg("--status-from").arg(f);
+        }
+        c.args([id, branch, &root, why]).stdin(Stdio::null()).stderr(Stdio::null());
+        match c.output() {
+            Ok(o) if o.status.success() => Ok(true),
+            Ok(o) => {
+                let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                Err(if t.is_empty() { "unknown".into() } else { t })
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
     /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
     /// moved natively into gh-intake; this crate shells to the compiled binary by bare

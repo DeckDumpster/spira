@@ -140,7 +140,12 @@ pub trait Lib {
     fn bead_reopen(&self, id: &str, cause: &str, suites: &str) -> bool;
     fn cause_event(&self, id: &str, cause: &str);
     fn release_claim(&self, id: &str);
-    fn bead_close_on_land(&self, id: &str, sha: &str);
+    /// `bdq close <id> --reason-file -`, the reason on stdin. `true` only on a clean exit.
+    fn bead_close(&self, id: &str, reason: &str) -> bool;
+    /// `sending reap-landed-branch <id> <branch> <root> <why>` for the repository the
+    /// `repo:` label names. Ok(false): that repository or branch is not here, nothing to
+    /// reap; Err: the Sending refused or failed (it remains the backstop).
+    fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String>;
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path);
     fn comment(&self, id: &str, text: &str);
     fn notify(&self, repo: &str, subject: &str, body: &str);

@@ -89,7 +89,7 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
             if lc_certify(w, &id, &tip).is_err() || !super::land::lc_deliver(w, &path, &tip, &crate::model::Member { id: id.clone(), tip: tip.clone() }) {
                 return FAIL;
             }
-            w.lib.bead_close_on_land(&id, &tip);
+            super::helpers::close_on_land(w, &c.s.submitted_label, &id, &tip);
             w.out(format!("queue.sh submit: landed {branch} (push)"));
         }
         LandMode::Pr | LandMode::Hold => {

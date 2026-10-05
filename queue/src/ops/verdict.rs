@@ -494,9 +494,9 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch) -> i32 {
     OK
 }
 
-fn land_member(w: &World, path: &Path, m: &Member, sha: &str) {
+fn land_member(w: &World, c: &Ctx, path: &Path, m: &Member, sha: &str) {
     w.lib.gh_issue_closeout(&m.id, sha, path);
-    w.lib.bead_close_on_land(&m.id, sha);
+    super::helpers::close_on_land(w, &c.s.submitted_label, &m.id, sha);
 }
 
 fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str) -> i32 {
@@ -551,7 +551,7 @@ fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_br
         &format!("PR {pr} merged onto {base_branch} by fast-forward (head {}). Members: {}", b.head, b.members_str()),
     );
     for m in &b.members {
-        land_member(w, b.path, m, &b.head);
+        land_member(w, c, b.path, m, &b.head);
     }
     for suite in tagged(out, "flaky: ") {
         w.scripts.observe_flake(suite.trim(), &b.head);
@@ -647,7 +647,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
     for m in &b.members {
         if let Some(cur) = current.as_ref().filter(|cur| w.git.is_ancestor(b.path, &m.tip, cur)) {
             super::land::lc_deliver(w, b.path, cur, m);
-            land_member(w, b.path, m, cur);
+            land_member(w, c, b.path, m, cur);
             w.out(format!("verdict {name}: {} already in moved base — LANDED", m.id));
         }
     }

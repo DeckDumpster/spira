@@ -368,6 +368,7 @@ fn a_moved_base_rebuilds_and_force_pushes_when_no_member_is_in_it() {
 #[test]
 fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
     let t = T::new(LandMode::Queue);
+    t.submitted(&["sp-a"]);
     lc_batch(&t);
     t.git.set("origin/main", "b1");
     t.git.ancestor("ta", "b1");
@@ -376,7 +377,7 @@ fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
     assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("merge")));
     assert!(has_call(&t.forge.calls, "pr-close 12"));
     assert!(t.out().contains("verdict spira: PR 12 base moved (b1) — closed, members requeued"));
-    assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 base moved") && t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lib.has("close_on_land sp-a b1"));
+    assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 base moved") && t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lib.has("bead_close sp-a b1"));
     assert!(t.out().contains("verdict spira: sp-a already in moved base — LANDED"));
     assert!(!t.lc.has("event bead sp-b"));
     assert!(!t.qfile("open").exists());
@@ -578,6 +579,7 @@ fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
 #[test]
 fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
     let t = T::new(LandMode::Queue);
+    t.submitted(&["sp-a", "sp-b"]);
     batch(&t);
     t.git.set("refs/heads/spira/queue/x", "h1");
     t.git.set("refs/heads/spira/queue/old", "o1");
@@ -589,7 +591,7 @@ fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
     assert!(t.out().contains("verdict spira: PR 12 landed by fast-forward (h1)"));
     for id in ["sp-a", "sp-b"] {
         assert!(t.lib.has(&format!("gh_closeout {id} h1")));
-        assert!(t.lib.has(&format!("close_on_land {id} h1")));
+        assert!(t.lib.has(&format!("bead_close {id} h1")));
     }
     assert!(t.lib.has("notify spira PR 12 merged (fast-forward)"));
     assert!(has_call(&t.scripts.calls, "observe-flake test-f.sh h1"));
