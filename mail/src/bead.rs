@@ -239,7 +239,9 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
     let out = bd.run(&a(&["create", subject, "-l", &labels, "--type", "decision", "--body-file", "-", "--silent"]), Some(body));
     let id = out.stdout.trim();
     if out.code == 0 && !id.is_empty() {
-        let _ = spira_config::lifecycle_row::after_create("mail", &out.stdout);
+        if let Err(e) = spira_config::lifecycle_row::after_create("mail", &out.stdout) {
+            eprintln!("mail: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+        }
         Some(id.to_string())
     } else {
         None
@@ -641,5 +643,29 @@ mod tests {
         let script = flaky_bd_script(d.path());
         let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
         assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), Vec::<String>::new()); // literal-ok: test fixture
+    }
+}
+
+#[cfg(test)]
+mod after_create_not_discarded {
+    #[test]
+    fn no_caller_discards_after_create_failure() {
+        let sources = [
+            ("gh-intake", include_str!("../../gh-intake/src/real.rs")),
+            ("groomer", include_str!("../../groomer/src/bd.rs")),
+            ("incident", include_str!("../../incident/src/real.rs")),
+            ("maechen-trigger", include_str!("../../maechen-trigger/src/real.rs")),
+            ("mail", include_str!("bead.rs")),
+            ("bdq", include_str!("../../bead/src/bin/bdq.rs")),
+        ];
+        for (name, src) in sources {
+            assert!(src.contains("lifecycle_row::after_create"), "{name}: positive control: caller not found");
+            for line in src.lines() {
+                let l = line.trim_start();
+                if l.starts_with("let _ =") && l.contains("after_create") {
+                    panic!("{name}: discards after_create failure: {l}");
+                }
+            }
+        }
     }
 }
