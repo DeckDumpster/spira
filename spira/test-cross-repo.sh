@@ -48,6 +48,9 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up crossrepo || { echo "test-cross-repo: could not build a fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 
 # TWO REPOS: the home repo the harness is installed in, and the "second" repo that the
 # bead's repo: label names. A bead for "second" must never touch the home repo.

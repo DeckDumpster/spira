@@ -249,6 +249,7 @@ git -C "$L_REPO" worktree add -q -b spira/sp-lbase "$L_RUN/worktree/sp-lbase" ma
 printf 'sp-lbase\n' > "$L_RUN/worktree/sp-lbase/sp-lbase.txt"
 git -C "$L_RUN/worktree/sp-lbase" add -A
 git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
+lc_bead SUBMITTED sp-lbase "$(git -C "$L_RUN/worktree/sp-lbase" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 
 out="$(SPIRA_HOME="$L_SH" SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$L_REPO" \
     SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist" PATH="$L_SH:$PATH" \

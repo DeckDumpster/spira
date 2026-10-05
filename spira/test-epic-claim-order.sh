@@ -38,6 +38,11 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'testdb_drop; rm -rf "$TMP"; exit 130' INT
 trap 'testdb_drop; rm -rf "$TMP"; exit 143' TERM
 testdb_up epicclaimorder || { echo "test-epic-claim-order.sh: could not build a fixture database"; exit 1; }
+# sp-mve9i: an epic is "started" by its children's lifecycle rows, never bd status. With no
+# lifecycle store here, a stand-in spira-lc on PATH (spira-claim runs it by name) tells the
+# fixture's bd story in lifecycle terms: closed → LANDED, in_progress → WORKING, open → READY.
+lc_mirror_bd "$TMP/lc-mirror"
+export PATH="$TMP/lc-mirror:$PATH" SPIRA_LC_BIN
 
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"

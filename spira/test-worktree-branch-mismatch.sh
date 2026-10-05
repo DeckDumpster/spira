@@ -65,6 +65,23 @@ git -C "$REPO" push -q origin main
 STATUS_FILE="$T/status.tsv"
 printf 'sp-parent\tclosed\nsp-both\tclosed\n' > "$STATUS_FILE"
 spira_status_seam "$STATUS_FILE"
+# sp-mve9i: the claim witness reads the lifecycle row (`spira-lc show`), never bd status, and
+# a machine that does not answer is "somebody may be home". This suite has no lifecycle store,
+# so a stand-in answers its three beads: the closed ones handed on (SUBMITTED), the child
+# READY — nobody holds any of them by the machine's word; only the planted aeon does.
+mkdir -p "$T/lc"
+cat > "$T/lc/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+[ "${1:-}" = show ] || exit 2
+case "${2:-}" in
+    sp-parent|sp-both) st=SUBMITTED ;;
+    sp-child) st=READY ;;
+    *) exit 1 ;;
+esac
+printf '{"bead":{"bead_id":"%s","state":"%s","holds":[]},"delivery":null}\n' "$2" "$st"
+STUB
+chmod +x "$T/lc/spira-lc"
+export SPIRA_LC_BIN="$T/lc/spira-lc"
 
 echo "test-worktree-branch-mismatch.sh"
 echo

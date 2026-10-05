@@ -80,9 +80,10 @@ export SPIRA_LC_PASSWORD=""
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 
-lc_seed_working_poisoned() {   # lc_seed_working_poisoned <bead-id>
+lc_seed_working_poisoned() {   # lc_seed_working_poisoned <bead-id> [holder]
+    local holder="NULL"; [ -n "${2:-}" ] && holder="'$2'"
     lc_root_sql --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','WORKING','[\"poison\"]',0,0)" >/dev/null 2>&1
+        "INSERT INTO bead (bead_id, state, holder, holds, version, updated_at) VALUES ('$1','WORKING',$holder,'[\"poison\"]',0,0)" >/dev/null 2>&1
 }
 
 seedt() {   # seedt <id> <event_type> <new_value> <created_at>
@@ -113,7 +114,9 @@ for id in pz1 pz2 pz3 pz5; do
     for t in '2026-09-01 01:00:00' '2026-09-01 02:00:00' '2026-09-01 03:00:00'; do seedt "$id" claimed '' "$t"; done
 done
 lc_seed_working_poisoned pz1
-lc_seed_working_poisoned pz3
+# pz3 is held: with lifecycle_enforce on the claim is the row's WORKING holder, never bd's
+# in_progress (sp-mve9i).
+lc_seed_working_poisoned pz3 aeon-test
 
 echo
 echo "CONTROL — removing only the label leaves CHECK 4 about to re-poison:"

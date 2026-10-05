@@ -92,6 +92,7 @@ branch() {               # branch <id> [file] [content] — a closed bead with a
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
+    lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 }
 
 superseded_branch() {    # superseded_branch <id> [file] [content] — like branch, but with supersedes dependency
@@ -102,6 +103,7 @@ superseded_branch() {    # superseded_branch <id> [file] [content] — like bran
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"%s","depends_on_id":"sp-succ","type":"supersedes"}]}\n' \
         "$id" "$id" "$id" "$id" | testdb_seed
+    lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 }
 
 drop_branch() {
