@@ -319,13 +319,9 @@ pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
     if !cfg.enforce {
         return Reading::Standing(Vec::new());
     }
-    // The candidates are bd's ready set — beads bd would offer a builder — not a bd status
-    // filter: bd status is inert for work beads (design §3.4, sp-mve9i). A ready bead with no
-    // row is exactly one "no builder can claim"; the sentinel's own rowless check reads the
-    // same set.
     let open = crate::deadline::output(
-        "rowless ready beads",
-        Command::new(&cfg.bd).args(["-C", &cfg.db, "ready", "--exclude-type", "epic,event", "--json", "--limit", "0"]),
+        "rowless open beads",
+        Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]),
     )
     .ok()
     .filter(|o| o.status.success())
@@ -381,9 +377,6 @@ mod tests {
         let _ = rowless_beads(&cfg);
         let seen = std::fs::read_to_string(&argv).unwrap();
         assert!(seen.contains("--exclude-type epic,event"), "epics are out of scope: {seen}");
-        // sp-mve9i: the candidates are bd's ready set (content plus blockers), never a bd
-        // status filter — bd status is inert for work beads (design §3.4).
-        assert!(seen.starts_with("-C x ready ") && !seen.contains("--status"), "{seen}");
         cfg.lc_bin = write("lc-down", "exit 1");
         assert!(matches!(rowless_beads(&cfg), Reading::Unknown), "an unanswering store neither files nor clears");
     }

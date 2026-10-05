@@ -7,11 +7,11 @@
 
 use crate::incident::{self, Finding};
 use crate::log::log;
-use spira_config::nonwork::{self, Kind, Which};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+const OPEN: &str = "open,in_progress,blocked,deferred";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cond {
@@ -52,11 +52,7 @@ fn names(d: &Path) -> BTreeSet<String> {
 fn open_beads(ctx: &Ctx, reference: &str) -> Option<Vec<String>> {
     let out = crate::deadline::output(
         "open beads by ref",
-        // Condition beads are incident records, not work: bd status is their only state.
-        Command::new(ctx.bd)
-            .args(["-C", ctx.db, "list", "--external-ref", reference])
-            .args(nonwork::status_args(Kind::Incident, Which::Live))
-            .args(["--json", "--limit", "0", "--brief"]),
+        Command::new(ctx.bd).args(["-C", ctx.db, "list", "--external-ref", reference, "--status", OPEN, "--json", "--limit", "0", "--brief"]),
     )
     .ok()
     .filter(|o| o.status.success())?;

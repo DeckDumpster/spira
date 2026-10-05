@@ -113,11 +113,8 @@ fn rows_from_json(text: &str) -> Vec<BeadRow> {
 }
 
 impl Bd for RealBd {
-    fn list(&self, db: &str, which: spira_config::nonwork::Which, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
-        use spira_config::nonwork::{status_args, Kind};
-        let mut args: Vec<String> = vec!["list".into()];
-        args.extend(status_args(Kind::Incident, which));
-        args.extend(["--limit".into(), "0".into(), "--json".into()]);
+    fn list(&self, db: &str, statuses: &[&str], label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        let mut args: Vec<String> = vec!["list".into(), "--status".into(), statuses.join(","), "--limit".into(), "0".into(), "--json".into()];
         if let Some(l) = label {
             args.push("--label".into());
             args.push(l.into());

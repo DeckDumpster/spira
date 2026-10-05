@@ -6,15 +6,13 @@
 use crate::decide::BeadRow;
 
 pub trait Bd {
-    /// `bd -C db list --status <which> [--label <label>] [--closed-after <date>]
+    /// `bd -C db list --status <statuses> [--label <label>] [--closed-after <date>]
     /// --limit 0 --json`, parsed into rows. Err when bd could not be reached at all
-    /// (distinct from an empty Ok(vec![]), which is a real "nothing found"). The rows are
-    /// incident records, a non-work kind whose bd status is its state
-    /// (`spira_config::nonwork::Kind::Incident`, sp-mve9i).
+    /// (distinct from an empty Ok(vec![]), which is a real "nothing found").
     fn list(
         &self,
         db: &str,
-        which: spira_config::nonwork::Which,
+        statuses: &[&str],
         label: Option<&str>,
         closed_after: Option<&str>,
     ) -> Result<Vec<BeadRow>, String>;

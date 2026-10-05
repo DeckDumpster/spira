@@ -149,9 +149,7 @@ pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
     let reg = registry(cfg);
     let home = reg.home_repo().to_string();
     let mut out = Vec::new();
-    // Incident records are a non-work kind whose bd status is their state (spira_config::nonwork).
-    let active = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Incident, spira_config::nonwork::Which::Active);
-    for b in list_beads(cfg, &[active[0].as_str(), active[1].as_str(), "--label", cfg.incident_label.as_str()]) {
+    for b in list_beads(cfg, &["--status", "open,in_progress", "--label", cfg.incident_label.as_str()]) {
         let Some(br) = label_value(&b.labels, "branch:") else { continue };
         let br = br.to_string();
         let repo = label_value(&b.labels, "repo:").unwrap_or("").to_string();

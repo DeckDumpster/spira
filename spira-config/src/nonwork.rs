@@ -1,6 +1,6 @@
 //! bd status for a bead that is not a work bead (sp-mve9i). Design §3.4 makes bd `status`
 //! inert for *work* beads — a task, bug or feature an aeon claims, whose state is the
-//! lifecycle machine's (`lc_state`). An ask, an alert, an incident record, an insight, an
+//! lifecycle machine's (`lc_state`). An ask, an alert, an insight, an
 //! intake mirror of a GitHub issue or an epic is never claimed or delivered: the machine
 //! models none of its life, so bd's `status` is the only state it has, and opening or
 //! closing it in bd is the whole of its lifecycle.
@@ -21,8 +21,6 @@ pub enum Kind {
     Ask,
     /// An auron/watchtower alert: open while the condition fires.
     Alert,
-    /// An incident record (incident, strand, watchtower's failed-unit beads).
-    Incident,
     /// A filed-closed observation (`bead file … insight`).
     Insight,
     /// gh-intake's mirror of a GitHub issue.
@@ -106,7 +104,7 @@ mod tests {
         assert_eq!(status_filter(Kind::Alert, Which::Closed), "closed");
         let row: Value = serde_json::from_str(r#"{"id":"sp-a","status":"closed"}"#).unwrap();
         assert!(row_closed(Kind::Alert, &row));
-        assert!(is_active(Kind::Incident, "in_progress") && !is_active(Kind::Incident, "closed"));
+        assert!(is_active(Kind::Alert, "in_progress") && !is_active(Kind::Alert, "closed"));
         assert_eq!(status_of(Kind::Ask, &serde_json::json!({})), "");
     }
 }

@@ -4,7 +4,6 @@
 //! being numeric — a `?` means the probe failed, and filing on a failed probe sounds the
 //! alarm without evidence (law-absence-needs-a-positive-control).
 
-use spira_config::nonwork::{self, Kind, Which};
 use super::collect::SweepData;
 use super::Cfg;
 use crate::failed_units;
@@ -44,9 +43,7 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
 fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
     let out = Command::new(&cfg.bd)
         .args(["-C", &cfg.db, "list", "--external-ref", &format!("incident:failed-unit-{unit}")])
-        // A failed-unit incident record is not a work bead: bd status is its only state.
-        .args(nonwork::status_args(Kind::Incident, Which::Live))
-        .args(["--json", "--limit", "0", "--brief"])
+        .args(["--status", "open,in_progress,blocked,deferred", "--json", "--limit", "0", "--brief"])
         .output();
     match out {
         Ok(o) if o.status.success() => serde_json::from_slice::<Vec<serde_json::Value>>(&o.stdout)

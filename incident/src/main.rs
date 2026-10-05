@@ -426,9 +426,7 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     // dedup scan needs. Filters the same four leading-character classes the bash's
     // `grep -vE '^💡|^warning|^  Fix|^  Or'` drops (bd's own tip/warning chrome).
     match std::process::Command::new(std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()))
-        .args(["-C", db, "list"])
-        .args(spira_config::nonwork::status_args(spira_config::nonwork::Kind::Incident, spira_config::nonwork::Which::Active))
-        .args(["--limit", "0", "--label", &env.labels])
+        .args(["-C", db, "list", "--status", "open,in_progress", "--limit", "0", "--label", &env.labels])
         .output()
     {
         Ok(out) => {

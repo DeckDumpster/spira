@@ -683,8 +683,7 @@ pub fn dup_refs_keys() -> Kv {
         if labels.iter().any(|l| l.starts_with("duplicate-of:")) {
             continue;
         }
-        // Incident records are not work beads: bd status is their state (spira_config::nonwork).
-        if nonwork::row_closed(Kind::Incident, i) {
+        if i.get("status").and_then(Value::as_str) == Some("closed") {
             let closed_at = i.get("closed_at").and_then(Value::as_str).unwrap_or("");
             let closed_date = closed_at.get(..10).unwrap_or("");
             if closed_date < since.as_str() {
