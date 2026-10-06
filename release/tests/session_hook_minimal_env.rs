@@ -164,7 +164,15 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     // context_window.current_usage set (even empty) is the client's own "a real API response
     // has happened" signal (ctx-meter.sh: "THE SUPPLIED FIELD WINS") — it needs no real
     // transcript under this fresh HOME to produce its headline.
-    let (rc, out) = run_under_minimal_env_as(&home, &paths.meter_command(), "{\"context_window\": {\"current_usage\": {}, \"total_input_tokens\": 12345}}");
+    //
+    // ctx-meter.sh sources conf.sh too (spira/ctx-meter.sh:45, byte-identical to session.sh's
+    // own line 43) — it needs `SPIRA_TOML`/`SPIRA_HOME` exactly as much as session.sh does.
+    // `paths.meter_command()` alone (unlike `hook_cmd` above) never carried either: the test
+    // passed with rc=1 and silent-empty stdout because conf.sh's own "SPIRA_TOML is not set"
+    // refusal goes to stderr, which `run_under_minimal_env_as` never captures — making a
+    // config refusal indistinguishable from a crash. Same prefix as `hook_cmd`.
+    let meter_cmd = format!("SPIRA_TOML={} SPIRA_HOME={} {}", toml.display(), home_dir, paths.meter_command());
+    let (rc, out) = run_under_minimal_env_as(&home, &meter_cmd, "{\"context_window\": {\"current_usage\": {}, \"total_input_tokens\": 12345}}");
     assert_eq!(rc, 0, "ctx-meter.sh must exit 0 through its registered command under a minimal env; got rc={rc}, output:\n{out}");
     assert!(!out.trim().is_empty(), "ctx-meter.sh produced no output at all");
 }

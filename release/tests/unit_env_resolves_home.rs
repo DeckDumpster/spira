@@ -55,6 +55,33 @@ use std::process::{Command, Stdio};
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("release/ has a parent").to_path_buf()
 }
+
+/// The REAL `SPIRA_SCOPE_LABEL` this checkout's own fayth labels resolve to, computed the
+/// same way `FIXTURE_BD_SCRIPT`'s own `scope=` line does: the basename of the parent of
+/// `git rev-parse --git-common-dir` — the MAIN repository's directory name, which in a
+/// worktree checkout (as this one is) is NOT this directory's own name. `complete.toml`'s
+/// fixture placeholder (`spira.scope_label = "spira"`) is wrong for a worktree whose main
+/// repo is named anything else, so every real `.fayth`'s `FAYTH_LABELS` (which all
+/// reference `$SPIRA_SCOPE_LABEL`) filtered out this fixture's own planted beads entirely —
+/// `in_scope`/`labels_match` (spira-claim/src/ready.rs) require an EXACT label match, not a
+/// substring, so a wrong scope label is indistinguishable from "nothing ready". Declared in
+/// `fixture_toml` below so `spira-claim`'s own resolved config agrees with the labels the
+/// fixture's `bd`/`spira-lc` stubs actually hand back.
+fn real_scope_label() -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace_root().join("spira"))
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .unwrap_or_else(|e| panic!("cannot run git rev-parse --git-common-dir: {e}"));
+    assert!(out.status.success(), "git rev-parse --git-common-dir failed: {}", String::from_utf8_lossy(&out.stderr));
+    let common_dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Path::new(&common_dir)
+        .parent()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| panic!("git-common-dir {common_dir:?} has no parent with a basename"))
+}
 /// The cargo profile this test binary was itself built in, from its own path
 /// (`<target>/<profile-dir>/deps/<exe>`; `debug` is the `dev` profile). Building the fixture
 /// binary in the SAME profile reuses what is already built — without it, a gate testing under
@@ -175,6 +202,11 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     // spira-claim's `bd list` call failed with "No such file or directory" until this named
     // the fixture's own `bd` stub (written to `root/bin/bd` above) explicitly.
     let bd_s = root.join("bin/bd").display().to_string();
+    // SPIRA_SCOPE_LABEL: see `real_scope_label`'s own doc — `complete.toml`'s "spira"
+    // placeholder does not match this (worktree) checkout's real git-common-dir basename,
+    // so every real fayth's partition filter (`in_scope`/`labels_match`, exact-match on
+    // labels) silently excluded every one of this fixture's planted beads.
+    let scope_s = real_scope_label();
     let toml = spira_config::process::fixture_toml(
         &home,
         &[
@@ -184,6 +216,7 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
             ("SPIRA_CHAMBER", &chamber_s),
             ("SPIRA_CHAMBER_OVERLAY", &overlay_s),
             ("SPIRA_BD", &bd_s),
+            ("SPIRA_SCOPE_LABEL", &scope_s),
         ],
     );
     Fixture { root, home, systemd_run_log, toml, _dir: t }
