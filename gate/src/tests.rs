@@ -147,6 +147,7 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_TIMEOUT", "2700"),
         ("SPIRA_GATE_SUITES", "on"),
         ("SPIRA_GATE_BUDGET", "300"),
+        ("SPIRA_GATE_DEADLINE", "300"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -3328,7 +3329,15 @@ fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
 #[test]
 fn phase_caps_sum_under_the_deadline() {
     let fixed: u64 = ["tools", "gate"].iter().filter_map(|p| crate::engine::phase_cap(p)).sum();
-    assert!(fixed < crate::engine::DEADLINE_DEFAULT, "{fixed}");
+    assert!(fixed < 300, "{fixed}");
     assert_eq!(crate::engine::phase_cap("base-tools"), crate::engine::phase_cap("tools"));
     assert_eq!(crate::engine::phase_cap("reentry"), None);
+}
+
+#[test]
+fn a_gate_with_no_declared_deadline_refuses() {
+    let f = Fake::new();
+    f.set_var("SPIRA_GATE_DEADLINE", "");
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=config"), "{}", f.verdict_line());
 }

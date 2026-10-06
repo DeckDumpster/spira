@@ -735,7 +735,9 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
             }
         };
-        let deadline = key::digits(ctx.var_or("SPIRA_GATE_DEADLINE", &DEADLINE_DEFAULT.to_string())).unwrap_or(DEADLINE_DEFAULT);
+        let Some(deadline) = key::digits(ctx.var("SPIRA_GATE_DEADLINE")) else {
+            return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_DEADLINE={:?} is not a number of seconds — refusing to run a gate with no wall-clock bound.", ctx.var("SPIRA_GATE_DEADLINE")));
+        };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let t_start = self.s.start;
         let eff = || {
@@ -1628,11 +1630,8 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
     Some(s)
 }
 
-/// The whole gate's wall-clock ceiling, seconds: every phase, base trial included.
-pub const DEADLINE_DEFAULT: u64 = 300;
-
 /// The most a named phase may take, seconds (`base-` prefix ignored). They are the branch
-/// trial's fixed phases and sum under [`DEADLINE_DEFAULT`], so the suites keep the rest;
+/// trial's fixed phases and sum under SPIRA_GATE_DEADLINE's 300 s, so the suites keep the rest;
 /// phases not listed take whatever of the deadline is left.
 pub fn phase_cap(name: &str) -> Option<u64> {
     match name.strip_prefix("base-").unwrap_or(name) {
