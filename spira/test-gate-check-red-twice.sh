@@ -91,7 +91,7 @@ run_gate_check() {
     SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         PATH="$TMP/sbin:$PATH" \
         SPIRA_CONF="$TMP/no.conf" \
-        gate-check.sh 2>/dev/null
+        gate-check.sh 2>&1
 }
 
 # --------------------------------------------------------------------------------------
