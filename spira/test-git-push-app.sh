@@ -123,17 +123,20 @@ tl_config SPIRA_RUN="$TMP/run"
 # SPIRA_GH_APP_INSTALLATION_ID with a raw std::env::var, deliberately: queue-helpers.rs's own
 # doc comment says this leaf binary resolves no harness context (bd, spira-lc, conf.sh) at
 # all, so a config problem elsewhere can never break a plain git/mail primitive. tl_config
-# only lands a registered key in the suite's SPIRA_TOML layer, which this binary never reads
-# — the plain env is the only door it has (one source of config, per Ryan 2026-10-05).
+# alone is not enough either: conf.sh's own "WHAT IS EXPORTED, AND WHAT MUST NEVER BE" list
+# does not carry SPIRA_GH_APP_* at all, so even a value tl_config lands correctly in this
+# shell's own SPIRA_GH_APP_ID never reaches a child process. Export it ourselves AFTER
+# sourcing lib.sh, so conf.sh's own (unexported) resolve of the registered key runs first
+# and our plain env wins last (one source of config, per Ryan 2026-10-05).
 (
     export PATH="$BIN:$PATH"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
-    export SPIRA_GH_APP_ID=99999
-    export SPIRA_GH_APP_INSTALLATION_ID=11111
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
+    export SPIRA_GH_APP_ID=99999
+    export SPIRA_GH_APP_INSTALLATION_ID=11111
     rm -f "$TMP/git-args"
     spira_git_push "$TMP/fake-repo" -q origin main
 ) 2>/dev/null || true
