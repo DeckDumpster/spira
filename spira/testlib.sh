@@ -134,6 +134,11 @@ _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 # Layers: the checked-in complete fixture (every key declared) as the base, then this suite's
 # own override file, which holds ONLY what the suite changes.
 _TL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Every repo a suite creates starts on `main`, whatever the host's own init.defaultBranch says:
+# a declared base (origin/main, local/main) is never derived any more, so a fixture repo must
+# actually HAVE the branch its repo-map row names. Git's own env config, so it reaches every
+# git a suite runs (an `env -i` drops it — such a call names its branch itself).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=init.defaultBranch GIT_CONFIG_VALUE_0=main
 _TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira-config/tests/fixtures/complete.toml"
 [ -f "$_TL_CONF_BASE" ] || { echo "testlib: no complete fixture at $_TL_CONF_BASE" >&2; exit 1; }
 _TL_CONF_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tl-conf.XXXXXX")"

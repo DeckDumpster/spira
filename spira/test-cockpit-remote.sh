@@ -126,7 +126,8 @@ if [ -f "$REBUILD_SRC" ]; then
     fi
     # The list is DECLARED config (spira.cockpit_sessions), read through spira-config with
     # no Rust-side literal or fallback (per Ryan 2026-10-05: one source of config).
-    if grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -q 'spira_config::process::cfg' \
+    if grep -q 'need("COCKPIT_SESSIONS")' "$REBUILD_SRC" \
+        && grep -A1 'let need = ' "$REBUILD_SRC" | grep -q 'spira_config::process::cfg(key)' \
         && ! grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -qE 'unwrap_or(_else|_default)?\('; then
         ok "rebuild does not hardcode the session list"
     else

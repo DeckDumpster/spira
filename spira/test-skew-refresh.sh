@@ -27,7 +27,7 @@ lcfix_up || { echo "test-skew-refresh: could not build a lifecycle fixture"; exi
 # ── Fixture: a git remote with two commits, REPO left one behind ─────────────────────────
 ORIGIN="$TMP/origin"
 REPO="$TMP/repo"
-git init -q "$ORIGIN"
+git init -q -b main "$ORIGIN"   # the declared base below names origin/main
 git -C "$ORIGIN" config user.email "test@test"
 git -C "$ORIGIN" config user.name "test"
 mkdir -p "$ORIGIN/spira"
