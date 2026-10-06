@@ -1116,8 +1116,15 @@ fn cmd_fayth(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let roster_override = env::var("SPIRA_FAYTHS").ok();
-    let roster_override = roster_override.as_deref();
+    // The roster is the declared one (spira.fayths), never an environment override.
+    let roster = match spira_config::process::cfg("SPIRA_FAYTHS") {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("spira-config fayth: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let roster_override = Some(roster.as_str());
     match args.first().map(String::as_str) {
         Some("names") => {
             for n in chamber::fayth_names(&home) {

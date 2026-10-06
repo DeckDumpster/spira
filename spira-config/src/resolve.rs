@@ -154,11 +154,9 @@ pub fn derive_home_repo(home: &Path, env: &BTreeMap<String, String>) -> std::pat
 /// (wave4-decomposition.md bead sp-mz7dn, "wave 4.8"). `home`/`repo` are the caller's own
 /// per-copy facts — [`resolve`] never self-locates them, and neither does this (see
 /// [`derive_home_repo`] for `repo`, when the caller does not already have it). The
-/// `spira.toml` in force is located the same way `spira-config locate` reports (no explicit
-/// file pin): [`crate::discover`]`(None)` then [`crate::load`]; a config file that fails to
-/// parse is a `String` error a caller can print and bail on, the same as every other
-/// `spira_config` entry point already does, rather than a new enum variant [`resolve`]
-/// itself would have to carry for an IO step it otherwise never performs.
+/// config is the one source `SPIRA_TOML` names in the `env` map handed in (a file, or
+/// base:override layers) — nothing is searched for, and an unset or unreadable one is an
+/// error a caller prints and bails on.
 pub fn resolve_for_process(
     home: &Path,
     repo: &Path,
