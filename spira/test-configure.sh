@@ -13,8 +13,6 @@
 # 4. DERIVABLE KEYS COMMENTED: at least one non-trap key appears as a comment.
 # 5. NO OVERWRITE: an existing config file is not touched; the script reports it.
 # 6. ROUND-TRIP: the generated file is accepted by conf.sh (spira-config validates, conf.sh resolves).
-# 7. REPO-MAP SEEDED: a repo-map file is written in the config directory.
-# 8. REPO-MAP PRESERVED: an existing repo-map is not overwritten.
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control)
 #   a. conf.sh refuses an unknown key (proves the round-trip checker would catch a bad key).
@@ -93,7 +91,7 @@ run_configure() {
         CONFIGURE_MAX_LIVE_AEONS="" \
         CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
         CONFIGURE_DOLT_DATA="" \
-        "$HERE/configure.sh" --no-repo-map "$@" 2>&1
+        "$HERE/configure.sh" "$@" 2>&1
 }
 
 _out="$(run_configure)"; _rc=$?
@@ -187,66 +185,8 @@ fi
 # The output must mention the existing file
 want "output reports the existing file" "already exists" "$_overwrite_out"
 
-# ==========================================================================
-echo
-echo "repo-map seeded — configure.sh seeds a repo-map from the example:"
-# ==========================================================================
-FAKE_HOME2="$TMP/home2"
-OUT2="$FAKE_HOME2/.config/spira/spira.toml"
-mkdir -p "$FAKE_HOME2"
-
-run_configure2() {
-    env -i \
-        PATH="$PATH" \
-        HOME="$FAKE_HOME2" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_TOML="$SPIRA_TOML" \
-        CONFIGURE_OUT="$OUT2" \
-        CONFIGURE_PROD="$FAKE_PROD" \
-        CONFIGURE_MAX_AEONS="2" \
-        CONFIGURE_MAX_LIVE_AEONS="" \
-        CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
-        CONFIGURE_DOLT_DATA="" \
-        "$HERE/configure.sh" "$@" 2>&1
-}
-
-_seed_out="$(run_configure2)"; _seed_rc=$?
-iszero "configure.sh (with repo-map) exits 0" "$_seed_rc"
-_repo_map_path="$(dirname "$OUT2")/repo-map"
-[ -f "$_repo_map_path" ] && ok "repo-map was created" \
-                          || bad "repo-map not created" "expected $OUT2/../repo-map"
-
-# ==========================================================================
-echo
-echo "repo-map preserved — existing repo-map is not overwritten:"
-# ==========================================================================
-EXISTING_MAP_MARKER="# existing-repo-map-sentinel-$$"
-printf '%s\n' "$EXISTING_MAP_MARKER" >> "$_repo_map_path"
-
-FAKE_HOME3="$TMP/home3"
-OUT3="$FAKE_HOME3/.config/spira/spira.toml"
-mkdir -p "$FAKE_HOME3"/.config/spira
-cp "$_repo_map_path" "$FAKE_HOME3/.config/spira/repo-map"
-
-_preserve_out="$(env -i \
-    PATH="$PATH" \
-    HOME="$FAKE_HOME3" \
-    SPIRA_CONF=/nonexistent \
-    SPIRA_TOML="$SPIRA_TOML" \
-    CONFIGURE_OUT="$OUT3" \
-    CONFIGURE_PROD="$FAKE_PROD" \
-    CONFIGURE_MAX_AEONS="2" \
-    CONFIGURE_MAX_LIVE_AEONS="" \
-    CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
-    CONFIGURE_DOLT_DATA="" \
-    "$HERE/configure.sh" 2>&1)"
-
-if grep -qF "$EXISTING_MAP_MARKER" "$FAKE_HOME3/.config/spira/repo-map" 2>/dev/null; then
-    ok "existing repo-map was not overwritten"
-else
-    bad "repo-map preserved" "sentinel line was lost — existing repo-map was overwritten"
-fi
-want "output reports the existing repo-map" "already exists" "$_preserve_out"
+# (Cases 7-8, repo-map seeded/preserved, are gone: configure.sh no longer seeds a repo-map —
+# the example it copied was deleted per Ryan 2026-10-05; the operator declares the repos.)
 
 # ==========================================================================
 echo
