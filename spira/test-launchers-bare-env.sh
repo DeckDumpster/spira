@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-launchers-bare-env.sh — every entry point an operator or a client starts OUTSIDE a Spira
-# unit, run from a bare login environment: HOME, PATH and the one export an operator's profile
-# carries (SPIRA_TOML), nothing else. A unit's environment is rendered for it; these have none,
+# unit, run from a bare login environment: HOME, PATH and the two exports an operator's profile
+# carries (SPIRA_TOML, SPIRA_RELEASE), nothing else. A unit's environment is rendered for it; these have none,
 # so a launcher that quietly depends on a variable only a unit sets passes every other suite.
 #
 # Each launcher (the ops pane aside, which renders "?" for what it cannot read) is run twice: with the profile export, where it must run, and with nothing, where
@@ -25,7 +25,7 @@ tl_config SPIRA_MAIL="$TMP/mail" SPIRA_RUN="$TMP/run" SPIRA_DB=""
 printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/claude"; chmod +x "$TMP/bin/claude"
 
 # profile <cmd...> — the operator's login environment; bare <cmd...> — a process given nothing.
-profile() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_TOML="$SPIRA_TOML" "$@"; }
+profile() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="${SPIRA_RELEASE:-$ROOT}" "$@"; }
 bare()    { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" "$@"; }
 
 refuses_bare() {  # refuses_bare <name> <cmd...>
@@ -42,6 +42,7 @@ printf 'From: Operator <operator@spira>\nSubject: Please reply\nMessage-ID: <%s@
 reply="$(printf 'In-Reply-To: <%s@spira>\nFrom: Concierge <concierge@spira>\nSubject: Re: Please reply\n\nDone.\n' "$id")"
 out="$(printf '%s\n' "$reply" | profile mail sendmail 2>&1)"; rc=$?
 wantrc "mail sendmail runs from a bare login environment" 0 "$rc"
+[ "$rc" = 0 ] || echo "# sendmail said: $out"
 nowant "mail sendmail names no missing config" "SPIRA_TOML" "$out"
 refuses_bare "mail sendmail" mail sendmail
 
