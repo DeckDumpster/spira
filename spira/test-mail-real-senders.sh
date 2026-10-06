@@ -46,6 +46,14 @@ export SPIRA_ID_PREFIX="sp"
 export SPIRA_ASK_LABEL="needs-operator"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
     SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
+# round 6 fix (pattern 7): SPIRA_MAIL_KINDS is a registered key too; undeclared, it fell
+# through to the complete fixture's own default
+# (/fixture/home/spira/spira-releases/current/spira/mail/kinds), so mail's own lint refused
+# every send with "unknown kind question — rule: kind must be a file in ..." before it ever
+# reached the Maildir — the real cause every "delivers exactly one message" assertion below
+# was actually testing against (confirmed by replaying the same `mail send` call by hand).
+# The real kinds directory lives in this tree at spira/mail/kinds.
+tl_config SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 # round 3 fix (pattern 7): the complete fixture mutes mail by default (mail_mute=true);
 # every message this suite sends would be filed straight to cur/ (already seen) rather
 # than new/, so none of its own-sender checks would ever see anything unread.

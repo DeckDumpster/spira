@@ -36,7 +36,16 @@ SPIRA_REPO_MAP="$TMP/repo-map"
 run_halt() {
     # SPIRA_RUN/SPIRA_PROD/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE
     # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
-    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+    # SPIRA_QUEUE_DIR is ALSO registered, and the complete fixture declares it as a literal
+    # default (/fixture/home/spira/run/queue) rather than deriving it from SPIRA_RUN
+    # (landing-pass/src/real.rs: `path_opt("queue_dir").unwrap_or_else(|| run.join("queue"))`
+    # only falls back when the key is unset). Undeclared, halt read the open-batch record
+    # from that /fixture path instead of $QUEUE_DIR below, found nothing, and treated every
+    # queue branch as orphaned — the open one included. $QUEUE_DIR is empty on the earlier
+    # calls above (before it is assigned below); tl_config writing "" is harmless, since an
+    # empty value resolves the same as unset and this key is re-declared on every call.
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+        SPIRA_QUEUE_DIR="${QUEUE_DIR:-}"
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent \

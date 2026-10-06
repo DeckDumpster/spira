@@ -62,10 +62,22 @@ GIT_BIN="$(dirname "$(command -v git)")"
 SPIRA_CONFIG_BIN="$(dirname "$(command -v spira-config)")" || bail "spira-config is not on PATH"
 mkdir -p "$TMP/run"
 
-# SPIRA_REPO_MAP/SPIRA_DB/SPIRA_RUN are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
-# CONFIG): declare them via tl_config and thread SPIRA_TOML through every env -i call below —
-# env -i clears it otherwise, and no process reads these three from the environment any more.
-tl_config SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" SPIRA_RUN="$TMP/run"
+# SPIRA_REPO_MAP/SPIRA_DB/SPIRA_RUN/SPIRA_HOME_REPO are registered keys (per Ryan 2026-10-05,
+# ONE SOURCE OF CONFIG): declare them via tl_config and thread SPIRA_TOML through every env -i
+# call below — env -i clears it otherwise, and no process reads these four from the
+# environment any more.
+#
+# A NAMED ROW, NOT AN EMPTY MAP. Leaving SPIRA_REPO_MAP pointing at a file that does not exist
+# used to mean "the map contributes nothing" — but the complete fixture still declares a
+# `base` of `local/main` for the home repo name `spira` (the production repo's own queue.local
+# setup), and SPIRA_REPO=$REPO makes THIS throwaway checkout answer to that same name. landref's
+# declared-base rung then finds `local/main`, which this repo never created, fails to verify,
+# and refuses outright rather than falling through to the remote-derived rungs — so every call
+# below saw "base branch ... could not be resolved" regardless of which branch was actually
+# checked out. Naming this fixture's own row (base origin/main, which it really has) keeps it
+# out from under the production row's default.
+printf '%s | %s | push | origin/main | |\n' "fixture" "$REPO" > "$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO="fixture" SPIRA_DB="$TMP/none.db" SPIRA_RUN="$TMP/run"
 
 # run_guard <email> <repo> -> exit code of branch-guard.sh staged
 run_guard() {
@@ -132,7 +144,9 @@ GIT_COMMITTER_NAME="aeon-shiva" GIT_COMMITTER_EMAIL="aeon-shiva@spira.local" \
 git -C "$REPO" commit -q -m "sp-test: aeon commit planted directly on main"
 
 # The check is run with SPIRA_REPO=$REPO so spira_repos returns the home repo name and
-# repo_root resolves to $REPO. SPIRA_REPO_MAP is absent so the map contributes nothing.
+# repo_root resolves to $REPO. The map above names this fixture "fixture" with a declared
+# base of origin/main, which this repo actually has — repo_names/repo_root resolve it as any
+# other mapped row would.
 run_check() {
     env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
