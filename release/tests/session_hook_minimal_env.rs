@@ -121,7 +121,6 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     std::fs::copy(build_bin("watchd", "watchd"), release_root.join("bin/watchd")).expect("copy watchd");
     std::os::unix::fs::symlink(workspace.join("spira"), release_root.join("spira")).expect("symlink spira/");
 
-    let paths = release::session_hook::resolve(&release_root, "", tmp.path().join("settings.json")).expect("resolve paths");
 
     // `SPIRA_CONF` (the legacy pre-toml override) is DEAD: spira/conf.sh (per Ryan
     // 2026-10-05) no longer reads it at all — "no legacy spira.conf, no conversion, no
@@ -155,8 +154,11 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     // the same place, but watchd is handed SPIRA_HOME directly here too, named outright
     // rather than relying on that derivation chain reaching it unbroken through session.sh.
     let home_dir = release_root.join("spira").display().to_string();
+    // The commands carry SPIRA_TOML themselves (the client's environment has none); build them
+    // against this test's own one-source file and run them exactly as registered.
+    let paths = release::session_hook::resolve(&release_root, "", &toml.display().to_string(), tmp.path().join("settings.json")).expect("resolve paths");
 
-    let hook_cmd = format!("SPIRA_TOML={} SPIRA_HOME={} {}", toml.display(), home_dir, paths.hook_command());
+    let hook_cmd = format!("SPIRA_HOME={} {}", home_dir, paths.hook_command());
     let (rc, out) = run_under_minimal_env_as(&home, &hook_cmd, "{\"hook_event_name\":\"SessionStart\",\"source\":\"startup\"}");
     assert_eq!(rc, 0, "session.sh must exit 0 through its registered command under a minimal env; got rc={rc}, output:\n{out}");
     assert!(!out.trim().is_empty(), "session.sh produced no output at all, with a real watcher row in its manifest");
@@ -171,7 +173,7 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     // passed with rc=1 and silent-empty stdout because conf.sh's own "SPIRA_TOML is not set"
     // refusal goes to stderr, which `run_under_minimal_env_as` never captures — making a
     // config refusal indistinguishable from a crash. Same prefix as `hook_cmd`.
-    let meter_cmd = format!("SPIRA_TOML={} SPIRA_HOME={} {}", toml.display(), home_dir, paths.meter_command());
+    let meter_cmd = format!("SPIRA_HOME={} {}", home_dir, paths.meter_command());
     let (rc, out) = run_under_minimal_env_as(&home, &meter_cmd, "{\"context_window\": {\"current_usage\": {}, \"total_input_tokens\": 12345}}");
     assert_eq!(rc, 0, "ctx-meter.sh must exit 0 through its registered command under a minimal env; got rc={rc}, output:\n{out}");
     assert!(!out.trim().is_empty(), "ctx-meter.sh produced no output at all");
