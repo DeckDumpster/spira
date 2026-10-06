@@ -48,6 +48,11 @@ export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
 tl_config SPIRA_RUN="$SPIRA_RUN"
+# round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
+# builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset
+# $SPIRA_SCOPE_LABEL) would require a "spira" label bead()'s seeded beads never carry —
+# nothing would ever be ready. Declare the empty scope this suite has always meant.
+tl_config SPIRA_SCOPE_LABEL=""
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -268,6 +273,9 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 AEON_HOME="$TMP/aeonhome"; mkdir -p "$AEON_HOME/chamber"
+# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/home/.../chamber. Declare this suite's real one.
+tl_config SPIRA_CHAMBER="$AEON_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$AEON_HOME/"
 cp -r "$HERE/actors" "$AEON_HOME/" 2>/dev/null || true

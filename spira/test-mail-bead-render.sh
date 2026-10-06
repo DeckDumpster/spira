@@ -46,8 +46,11 @@ tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
     SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF=""
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
+export SPIRA_HOME="$HERE"
 
-run() { mail "$@"; }
+run() { timeout 30 mail "$@"; }
 
 body_of() {
     local mailbox="$1" f

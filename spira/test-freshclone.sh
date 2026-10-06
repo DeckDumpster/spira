@@ -93,8 +93,13 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HARNESS/spira/"
 
 conf_val() {
     local key="$1"; shift
+    # SPIRA_TOML names the shipped example (spira-config/examples/spira.toml), the one
+    # source of config now that conf.sh refuses outright with none at all — the schema's
+    # own worked example is what "shipped default" means under the new law, not a
+    # computed bash default (per Ryan 2026-10-05, nothing has one any more).
     env -i "$@" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$HERE/../spira-config/examples/spira.toml" \
         bash -c ". '$HARNESS/spira/conf.sh' 2>/dev/null; printf '%s' \"\${${key}:-}\"" 2>/dev/null
 }
 

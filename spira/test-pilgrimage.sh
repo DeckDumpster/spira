@@ -153,7 +153,7 @@ n_mails() { ls "$MAILDIR/operator/new/" 2>/dev/null | wc -l | tr -d ' '; }
 mail_content() { cat "$MAILDIR/operator/new/"* 2>/dev/null; }
 
 tl_config SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR"
-run() { pilgrimage.sh check 2>&1; }
+run() { timeout 30 pilgrimage.sh check 2>&1; }
 
 # One seed, three epics: a finished one (announce/close), one still going (silence), and
 # one outside Spira's partition (silence). No branch/landstate for any of them, so all three

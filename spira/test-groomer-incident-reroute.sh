@@ -65,7 +65,7 @@ run_sweep() {
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        groomer sweep "$@" 2>&1
+        timeout 30 groomer sweep "$@" 2>&1
 }
 
 labels_of() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }

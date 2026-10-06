@@ -71,8 +71,10 @@ sentinel() {
     # SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_FAYTHS/SPIRA_NOTIFY/SPIRA_REPO_MAP are
     # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config,
     # not the per-call env prefix below, which no process reads them from any more.
+    # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME.
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
-        SPIRA_FAYTHS="t" SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map"
+        SPIRA_FAYTHS="t" SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_CHAMBER="$SH/chamber"
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
     SPIRA_INFERENCE_EVERY=999999 \

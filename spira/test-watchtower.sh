@@ -959,7 +959,9 @@ echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:
 # fixture pins FAYTH_LABELS to a literal (never the shipped default) and avoids this
 # suite depending on the real builder.fayth's own label composition.
 IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
-tl_config SPIRA_FAYTHS=builder
+# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# now, no longer derived from SPIRA_HOME when unset.
+tl_config SPIRA_FAYTHS=builder SPIRA_CHAMBER="$IWR_HOME/chamber"
 cp "$HERE/ready-bucket.py" "$IWR_HOME/"
 cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder

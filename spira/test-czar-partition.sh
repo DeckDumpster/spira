@@ -34,7 +34,10 @@ mkdir -p "$T/run"
 
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$T/no-such.conf"
-tl_config SPIRA_RUN="$T/run"
+# The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+# SPIRA_HOME any more (sfail round 2, pattern 6) — without this, czar.fayth/builder.fayth
+# are never found in the real chamber this suite reads.
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 

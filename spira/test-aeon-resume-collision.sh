@@ -51,7 +51,10 @@ cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
-tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# now (no longer derived from SPIRA_HOME when unset), so the fixture persona built below
+# under $SPIRA_HOME/chamber would otherwise never be found.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"

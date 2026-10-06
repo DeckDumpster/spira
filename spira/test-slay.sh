@@ -137,6 +137,10 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP/lc-data"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. Empty it so SPIRA_LC_PASSWORD="" above is used.
+tl_config SPIRA_LC_PASSWORD_FILE=""
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 

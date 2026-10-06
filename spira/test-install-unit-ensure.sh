@@ -98,7 +98,7 @@ ensure() {
         SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_PROD="${_ENSURE_PROD:-$PROD}" SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}"
     env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
-        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" \
         SPIRA_CONF=/nonexistent \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_SYSTEMCTL="$TMP/sc" \
@@ -113,7 +113,7 @@ tl_config SPIRA_PATH="$BIN" SPIRA_WATCHERS="$TMP/watchers-empty" SPIRA_DB="$TMP/
     SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
     SPIRA_PROD="$PROD"
 rendered="$(env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
-    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" \
     SPIRA_CONF=/nonexistent \
     units-install --render 2>&1)"
 
@@ -144,7 +144,7 @@ echo "pinned release — host release state cannot decide the verdict:"
 SK="$TMP/skew"; mkdir -p "$SK/aaa/bin" "$SK/bbb"
 cp "$PIN/bin/unit-ensure" "$SK/aaa/bin/unit-ensure"; ln -s bbb "$SK/current"
 tl_config SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod
-skew_out="$(env -i PATH="$SK/aaa/bin:$BIN:$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
+skew_out="$(env -i PATH="$SK/aaa/bin:$BIN:$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" SPIRA_CONF=/nonexistent \
     SPIRA_SYSTEMCTL="$TMP/sc" \
     unit-ensure 2>&1)"
 want "skewed release copy is refused" "REFUSING to write units" "$skew_out"

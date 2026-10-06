@@ -91,6 +91,10 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../syste
 done
 ln -s "$HERE/conf.sh"  "$FIXTURE/spira/conf.sh"
 ln -s "$HERE/lib.sh"   "$FIXTURE/spira/lib.sh"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so a fixture spira/ with none refuses config resolution
+# outright (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d"   "$FIXTURE/spira/conf.d"
 
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"

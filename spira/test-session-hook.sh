@@ -131,7 +131,7 @@ hook() {
       | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
         "${extra[@]+"${extra[@]}"}" \
-        bash "$CLONE/spira/hooks/session.sh"
+        timeout 30 bash "$CLONE/spira/hooks/session.sh"
 }
 
 echo "one line per watcher, and nothing else — the positive control"
@@ -199,7 +199,7 @@ echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
     printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
-        bash "$CLONE/spira/hooks/session.sh"
+        timeout 30 bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
 has "and still summarises"        "$out4" "## Spira watchers"

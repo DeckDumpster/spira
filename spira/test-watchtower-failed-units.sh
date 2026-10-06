@@ -87,11 +87,16 @@ printf 'line one\nline two\nline three\n'
 MOCK
 chmod +x "$BIN/journalctl"
 
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so a stub home needs the registry symlinked in (sfail round 2, pattern 1).
+WT_HOME="$TMP/wt-home"; mkdir -p "$WT_HOME"; ln -s "$HERE/conf.d" "$WT_HOME/conf.d"
+
 # wt_show -> the --show snapshot (touches nothing: no incident.sh, no state write)
 wt_show() {
     tl_config SPIRA_RUN="$TMP/run"
-    env -i PATH="$PATH" HOME="$TMP" \
+    timeout 30 env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$WT_HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
@@ -110,8 +115,9 @@ printf '%s\t%s\n' "\$2" "\${SPIRA_INCIDENT_REF:-}" >> "$TMP/inc-calls"
 MOCK
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
-    env -i PATH="$PATH" HOME="$TMP" \
+    timeout 30 env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$WT_HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \

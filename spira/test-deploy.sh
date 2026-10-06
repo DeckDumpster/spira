@@ -330,7 +330,7 @@ run_deploy() {
         "GIT_COMMITTER_NAME=test" \
         "GIT_COMMITTER_EMAIL=test@t" \
         "${extra_env[@]+"${extra_env[@]}"}" \
-        bash "$DEPLOY" "${deploy_args[@]+"${deploy_args[@]}"}" 2>&1
+        timeout 60 bash "$DEPLOY" "${deploy_args[@]+"${deploy_args[@]}"}" 2>&1
 }
 
 # ==========================================================================
@@ -1188,7 +1188,7 @@ _ff_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
 _ff_rc=$?
 not0 "rdonly/fail-first: old sidecar location → NOT-LATEST → rollback (exits non-zero)" "$_ff_rc"
 want "rdonly/fail-first: rollback mentioned"   "ROLLBACK" "$_ff_out"
@@ -1225,7 +1225,7 @@ _rdonly_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
 _rdonly_rc=$?
 is0    "rdonly: deploy exits 0 (no rollback)"        "$_rdonly_rc"
 nowant "rdonly: no ROLLBACK"                        "ROLLBACK" "$_rdonly_out"
@@ -1528,7 +1528,7 @@ _tb_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
 _tb_rc=$?
 not0 "tarball/no-forge-repo: exits non-zero without SPIRA_FORGE_REPO" "$_tb_rc"
 want "tarball/no-forge-repo: mentions SPIRA_FORGE_REPO" "SPIRA_FORGE_REPO" "$_tb_out"
@@ -1563,7 +1563,7 @@ _tb_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" --dry-run latest 2>&1)"
+    timeout 60 bash "$DEPLOY" --dry-run latest 2>&1)"
 _tb_rc=$?
 is0  "tarball/latest: exits 0 with SPIRA_FORGE_REPO set"  "$_tb_rc"
 want "tarball/latest: resolves to $NEW_TAG" "$NEW_TAG" "$_tb_out"
@@ -1597,7 +1597,7 @@ _tb_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
 _tb_rc=$?
 is0  "tarball/explicit-tag: exits 0"             "$_tb_rc"
 want "tarball/explicit-tag: names asset"         "$NEW_RELEASE" "$_tb_out"
@@ -1688,7 +1688,7 @@ _out="$(env -i \
     "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
     "SLAY_LOG=$SLAY_LOG" \
     "GIT_CONFIG_NOSYSTEM=1" \
-    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$NEW_TAG" 2>&1)"
 _rc=$?
 not0 "artifact/fail-first: no GH_REPO with no-.git SPIRA_REPO → deploy fails" "$_rc"
 
@@ -1719,7 +1719,7 @@ _out="$(env -i \
     "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
     "SLAY_LOG=$SLAY_LOG" \
     "GIT_CONFIG_NOSYSTEM=1" \
-    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$NEW_TAG" 2>&1)"
 _rc=$?
 is0    "artifact/spira-gh-repo: deploy exits 0 with SPIRA_GH_REPO" "$_rc"
 islink "artifact/spira-gh-repo: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
@@ -1753,7 +1753,7 @@ _out="$(env -i \
     "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
     "SLAY_LOG=$SLAY_LOG" \
     "GIT_CONFIG_NOSYSTEM=1" \
-    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$NEW_TAG" 2>&1)"
 _rc=$?
 is0    "artifact/gh-repo-direct: deploy exits 0 with GH_REPO set directly" "$_rc"
 islink "artifact/gh-repo-direct: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"

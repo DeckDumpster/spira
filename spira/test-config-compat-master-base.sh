@@ -124,7 +124,7 @@ tl_config SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_
     SPIRA_REPO_MAP="$B_SH/repo-map" SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$B_SH/forge-fixture.sh"
 out="$(SPIRA_HOME="$B_SH" PATH="$B_SH:$PATH" \
-        batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
+        timeout 30 batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
 is "batcher cut: sp-mbase is IN_DELIVERY, not left CERTIFIED" "IN_DELIVERY" "$(lcfix_state sp-mbase)"
@@ -209,7 +209,7 @@ tl_config SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_
     SPIRA_REPO_MAP="$V_SH/repo-map" SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 \
     SPIRA_QUEUE_CI_IDLE_SEC=600 SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh"
 out="$(SPIRA_HOME="$V_SH" PATH="$V_SH:$PATH" \
-        queue verdict "$V_REPONAME" 2>&1)"
+        timeout 30 queue verdict "$V_REPONAME" 2>&1)"
 
 is   "verdict: remote MASTER fast-forwards to the batch head" \
      "$V_BATCH_HEAD" "$(git -C "$V_REMOTE" rev-parse master 2>/dev/null)"
@@ -253,7 +253,7 @@ lc_bead SUBMITTED sp-lbase "$(git -C "$L_RUN/worktree/sp-lbase" rev-parse HEAD)"
 
 tl_config SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist"
 out="$(SPIRA_HOME="$L_SH" SPIRA_REPO="$L_REPO" PATH="$L_SH:$PATH" \
-        landing-pass land 2>&1)"
+        timeout 30 landing-pass land 2>&1)"
 
 want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"
 git -C "$L_REPO" fetch -q origin

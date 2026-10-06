@@ -61,7 +61,9 @@ mkdir -p "$T/run" "$T/chamber" "$T/bin"
 # (inherited here — this is the main suite shell, not under env -i), so these are declared
 # through tl_config rather than export, or conf.sh's own resolve would overwrite them right
 # back to the fixture's values the moment lib.sh is sourced below.
-tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db"
+# SPIRA_CHAMBER too — the fixture declares a fixed, nonexistent path; nothing derives it
+# from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db" SPIRA_CHAMBER="$T/chamber"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
 
@@ -289,7 +291,8 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
     local run="$1"; shift
     mkdir -p "$run"
     tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$DSTUBS/counting-bd" \
-        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL="" SPIRA_MAX_AEONS=2
+        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL="" SPIRA_MAX_AEONS=2 \
+        SPIRA_CHAMBER="$DSTUBS/chamber"
     env -i \
         PATH="$LCBIN:$DSTUBS:$PATH" HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" \

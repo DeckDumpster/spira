@@ -50,7 +50,10 @@ export SPIRA_CONF="$T/no-such.conf"
 # layer rather than pinning a private SPIRA_TOML: that layered SPIRA_TOML is already the
 # clean, fully-specified environment law-gates-run-in-a-clean-environment asks for — no
 # ambient operator config can reach it either way.
-tl_config SPIRA_RUN="$T/run"
+# SPIRA_CHAMBER too: the complete fixture declares a non-empty value, and nothing derives
+# it from SPIRA_HOME any more (sfail round 2, pattern 6) — without this the real chamber
+# (builder.fayth, ops.fayth, ...) is never found.
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -193,6 +196,10 @@ export SPIRA_SUMMON="$MOCK_SUMMON"
 # the FAYTH_LANE declaration, not to a hardcoded name.
 LANES_HOME="$T/lanes-home"
 mkdir -p "$LANES_HOME/chamber"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so a synthetic chamber with none refuses config resolution
+# outright (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$LANES_HOME/conf.d"
 cat > "$LANES_HOME/chamber/worker.fayth" <<'F'
 FAYTH_NAME=worker
 FAYTH_LABELS="spira,plan"
@@ -208,6 +215,7 @@ F
 
 export SPIRA_HOME="$LANES_HOME"
 export SPIRA_FAYTHS="worker guardian"
+tl_config SPIRA_CHAMBER="$LANES_HOME/chamber"
 
 lane="$(spira_lane_fayths)"
 task="$(spira_task_fayths)"
@@ -227,6 +235,7 @@ is "there is at least one task fayth"  "1" "$([ -n "$task" ] && echo 1 || echo 0
 # ==========================================================================================
 export SPIRA_HOME="$HERE"
 export SPIRA_FAYTHS="builder ops"
+tl_config SPIRA_CHAMBER="$HERE/chamber"
 
 real_task="$(spira_task_fayths)"
 real_lane="$(spira_lane_fayths)"
@@ -286,7 +295,7 @@ done
 unset SPIRA_FAYTHS SPIRA_REPO_MAP SPIRA_DB
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$T/no-such.conf"
-tl_config SPIRA_RUN="$T/run"
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh" 2>/dev/null
 

@@ -78,6 +78,9 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 # gains a new sourced dependency. Only production scripts; test-*.sh are excluded.
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN"

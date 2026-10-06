@@ -40,7 +40,7 @@ get_enable() {
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
-        units-install --list-enable 2>/dev/null
+        timeout 30 units-install --list-enable 2>/dev/null
 }
 
 # ==========================================================================

@@ -100,6 +100,10 @@ RUN="$TMP/run"
 mkdir -p "$RUN/gh-closed" "$RUN/landstate"
 export SPIRA_RUN="$RUN"
 export SPIRA_HOME="$TMP"
+# round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
+# binary reads <home>/conf.d to resolve its config schema at all, even when every value
+# is otherwise declared via tl_config — give this stub home the real registry.
+ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 export SPIRA_HOME_REPO=fixture
 export SPIRA_REPO="$REPO"
 export SPIRA_REPO_DERIVED="$REPO"

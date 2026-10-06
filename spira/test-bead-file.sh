@@ -26,6 +26,12 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 mkdir -p "$T/chamber" "$T/run"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$T/conf.d"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$T/chamber"
 
 # ---------------------------------------------------------------------------
 # FAKE FAYTHS. builder (plan lane), maechen (maechen-sweep lane), empty (no labels).

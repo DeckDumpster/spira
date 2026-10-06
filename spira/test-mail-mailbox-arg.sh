@@ -29,9 +29,12 @@ SPIRA_ID_PREFIX="sp"
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
     SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX"
 export SPIRA_CONF=""
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
+export SPIRA_HOME="$HERE"
 mkdir -p "$SPIRA_MAIL_KINDS"
 
-run() { mail "$@"; }
+run() { timeout 30 mail "$@"; }
 
 no_mailbox_created() {  # <name> <label>
     [ -e "$SPIRA_MAIL/$1" ] && bad "$2: no mailbox created" "found $SPIRA_MAIL/$1" \

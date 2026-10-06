@@ -63,13 +63,18 @@ FAYTH_SUMMON=operator
 EOF
 
 roster() { # roster <function>
-    tl_config SPIRA_FAYTHS="worker laner human humanlane"
+    # SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its
+    # own now, no longer derived from SPIRA_HOME when unset.
+    tl_config SPIRA_FAYTHS="worker laner human humanlane" SPIRA_CHAMBER="$TMP/chamber"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$TMP" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
 # The fixture chamber must sit under SPIRA_HOME, which is where fayth_get and fayth_names look.
 ln -sfn "$CH" "$TMP/chamber"
+# SPIRA_HOME="$TMP" in roster() IS the home now (locate_home no longer searches); every
+# binary (lib.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
+ln -sfn "$HERE/conf.d" "$TMP/conf.d"
 
 is "the task pool is the ordinary fayth alone"        "worker"          "$(roster spira_task_fayths)"
 is "the lane list is the ordinary lane fayth alone"   "laner"           "$(roster spira_lane_fayths)"
@@ -87,7 +92,7 @@ echo
 echo "the shipped concierge — real persona, summoned by nobody"
 
 ship() { # ship <function>   — the REAL chamber, with the concierge listed in the roster
-    tl_config SPIRA_FAYTHS="builder ops concierge"
+    tl_config SPIRA_FAYTHS="builder ops concierge" SPIRA_CHAMBER="$HERE/chamber"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null

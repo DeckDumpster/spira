@@ -44,6 +44,10 @@ echo "test-sin-exempt.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
+# round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
+# binary reads <home>/conf.d to resolve its config schema at all — give this stub home
+# the real registry.
+ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log" MAIL_LOG="$TMP/mail.log"
 # sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from

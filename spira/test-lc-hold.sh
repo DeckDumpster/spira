@@ -46,6 +46,12 @@ export PATH="$PATH:$(dirname "$DOLT_BIN")"
 
 # Never let an ambient SPIRA_LC_SOCKET route this suite's calls through a real service.
 unset SPIRA_LC_SOCKET
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. Empty it so the root/no-password SPIRA_LC_PASSWORD
+# set below is actually used, instead of erroring trying to read a credential file that
+# is not there.
+tl_config SPIRA_LC_PASSWORD_FILE=""
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"

@@ -41,7 +41,7 @@ run_reachable() {
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        cockpit-collect probe reachable 2>/dev/null
+        timeout 30 cockpit-collect probe reachable 2>/dev/null
 }
 
 # Like run_reachable but passes SPIRA_SCOPE_LABEL so the scope filter is active.
@@ -53,7 +53,7 @@ run_reachable_scoped() {
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        cockpit-collect probe reachable 2>/dev/null
+        timeout 30 cockpit-collect probe reachable 2>/dev/null
 }
 
 # =============================================================================

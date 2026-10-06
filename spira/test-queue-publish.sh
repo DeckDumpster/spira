@@ -100,7 +100,7 @@ queue() {
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
-        command queue "$@" 2>&1
+        timeout 30 queue "$@" 2>&1
 }
 verdict() {
     SPIRA_CONF=/nonexistent \
@@ -109,7 +109,7 @@ verdict() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
     FIXTURE_RED_SUITES="${RED_SUITES:-}" \
     FIXTURE_PR_STATE="${PR_STATE:-open}" \
-        command queue verdict "$REPONAME" 2>&1
+        timeout 30 queue verdict "$REPONAME" 2>&1
 }
 # mk_bins <head> — land-local now refuses without a --with-bins corpus for the tree it is
 # landing; every head this suite lands needs one (see test-land-local-release.sh for the

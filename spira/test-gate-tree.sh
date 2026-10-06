@@ -80,11 +80,14 @@ barrier_cmd() {
 BARDIR="$TMP/barrier"
 BARSECS=30
 
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_VERDICT_TTL=0
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_VERDICT_TTL=0
     # Any caller override: a registered key goes to tl_config too; anything else (e.g. the
     # non-registered SPIRA_GATE_LOG/SPIRA_GATE_LOCK_WAIT seams) stays a plain env assignment.
+    # NEVER called from here when two rungate calls race in parallel (this suite's own
+    # concurrent cases pass no registered-key override) — tl_config writes the ONE shared
+    # override file, and two concurrent writers to it would race/corrupt it.
     local extra_env=() kv k
     for kv in "$@"; do
         k="${kv%%=*}"

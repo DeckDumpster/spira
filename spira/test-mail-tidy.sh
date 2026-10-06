@@ -41,6 +41,9 @@ tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
     SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL" SPIRA_MAIL_TIDY_FRESH="$SPIRA_MAIL_TIDY_FRESH" \
     SPIRA_DB="$SPIRA_DB"
 export SPIRA_CONF=/nonexistent
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
+export SPIRA_HOME="$HERE"
 
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 OLD_AGE=7200    # older than SPIRA_MAIL_TIDY_FRESH
@@ -72,7 +75,7 @@ chmod +x "$STUB_BD"
 SPIRA_BD="$STUB_BD"
 tl_config SPIRA_BD="$SPIRA_BD"
 
-run_tidy() { "$MAIL" tidy operator "$@"; }
+run_tidy() { timeout 30 "$MAIL" tidy operator "$@"; }
 
 send_msg() {   # send_msg <mailbox> <subject> <bead-id|-> [--urgent]
     local mbox="$1" subj="$2" bid="$3"; shift 3
@@ -80,7 +83,7 @@ send_msg() {   # send_msg <mailbox> <subject> <bead-id|-> [--urgent]
     [ "$bid" != "-" ] && extra+=(--bead "$bid")
     [ "${1:-}" = "--urgent" ] && extra+=(--urgent)
     echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="fixture" \
-        "$MAIL" send "$mbox" \
+        timeout 30 "$MAIL" send "$mbox" \
             --from "Bot <bot@spira>" \
             --subject "$subj" \
             "${extra[@]}" 2>/dev/null
@@ -242,16 +245,16 @@ echo "=== Fresh install: a mailbox install created but no mail ever reached ==="
 # misconfigured SPIRA_MAIL must not tidy silently).
 FRESH="$TMP/fresh-mail"
 tl_config SPIRA_MAIL="$FRESH"
-out="$("$MAIL" tidy operator 2>&1)"; rc=$?
+out="$(timeout 30 "$MAIL" tidy operator 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "positive control: tidy of a mailbox nothing created still refuses" \
                 || bad "positive control: tidy of a mailbox nothing created still refuses" "rc=0"
 want "positive control: and says why" "mailbox not found" "$out"
-"$MAIL" ensure operator; rc=$?
+timeout 30 "$MAIL" ensure operator; rc=$?
 is "mail ensure operator exits 0" 0 "$rc"
 [ -d "$FRESH/operator/new" ] && [ -d "$FRESH/operator/cur" ] && [ -d "$FRESH/operator/tmp" ] \
     && ok  "ensure creates the operator maildir (new, cur, tmp)" \
     || bad "ensure creates the operator maildir (new, cur, tmp)" "$(ls -R "$FRESH" 2>&1 | head -5)"
-out="$("$MAIL" tidy operator 2>&1)"; rc=$?
+out="$(timeout 30 "$MAIL" tidy operator 2>&1)"; rc=$?
 is     "tidy of the ensured, empty mailbox exits 0" 0 "$rc"
 nowant "and does not report it missing" "mailbox not found" "$out"
 want   "install ensures the operator mailbox" 'tool_status("mail", &["ensure", "operator"])' "$(cat "$HERE/../install/src/bin/install.rs")"

@@ -49,7 +49,7 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 export SPIRA_HOME="$HERE"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
 tl_config SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
-    SPIRA_ASK_LABEL="needs-operator" SPIRA_ID_PREFIX="sp"
+    SPIRA_ASK_LABEL="needs-operator" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_MUTE=0
 
 ask_rebase_loop() {   # ask_rebase_loop <id> <branch> <repo> <n> <conflicts> <others>
     landing-pass ask-rebase-loop "$1" "$2" "$3" "$4" "$5" "$6"

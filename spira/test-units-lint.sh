@@ -28,6 +28,9 @@ mkdir -p "$TMP/home"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
 ln -s "$HERE"/*.sh "$CLONE/spira/"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, and the *.sh glob above never matches the conf.d directory.
+ln -s "$HERE/conf.d" "$CLONE/spira/conf.d"
 
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2), found by name
 # on the suite's PATH (sp-gypjk).

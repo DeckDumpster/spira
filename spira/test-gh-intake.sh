@@ -136,6 +136,9 @@ export MAILLOG
 # (sp-k6lku, "wave 4.13") through spira_config::repos, not a bash repo_root() seam, so the
 # fixture is the map file itself, not a faked lib.sh function.
 mkdir -p "$T/spira-home"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$T/spira-home/conf.d"
 REPOCHECKOUT="$T/repo-checkout"; mkdir -p "$REPOCHECKOUT/.git"
 REPOMAP="$T/repo-map"
 printf 'widgets | %s\n' "$REPOCHECKOUT" > "$REPOMAP"
@@ -151,7 +154,7 @@ run_intake() {
         SPIRA_HOME="$T/spira-home" \
         SPIRA_GH_INTAKE_API="$API" \
         GITHUB_TOKEN="canary-token-must-never-be-sent" \
-        "$BIN" "$@" 2>&1
+        timeout 30 "$BIN" "$@" 2>&1
 }
 
 echo
@@ -196,7 +199,7 @@ out="$(env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_MAIL_BIN="$T/bin_mail.sh" \
     SPIRA_HOME="$T/spira-home" \
-    SPIRA_GH_INTAKE_API="$API" "$BIN" 2>&1)"; rc=$?
+    SPIRA_GH_INTAKE_API="$API" timeout 30 "$BIN" 2>&1)"; rc=$?
 is "exits 1" "1" "$rc"
 want "names the unresolved repo" "no-such-repo" "$out"
 

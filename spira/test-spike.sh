@@ -78,6 +78,9 @@ echo "the partition is the spike's own:"
 SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
 mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # `summon_fayth` is a `sentinel --summon` shim now (wave 4.27, family G, sp-gzmd2): a real
 # subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
 # probe — the same one-line symlink trick test-summon-fayth.sh's own `aeon --escape`

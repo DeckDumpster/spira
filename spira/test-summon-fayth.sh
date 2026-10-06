@@ -64,6 +64,9 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run" "$T/chamber" "$T/bin"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$T/chamber"
 
 # `aeon --escape <fayth>` (spira/escape.sh retired, sp-zpaq0) resolves its home from
 # SPIRA_HOME and requires <home>/lib.sh to exist; this one-line stub sources the REAL

@@ -59,7 +59,7 @@ fi
 # ── Read the manifest from conf.sh, tiered ────────────────────────────────────
 # An explicit, minimal environment: a real spira.conf on this box (or in this image build)
 # must not decide what the image is checked against (law-gates-run-in-a-clean-environment).
-manifest="$(env -i HOME="${HOME:-/root}" PATH="$PATH" SPIRA_CONF=/nonexistent bash -c '
+manifest="$(env -i HOME="${HOME:-/root}" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="${SPIRA_TOML:-}" bash -c '
     . '"$(printf '%q' "$CONF")"' 2>/dev/null
     for b in $(spira_deps_list); do
         printf "%s %s\n" "$b" "$(spira_bin_tier "$b")"

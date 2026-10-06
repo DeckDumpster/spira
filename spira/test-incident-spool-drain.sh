@@ -30,6 +30,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 lc_mirror_bd "$TMP/lc"
 mkdir -p "$TMP/home" "$TMP/run"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
+# SPIRA_HOME="$TMP/home" below IS the home now (locate_home no longer searches); every
+# binary reads <home>/conf.d, so the stub needs the real registry.
+ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 SPOOL="$TMP/run/incident-spool"
 ILOG="$TMP/run/incident.log"
 tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"

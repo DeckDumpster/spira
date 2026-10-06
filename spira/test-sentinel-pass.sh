@@ -111,7 +111,7 @@ FAILING_BD="$TMP/failing-bd"
 printf '#!/bin/sh\nexit 1\n' > "$FAILING_BD"; chmod +x "$FAILING_BD"
 _run_unreadable="$TMP/run-unreadable"; mkdir -p "$_run_unreadable"
 tl_config SPIRA_RUN="$_run_unreadable" SPIRA_DB="$TMP/irrelevant-db" SPIRA_BD="$FAILING_BD" \
-    SPIRA_FAYTHS="" SPIRA_NOTIFY="$STUBS/mock-notify"
+    SPIRA_FAYTHS="" SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_CHAMBER="$STUBS/chamber"
 out_unreadable="$(env -i \
     PATH="$STUBS:$PATH" HOME="$HOME" \
     SPIRA_HOME="$STUBS" \
@@ -166,7 +166,7 @@ run_pass() {
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_PATH="$SPIRA_PATH" \
         SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= \
-        SPIRA_MAX_AEONS=3
+        SPIRA_MAX_AEONS=3 SPIRA_CHAMBER="$STUBS/chamber"
     env -i \
         PATH="$STUBS:$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$STUBS" \

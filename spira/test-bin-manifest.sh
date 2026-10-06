@@ -24,7 +24,7 @@ echo "test-bin-manifest.sh"
 # An explicit, minimal environment: a real spira.conf on this box must not decide a verdict
 # (law-gates-run-in-a-clean-environment). SPIRA_CONF names a file that does not exist.
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-eval "$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash -c '
+eval "$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" bash -c '
     . '"$HERE"'/conf.sh 2>/dev/null
     _manifest="$(spira_deps_list)"
     printf "MANIFEST=%q\n" "$_manifest"

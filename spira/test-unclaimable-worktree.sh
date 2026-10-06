@@ -115,12 +115,16 @@ echo "test-unclaimable-worktree.sh"
 # batch report rather than redesigned.
 tl_config SPIRA_DB="$SPIRA_DB"
 run_from_worktree() {
-    env -u SPIRA_HOME \
+    # SPIRA_HOME IS THE HOME now (locate_home no longer searches) — sentinel refuses/hangs
+    # with none at all, so it is pointed at the worktree's own copy (which carries conf.d,
+    # being a full `cp -r "$HERE"`) rather than unset (sfail round 2, pattern 1).
+    timeout 30 env \
         -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
         -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
         -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
         -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
         -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
+        SPIRA_HOME="$FAKE_WT/spira" \
         SPIRA_CONF="$TMP/no-such.conf" \
         bash -c ". \"$FAKE_WT/spira/lib.sh\"; detect_unclaimable_ready" 2>/dev/null
 }

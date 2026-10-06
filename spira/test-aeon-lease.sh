@@ -41,6 +41,7 @@ echo "the shipped chamber fayths declare what the aeon actually enforces"
 # effect. Pinned against the real chamber files, not a fixture copy of them.
 fg() {
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c '. "$1"/lib.sh; fayth_get "$2" "$3" "$4"' _ "$HERE" "$1" "$2" "$3"
 }
 is "builder.fayth declares a 90-minute lease" "90" "$(fg builder FAYTH_LEASE_MINUTES 10)"

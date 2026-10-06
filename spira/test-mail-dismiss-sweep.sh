@@ -42,7 +42,7 @@ SPIRA_RUN="$TMP/run"
 SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_INDEX="$SPIRA_MAIL_INDEX" SPIRA_ID_PREFIX="sp" \
-    SPIRA_RUN="$SPIRA_RUN" SPIRA_OPERATOR_ACTOR="$SPIRA_OPERATOR_ACTOR"
+    SPIRA_RUN="$SPIRA_RUN" SPIRA_OPERATOR_ACTOR="$SPIRA_OPERATOR_ACTOR" SPIRA_MAIL_MUTE=0
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before

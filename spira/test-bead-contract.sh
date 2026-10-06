@@ -22,6 +22,9 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/chamber"
+# SPIRA_HOME="$T" below IS the home now (locate_home no longer searches); every binary
+# reads <home>/conf.d, so the stub needs the real registry.
+ln -s "$HERE/conf.d" "$T/conf.d"
 
 # ---------------------------------------------------------------------------
 # FIXTURE CHAMBER. Two personas: one with labels, one deliberately label-less
@@ -53,7 +56,9 @@ MAP
 
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 run_contract() {
-    tl_config SPIRA_REPO_MAP="${1-$T/repo-map}"
+    # SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its
+    # own now, no longer derived from SPIRA_HOME when unset.
+    tl_config SPIRA_REPO_MAP="${1-$T/repo-map}" SPIRA_CHAMBER="$T/chamber"
     env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$T/none.conf" \
         SPIRA_HOME="$T" \

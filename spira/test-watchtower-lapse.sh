@@ -51,7 +51,7 @@ wt() {  # wt [VAR=val ...] -> the snapshot
     # via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
@@ -68,7 +68,7 @@ wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
     # via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \

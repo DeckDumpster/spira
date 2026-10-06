@@ -154,7 +154,7 @@ JSONL
     # fetch_beads()'s parsing made of that real payload.
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH"
     out="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         "$PANEL_BIN" --dump 2>"$TMP/panel-dump.err")"
     title="$(printf '%s' "$out" | python3 -c '
 import json, sys

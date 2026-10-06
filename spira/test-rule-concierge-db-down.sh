@@ -122,6 +122,9 @@ echo
 echo "=== concierge.sh: the statute book rendering empty vs. the store being unreachable ==="
 
 FX="$TMP/fx"; mkdir -p "$FX/chamber"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so this fixture home needs one too (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$FX/conf.d"
 cp "$HERE/chamber/concierge.md" "$FX/chamber/fx.md"
 ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
@@ -130,7 +133,9 @@ FAYTH_NAME=fx
 EOF
 
 run_concierge_brief() {
-    tl_config SPIRA_MEMORIES_CACHE=""
+    # The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+    # SPIRA_HOME any more (sfail round 2, pattern 6) — without this fx.fayth is never found.
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber"
     SPIRA_DB="$DB" \
         SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
         bash "$CONCIERGE_SH" brief 2>&1

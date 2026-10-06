@@ -31,6 +31,7 @@ testdb_up mailaeon || { echo "test-mail-aeon: could not build fixture db"; exit 
 bdq() { BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --

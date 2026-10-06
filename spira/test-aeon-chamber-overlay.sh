@@ -58,8 +58,11 @@ SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 SPIRA_CHAMBER_OVERLAY="$TMP/overlay-empty"   # deliberately absent for the golden check
+# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# now (no longer derived from SPIRA_HOME when unset), so the fixture persona built above
+# under $SPIRA_HOME/chamber would otherwise never be found.
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
-    SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY"
+    SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 
 command -v aeon >/dev/null 2>&1 \
     || { printf 'test-aeon-chamber-overlay: aeon is not on PATH\n' >&2; exit 1; }

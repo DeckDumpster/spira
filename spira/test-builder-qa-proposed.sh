@@ -38,7 +38,9 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run"
 
 export SPIRA_HOME="$HERE"
-tl_config SPIRA_RUN="$T/run"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at the real chamber this suite reads fayths from.
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 export SPIRA_CONF="$T/no-such.conf"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"

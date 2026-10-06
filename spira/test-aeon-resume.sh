@@ -80,6 +80,9 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
@@ -90,9 +93,12 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; tl_config SPIRA_AGENT="$BIN/claude"; export TMP
+BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+# It only `export`s SPIRA_AGENT (testlib.sh, not edited here) — a registered key, so the aeon
+# binary also needs it declared through tl_config, read back from what aeon_fixture_agent set.
 aeon_fixture_agent "$BIN/claude"
+tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
 # `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
 # lifecycle terms, ahead of the tree's spira-lc on PATH.

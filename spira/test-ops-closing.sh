@@ -89,6 +89,9 @@ cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$REPO_MAP"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$HOMEDIR/chamber"
 
 # A FAYTH NOT CALLED ops, so nothing here can key on the persona's name.
 for f in builder; do

@@ -94,6 +94,9 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail"; chmod +x "$SH/mail"
 # bd create directly, so the fayth's own FAYTH_LABELS is what a fake chamber has to supply.
 mkdir -p "$SH/chamber"
 cp "$HERE/chamber/batcher.fayth" "$SH/chamber/"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SH/chamber"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |

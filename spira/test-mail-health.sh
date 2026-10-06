@@ -25,7 +25,11 @@ export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 export SPIRA_HOME="$HERE"
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export SPIRA_CONF="$TMP/no-such-spira.conf"
-tl_config SPIRA_RUN="$TMP/run" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_UNREAD_AGE=60
+# SPIRA_MAIL_MUTE is a raw env read too (mail/src/env.rs), but conf.sh resolves it from
+# SPIRA_TOML and EXPORTS it (resolve --sh-all) into every subprocess's own environment —
+# the complete fixture now declares mail_mute=true, which would silently mute every
+# delivery this suite counts on. Declared false here so conf.sh exports the override.
+tl_config SPIRA_RUN="$TMP/run" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_UNREAD_AGE=60 SPIRA_MAIL_MUTE=false
 
 HEALTH=mail-health.sh   # invoked by name on the suite's PATH (sp-gypjk)
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)

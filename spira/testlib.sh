@@ -527,7 +527,8 @@ aeon_fixture_agent() {
         printf 'exec %q "$@"\n' "$shim"
     } > "$outer"
     chmod +x "$outer"
-    export SPIRA_AGENT="$outer"
+    export SPIRA_AGENT="$outer"   # bash-level readers in the suite
+    tl_config SPIRA_AGENT="$outer"   # every binary: the one source
 }
 
 # lc_row_state <id> — the STATE the lifecycle machine on PATH (lc_aeon_mirror, for the aeon

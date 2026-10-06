@@ -74,6 +74,10 @@ echo "the brief — composed against a fixture chamber and a fixture statute cac
 # mail and bead.sh are SYMLINKED IN rather than reimplemented, so "names an executable
 # tool" is checking the real tools under a fixture chamber, not a fixture's stand-ins.
 FX="$TMP/fx"; mkdir -p "$FX/chamber"
+# round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
+# binary reads <home>/conf.d to resolve its config schema at all — give this stub
+# chamber the real registry.
+ln -s "$HERE/conf.d" "$FX/conf.d"
 cp "$HERE/chamber/concierge.md" "$FX/chamber/fx.md"
 ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
@@ -88,7 +92,8 @@ fixture_cmd() { printf 'printf %s' "$(printf '%q' "$FIX_JSON")"; }
 brief_fx() { # brief_fx [persona] -> compose the brief for a fixture persona
     # SPIRA_MEMORIES_CACHE is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads it from any more.
-    tl_config SPIRA_MEMORIES_CACHE=""
+    # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME either.
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber"
     SPIRA_HOME="$FX" CONCIERGE_FAYTH="${1:-fx}" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" brief
 }
@@ -248,6 +253,7 @@ tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
 # this test's own "no brief at" (sp-wm2a3). The sibling fixture below (CONV_EMPTY) already
 # gets this right via `mktemp -d`.
 mkdir -p "$TMP/empty-chamber"
+ln -s "$HERE/conf.d" "$TMP/empty-chamber/conf.d"
 # SPIRA_RUN/SPIRA_WIKI are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config, not the env prefixes below, which no process reads them from any
 # more. Same values for both calls, so one declaration covers them.
@@ -280,6 +286,7 @@ if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/n
     printf '  skip  (no systemd user session — launcher model test requires it)\n'
 else
     MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber" "$MT_TMP/chamber-empty"
+    ln -s "$HERE/conf.d" "$MT_TMP/conf.d"
     cp "$HARNESS/spira/chamber/concierge.md" "$MT_TMP/chamber/modeltest.md"
     sed -e 's|^FAYTH_NAME=.*|FAYTH_NAME=modeltest|' \
         -e 's|^FAYTH_MODEL=.*|FAYTH_MODEL=fayth-declared-should-not-be-used|' \
@@ -436,6 +443,7 @@ echo "convergence — a live holder with no tty is HEADLESS, not convergence (D1
 # needs neither systemd nor tmux to run.
 CONV_PROJ="$(mktemp -d)"
 CONV_DIR="$(mktemp -d)"; mkdir -p "$CONV_DIR/bin"
+ln -s "$HERE/conf.d" "$CONV_DIR/conf.d"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$CONV_DIR/bin/claude"; chmod +x "$CONV_DIR/bin/claude"
 CONV_BRAIN="$(bash -c ". '$HERE/conf.sh' >/dev/null 2>&1; printf %s \"\${SPIRA_WIKI:-\$SPIRA_REPO}\"")"
 CONV_SID="conv-headless-$(date +%s)"
@@ -476,6 +484,7 @@ nowant "it does not advise an attach that cannot work"       "attach:  tmux"   "
 # and start proceeds to compose_brief. Pointed at an empty chamber, compose_brief fails with
 # "no brief at..." — proving this is a fallthrough and not a second accidental short-circuit.
 CONV_EMPTY="$(mktemp -d)"
+ln -s "$HERE/conf.d" "$CONV_EMPTY/conf.d"
 # SPIRA_RUN/SPIRA_TOKEN_PROJECTS unchanged from the tl_config declared above.
 conv_no_out="$(SPIRA_HOME="$CONV_EMPTY" \
     CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
@@ -500,6 +509,7 @@ if c==0: os._exit(0)
 os.waitpid(c,0)' 2>/dev/null; then
 LIVE_PROJ="$(mktemp -d)"
 LIVE_DIR="$(mktemp -d)"; mkdir -p "$LIVE_DIR/bin"
+ln -s "$HERE/conf.d" "$LIVE_DIR/conf.d"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$LIVE_DIR/bin/claude"; chmod +x "$LIVE_DIR/bin/claude"
 LIVE_SID="conv-live-elsewhere-$(date +%s)"
 printf '%s\n%s\n' "$LIVE_SID" "$CONV_BRAIN" > "$LIVE_DIR/concierge-session"
@@ -573,6 +583,7 @@ echo "singleton — a bare, hand-started holder is detected by name, not by resu
 # scans for the NAME instead, via the internal _stray-holders subcommand.
 SH_SESS="stray-test-$$"
 SH_TMP="$TMP/stray"; mkdir -p "$SH_TMP"
+ln -s "$HERE/conf.d" "$SH_TMP/conf.d"
 SH_FAKE="$SH_TMP/fakeclaude"
 printf '#!/bin/sh\nsleep 30\n' > "$SH_FAKE"; chmod +x "$SH_FAKE"
 

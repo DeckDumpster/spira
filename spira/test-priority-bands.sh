@@ -28,7 +28,7 @@ echo
 # THE SHIPPED DEFAULTS, read in an explicit minimal environment: a suite that inherits a real
 # spira.conf is asserting about one box, not about what the repository ships.
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-vals="$(env -i HOME="$TMP" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash -c '
+vals="$(env -i HOME="$TMP" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" bash -c '
     . '"$HERE"'/conf.sh >/dev/null 2>&1
     printf "%s %s %s\n" "${SPIRA_SUITES_PRIORITY:-}" "${SPIRA_GH_INTAKE_PRIORITY:-}" "${SPIRA_INCIDENT_PRIORITY:-}"' 2>/dev/null)"
 read -r self_pri user_pri inc_pri <<< "$vals"

@@ -162,6 +162,9 @@ mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierg
 # never pins, SPIRA_LOOM_BUDGET_MS included) — law-a-binary-resolves-the-config-it-reads;
 # a fixture SPIRA_HOME that runs a binary needs conf.d, the same way $HERE already is one.
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 
 send_plain() {   # send_plain <mailbox> <from> <subject> -> bare Message-ID on stdout
     local mailbox="$1" from="$2" subject="$3" newest

@@ -32,6 +32,9 @@ git -C "$REPO" fetch -q origin
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 cp -r "$HERE/chamber" "$SH/"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SH/chamber"
 
 # Repo-map must exist before any bead.sh call; bdq validates repo: labels against it.
 cat > "$SH/repo-map" <<RMAP

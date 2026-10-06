@@ -23,7 +23,7 @@ tl_config SPIRA_WATCHERS="$WATCHERS" SPIRA_RUN="$TMP/run" \
 rendered="$(env -i \
     PATH="$PATH" \
     HOME="$TMP/home" \
-    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
     SPIRA_CONF=/nonexistent \
     units-install test --render 2>&1)"
 render_rc=$?

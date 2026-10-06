@@ -50,6 +50,9 @@ command -v "$BIN" >/dev/null 2>&1 || bail "queue-watch is not on PATH"
 # --- fixtures --------------------------------------------------------------------------------
 RUN="$T/run"; FX="$T/fx"; Q="$RUN/queue/q"
 mkdir -p "$Q" "$FX"
+# SPIRA_HOME/--home IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$FX/conf.d"
 
 # A real base: an origin with main, and a checkout whose origin/main a tip can be an
 # ancestor of — "landed" is verified against the commit graph, never taken from the forge.
@@ -149,7 +152,7 @@ EOF
 
 tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh"
 export FX SPIRA_LC_BIN="$FX/spira-lc"
-out="$("$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
+out="$(timeout 30 "$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 printf '%s\n' "$out" | sed 's/^/    | /'
 
 # --- 2. the event stream ---------------------------------------------------------------------
@@ -170,7 +173,7 @@ nowant "the push-mode repo is not watched"          " p watching" "$out"
 "$BIN" health --run "$RUN" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
 
 touch "$FX/lc-broken"
-blind="$("$BIN" watch --ticks 2 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
+blind="$(timeout 30 "$BIN" watch --ticks 2 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 want "an unreadable queue is reported blind after two failed polls"      "q blind: cannot see the queue" "$blind"
 herr="$("$BIN" health --run "$RUN" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails after a blind poll" || bad "health fails after a blind poll (rc=$hrc)"
@@ -184,14 +187,14 @@ want "never-polled is named"                      "never polled" "$herr"
 # --- 4. nothing to watch is idle, not a crash loop -------------------------------------------
 printf '[repo.p]\npath = "%s"\nmode = "push"\n' "$T/repo" > "$FX/push-only.toml"
 IRUN="$T/idle-run"
-rout="$("$BIN" watch --ticks 1 --interval 1 --run "$IRUN" --home "$FX" --config "$FX/push-only.toml" 2>&1)"; rrc=$?
+rout="$(timeout 30 "$BIN" watch --ticks 1 --interval 1 --run "$IRUN" --home "$FX" --config "$FX/push-only.toml" 2>&1)"; rrc=$?
 [ "$rrc" -eq 0 ] && ok "no queue-mode repository is idle, not an exit" || bad "no queue-mode repository is idle, not an exit (rc=$rrc)"
 want "idle says why"                              'idle: '"$FX"'/push-only.toml: no repository has mode = "queue"' "$rout"
 hout="$("$BIN" health --run "$IRUN" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "idle reads DEGRADED, not healthy" || bad "idle reads DEGRADED, not healthy (rc=$hrc)"
 want "health names the idle reason"               "idle:" "$hout"
 printf 'not = [valid\n' > "$FX/broken.toml"
-bout="$("$BIN" watch --ticks 1 --run "$IRUN" --home "$FX" --config "$FX/broken.toml" 2>&1)"; brc=$?
+bout="$(timeout 30 "$BIN" watch --ticks 1 --run "$IRUN" --home "$FX" --config "$FX/broken.toml" 2>&1)"; brc=$?
 [ "$brc" -ne 0 ] && ok "an unparseable spira.toml is fatal" || bad "an unparseable spira.toml is fatal (rc=$brc)"
 
 # --- 4b. a gutted config is re-read, not latched idle forever ---------------------------------
@@ -207,7 +210,7 @@ mkdir -p "$ARUN/queue/q"
     mv "$APPEAR.tmp" "$APPEAR"
 ) &
 appear_pid=$!
-aout="$("$BIN" watch --ticks 3 --interval 2 --run "$ARUN" --home "$FX" --config "$APPEAR" 2>&1)"; arc=$?
+aout="$(timeout 30 "$BIN" watch --ticks 3 --interval 2 --run "$ARUN" --home "$FX" --config "$APPEAR" 2>&1)"; arc=$?
 wait "$appear_pid" 2>/dev/null || true
 [ "$arc" -eq 0 ] && ok "watch keeps running across the config being restored" || bad "watch keeps running across the config being restored (rc=$arc)"
 want "starts idle on the gutted config"            'idle: '"$APPEAR"': no repository has mode = "queue"' "$aout"
@@ -266,7 +269,7 @@ chmod +x "$FX/incident.sh"
 # always wins.
 tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1
 sout="$(QUEUE_WATCH_HEAD_STALL_SECS=100000000 \
-    "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"
+    timeout 30 "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"
 printf '%s\n' "$sout" | sed 's/^/    | /'
 
 want "a queued job with no runner is named distinctly"        "qs stall: PR 419 CI queued" "$sout"

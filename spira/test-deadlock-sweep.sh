@@ -105,7 +105,15 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/home/.../chamber. Declare this suite's real one.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+# round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
+# builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset
+# $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads never carry — nothing
+# would ever be ready. Declare the empty scope this suite has always meant.
+tl_config SPIRA_SCOPE_LABEL=""
 # attempts.sh's candidates() reads fayth_partitions from the chamber (lib.sh) — the same
 # partition builder.fayth declares, so this tool and the summoner cannot disagree about
 # which beads are "ours" (attempts.sh's own header comment).

@@ -58,6 +58,9 @@ echo "case 2 — strand detection: sentinel log 'not evaluated' → pass-truncat
 # PASS_TRUNCATED=1 to the classifier.
 mkdir -p "$TMP/stubs/chamber"
 _libs "$TMP/stubs"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$TMP/stubs/chamber"
 cat > "$TMP/stubs/chamber/test-watcher.fayth" <<'FAYTH'
 FAYTH_NAME=test-watcher
 FAYTH_LABELS=spira,test-plan
@@ -166,8 +169,10 @@ done
 touch "$TMP/stubs2/repo-map"
 
 _run2="$TMP/run2"; mkdir -p "$_run2"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
 tl_config SPIRA_RUN="$_run2" SPIRA_DB="$TMP/no-db" SPIRA_FAYTHS="alpha beta" \
-    SPIRA_NOTIFY="$TMP/stubs2/mock-notify"
+    SPIRA_NOTIFY="$TMP/stubs2/mock-notify" SPIRA_CHAMBER="$TMP/stubs2/chamber"
 out="$(env -i \
     PATH="$PATH" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \

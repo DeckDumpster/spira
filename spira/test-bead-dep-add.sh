@@ -28,7 +28,7 @@ run_dep_add() {           # run_dep_add <args...> -> sets DA_OUT and DA_RC from 
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     DA_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_ALARM_LABEL="incident-test" \
-        bead.sh dep add "$@" 2>&1)"
+        timeout 30 bead.sh dep add "$@" 2>&1)"
     DA_RC=$?
 }
 

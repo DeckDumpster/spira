@@ -43,6 +43,9 @@ git init -q "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
 mkdir -p "$REPO/spira"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$REPO/spira/conf.d"
 printf '# boundary\n'        > "$REPO/spira/boundary"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/gate.sh"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/lib.sh"
@@ -125,7 +128,7 @@ run_skew() {
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$REPO" \
         "${extra[@]+"${extra[@]}"}" \
-        skew check 2>&1
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -233,7 +236,7 @@ run_skew_noart() {
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$NO_GIT_REPO" \
         "${extra[@]+"${extra[@]}"}" \
-        skew check 2>&1
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -312,7 +315,7 @@ run_skew_artifact() {
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$ARTIFACT_REPO" \
         "${extra[@]+"${extra[@]}"}" \
-        skew check 2>&1
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -480,7 +483,7 @@ run_skew_checkout() {
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$CLONE_CK" \
         "${extra[@]+"${extra[@]}"}" \
-        skew check 2>&1
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

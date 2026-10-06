@@ -102,8 +102,10 @@ MOCK
             *)          tl_config "$arg" ;;
         esac
     done
+    # round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches); without
+    # it, watchtower has no <home>/conf.d to resolve its config schema at all.
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         SPIRA_THROTTLE_STAMP="$TMP/run/queue-throttled" \
         SPIRA_INCIDENT_SH="$mock" \

@@ -64,6 +64,10 @@ done
 for f in conf.sh lib.sh owned.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
+# round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
+# binary reads <home>/conf.d to resolve its config schema at all — give this fixture
+# home the real registry (conf.sh's own symlink above is not enough on its own).
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$FIXTURE/spira/"
 # Link the real uninstall.sh so the test drives it.
 ln -s "$HERE/uninstall.sh" "$FIXTURE/spira/uninstall.sh"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"

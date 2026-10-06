@@ -98,7 +98,7 @@ export SPIRA_LC_PASSWORD=""
 # the host/port connection this suite is testing.
 tl_config SPIRA_LC_SOCKET=/nonexistent/spira-lc.sock
 
-"$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
+timeout 30 "$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
 
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db spira_lifecycle "$@"; }
@@ -165,7 +165,7 @@ JSONL
 wantrc "bd fixtures seed cleanly into a real, throwaway bd" 0 $?
 
 # ── dry run: computes and reports, writes nothing ──────────────────────────────────────
-DRY_OUT="$("$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
+DRY_OUT="$(timeout 30 "$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
     --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo --dry-run 2>"$TMP/dry.err")"
 DRY_RC=$?
 wantrc "dry run exits cleanly" 0 "$DRY_RC"
@@ -175,7 +175,7 @@ is "dry run leaves the batch table at zero rows" "0" "$(row_count batch)"
 is "dry run leaves the event table at zero rows" "0" "$(row_count event)"
 
 # ── the real run ────────────────────────────────────────────────────────────────────────
-REAL_OUT="$("$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
+REAL_OUT="$(timeout 30 "$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
     --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo 2>"$TMP/real.err")"
 REAL_RC=$?
 wantrc "the real run exits cleanly" 0 "$REAL_RC"
@@ -205,7 +205,7 @@ nowant "sp-ready, with every oracle agreeing, is not in the contradiction report
 events_after_first_run="$(row_count event)"
 
 # ── re-running is a no-op ──────────────────────────────────────────────────────────────
-RERUN_OUT="$("$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
+RERUN_OUT="$(timeout 30 "$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
     --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo 2>"$TMP/rerun.err")"
 wantrc "the rerun also exits cleanly" 0 $?
 want "the rerun classifies nothing new" '"classified": 0' "$RERUN_OUT"
@@ -213,7 +213,7 @@ is "the rerun leaves the event log exactly as the first run left it" "$events_af
 is "sp-ready's state survives the rerun unchanged" "READY" "$(state_of sp-ready)"
 
 # ── repository configuration detection: spira.toml gives the same answers ─────────────
-TOML_OUT="$("$BIN" classify --home "$TOML_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
+TOML_OUT="$(timeout 30 "$BIN" classify --home "$TOML_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
     --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo --dry-run 2>"$TMP/toml.err")"
 wantrc "classify against a spira.toml home exits cleanly" 0 $?
 want "it reports spira.toml as its configuration source" '"source": "spira.toml"' "$TOML_OUT"

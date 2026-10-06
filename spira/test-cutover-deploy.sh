@@ -93,6 +93,9 @@ echo "test-cutover-deploy.sh"
 
 # --- fixture: an "aged install" with no spira.toml yet and one repo, no beads that match it ---
 FIX="$TMP/fixture"; mkdir -p "$FIX/run/queue" "$FIX/run/landstate"
+# SPIRA_HOME="$FIX" below IS the home now (locate_home no longer searches); every binary
+# (cutover-deploy.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
+ln -s "$HERE/conf.d" "$FIX/conf.d"
 GITREPO="$TMP/gitrepo"
 git init -q -b main "$GITREPO"
 git -C "$GITREPO" config user.email test@example.invalid

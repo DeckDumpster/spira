@@ -45,11 +45,11 @@ echo "test-groom-escalation-check.sh"
 
 echo
 echo "SPIRA_GROOM_ASK_LABEL is in the conf key list and defaults to groom-asked:"
-keys="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" \
+keys="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_CONF_KEYS"' 2>/dev/null)"
 want "SPIRA_GROOM_ASK_LABEL is in the key list" "SPIRA_GROOM_ASK_LABEL" "$keys"
 
-val="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" \
+val="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_GROOM_ASK_LABEL"' 2>/dev/null)"
 is "SPIRA_GROOM_ASK_LABEL defaults to groom-asked" "groom-asked" "$val"
 

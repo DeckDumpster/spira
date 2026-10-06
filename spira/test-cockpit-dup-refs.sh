@@ -46,7 +46,7 @@ lc_mirror_bd "$TMP/lc"
 dup_refs() {    # dup_refs <fixture-file>
     tl_config SPIRA_DB="$TMP/nodb" SPIRA_RUN="$TMP"
     env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent \
         SPIRA_BDJSON_FIXTURE="$1" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \

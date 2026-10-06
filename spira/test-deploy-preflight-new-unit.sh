@@ -53,6 +53,9 @@ done
 for f in conf.sh lib.sh suite-covers.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
+# locate_home reads <home>/conf.d directly now (no search) — a fixture spira/ with none
+# refuses config resolution outright (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$FIXTURE/spira/conf.d"
 printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 

@@ -45,6 +45,9 @@ mkdir -p "$TMP/run" "$TMP/home"
 # THE STRAND IS A BINARY (strand.sh is gone), invoked by name from the tree's build on PATH. Its roster
 # probe sources lib.sh from SPIRA_HOME, so the stub home carries the real lib.sh.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$TMP/home/$_s"; done
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so the stub home needs the registry too.
+ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 
 SUBMITTED=mysubmitted-nondefault
 

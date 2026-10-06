@@ -77,6 +77,9 @@ install_fixture_build() {
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$fixture/spira/$f"
     done
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+    # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
+    [ -e "$fixture/spira/conf.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.d" "$fixture/spira/conf.d"
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
     printf '# empty\n' > "$fixture/spira/repo-map.example"
     install_fixture_release_stub "$fixture/spira"
@@ -205,6 +208,9 @@ mk_install_fixture() {
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$spira/$f"
     done
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+    # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
+    [ -e "$spira/conf.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.d" "$spira/conf.d"
     printf '# empty\n' > "$spira/watchers"
     printf '# empty\n' > "$spira/repo-map.example"
     # Root/spira/cockpit exec targets outside bin/ (concierge.sh, mail.sh, moot-sweep.sh, ...)
@@ -274,6 +280,9 @@ tinstall_fixture() {   # tinstall_fixture <dir>
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$src/$f" ] && ln -sf "$src/$f" "$dir/spira/$f"
     done
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+    # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
+    [ -e "$dir/spira/conf.d" ] || ln -sf "$src/conf.d" "$dir/spira/conf.d"
     printf '# empty — test fixture\n' > "$dir/spira/watchers"
     printf '# empty\n' > "$dir/spira/repo-map.example"
 }

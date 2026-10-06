@@ -97,7 +97,9 @@ tl_config SPIRA_WARDEN_LABEL=warden-sweep
 
 echo; echo "PARTITION: warden claims only its sweep, never plan work"
 export SPIRA_HOME="$HERE" SPIRA_CONF="$T/none.conf"
-SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at the real chamber fayth_get below reads from.
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 wl="$(fayth_get warden FAYTH_LABELS)"

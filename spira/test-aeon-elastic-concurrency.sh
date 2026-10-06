@@ -68,6 +68,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # reintroduced through the config seam instead of the inline check this time (sp-8qm8g).
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"

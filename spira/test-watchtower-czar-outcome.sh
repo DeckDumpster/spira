@@ -53,6 +53,10 @@ chmod +x "$MOCK_INC"
 # shim that testdb_up prepended.
 # A trigger's state is its lifecycle row (sp-mve9i); this world's machine mirrors the store.
 lc_mirror_bd "$TMP/lc"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so a stub home needs the registry symlinked in or watchtower hangs/refuses
+# finding none (sfail round 2, pattern 1).
+WTCO_HOME="$TMP/wtco-home"; mkdir -p "$WTCO_HOME"; ln -s "$HERE/conf.d" "$WTCO_HOME/conf.d"
 wt_co() {   # wt_co [VAR=val ...]
     tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
         SPIRA_PATH="${SPIRA_PATH:-}"
@@ -63,8 +67,9 @@ wt_co() {   # wt_co [VAR=val ...]
             *) extra+=("$_a") ;;
         esac
     done
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$TMP" \
+    timeout 30 env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$WTCO_HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_INCIDENT_SH="$MOCK_INC" \
         "${extra[@]+"${extra[@]}"}" watchtower --czar-outcome-check 2>/dev/null

@@ -69,6 +69,12 @@ done
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. Empty it so SPIRA_LC_PASSWORD="" (root, no
+# password) below is actually used.
+tl_config SPIRA_LC_PASSWORD_FILE=""
+
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
 SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
 SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
