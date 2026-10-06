@@ -634,7 +634,7 @@ fn main() -> ExitCode {
         // A bead count, not just an existence check (original: `bd -C $SPIRA_DB list --limit
         // 0 --json`, 10s timeout, length of the JSON array, "?" on any failure to parse or
         // to run at all). This ALSO proves the post-init skip check keeps -C — only the
-        // fresh-init call below lost it (test-install-bd-init-cwd.sh property 3).
+        // fresh-init call below lost it.
         let bead_count = Command::new("timeout")
             .args(["10", "bd", "-C", &db, "list", "--limit", "0", "--json"])
             .output()

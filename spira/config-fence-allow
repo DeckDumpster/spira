@@ -133,7 +133,6 @@ spira/test-held.sh
 spira/test-hold-liveness.sh
 spira/test-hold.sh
 spira/test-incident.sh
-spira/test-install-bd-init-cwd.sh
 spira/test-install-conf-seed.sh
 spira/test-install-dolt-breaker.sh
 spira/test-install-dolt-mode.sh
