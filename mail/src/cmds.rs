@@ -100,7 +100,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
 
     let mut body = body;
     let mut rerouted = false;
-    if mailbox == "operator" && env.bead_id.is_some() && (args.kind == "question" || args.kind == "decision") {
+    if mailbox == "operator" && (args.kind == "question" || args.kind == "decision") {
         if let Some(why) = class_refusal(args.class, &body) {
             eprintln!(
                 "mail: routed to the concierge, not the operator — {why}. Only permissions, policy and destructive-on-production-data asks go to the operator (--class); everything else is the concierge's judgement."

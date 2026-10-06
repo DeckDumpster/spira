@@ -116,7 +116,7 @@ send_question() {   # send_question <subject> -> leaves message in operator/new 
     local subject="$1"
     SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
         run send operator --from "Builder <builder@spira>" --subject "$subject" \
-            --kind question --default "proceed with the default" \
+            --kind question --class policy --default "proceed with the default" \
             <<'BODY' >/dev/null 2>"$TMP/send.err"
 ## Question
 
@@ -125,6 +125,10 @@ Should I proceed?
 ## Default
 
 proceed with the default
+
+## Class basis
+
+needs a policy ruling
 BODY
 }
 

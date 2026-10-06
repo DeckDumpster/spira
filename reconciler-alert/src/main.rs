@@ -166,13 +166,13 @@ fn run_gap(args: &Args) -> Result<(), String> {
 
     if io::concierge_is_running(&concierge_sh()) {
         let body = format!("## Alert\n{subject}\n\n{evidence}");
-        io::mail_send(&mail_sh(), "concierge", &from, &subject, "alert", None, &body)?;
+        io::mail_send(&mail_sh(), "concierge", &from, &subject, "alert", None, None, &body)?;
         println!("reconciler-alert: {} — sent to concierge", invariant);
     } else {
         let body = format!(
             "## Note\n{subject}\n\nThe Concierge is not running, so this alert is forwarded here as a note.\n\n{evidence}"
         );
-        io::mail_send(&mail_sh(), "operator", &from, &subject, "note", None, &body)?;
+        io::mail_send(&mail_sh(), "operator", &from, &subject, "note", None, None, &body)?;
         println!("reconciler-alert: {} — concierge not running, sent to operator as a note", invariant);
     }
     Ok(())
@@ -190,8 +190,8 @@ fn run_escalate(args: &Args) -> Result<(), String> {
             let default = args.get("default").ok_or(
                 "escalating to the operator requires --default (law-escalate-decisions-not-problems: every ask carries a default)",
             )?;
-            let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}");
-            io::mail_send(&mail_sh(), "operator", &from, subject, "question", Some(default), &full_body)?;
+            let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n## Class basis\nEscalated as {class}.\n\n{body}");
+            io::mail_send(&mail_sh(), "operator", &from, subject, "question", Some(default), Some(class), &full_body)?;
             println!("reconciler-alert: escalation ({}) sent to operator", class);
         }
         None => {
@@ -204,7 +204,7 @@ fn run_escalate(args: &Args) -> Result<(), String> {
                  operator path accepts (permissions, policy, destructive-or-irreversible-on-production-data). \
                  Refused by construction and routed back for your judgement.\n\n{body}"
             );
-            io::mail_send(&mail_sh(), "concierge", &from, &refused_subject, "alert", None, &full_body)?;
+            io::mail_send(&mail_sh(), "concierge", &from, &refused_subject, "alert", None, None, &full_body)?;
             println!("reconciler-alert: escalation class '{}' refused, routed to concierge", class);
         }
     }

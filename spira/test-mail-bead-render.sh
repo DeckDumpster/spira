@@ -139,9 +139,9 @@ printf '{"id":"%s","title":"%s","status":"closed","issue_type":"bug","priority":
 
 _subj="Close GitHub issue github:example/repo#1 for bead $REG_ID"
 _dflt="post a comment explaining the resolution and close the issue"
-out="$(printf '## Question\n%s\n\n## Default\n%s\n' "$_subj" "$_dflt" \
+out="$(printf '## Question\n%s\n\n## Default\n%s\n\n## Class basis\nneeds a policy ruling\n' "$_subj" "$_dflt" \
     | run send operator --from "Landing gate <gate@spira>" --subject "$_subj" \
-        --kind question --default "$_dflt" --bead "$REG_ID" 2>&1)"; rc=$?
+        --kind question --class policy --default "$_dflt" --bead "$REG_ID" 2>&1)"; rc=$?
 wantrc "regression: send succeeds" 0 "$rc"
 body4="$(body_of operator)"
 want "regression: rendered block carries the bead's real title" "$REG_TITLE"    "$body4"
@@ -159,9 +159,9 @@ printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","priority"
     "$OTHER_ID" "$OTHER_TITLE" \
     | testdb_seed || { echo "test-mail-bead-render: stranger seed failed"; exit 1; }
 _subj="Fix found on $OTHER_ID: $KNOWN_ID rebase loop x3"
-out="$(printf '## Question\n%s\n\n## Default\nsplit it\n' "$_subj" \
+out="$(printf '## Question\n%s\n\n## Default\nsplit it\n\n## Class basis\nneeds a policy ruling\n' "$_subj" \
     | run send operator --from "Landing gate <gate@spira>" --subject "$_subj" \
-        --kind question --default "split it" --bead "$KNOWN_ID" 2>&1)"; rc=$?
+        --kind question --class policy --default "split it" --bead "$KNOWN_ID" 2>&1)"; rc=$?
 wantrc "stranger-title: send succeeds" 0 "$rc"
 body5="$(body_of operator)"
 want   "stranger-title: subject bead's block renders" "$KNOWN_ID: $KNOWN_TITLE" "$body5"
