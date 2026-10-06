@@ -530,10 +530,21 @@ fn parse_column(s: &str) -> Option<Column> {
 /// checkout outside its workspaces root, or with a real remote, must halt the whole process
 /// that sourced it, not just this one check.
 fn cmd_repo_containment_check() -> ExitCode {
-    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
-    let workspaces = env::var("SPIRA_WORKSPACES").unwrap_or_default();
-    let map_text = env::var("SPIRA_REPO_MAP")
-        .ok()
+    // Declared config, the one source: a key that does not resolve refuses the check.
+    let declared = |k: &str| match spira_config::process::cfg(k) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(format!("spira-config repo containment-check: {e}")),
+    };
+    let (instance, workspaces, map_path) = match (declared("SPIRA_INSTANCE"), declared("SPIRA_WORKSPACES"), declared("SPIRA_REPO_MAP")) {
+        (Ok(i), Ok(w), Ok(m)) => (i, w, m),
+        (a, b, c) => {
+            for e in [a.err(), b.err(), c.err()].into_iter().flatten() {
+                eprintln!("{e}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    let map_text = Some(map_path)
         .filter(|p| !p.is_empty())
         .and_then(|p| spira_config::containment::read_repo_map(Path::new(&p)))
         .or_else(|| {
