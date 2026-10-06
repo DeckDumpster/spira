@@ -98,11 +98,16 @@ ensure() {
         SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_PROD="${_ENSURE_PROD:-$PROD}" SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
         SPIRA_BD=""
+    # SPIRA_BROKER_ENABLE ALSO AS PLAIN ENV: install/src/ensure.rs's producer guard still
+    # reads it with a bare std::env::var, never through spira_config::process::cfg (unlike
+    # the manifest's own ENABLE-set resolution a few lines over) — tl_config's declaration
+    # never reaches that one check.
     env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" \
         SPIRA_CONF=/nonexistent \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_SYSTEMCTL="$TMP/sc" \
+        SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
         unit-ensure "$@" 2>&1
 }
 
