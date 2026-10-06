@@ -121,6 +121,11 @@ id = "UC-instance-lifecycle-18"
 tier = "T2"
 statement = "root install exits 3 when installed but `ready.sh` fails; `--dry-run` prints each phase and mutates nothing"
 
+[use_case.uncovered]
+reason = "test-install-refusal.sh deleted: it was green and red on one commit, so it asserted nothing (law-a-test-that-flips-is-deleted). No deterministic replacement exists yet"
+date = "2026-10-06"
+bead = "sp-7j1cc"
+
 [[use_case]]
 id = "UC-instance-lifecycle-19"
 tier = "T1"
