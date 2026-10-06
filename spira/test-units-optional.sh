@@ -52,7 +52,11 @@ _units() {
         done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
         path="$shadow"
     fi
-    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run"
+    # SPIRA_WATCHERS no longer derives from SPIRA_HOME (one source of config, per Ryan
+    # 2026-10-05): point it at the real manifest beside this suite, or units-install
+    # refuses outright ("no watcher manifest at /fixture/home/...").
+    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run" \
+        SPIRA_WATCHERS="$HERE/watchers"
     env -i \
         PATH="$path" \
         HOME="$HOME" \
@@ -82,7 +86,6 @@ command -v inotifywait >/dev/null 2>&1 || skip "inotifywait not on PATH — cann
 echo "A: loom is installed unconditionally (a release always carries it)"
 # ==========================================================================
 a_out="$(_units "$DEF_INOTIFY")"; a_rc=$?
-echo "DEBUGNOTES=[$(cat "$TMP/notes" 2>/dev/null)]"
 is     "A: units.sh exits 0" "0" "$a_rc"
 want   "A: UNITS includes spira-loom.service" "spira-loom.service" \
        "$(printf '%s\n' "$a_out" | grep '^UNITS:')"
