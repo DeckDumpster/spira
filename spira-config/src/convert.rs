@@ -23,7 +23,7 @@ include!(concat!(env!("OUT_DIR"), "/spira_convert.rs"));
 /// carry. Never fatal — matching `spira_conf_read`'s own "report, don't refuse" — but
 /// returned so a caller can show what a widened schema would still need to capture. An
 /// unrecognized lane token is not among these: see [`convert`]'s `Err`.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ConvertWarnings(pub Vec<String>);
 
 impl ConvertWarnings {
@@ -542,4 +542,47 @@ pub fn convert(
     // A conf without SPIRA_ID_PREFIX still converts: the refusal is `spira-config validate`'s
     // (doctor, pre-activate), the one place the required key is checked (sp-k6m1m).
     Ok((doc, warnings))
+}
+
+/// What [`convert_legacy_dir`] found in a config directory.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LegacyOutcome {
+    /// A `spira.toml` already stands there; nothing was read or written.
+    Present(std::path::PathBuf),
+    /// No `spira.toml` and no `spira.conf`: a fresh install with nothing to convert.
+    Nothing,
+    /// `spira.conf` (and `repo-map`, when present) were converted into the returned `spira.toml`.
+    Converted(std::path::PathBuf, ConvertWarnings),
+}
+
+/// Upgrade a pre-cutover config directory in place: when `dir` holds `spira.conf` but no
+/// `spira.toml`, write the `spira.toml` that [`convert`] makes from the conf, the `repo-map`
+/// beside it and `fayths`. An existing `spira.toml` is never read or overwritten, so a second
+/// run converts nothing.
+pub fn convert_legacy_dir(
+    dir: &std::path::Path,
+    home: &str,
+    fayths: &[std::path::PathBuf],
+) -> Result<LegacyOutcome, String> {
+    let toml_path = crate::toml_path_at(dir);
+    if toml_path.is_file() {
+        return Ok(LegacyOutcome::Present(toml_path));
+    }
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()));
+    let conf_path = dir.join("spira.conf");
+    if !conf_path.is_file() {
+        return Ok(LegacyOutcome::Nothing);
+    }
+    let conf = read(&conf_path)?;
+    let map_path = dir.join("repo-map");
+    let repo_map = if map_path.is_file() { read(&map_path)? } else { String::new() };
+    let mut texts = Vec::new();
+    for f in fayths {
+        texts.push((f.display().to_string(), read(f)?));
+    }
+    let refs: Vec<(&str, &str)> = texts.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let (doc, warnings) = convert(&conf, home, &repo_map, &refs).map_err(|e| e.join("; "))?;
+    let out = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    crate::write_atomic(&toml_path, &out).map_err(|e| format!("{}: {e}", toml_path.display()))?;
+    Ok(LegacyOutcome::Converted(toml_path, warnings))
 }

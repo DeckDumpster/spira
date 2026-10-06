@@ -555,6 +555,16 @@ _rollback() {
 # regenerates a document holding only the one key just written, the "gutted spira.toml"
 # failure this bead retires.
 _new_prod="$SPIRA_RELEASES/current/spira"
+if [ -z "$(spira_toml_file)" ]; then
+    mapfile -t _fayths < <(_spira_fayth_paths)
+    _fayth_args=(); for _f in "${_fayths[@]}"; do _fayth_args+=(--fayth "$_f"); done
+    _converted="$(spira-config convert-legacy "$SPIRA_CONFIG_HOME" --home "$HOME" ${_fayth_args[@]+"${_fayth_args[@]}"})" \
+        || { _rollback "converting the pre-cutover config failed"; }
+    if [ -n "$_converted" ]; then
+        export SPIRA_TOML="$_converted"
+        log "deploy: pre-cutover config converted — SPIRA_TOML = $_converted"
+    fi
+fi
 _conf_path="$(spira_toml_write_target)"
 if [ -n "$_conf_path" ] && [ -f "$_conf_path" ]; then
     _conf_backup="${_conf_path}.pre-deploy.$$"
