@@ -556,7 +556,12 @@ git -C "$GITEA_WORK" commit --allow-empty -q -m "initial"
 git -C "$GITEA_WORK" commit --allow-empty -q -m "sp-alt1: first landing on gitea remote"
 git -C "$GITEA_WORK" commit --allow-empty -q -m "sp-alt2: second landing on gitea remote"
 git -C "$GITEA_WORK" remote add gitea "$BARE_3LJK"
-git -C "$GITEA_WORK" push -q gitea master:master
+# main:master, not master:master: testlib.sh pins init.defaultBranch=main host-wide (every
+# fixture repo starts on main, one source of config), so GITEA_WORK's own local branch is
+# "main" — pushing a "master" source that was never created here failed outright, leaving
+# the bare repo (deliberately named "master" via its own HEAD symref above, to exercise a
+# non-"main" default branch name) empty.
+git -C "$GITEA_WORK" push -q gitea main:master
 
 GITEA_REPO="$T/gitea-repo-3ljk"
 git clone -q -o gitea "$BARE_3LJK" "$GITEA_REPO"
