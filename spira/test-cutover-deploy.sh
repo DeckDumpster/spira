@@ -154,10 +154,12 @@ want "it ran the classifier" "classifying the quiesced store" "$out"
 
 out_flag="$(run_deploy --remove-dropin /nonexistent 2>&1)"; wantrc "the retired --remove-dropin flag is refused" 2 $?
 
-echo
-echo "the config step left a freshly created spira.toml with no lifecycle switch in it:"
-[ -f "$TOML" ] || bail "spira.toml was not created"
-nowant "spira.toml carries no lifecycle_enforce key" "lifecycle_enforce" "$(cat "$TOML")"
+# "the config step left a freshly created spira.toml at $CFGHOME" is deleted: that coupling
+# between SPIRA_CONFIG_HOME (the operator's config home, for classify's own --home) and
+# where conf.sh's spira_config_unset actually WRITES is gone under one source of config
+# (per Ryan 2026-10-05) — spira_config_unset always targets $SPIRA_TOML's own last layer
+# (this suite's testlib override file), never $CFGHOME/spira.toml. "it reports the retired
+# switch's removal" above already covers that the step ran.
 
 echo
 echo "the classifier actually ran (its own event log is non-empty, or it had nothing to classify):"
