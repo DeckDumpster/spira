@@ -244,6 +244,8 @@ fn bead_of_pidfile(path: &std::path::Path) -> String {
     }
 }
 
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}";
+
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
     let planes = selected_planes(args, &[Plane::Work]);
@@ -267,7 +269,12 @@ fn cmd_stop(args: &[String]) -> i32 {
                 }
                 i += 2;
             }
-            _ => i += 1,
+            "--work" | "--observability" | "--maintenance" | "--all" | "--hard" => i += 1,
+            other => {
+                eprintln!("spira: stop: unrecognised argument {other:?} — a reason is given as --why \"...\", never positionally; nothing was stopped");
+                eprintln!("{USAGE}");
+                return 64;
+            }
         }
     }
 
@@ -792,7 +799,7 @@ fn main() {
             0
         }
         _ => {
-            eprintln!("usage: world.sh {{stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}}");
+            eprintln!("{USAGE}");
             64
         }
     };
