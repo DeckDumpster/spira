@@ -31,6 +31,16 @@ pub fn first_paragraph(raw: &str) -> String {
     lines.join("\n")
 }
 
+/// Saves the message under `run_dir/spira-sendmail` before delivery; the caller removes it on
+/// success, so what remains is exactly the messages that failed to send.
+pub fn spool_message(run_dir: &Path, raw: &str) -> Option<PathBuf> {
+    let dir = run_dir.join("spira-sendmail");
+    fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("{}.eml", maildir::mint_msgid()));
+    fs::write(&path, raw).ok()?;
+    Some(path)
+}
+
 fn strip_angle_brackets(s: &str) -> String {
     s.chars().filter(|c| *c != '<' && *c != '>').collect()
 }
@@ -103,7 +113,7 @@ pub struct SendmailOutcome {
 /// the answer is noted on the work bead itself, so the session that next claims it can read it.
 pub fn sendmail(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<SendmailOutcome, String> {
     let in_reply_to = strip_angle_brackets(&message::header_ci_before_blank(raw, "in-reply-to"));
-    let first_para = first_paragraph(raw);
+    let mut first_para = first_paragraph(raw);
 
     let mut dest_mailbox = "concierge".to_string();
     let mut orig_file: Option<PathBuf> = None;
@@ -123,6 +133,10 @@ pub fn sendmail(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, home: &Path, mail
             dest_mailbox = reply_mailbox(&orig_from, home, mail_root);
             orig_file = Some(path);
         }
+    }
+
+    if first_para.is_empty() {
+        first_para = format!("answered by mail <{in_reply_to}> \"{orig_subject}\" (reply body empty)");
     }
 
     if !orig_bead.is_empty() {
@@ -205,6 +219,32 @@ mod tests {
     fn first_paragraph_stops_at_the_next_blank_line() {
         let raw = "From: A\nSubject: S\n\n\nFirst line.\nSecond line.\n\nIgnored third paragraph.\n";
         assert_eq!(first_paragraph(raw), "First line.\nSecond line.");
+    }
+
+    #[test]
+    fn a_spooled_message_is_readable_back() {
+        let d = testkit::TempDir::new("mail-spool");
+        let p = spool_message(d.path(), "hello").unwrap();
+        assert_eq!(fs::read_to_string(p).unwrap(), "hello");
+    }
+
+    #[test]
+    fn a_crlf_reply_body_is_found() {
+        let raw = "From: A\r\nSubject: S\r\n\r\nApprove it.\r\nMore.\r\n\r\nIgnored.\r\n";
+        assert_eq!(first_paragraph(raw), "Approve it.\nMore.");
+    }
+
+    #[test]
+    fn an_empty_reply_body_still_closes_the_bead_with_a_traceable_reason() {
+        let d = testkit::TempDir::new("mail-sendmail-empty");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        let q = deliver_question(d.path(), "operator", "X-Spira-Bead: sp-dec1\n");
+        let bd = FakeBd::new(vec![BdOut::ok(""), BdOut::ok("[]")]);
+        let raw = format!("From: Operator <operator@spira>\nSubject: Re: May I?\nIn-Reply-To: <{q}@spira>\n\n\n");
+        sendmail(&bd, &FakeLc::new(0), true, &home, d.path(), false, &raw).unwrap();
+        let reason = bd.calls()[0].1.clone().unwrap();
+        assert!(reason.contains(&q) && reason.contains("May I?"), "{reason}");
     }
 
     #[test]

@@ -226,9 +226,18 @@ fn run_sendmail(_args: &[String]) -> ExitCode {
     let env = Env::load();
     let bd = bd_cli(&env);
     let db_configured = !env.db.is_empty();
+    let spool = sendmail::spool_message(&env.run_dir, &raw);
     match sendmail::sendmail(&bd, &LcCli, db_configured, &env.home, &env.mail_root, env.mute, &raw) {
-        Ok(_) => ExitCode::SUCCESS,
-        Err(e) => fail(format!("sendmail: {e}")),
+        Ok(_) => {
+            if let Some(p) = spool {
+                let _ = std::fs::remove_file(p);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            let kept = spool.map(|p| format!(" (message kept at {})", p.display())).unwrap_or_default();
+            fail(format!("sendmail: {e}{kept}"))
+        }
     }
 }
 
