@@ -291,7 +291,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     // THE ONE SOURCE (per Ryan 2026-10-05): every process in the stage reads config only from
     // the spec SPIRA_TOML names, never the environment. So the stage declares its own values
     // in a layer of its own over the parent's complete spec, and runs everything under that.
-    let layer = root.join("spira.toml");
+    let layer = spira_config::toml_path_at(&root);
     let declared: Vec<(String, String)> = env
         .iter()
         .filter(|(k, _)| sh.join("conf.d").join(k).is_file())
