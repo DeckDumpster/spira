@@ -184,24 +184,37 @@ fn build(dir: &Path, repo: &Path, tree: &str, steps: &dyn Steps) -> Result<(), S
     std::fs::write(&runner, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
     set_exec(&runner)?;
     let file = config.join("sim.toml");
-    for (k, v) in config_settings(&work) {
+    let gh_state = dir.join("gh");
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&gh_state).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    let gh_bin = bin.join("gh");
+    link(&std::env::current_exe().map_err(|e| e.to_string())?, &gh_bin)?;
+    for (k, v) in config_settings(&work, &gh_bin) {
         steps.config_set(&release, &file, &k, &v)?;
     }
     std::fs::write(
         config.join("sim.env"),
-        format!("SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\n", run_dir.display(), runner.display()),
+        format!(
+            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\n",
+            run_dir.display(),
+            runner.display(),
+            gh_state.display(),
+            bin.display()
+        ),
     )
     .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn config_settings(work: &Path) -> Vec<(String, String)> {
+pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
     let kv = |k: &str, v: &str| (k.to_string(), v.to_string());
     vec![
         kv("spira.lifecycle_enforce", "true"),
         kv("repo.sim.path", &work.display().to_string()),
         kv("repo.sim.mode", "queue.local"),
         kv("repo.sim.base", "local/main"),
+        kv("spira.gh", &gh.display().to_string()),
     ]
 }
 
