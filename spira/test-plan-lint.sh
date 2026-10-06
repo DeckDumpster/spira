@@ -20,7 +20,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-lint.sh spira/suite-coverage-json.sh suite-select/
+# covers: spira/plan-lint.sh spira/suite-coverage-json.sh suite-select/ test-plan/ docs/test-plan/*.toml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -144,6 +144,40 @@ isz "--gaps still exits 0 once covered" "$rc"
 [[ "$out" != *"UC-dispatch-02"* ]] && ok "--gaps: covering a use case clears its gap" \
     || bad "--gaps: covering a use case clears its gap" "still reported: $out"
 rm "$ROOT/spira/test-covers-02.sh"
+
+# ==========================================================================
+# LAUNCHERS: a use case with a launcher table is a gap until a suite covers it, whatever
+# its uncovered marker says; a launcher whose site lost its needle fails the lint.
+# ==========================================================================
+cat > "$ROOT/docs/test-plan/launch.toml" <<'EOF'
+api_version = "test-plan/v1"
+area = "launch"
+
+[[use_case]]
+id = "UC-launch-01"
+tier = "T2"
+statement = "the registered status command starts"
+launcher = { site = "somewhere/registers.rs", needle = "status_cmd" }
+
+[use_case.uncovered]
+reason = "not yet"
+date = "2026-10-06"
+bead = "sp-x"
+EOF
+mkdir -p "$ROOT/somewhere"
+echo 'fn status_cmd() {}' > "$ROOT/somewhere/registers.rs"
+out="$(lint --gaps)"; rc=$?
+isz "--gaps with a launcher never fails" "$rc"
+want "an uncovered launcher is reported even with an uncovered marker" "launcher gap: UC-launch-01" "$out"
+printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/x.sh UC-launch-01\necho hi\n' > "$ROOT/spira/test-launch.sh"
+out="$(lint --gaps)"
+[[ "$out" != *"launcher gap"* ]] && ok "covering the launcher clears its gap" \
+    || bad "covering the launcher clears its gap" "still reported: $out"
+echo 'fn renamed() {}' > "$ROOT/somewhere/registers.rs"
+out="$(lint)"; rc=$?
+isnz "SEEN RED: a launcher site that lost its needle fails the lint" "$rc"
+want "and names the launcher" "UC-launch-01" "$out"
+rm -rf "$ROOT/docs/test-plan/launch.toml" "$ROOT/somewhere" "$ROOT/spira/test-launch.sh"
 
 # ==========================================================================
 # An empty corpus refuses to report clean (law-absence-needs-a-positive-control).

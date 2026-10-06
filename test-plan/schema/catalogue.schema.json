@@ -24,6 +24,23 @@
   },
   "additionalProperties": false,
   "definitions": {
+    "Launcher": {
+      "description": "A command the harness registers or documents for something outside its own process to run — a status line, a hook, a mail client's outgoing line, a pane's start command. `site` is the repo-relative file that writes it and `needle` a string that file must contain, so the declaration cannot outlive the launcher it names.",
+      "type": "object",
+      "required": [
+        "needle",
+        "site"
+      ],
+      "properties": {
+        "needle": {
+          "type": "string"
+        },
+        "site": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
     "Tier": {
       "description": "The cheapest tier that would catch a regression in a use case's behaviour — `docs/test-plan/README.md`'s own table. Spelled as the exact uppercase token every suite header and catalogue line already uses, so no rename table can drift from it.",
       "type": "string",
@@ -57,7 +74,7 @@
       "additionalProperties": false
     },
     "UseCase": {
-      "description": "One row of a catalogue: `UC-<area>-NN`, its tier, the behaviour it states, and — only while nothing covers it — why.",
+      "description": "One row of a catalogue: `UC-<area>-NN`, its tier, the behaviour it states, and — only while nothing covers it — why. A use case with a `launcher` is that launcher's own \"start it as its launcher does and check it starts\" case.",
       "type": "object",
       "required": [
         "id",
@@ -67,6 +84,16 @@
       "properties": {
         "id": {
           "type": "string"
+        },
+        "launcher": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Launcher"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "statement": {
           "type": "string"
