@@ -22,7 +22,8 @@ pub fn count_by_release(show: &str) -> BTreeMap<String, usize> {
             .flat_map(|l| l.split_whitespace())
             .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="));
         if let Some(r) = release {
-            let sha = r.trim_end_matches('/').rsplit('/').next().unwrap_or(r);
+            let resolved = std::fs::canonicalize(r).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| r.to_string());
+            let sha = resolved.trim_end_matches('/').rsplit('/').next().unwrap_or(&resolved);
             *counts.entry(sha.to_string()).or_insert(0) += 1;
         }
     }
@@ -97,6 +98,19 @@ mod tests {
         let c = count_by_release(SHOW);
         assert_eq!((c.get("aaa"), c.get("bbb"), c.len()), (Some(&1), Some(&2), 2));
         assert!(count_by_release("Id=x\nEnvironment=FOO=1\n").is_empty());
+    }
+
+    #[test]
+    fn a_symlink_and_the_release_it_resolves_to_are_one_release() {
+        let d = testkit::TempDir::new("wt-skew-link");
+        std::fs::create_dir_all(d.join("abc123")).unwrap();
+        std::os::unix::fs::symlink(d.join("abc123"), d.join("current")).unwrap();
+        let show = format!(
+            "Id=a.service\nEnvironment=SPIRA_RELEASE={0}/current\n\nId=b.service\nEnvironment=SPIRA_RELEASE={0}/abc123\n",
+            d.display()
+        );
+        let c = count_by_release(&show);
+        assert_eq!((c.get("abc123"), c.len()), (Some(&2), 1));
     }
 
     #[test]
