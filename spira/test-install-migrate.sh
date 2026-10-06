@@ -130,9 +130,15 @@ inst() {
     # undeclared, SPIRA_INSTANCE resolves to the complete fixture's "prod" (containment
     # exempt), but units-install is given "$_INST" ("mig") on argv — a mismatch. Declare
     # the instance this suite actually drives, and a workspaces root wide enough for it.
+    # round 5 fix: units_install.rs now calls bootstrap::ensure_reader_mailboxes() before
+    # anything else (sp-xp0u2), which shells out to `mail ensure concierge` — mail/src/env.rs
+    # resolves its mailbox root from the registered SPIRA_MAIL, undeclared here, so it fell
+    # through to the complete fixture's own default (/fixture/home/spira/run/mail) and
+    # EPERM'd before the migration logic this suite is actually about ever ran. Give it a
+    # writable root under this suite's own $TMP.
     tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_WATCHERS="$WATCHERS" \
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
-        SPIRA_INSTANCE="$_INST" SPIRA_WORKSPACES="$TMP"
+        SPIRA_INSTANCE="$_INST" SPIRA_WORKSPACES="$TMP" SPIRA_MAIL="$TMP/mail"
     SCTL_LOG="$SCTL_LOG" \
     PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
