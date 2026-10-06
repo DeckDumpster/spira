@@ -20,32 +20,7 @@ use rebase_stale::branch::{self, BranchConfig};
 use rebase_stale::engine::{self, Config};
 use rebase_stale::resolve::Rules;
 use rebase_stale::seam::LibSeam;
-
-/// The environment conf.sh exports is what every caller runs under; spira-config's typed
-/// `[spira]` section answers a key the environment leaves unset.
-struct Keys {
-    toml: Option<spira_config::SpiraSection>,
-}
-
-impl Keys {
-    fn load() -> Keys {
-        let toml = spira_config::discover(None)
-            .and_then(|p| spira_config::load(&p).ok())
-            .and_then(|d| d.spira);
-        Keys { toml }
-    }
-
-    fn get(
-        &self,
-        env_key: &str,
-        pick: impl Fn(&spira_config::SpiraSection) -> Option<String>,
-    ) -> Option<String> {
-        env::var(env_key)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .or_else(|| self.toml.as_ref().and_then(pick))
-    }
-}
+use spira_config::process::cfg;
 
 fn die2(msg: &str) -> ExitCode {
     eprintln!("rebase-stale: {msg}");
@@ -56,16 +31,18 @@ fn die2(msg: &str) -> ExitCode {
 /// reaplog — no bd, no queue, no repository lookup of their own, because the caller (today,
 /// lib.sh's own shim) has already resolved the repo path/name and, for `rebase-branch`, the
 /// formatter command.
+///
+/// `SPIRA_REAPLOG`/`SPIRA_FORMAT_TIMEOUT` are not registered config keys (no
+/// `spira/conf.d/` entry) — they stay ambient env reads with their own defaults.
 fn branch_config() -> Result<BranchConfig, String> {
-    let keys = Keys::load();
-    let run = keys.get("SPIRA_RUN", |s| s.run.clone()).map(PathBuf::from).ok_or_else(|| "SPIRA_RUN is not set".to_string())?;
+    let run = PathBuf::from(cfg("SPIRA_RUN")?);
     let reaplog = env::var("SPIRA_REAPLOG").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| run.join("reap.log"));
     let format_timeout = env::var("SPIRA_FORMAT_TIMEOUT").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
     Ok(BranchConfig {
         run,
         reaplog,
-        git_name: keys.get("SPIRA_GIT_NAME", |s| s.git_name.clone()).unwrap_or_else(|| "spira".into()),
-        git_email: keys.get("SPIRA_GIT_EMAIL", |s| s.git_email.clone()).unwrap_or_else(|| "spira@spira.invalid".into()),
+        git_name: cfg("SPIRA_GIT_NAME")?,
+        git_email: cfg("SPIRA_GIT_EMAIL")?,
         format_timeout: Duration::from_secs(format_timeout),
     })
 }
@@ -128,39 +105,45 @@ fn main() -> ExitCode {
     };
     let repo_arg = args.next();
 
-    let keys = Keys::load();
+    // `SPIRA_HOME` is not a registered config key (no `spira/conf.d/` entry) — ambient env
+    // read stays as is.
     let Some(home) = env::var_os("SPIRA_HOME").map(PathBuf::from) else {
         eprintln!("rebase-stale: SPIRA_HOME is not set (lib.sh lives there)");
         return ExitCode::from(3);
     };
-    let Some(run) = keys.get("SPIRA_RUN", |s| s.run.clone()).map(PathBuf::from) else {
-        eprintln!("rebase-stale: SPIRA_RUN is not set");
-        return ExitCode::from(3);
-    };
-    let log = keys
-        .get("SPIRA_REBASE_STALE_LOG", |s| s.rebase_stale_log.clone())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| run.join("rebase-stale.log"));
-    let cfg = Config {
+
+    macro_rules! cfg_or_exit {
+        ($key:expr) => {
+            match cfg($key) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("rebase-stale: {e}");
+                    return ExitCode::from(3);
+                }
+            }
+        };
+    }
+
+    let run = PathBuf::from(cfg_or_exit!("SPIRA_RUN"));
+    let log = PathBuf::from(cfg_or_exit!("SPIRA_REBASE_STALE_LOG"));
+    let git_name = cfg_or_exit!("SPIRA_GIT_NAME");
+    let git_email = cfg_or_exit!("SPIRA_GIT_EMAIL");
+    // `SPIRA_DB` deliberately resolves to an empty string to mean "no database for this
+    // run" (spira/conf.d/SPIRA_DB) — that emptiness is the declared value, not a missing one.
+    let db = cfg_or_exit!("SPIRA_DB");
+    let db = if db.is_empty() { None } else { Some(PathBuf::from(db)) };
+    let bd = cfg_or_exit!("SPIRA_BD");
+
+    let config = Config {
         log,
-        git_name: keys
-            .get("SPIRA_GIT_NAME", |s| s.git_name.clone())
-            .unwrap_or_else(|| "spira".into()),
-        git_email: keys
-            .get("SPIRA_GIT_EMAIL", |s| s.git_email.clone())
-            .unwrap_or_else(|| "spira@spira.invalid".into()),
+        git_name,
+        git_email,
         lock_wait: Duration::from_secs(60),
         run: run.clone(),
     };
-    let seam = LibSeam::new(
-        home,
-        keys.get("SPIRA_DB", |s| s.db.clone()).map(PathBuf::from),
-        keys.get("SPIRA_BD", |s| s.bd.clone())
-            .unwrap_or_else(|| "bd".into()),
-        run.clone(),
-    );
+    let seam = LibSeam::new(home, db, bd, run.clone());
     let rules = Rules::standard(Some(run.join("rebase-stale.target")));
-    let r = engine::run(&id, repo_arg.as_deref(), &cfg, &seam, &rules);
+    let r = engine::run(&id, repo_arg.as_deref(), &config, &seam, &rules);
     if let Some(s) = r.stdout {
         println!("{s}");
     }

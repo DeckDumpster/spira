@@ -90,6 +90,19 @@ fn die(usage: &str) -> i32 {
     2
 }
 
+/// The one config read every subcommand makes — `config::Config::resolve`'s own `Err` is a
+/// registered key the process could not resolve from `$SPIRA_TOML`; print it and exit,
+/// never substitute a value (per Ryan 2026-10-05: one source of config).
+fn cfg_or_die() -> config::Config {
+    match config::Config::resolve(&config::Live::load()) {
+        Ok(c) => c,
+        Err(e) => {
+            check::warn(&format!("FATAL {e}"));
+            std::process::exit(1);
+        }
+    }
+}
+
 /// `aeon_alive <pidfile>` (lib.sh, wave 4.23 sp-0ffox): the one canonical implementation —
 /// `bead` and `cockpit-collect` call this crate in-process instead of keeping their own
 /// copy; lib.sh's bash callers (`hold.sh`) get a one-line shim onto this verb.
@@ -107,7 +120,7 @@ fn cmd_aeon_count(args: Vec<String>) -> i32 {
     if args.is_empty() || args.len() > 2 {
         return die("aeon-count <fayth> [exclude-unit]");
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     let exclude = args.get(1).filter(|s| !s.is_empty()).map(String::as_str);
     print!("{}", probe::aeon_count(&cfg, &args[0], exclude));
     0
@@ -118,7 +131,7 @@ fn cmd_aeons_live_total(args: Vec<String>) -> i32 {
     if !args.is_empty() {
         return die("aeons-live-total");
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     print!("{}", probe::aeons_live_total(&cfg));
     0
 }
@@ -128,7 +141,7 @@ fn cmd_aeons_live_lanes(args: Vec<String>) -> i32 {
     if !args.is_empty() {
         return die("aeons-live-lanes");
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     print!("{}", probe::aeons_live_lanes(&cfg));
     0
 }
@@ -146,7 +159,7 @@ fn cmd_detect_livelocked(args: Vec<String>) -> i32 {
     if !args.is_empty() {
         return die("detect-livelocked");
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     print_lines(&detectors::detect_livelocked(&cfg));
     0
 }
@@ -157,7 +170,7 @@ fn cmd_detect_incident_needs_builder(args: Vec<String>) -> i32 {
     if !args.is_empty() {
         return die("detect-incident-needs-builder");
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     match detectors::detect_incident_needs_builder(&cfg) {
         Ok(s) => {
             print_lines(&s);
@@ -175,7 +188,7 @@ fn cmd_detect_invalid_closed(args: Vec<String>) -> i32 {
     if !args.is_empty() {
         return die("detect-invalid-closed");
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     print_lines(&detectors::detect_invalid_closed(&cfg));
     0
 }
@@ -186,7 +199,7 @@ fn cmd_all_partition_members(args: Vec<String>) -> i32 {
     if !args.is_empty() {
         return die("all-partition-members");
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     print_lines(&detectors::all_partition_members(&cfg));
     0
 }
@@ -222,7 +235,7 @@ fn main() {
         print!("{HELP}");
         return;
     }
-    let cfg = config::Config::resolve(&config::Live::load());
+    let cfg = cfg_or_die();
     if args.mode == Mode::ThrottleState {
         println!("{}", probe::throttle_line(&probe::throttle(&cfg)));
         return;

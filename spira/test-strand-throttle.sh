@@ -57,16 +57,17 @@ echo
 echo "case 3 — 'strand throttle-state' against a real stamp file:"
 # ======================================================================================
 mkdir -p "$TMP/run"
-out="$(SPIRA_RUN="$TMP/run" strand throttle-state 2>&1)"
+tl_config SPIRA_RUN="$TMP/run"
+out="$(strand throttle-state 2>&1)"
 want "throttle_state: no stamp reads open" $'open\t' "$out"
 
 _stamp="$TMP/run/queue-throttled"
 printf 'since=2026-09-24T18:01:47Z depth=12 since_land=4m\n' > "$_stamp"
-out="$(SPIRA_RUN="$TMP/run" strand throttle-state 2>&1)"
+out="$(strand throttle-state 2>&1)"
 want "throttle_state: readable stamp reads shut" $'shut\tdepth 12' "$out"
 
 chmod 000 "$_stamp"
-out="$(SPIRA_RUN="$TMP/run" strand throttle-state 2>&1)"
+out="$(strand throttle-state 2>&1)"
 chmod 644 "$_stamp"
 want "throttle_state: unreadable stamp reads unreadable" "unreadable" "$out"
 tl_summary

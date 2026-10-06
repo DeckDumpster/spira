@@ -208,19 +208,18 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
     all_ok
 }
 
-/// `queue_notify_concierge <name> <subject-suffix> <body>`: mails the concierge mailbox
-/// (`$SPIRA_MAIL_SESSION_MAILBOX`, default `concierge`) as a machine event for a mutation
-/// the owner just made to an open batch (eject, rebuild, force-push, merge).
-/// spira-mail-deliver.sh watches every registered mailbox and wakes its reader the moment
-/// new mail lands (law-machine-events-wake-in-real-time), so the Concierge learns of it
-/// within seconds — never by polling the queue by hand. Best-effort, as the bash body was
-/// (`|| true`): a mail failure never blocks the mutation it is reporting on.
-pub fn notify(name: &str, subject: &str, body: &str) {
-    let mailbox = std::env::var("SPIRA_MAIL_SESSION_MAILBOX").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "concierge".into());
+/// `queue_notify_concierge <name> <subject-suffix> <body>`: mails `mailbox`
+/// (`Settings::mailbox`, i.e. `SPIRA_MAIL_SESSION_MAILBOX`'s declared value) as a machine
+/// event for a mutation the owner just made to an open batch (eject, rebuild, force-push,
+/// merge). spira-mail-deliver.sh watches every registered mailbox and wakes its reader the
+/// moment new mail lands (law-machine-events-wake-in-real-time), so the Concierge learns of
+/// it within seconds — never by polling the queue by hand. Best-effort, as the bash body
+/// was (`|| true`): a mail failure never blocks the mutation it is reporting on.
+pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
     let full_subject = format!("Merge queue: {name} {subject}");
     let full_body = format!("## Alert\n{body}\n");
     if let Ok(mut child) = Command::new("mail")
-        .args(["send", &mailbox, "--from", "Spira Queue <queue@spira>", "--subject", &full_subject, "--kind", "alert"])
+        .args(["send", mailbox, "--from", "Spira Queue <queue@spira>", "--subject", &full_subject, "--kind", "alert"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -237,9 +236,9 @@ pub fn notify(name: &str, subject: &str, body: &str) {
 /// Row 4 of the local/main design: is `forge_sha` an ancestor of `local_sha`? Under
 /// queue.local the forge's main moves only by our own publishes, so a non-ancestor means
 /// something pushed outside the publish queue; the first sighting of each foreign tip mails
-/// the concierge (marker `queue/<name>/divergence-alarmed`, cleared once healthy). Never
+/// `mailbox` (marker `queue/<name>/divergence-alarmed`, cleared once healthy). Never
 /// rebases. A check that cannot run is `CannotCheck`, never `Diverged`.
-pub fn check_divergence(queue_dir: &Path, name: &str, repo: &Path, forge_sha: &str, local_sha: &str) -> Divergence {
+pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path, forge_sha: &str, local_sha: &str) -> Divergence {
     if queue_dir.as_os_str().is_empty() {
         return Divergence::CannotCheck("the queue directory is not configured, so the divergence marker cannot be placed".into());
     }
@@ -283,7 +282,7 @@ pub fn check_divergence(queue_dir: &Path, name: &str, repo: &Path, forge_sha: &s
             "{name}'s forge target ({forge_sha}) is not an ancestor of local/main ({local_sha}) — something pushed to the forge outside the publish queue. Foreign commit(s):\n{}\n\nPublishing is refused until this is reconciled by hand. Never rebase silently.",
             if foreign.is_empty() { "<none found>" } else { &foreign }
         );
-        notify(name, "divergence: forge is not an ancestor of local/main", &body);
+        notify(mailbox, name, "divergence: forge is not an ancestor of local/main", &body);
     }
     Divergence::Diverged(foreign_range)
 }

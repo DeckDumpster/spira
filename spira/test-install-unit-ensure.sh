@@ -94,17 +94,19 @@ rm -f "$TMP/badprod/bin/spira-supervise"
 # ensure <args> — run unit-ensure.sh in a controlled environment. The mocks go first on
 # the caller's PATH (conf.sh keeps it first and only appends SPIRA_PATH).
 ensure() {
+    tl_config SPIRA_PATH="$BIN" SPIRA_WATCHERS="$TMP/watchers-empty" SPIRA_DB="$TMP/db" \
+        SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_PROD="${_ENSURE_PROD:-$PROD}" SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
+        SPIRA_BD=""
+    # SPIRA_BROKER_ENABLE ALSO AS PLAIN ENV: install/src/ensure.rs's producer guard still
+    # reads it with a bare std::env::var, never through spira_config::process::cfg (unlike
+    # the manifest's own ENABLE-set resolution a few lines over) — tl_config's declaration
+    # never reaches that one check.
     env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$BIN" \
-        SPIRA_WATCHERS="$TMP/watchers-empty" \
-        SPIRA_DB="$TMP/db" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_INSTANCE=prod \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_SYSTEMCTL="$TMP/sc" \
-        SPIRA_PROD="${_ENSURE_PROD:-$PROD}" \
         SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
         unit-ensure "$@" 2>&1
 }
@@ -113,13 +115,12 @@ ensure() {
 echo
 echo "positive control — render produces valid output before testing:"
 # ==========================================================================
+tl_config SPIRA_PATH="$BIN" SPIRA_WATCHERS="$TMP/watchers-empty" SPIRA_DB="$TMP/db" \
+    SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+    SPIRA_PROD="$PROD" SPIRA_BD=""
 rendered="$(env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_PATH="$BIN" \
-    SPIRA_WATCHERS="$TMP/watchers-empty" \
-    SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" \
-    SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    SPIRA_PROD="$PROD" \
     units-install --render 2>&1)"
 
 # Write all units to DEST (full install).
@@ -148,8 +149,9 @@ echo "pinned release — host release state cannot decide the verdict:"
 # POSITIVE CONTROL: the hazard is real — a copy beside a current naming another release refuses.
 SK="$TMP/skew"; mkdir -p "$SK/aaa/bin" "$SK/bbb"
 cp "$PIN/bin/unit-ensure" "$SK/aaa/bin/unit-ensure"; ln -s bbb "$SK/current"
-skew_out="$(env -i PATH="$SK/aaa/bin:$BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
-    SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_SYSTEMCTL="$TMP/sc" \
+tl_config SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_BD=""
+skew_out="$(env -i PATH="$SK/aaa/bin:$BIN:$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" SPIRA_CONF=/nonexistent \
+    SPIRA_SYSTEMCTL="$TMP/sc" \
     unit-ensure 2>&1)"
 want "skewed release copy is refused" "REFUSING to write units" "$skew_out"
 nowant "pinned run is not refused" "REFUSING" "$(ensure)"

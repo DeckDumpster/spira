@@ -69,10 +69,10 @@ mkdir -p "$FRAG_DIR"
 printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG_DIR/testprobe.env"
 
 log_out="$TMP/probe.log"
+tl_config SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map"
 env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
     cockpit-collect _probe_body_test testprobe 30 quick 2>"$log_out" || true
 

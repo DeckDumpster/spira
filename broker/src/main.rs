@@ -157,31 +157,36 @@ mod tests {
     use super::*;
 
     // ENV VARS ARE PROCESS-GLOBAL: the one test below that resolves config takes this
-    // lock for its whole body.
+    // lock for its whole body. `spira_config::process::cfg`/`config()` additionally
+    // cache per PROCESS (a `OnceLock`) — this test does NOT go through that door
+    // (`merge_resolved_env` calls `resolve_for_process` directly), so it is safe to
+    // drive per-test via SPIRA_TOML/SPIRA_HOME without colliding with a `cfg()`-based
+    // test elsewhere in this binary. The lock still guards the env mutation itself.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    // Wave 4.8: merge_resolved_env() must reach a registry key this crate never hardcoded
-    // a default for, and must never leak a NEVER_EXPORTED key into this process's own
-    // environment.
+    // One-source-of-config (per Ryan 2026-10-05): there is no more "registry default"
+    // to assert — a key's value comes only from the config file. This proves a value this
+    // process's own config file DECLARES reaches the real environment via
+    // merge_resolved_env(), and that a NEVER_EXPORTED key still never does.
     #[test]
-    fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
+    fn merge_resolved_env_reaches_a_declared_value_and_never_exports_the_forbidden_set() {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved_home = std::env::var_os("SPIRA_HOME");
+        let saved_toml = std::env::var_os("SPIRA_TOML");
         let saved_bd = std::env::var_os("SPIRA_BD");
         let saved_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
         std::env::remove_var("SPIRA_BD");
         std::env::remove_var("SPIRA_MAX_AEONS");
-        let dir = testkit::TempDir::new("broker-merge-env");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_BD"),
-            "TYPE=string\nGROUP=bd\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_BD:=bd}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_HOME", &home);
 
-        merge_resolved_env().unwrap();
+        let dir = testkit::TempDir::new("broker-merge-env");
+        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_BD", "bd-fixture")]);
+        std::env::set_var("SPIRA_TOML", &toml);
+        // The real, checked-in spira/conf.d (this crate's own repo layout: `broker/`
+        // sits beside `spira/`) — resolve_for_process needs a real registry to
+        // validate every key it resolves.
+        std::env::set_var("SPIRA_HOME", std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira"));
+
+        let result = merge_resolved_env();
 
         let got_bd = std::env::var("SPIRA_BD").ok();
         let got_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
@@ -189,6 +194,10 @@ mod tests {
         match saved_home {
             Some(v) => std::env::set_var("SPIRA_HOME", v),
             None => std::env::remove_var("SPIRA_HOME"),
+        }
+        match saved_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
         }
         match saved_bd {
             Some(v) => std::env::set_var("SPIRA_BD", v),
@@ -198,9 +207,10 @@ mod tests {
             Some(v) => std::env::set_var("SPIRA_MAX_AEONS", v),
             None => std::env::remove_var("SPIRA_MAX_AEONS"),
         }
-
-        assert_eq!(got_bd, Some("bd".to_string()), "a registry default must reach the real environment");
-        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
         let _ = std::fs::remove_dir_all(&dir);
+
+        result.expect("merge_resolved_env resolves given a complete config file and a real registry");
+        assert_eq!(got_bd, Some("bd-fixture".to_string()), "a declared config value must reach the real environment");
+        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
     }
 }

@@ -30,8 +30,12 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 lc_mirror_bd "$TMP/lc"
 mkdir -p "$TMP/home" "$TMP/run"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
+# SPIRA_HOME="$TMP/home" below IS the home now (locate_home no longer searches); every
+# binary reads <home>/conf.d, so the stub needs the real registry.
+ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 SPOOL="$TMP/run/incident-spool"
 ILOG="$TMP/run/incident.log"
+tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
 
 # spool_entry <ref-or-empty> <title> <cause-or-empty> <body> -> writes a spool file by hand,
 # in incident.sh's own spool_write format, so entries missing a field (an older-format
@@ -57,9 +61,10 @@ echo "1. SEEN TO FAIL FIRST: an unreachable database leaves the filing spooled, 
 # ======================================================================================
 BROKEN_BD="$TMP/no-such-bd"
 rm -rf "$SPOOL"; mkdir -p "$SPOOL"; : > "$ILOG"
+tl_config SPIRA_BD="$BROKEN_BD"
 out="$(printf 'db is down' | env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$BROKEN_BD" \
-    SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_REF="incident:db-down-probe" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh file "db down probe" - 2>&1)"; rc=$?
@@ -78,9 +83,10 @@ rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
 spool_entry "incident:drain-good-1" "good one" suite-red "payload 1" >/dev/null
 spool_entry "incident:drain-good-2" "good two" suite-red "payload 2" >/dev/null
 
+tl_config SPIRA_BD="$STUB_BD"
 drain_out="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-    SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+    SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain 2>&1)"; rc=$?
 want "drain reports 2 drained" "drained 2" "$drain_out"
@@ -93,9 +99,10 @@ is   "both entries are removed from the spool" "0" "$(spool_count)"
 rm -rf "$SPOOL"; mkdir -p "$SPOOL"
 spool_entry "incident:drain-stuck-1" "stuck one" suite-red "payload 1" >/dev/null
 spool_entry "incident:drain-stuck-2" "stuck two" suite-red "payload 2" >/dev/null
+tl_config SPIRA_BD="$BROKEN_BD"
 drain_stuck_out="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$BROKEN_BD" \
-    SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain 2>&1)"; rc=$?
 want "drain reports 0 drained when the database is down" "drained 0" "$drain_stuck_out"
@@ -109,9 +116,10 @@ echo "3. a REF-less entry is quarantined to .bad, not retried forever:"
 # ======================================================================================
 rm -rf "$SPOOL"; mkdir -p "$SPOOL"; : > "$ILOG"
 _bad_path="$(spool_entry "" "no ref here" suite-red "payload")"
+tl_config SPIRA_BD="$STUB_BD"
 env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-    SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+    SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain >/dev/null 2>&1
 is "the REF-less entry is moved to .bad" "1" "$(bad_count)"
@@ -125,18 +133,20 @@ echo "4. pre-CAUSE entries (no CAUSE: line — an older-format spool entry) defa
 rm -rf "$SPOOL"; mkdir -p "$SPOOL"; rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
 PRECAUSE_REF="incident:pre-cause-entry"
 spool_entry "$PRECAUSE_REF" "pre-cause probe" "" "first filing" >/dev/null
+tl_config SPIRA_BD="$STUB_BD"
 env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-    SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+    SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain >/dev/null 2>&1
 # The FIRST filing only creates the bead (no recurrence event yet); a second, equally
 # pre-CAUSE entry for the same ref is what exercises bump_recur, whose cause is what
 # a pre-CAUSE entry must default to.
 spool_entry "$PRECAUSE_REF" "pre-cause probe" "" "second filing" >/dev/null
+tl_config SPIRA_BD="$STUB_BD"
 env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-    SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+    SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain >/dev/null 2>&1
 

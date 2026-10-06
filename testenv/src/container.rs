@@ -2,8 +2,9 @@
 //! driver (DESIGN.md §12, sp-s0e1k; replaces spira/testenv.sh). Everything that touches the
 //! host goes through [`Host`], so the orchestration is unit-tested against a fake.
 
-use crate::settings::{self, Source};
+use crate::settings::Source;
 use regex::Regex;
+use spira_config::process::{cfg, cfg_parse};
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -105,7 +106,7 @@ pub trait Host {
 pub struct Conf {
     /// The harness root: `<root>/spira/testenv/Containerfile`. None = not found.
     pub harness: Option<PathBuf>,
-    pub bd_pin: Option<PathBuf>,
+    pub bd_pin: PathBuf,
     pub registry: String,
     pub max_concurrent: i64,
     pub cpus: Option<String>,
@@ -116,51 +117,32 @@ pub struct Conf {
     pub basic_retry_sleep: u64,
 }
 
+/// SPIRA_TESTENV_CPUS: trimmed and kept only when it parses as a positive number — a given
+/// non-numeric or non-positive value is simply not an override (the cgroup's own CPU share
+/// governs), never a parse refusal; this key has no "bad value" the way SPIRA_BATCH_MAXPAR
+/// does. Pure over the already-fetched string so a unit test can drive it directly.
+fn valid_cpus(raw: &str) -> Option<String> {
+    let v = raw.trim().to_string();
+    v.parse::<f64>().is_ok_and(|n| n > 0.0).then_some(v)
+}
+
 impl Conf {
-    pub fn load(src: &Source, harness: Option<PathBuf>) -> Conf {
-        let num = |env: &str, cfg: Option<&str>, d: i64| -> i64 {
-            src.get(env, cfg)
-                .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(d)
+    pub fn load(src: &Source, harness: Option<PathBuf>) -> Result<Conf, String> {
+        let num = |env: &str| -> Option<i64> {
+            src.get(env).and_then(|v| v.trim().parse().ok())
         };
-        let bd_pin = src
-            .get("SPIRA_BD_PIN", Some("spira.bd_pin"))
-            .map(PathBuf::from)
-            .or_else(|| {
-                let root = harness.clone().unwrap_or_default();
-                Some(settings::resolve_run(src, &root).join("bd-pin"))
-            });
-        Conf {
-            bd_pin,
-            registry: src
-                .get("SPIRA_TESTENV_REGISTRY", Some("spira.testenv_registry"))
-                .unwrap_or_default(),
-            max_concurrent: num(
-                "SPIRA_TESTENV_MAX_CONCURRENT",
-                Some("spira.testenv_max_concurrent"),
-                8,
-            ),
-            cpus: src
-                .get("SPIRA_TESTENV_CPUS", Some("spira.testenv_cpus"))
-                .map(|v| v.trim().to_string())
-                .filter(|v| v.parse::<f64>().is_ok_and(|n| n > 0.0)),
-            queue_timeout: num(
-                "SPIRA_TESTENV_QUEUE_TIMEOUT",
-                Some("spira.testenv_queue_timeout"),
-                900,
-            )
-            .max(0) as u64,
-            queue_poll: num(
-                "SPIRA_TESTENV_QUEUE_POLL",
-                Some("spira.testenv_queue_poll"),
-                5,
-            )
-            .max(1) as u64,
-            heartbeat: num("SPIRA_TESTENV_BUILD_HEARTBEAT", None, 60).max(1) as u64,
-            basic_wait_ticks: num("SPIRA_TESTENV_BASIC_WAIT_TICKS", None, 20).max(0) as u32,
-            basic_retry_sleep: num("SPIRA_TESTENV_BASIC_RETRY_SLEEP", None, 2).max(0) as u64,
+        Ok(Conf {
+            bd_pin: PathBuf::from(cfg("SPIRA_BD_PIN")?),
+            registry: cfg("SPIRA_TESTENV_REGISTRY")?,
+            max_concurrent: cfg_parse("SPIRA_TESTENV_MAX_CONCURRENT")?,
+            cpus: valid_cpus(&cfg("SPIRA_TESTENV_CPUS")?),
+            queue_timeout: cfg_parse::<i64>("SPIRA_TESTENV_QUEUE_TIMEOUT")?.max(0) as u64,
+            queue_poll: cfg_parse::<i64>("SPIRA_TESTENV_QUEUE_POLL")?.max(1) as u64,
+            heartbeat: num("SPIRA_TESTENV_BUILD_HEARTBEAT").unwrap_or(60).max(1) as u64,
+            basic_wait_ticks: num("SPIRA_TESTENV_BASIC_WAIT_TICKS").unwrap_or(20).max(0) as u32,
+            basic_retry_sleep: num("SPIRA_TESTENV_BASIC_RETRY_SLEEP").unwrap_or(2).max(0) as u64,
             harness,
-        }
+        })
     }
 
     fn spira_dir(&self) -> Option<PathBuf> {
@@ -288,10 +270,9 @@ impl Driver<'_> {
             return None;
         };
         let mut closure = sha256sum_line(&cf_bytes);
-        if let Some(pin) = &self.conf.bd_pin {
-            if self.host.is_file(pin) {
-                closure.extend(self.host.read(pin).unwrap_or_default());
-            }
+        let pin = &self.conf.bd_pin;
+        if self.host.is_file(pin) {
+            closure.extend(self.host.read(pin).unwrap_or_default());
         }
         closure.extend(sha256sum_line(deps_text.as_bytes()));
         Some(crate::verdict::sha256_hex(&closure)[..12].to_string())
@@ -1376,14 +1357,16 @@ impl Host for RealHost {
 }
 
 /// `testenv container <args>`.
-pub fn main(
-    args: &[String],
-    harness: Option<PathBuf>,
-    config: Option<&spira_config::SpiraToml>,
-) -> i32 {
+pub fn main(args: &[String], harness: Option<PathBuf>) -> i32 {
     let env = |k: &str| std::env::var(k).ok();
-    let src = Source { env: &env, config };
-    let conf = Conf::load(&src, harness);
+    let src = Source { env: &env };
+    let conf = match Conf::load(&src, harness) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("testenv container: {e}");
+            return 1;
+        }
+    };
     Driver {
         host: &RealHost,
         conf: &conf,

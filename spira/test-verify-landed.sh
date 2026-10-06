@@ -8,6 +8,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 export SPIRA_CONF=/nonexistent SPIRA_VERIFY_TIMEOUT=3 SPIRA_DB=/nonexistent
+tl_config SPIRA_VERIFY_TIMEOUT=3 SPIRA_DB=/nonexistent
 
 echo "test-verify-landed.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -31,6 +32,7 @@ for a in "$@"; do [ -f "$a" ] && cat "$a" >> "$FIX/filed"; done
 STUB
 chmod +x "$TMP/bd" "$TMP/bead.sh"
 export SPIRA_BD="$TMP/bd" SPIRA_VERIFY_BEAD_SH="$TMP/bead.sh"
+tl_config SPIRA_BD="$SPIRA_BD"
 
 mkbead() { # id description
     python3 -c 'import json,sys; print(json.dumps([{"id":sys.argv[1],"labels":["repo:zzrepo"],"description":sys.argv[2]}]))' "$1" "$2" > "$FIX/$1.json"
@@ -72,7 +74,10 @@ want "a hanging check is bounded and fails" "sp-hang1" "$(cat "$FIX/filed")"
 
 R="$TMP/repo"; git init -q "$R"; git -C "$R" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "base"
 git -C "$R" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "sp-pass1: fix"
-out="$(SPIRA_ID_PREFIX=sp "$V" --range HEAD~1..HEAD --repo "$R" 2>&1)"
+# SPIRA_ID_PREFIX is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config, not the env prefix below, which no process reads it from any more.
+tl_config SPIRA_ID_PREFIX=sp
+out="$("$V" --range HEAD~1..HEAD --repo "$R" 2>&1)"
 want "ids come from the landed range"       "PASS sp-pass1" "$out"
 
 tl_summary

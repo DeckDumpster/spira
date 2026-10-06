@@ -69,6 +69,13 @@ done
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
+# (root, no password) credential file, declared, and no socket.
+: > "$TMP/lc-credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential" SPIRA_LC_SOCKET=""
+
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
 SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
 SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
@@ -107,6 +114,11 @@ printf '# name | path | land | base | format | gate\nalpha | %s | queue | main |
 RUN="$TMP/run"
 mkdir -p "$RUN"
 SPIRA_SCOPE_LABEL=alpha
+# Constant across every env -i invocation below (collect and pane alike); declared once
+# via tl_config since each env -i would otherwise strip SPIRA_TOML and these registered keys.
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=builder SPIRA_PATH="$BD_PATH" \
+    SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL"
 
 AGO1H="$(date -u -d '65 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-65M +%Y-%m-%dT%H:%M:%SZ)"
 AGO2H="$(date -u -d '2 hours ago'    +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-2H  +%Y-%m-%dT%H:%M:%SZ)"
@@ -157,10 +169,8 @@ lc_seed_bead sp-d3 SUBMITTED "$NOW_EPOCH"
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" \
+    SPIRA_REPO="$REPO" \
+    SPIRA_TOML="$SPIRA_TOML" \
         "${LC_ENV[@]}" \
     cockpit-collect once 2>/dev/null)"
 
@@ -222,8 +232,7 @@ for line in sys.stdin:
 
 pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$PANE" once 0 120 2>/dev/null)"
 
 want "pane renders QUEUE label"    "QUEUE"   "$pane"
@@ -242,10 +251,9 @@ echo "--- (b) spira-lc unreachable ---"
 # SPIRA_LC_BIN names a program that does not exist: CANNOT TELL renders "?" everywhere.
 out_b="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" SPIRA_LC_BIN="$TMP/no-such-spira-lc" \
+    SPIRA_REPO="$REPO" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_LC_BIN="$TMP/no-such-spira-lc" \
     cockpit-collect once 2>/dev/null)"
 
 valb() { printf '%s' "$out_b" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
@@ -271,8 +279,7 @@ for line in sys.stdin:
 
 pane_b="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$PANE" once 0 120 2>/dev/null)"
 
 want "unreadable: pane shows certify ?" "certify  ?" "$pane_b"
@@ -300,8 +307,7 @@ for line in sys.stdin:
 
 pane_c="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$PANE" once 0 120 2>/dev/null)"
 
 nowant "absent keys: pane does not render certify 0" "certify  0" "$pane_c"

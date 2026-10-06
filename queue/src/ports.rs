@@ -35,6 +35,18 @@ pub struct Settings {
     pub preflight_wall_secs: u64,
     /// The verdict pass's thresholds, as conf.sh resolved them (DESIGN-verdict.md §3).
     pub verdict: VerdictSettings,
+    /// `SPIRA_CERTIFY_SUITES` (declared value; law-one-source-of-config): the suites
+    /// `submit` gates on.
+    pub certify_suites: String,
+    /// `SPIRA_GIT_NAME` / `SPIRA_GIT_EMAIL` (declared values): the identity a batch merge
+    /// commits as.
+    pub git_name: String,
+    pub git_email: String,
+    /// `SPIRA_MAIL_SESSION_MAILBOX` (declared value): the mailbox `notify`/`divergence`
+    /// alarm into.
+    pub mailbox: String,
+    /// `SPIRA_EXPRESS_LABEL` (declared value): the bd label `sort_rows` ranks first.
+    pub express_label: String,
 }
 
 /// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for
@@ -114,8 +126,9 @@ pub trait Git {
     fn worktree_prune(&self, repo: &Path);
     fn worktree_add_detached(&self, repo: &Path, path: &Path, sha: &str) -> bool;
     fn worktree_remove(&self, repo: &Path, path: &Path);
-    /// `merge --no-edit --no-ff -F <msgfile> <tip>` as spira; false on conflict.
-    fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str) -> bool;
+    /// `merge --no-edit --no-ff -F <msgfile> <tip>` as `git_name <git_email>`; false on
+    /// conflict.
+    fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str, git_name: &str, git_email: &str) -> bool;
     fn merge_abort(&self, wt: &Path);
     /// `status --porcelain` is empty.
     fn is_clean(&self, wt: &Path) -> bool;
@@ -148,17 +161,20 @@ pub trait Lib {
     fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String>;
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path);
     fn comment(&self, id: &str, text: &str);
-    fn notify(&self, repo: &str, subject: &str, body: &str);
+    /// `mailbox`: `Settings::mailbox` (`SPIRA_MAIL_SESSION_MAILBOX`'s declared value).
+    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str);
     fn event(&self, kind: &str, title: &str, detail: &str);
-    /// R11: is forge an ancestor of local (alarms once per foreign tip if not).
-    fn divergence(&self, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence;
+    /// R11: is forge an ancestor of local (alarms once per foreign tip if not). `mailbox`:
+    /// `Settings::mailbox`.
+    fn divergence(&self, mailbox: &str, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence;
     /// R12: `spira_git_push <path> -q <remote> <refspec>`.
     fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool;
     /// R13: Ok, or Err(REBASE_FAILURE).
     fn rebase(&self, branch: &str, onto: &str, path: &Path, name: &str) -> Result<(), String>;
     fn land_subject(&self, id: &str) -> String;
     /// R15: `queue_sort_rows` over `<id> <tip> <epoch>` rows; returns `<id> <tip>` rows.
-    fn sort_rows(&self, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
+    /// `express_label`: `Settings::express_label` (`SPIRA_EXPRESS_LABEL`'s declared value).
+    fn sort_rows(&self, express_label: &str, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str);
     fn format_batch(&self, wt: &Path, base: &str, name: &str);
     /// `_base_conflict`: true when the tip conflicts with the base.

@@ -52,7 +52,11 @@ fixture_cmd() { # fixture_cmd <json> -> a shell command string render_memories c
 
 run_render() { # run_render <json> <core-csv> [prefixes] [budget]
     local json="$1" core_csv="$2" prefixes="${3:-law-rm-}" budget="${4:-120000}"
-    SPIRA_HOME="$HERE" SPIRA_STATUTE_CORE="$core_csv" SPIRA_MEMORIES_CACHE="" \
+    # conf.sh's own resolution step reads SPIRA_STATUTE_CORE/SPIRA_MEMORIES_CACHE from
+    # SPIRA_TOML now, not the environment, so the fixture value must go through tl_config
+    # even though render_memories itself is a plain bash function reading them in-process.
+    tl_config SPIRA_STATUTE_CORE="$core_csv" SPIRA_MEMORIES_CACHE=""
+    SPIRA_HOME="$HERE" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd "$json")" \
         bash -c ". \"$LIB_SH\" && render_memories \"$prefixes\" \"$budget\""
 }
@@ -175,8 +179,10 @@ echo "=== cache: hit, miss, and write ==="
 CACHE_FILE="$TMP/test-memories-cache.json"
 run_render_cached() { # run_render_cached <json> <core-csv> [age]
     local json="$1" core_csv="$2" age="${3:-300}"
-    SPIRA_HOME="$HERE" SPIRA_STATUTE_CORE="$core_csv" SPIRA_MEMORIES_CACHE="$CACHE_FILE" \
-        SPIRA_MEMORIES_CACHE_AGE="$age" SPIRA_MEMORIES_CMD="$(fixture_cmd "$json")" \
+    tl_config SPIRA_STATUTE_CORE="$core_csv" SPIRA_MEMORIES_CACHE="$CACHE_FILE" \
+        SPIRA_MEMORIES_CACHE_AGE="$age"
+    SPIRA_HOME="$HERE" \
+        SPIRA_MEMORIES_CMD="$(fixture_cmd "$json")" \
         bash -c ". \"$LIB_SH\" && render_memories \"law-rm-\""
 }
 
@@ -195,7 +201,8 @@ printf '{"law-rm-alpha": "CACHED alpha body", "law-rm-beta": "Beta statute body.
 touch "$CACHE_FILE"
 if grep -q "CACHED alpha body" "$CACHE_FILE"; then
     ok "cache hit: positive control — cache holds distinct marker"
-    out_hit="$(SPIRA_HOME="$HERE" SPIRA_STATUTE_CORE="law-rm-alpha" SPIRA_MEMORIES_CACHE="$CACHE_FILE" \
+    tl_config SPIRA_STATUTE_CORE="law-rm-alpha" SPIRA_MEMORIES_CACHE="$CACHE_FILE"
+    out_hit="$(SPIRA_HOME="$HERE" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd "$FIX3")" \
         bash -c ". \"$LIB_SH\" && render_memories \"law-rm-\"")"
     want   "cache hit: renders CACHED body from cache" "CACHED alpha body"  "$out_hit"
@@ -217,8 +224,8 @@ testdb_require test-render-memories
 if testdb_up render-memories >/dev/null 2>&1; then
     "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-rm-live" \
         "Live statute body, read for real." >/dev/null 2>&1
-    out_live="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_HOME="$HERE" \
-        SPIRA_STATUTE_CORE="law-rm-live" SPIRA_MEMORIES_CACHE="" \
+    tl_config SPIRA_STATUTE_CORE="law-rm-live" SPIRA_MEMORIES_CACHE="" SPIRA_BD="$SPIRA_BD"
+    out_live="$(SPIRA_DB="$SPIRA_DB" SPIRA_HOME="$HERE" \
         bash -c ". \"$LIB_SH\" && render_memories \"law-rm-\"")"
     want "a real bd read renders the live statute in full" "Live statute body" "$out_live"
     testdb_drop

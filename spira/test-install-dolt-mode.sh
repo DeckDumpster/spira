@@ -139,22 +139,22 @@ FAKE_RUN="$TMP/run"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN"
 
 # Pre-render units so the diff check in install.sh passes.
+# SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA declared empty on purpose (not "use the default"; see
+# test-deploy-preflight-new-unit.sh) — the complete fixture's own concrete paths point
+# nowhere in this fixture and would send phase checks down the wrong branch.
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" \
+    SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd"
 _rendered="$(env -i \
+    SPIRA_TOML="$SPIRA_TOML" \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    "SPIRA_RUN=$FAKE_RUN" \
     "SPIRA_HOME=$SPIRA_DIR" \
-    "SPIRA_PROD=$SPIRA_DIR" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
     SPIRA_INSTALL_AERC_CONSIDERED=1 \
-    "SPIRA_BD=$MOCK_BIN/bd" \
     units-install prod --render  2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
@@ -182,24 +182,36 @@ run_install() {
         install_args+=("$_a")
     done
     unset _a in_env
+    # SPIRA_DB is registered too (install's bootstrap.rs resolves it via cfg()) — the
+    # round-3 caveat's audit item.
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" \
+        SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd" \
+        SPIRA_DB="$FAKE_DB"
+    # A caller's extra_env assignment (SPIRA_DOLT_DATA=... at the call sites below) is a
+    # registered key -> tl_config too, so it reaches spira-install through SPIRA_TOML,
+    # overriding the fixed declaration above; anything else still rides the env -i prefix.
+    local env_extra=() _kv _k
+    for _kv in "${extra_env[@]+"${extra_env[@]}"}"; do
+        _k="${_kv%%=*}"
+        if [ -f "$HERE/conf.d/$_k" ]; then
+            tl_config "$_kv"
+        else
+            env_extra+=("$_kv")
+        fi
+    done
+    unset _kv _k
     env -i \
+        SPIRA_TOML="$SPIRA_TOML" \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$FAKE_RUN" \
         "SPIRA_HOME=$SPIRA_DIR" \
-        "SPIRA_PROD=$SPIRA_DIR" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "SPIRA_DB=$FAKE_DB" \
-        "${extra_env[@]+"${extra_env[@]}"}" \
+        "${env_extra[@]+"${env_extra[@]}"}" \
         spira-install "${install_args[@]+"${install_args[@]}"}" 2>&1
 }
 

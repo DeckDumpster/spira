@@ -106,8 +106,17 @@ impl Drop for Real {
     }
 }
 
+// Registered config keys (spira/conf.d) this crate's generic `World::env` seam also
+// serves — $SPIRA_TOML only, never the raw environment, never a fallback (per Ryan
+// 2026-10-05). Every other key `env` is called with (SPIRA_NOW, CENSUS_RETRY_DELAY_S) is
+// not a registered key and stays a plain environment read.
+const RESOLVED_KEYS: &[&str] = &["SPIRA_DB", "SPIRA_BD", "SPIRA_RUN", "SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S"];
+
 impl World for Real {
     fn env(&self, k: &str) -> Option<String> {
+        if RESOLVED_KEYS.contains(&k) {
+            return spira_config::process::cfg(k).ok();
+        }
         std::env::var(k).ok()
     }
 

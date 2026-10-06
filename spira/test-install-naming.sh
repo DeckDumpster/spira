@@ -18,14 +18,13 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/run"
 WATCHERS="$TMP/watchers"; printf '# empty\n' > "$WATCHERS"
 
+tl_config SPIRA_WATCHERS="$WATCHERS" SPIRA_RUN="$TMP/run" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="" SPIRA_REPO_MAP=/nonexistent
 rendered="$(env -i \
     PATH="$PATH" \
     HOME="$TMP/home" \
+    SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_WATCHERS="$WATCHERS" \
-    SPIRA_RUN="$TMP/run" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
     units-install test --render 2>&1)"
 render_rc=$?
 is "render: install.sh test --render exits 0" "0" "$render_rc"
@@ -56,10 +55,14 @@ want "naming: beads-push.service present (shared, plain name)" \
 # enable — already instance-qualified (inst_name applied per manifest entry, install/src/
 # manifest.rs, sp-31dm0: systemd/units.sh is retired). `--list-enable` is the T1 way to
 # prove the enable-time name, without a live install run against real systemd.
-enable_arr="$(env -i PATH="$PATH" HOME="$HOME" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
-    SPIRA_INSTANCE=test \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-    SPIRA_WATCHERS="$WATCHERS" \
+# SPIRA_INSTANCE IS A BOOTSTRAP EXCEPTION (units_install.rs: instance_arg.or_else(||
+# nonempty_env("SPIRA_INSTANCE"))) — read with a raw std::env::var, before config can even
+# be located, never through spira-config. It still needs the plain env assignment below,
+# on top of (not instead of) the tl_config declaration every other registered key here uses.
+tl_config SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run" \
+    SPIRA_WATCHERS="$WATCHERS"
+enable_arr="$(env -i PATH="$PATH" HOME="$HOME" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
+    SPIRA_CONF=/nonexistent SPIRA_INSTANCE=test \
     units-install --list-enable 2>/dev/null | tr '\n' ' ')"
 want   "naming: ENABLE includes spira-sentinel-test.timer" "spira-sentinel-test.timer" "$enable_arr"
 nowant "naming: ENABLE does not include plain spira-sentinel.timer" "spira-sentinel.timer" "$enable_arr"

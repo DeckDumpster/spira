@@ -29,17 +29,17 @@ mkdir -p "$T/run"
 # SPIRA_CONF at a nonexistent path so no host config leaks verdicts into the suite
 # (law-gates-run-in-a-clean-environment).
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
+tl_config SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_DB="$T/db"
+tl_config SPIRA_DB="$T/db"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
 BIN="$T/bin"; mkdir -p "$BIN"
-export SPIRA_BD="$BIN/bd"
-# PINNED NON-DEFAULT: proves the delay is actually read from the env rather than a literal
+SPIRA_BD="$BIN/bd"; tl_config SPIRA_BD="$SPIRA_BD"
+# PINNED NON-DEFAULT: proves the delay is actually read from config rather than a literal
 # baked into claim_retry, and keeps the suite fast regardless of the shipped default.
-export SPIRA_CLAIM_RETRY_DELAY_S=0
+tl_config SPIRA_CLAIM_RETRY_DELAY_S=0
 CALLS="$T/calls"
 export CALLS
 

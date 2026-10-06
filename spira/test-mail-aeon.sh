@@ -31,6 +31,7 @@ testdb_up mailaeon || { echo "test-mail-aeon: could not build fixture db"; exit 
 bdq() { BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
@@ -46,8 +47,12 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sour
 # among them — silently resolves to "" because its conf.d/SPIRA_MAIL file is never found,
 # so part (d) below created no mailbox for the stub to see.
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_MAIL="$TMP/mail"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_MAIL="$TMP/mail"; export SPIRA_MAIL; tl_config SPIRA_MAIL="$SPIRA_MAIL"
+# The complete fixture declares mail_mute = true; this suite's assertions read the "new"
+# maildir specifically (mail_deliver, mute=true, lands in "cur" with :2,S instead — sp-9hwim)
+# — declare this suite's own unmuted intent (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_MAIL_MUTE=0
 export SPIRA_CONF=""   # prevent reading a real spira.conf
 
 
@@ -65,11 +70,10 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_HOME/hooks/pre-commit"; chmod +
 echo
 echo "bead.sh amend — in_progress bead with live aeon (b)"
 
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf '' > "$SPIRA_REPO_MAP"   # empty; amend does not need it
 
-run_bead() { SPIRA_HOME="$SPIRA_HOME" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_RUN="$SPIRA_RUN" \
-             bead.sh "$@"; }
+run_bead() { SPIRA_HOME="$SPIRA_HOME" bead.sh "$@"; }
 
 # The amended beads are FIXTURE STATE, declared as data — one held in_progress by an aeon,
 # one open — never claimed or closed through bd around the lifecycle machine (sp-hyo5e).
@@ -136,7 +140,7 @@ git -C "$AEON_REPO" commit -qm seed
 git -C "$AEON_REPO" push -q origin main 2>/dev/null
 
 printf 'fixture | %s | push | origin/main | |\n' "$AEON_REPO" > "$SPIRA_HOME/repo-map"
-export SPIRA_REPO_MAP="$SPIRA_HOME/repo-map"
+SPIRA_REPO_MAP="$SPIRA_HOME/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
@@ -180,10 +184,9 @@ BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["id"])' 2>/dev/null)"
 [ -n "$BID4" ] || { bad "(d): could not file test bead" ""; tl_summary; exit 1; }
 
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_AGENT="$SPIRA_AGENT"
 aeon_rc=0
-SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" \
-SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
-SPIRA_AGENT="$SPIRA_AGENT" SPIRA_CONF="" \
+SPIRA_HOME="$SPIRA_HOME" SPIRA_CONF="" \
 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
     aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || aeon_rc=$?
 

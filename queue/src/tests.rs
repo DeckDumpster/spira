@@ -108,7 +108,7 @@ impl Git for FGit {
         true
     }
     fn worktree_remove(&self, _: &Path, _: &Path) {}
-    fn merge_no_ff(&self, wt: &Path, msg: &str, tip: &str) -> bool {
+    fn merge_no_ff(&self, wt: &Path, msg: &str, tip: &str, _git_name: &str, _git_email: &str) -> bool {
         self.calls.borrow_mut().push(format!("merge {tip} {msg}"));
         if self.merge_fail.borrow().contains(tip) {
             return false;
@@ -211,13 +211,13 @@ impl Lib for FLib {
     fn comment(&self, id: &str, text: &str) {
         self.log(format!("comment {id} {text}"));
     }
-    fn notify(&self, repo: &str, subject: &str, _body: &str) {
+    fn notify(&self, _mailbox: &str, repo: &str, subject: &str, _body: &str) {
         self.log(format!("notify {repo} {subject}"));
     }
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.log(format!("event {kind} {title} {detail}"));
     }
-    fn divergence(&self, _: &Path, _: &str, _: &Path, forge: &str, local: &str) -> Divergence {
+    fn divergence(&self, _mailbox: &str, _: &Path, _: &str, _: &Path, forge: &str, local: &str) -> Divergence {
         self.log(format!("divergence {forge} {local}"));
         if self.cannot_check.get() {
             Divergence::CannotCheck("no queue dir".into())
@@ -238,7 +238,7 @@ impl Lib for FLib {
     fn land_subject(&self, id: &str) -> String {
         format!("spira: land {id}")
     }
-    fn sort_rows(&self, _: &Path, _: &str, prio: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(&self, _express_label: &str, _: &Path, _: &str, prio: &str, rows: &str) -> Vec<(String, String)> {
         self.log(format!("sort_rows {prio}"));
         rows.lines().filter_map(|l| {
             let mut it = l.split_whitespace();
@@ -577,6 +577,11 @@ impl T {
             transition_maxsec: 30,
             preflight_wall_secs: 240,
             verdict: VerdictSettings::default(),
+            certify_suites: "on".into(), // literal-ok: fixture vocabulary
+            git_name: "spira".into(),
+            git_email: "spira@spira.invalid".into(),
+            mailbox: "concierge".into(),
+            express_label: "express".into(),
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {
@@ -2002,9 +2007,9 @@ fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
 
 #[test]
 fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its_own() {
-    let t = T::new(LandMode::Queue);
+    let mut t = T::new(LandMode::Queue);
     t.git.set("refs/heads/spira/sp-a", "t1");
-    t.var("SPIRA_CERTIFY_SUITES", "off");
+    t.lib.s.certify_suites = "off".into();
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0);
     assert_eq!(t.scripts.calls.borrow()[0], "gate spira/sp-a spira bead=sp-a suites=off");
     assert!(t.lc.has("certify sp-a t1"));

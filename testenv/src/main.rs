@@ -96,8 +96,7 @@ fn main() -> ExitCode {
     if args.first().map(String::as_str) == Some("container") {
         let env = |k: &str| std::env::var(k).ok();
         let harness = Harness::locate(&env).map(|h| h.root);
-        let config = load_config("testenv");
-        let rc = testenv::container::main(&args[1..], harness, config.as_ref());
+        let rc = testenv::container::main(&args[1..], harness);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
     // `testenv plan <json>` — the container setup in one exec, run inside the container
@@ -176,12 +175,27 @@ fn main() -> ExitCode {
         .ok()
         .and_then(|p| std::fs::read(p).ok())
         .unwrap_or_default();
+    // The one source of config (per Ryan 2026-10-05): read once, here, at the true top
+    // level — `run`/`report`/`warm_refill`/`warm_sweep` take the result off `Deps`, never
+    // the environment or `spira_config::process::cfg` directly.
+    let settings = match testenv::settings::Settings::load(
+        &testenv::settings::Source { env: &env },
+        testenv::batch::now_epoch(),
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("batch: {e}");
+            println!("VERDICT FAULT rc=2 ran=0 reason=settings-refused");
+            return ExitCode::from(2);
+        }
+    };
     let deps = Deps {
         rt: &rt,
         builder: &Cargo,
         harness,
         env: &env,
         config: config.as_ref(),
+        settings,
         stdin: &stdin,
         out: &out,
         owner_dir: std::path::PathBuf::from("/tmp"),

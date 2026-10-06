@@ -52,7 +52,7 @@ fn converts_conf_repo_map_and_fayths() {
         Some("/opt/fixture-home/.local/state/spira".to_string())
     );
     assert_eq!(spira.max_aeons, Some(4));
-    assert_eq!(spira.fayths, vec!["builder".to_string(), "ops".to_string()]);
+    assert_eq!(spira.fayths, Some(vec!["builder".to_string(), "ops".to_string()]));
     assert_eq!(spira.certify_suites, Some(spira_config::OnOff::Off));
     assert_eq!(
         spira.czar_stage_deadlock,

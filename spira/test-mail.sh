@@ -22,10 +22,23 @@ isz() { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0 got $2"; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_ID_PREFIX="sp"
+mkdir -p "$TMP/watchd"
+# SPIRA_MAIL_MUTE=0 up front: the complete fixture's own declared default is true (every
+# key needs SOME value), which would silently mute every "lands in new/" assertion in this
+# suite, not just the mail-mute section below that tests muting on purpose.
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_MUTE=0 \
+    SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" \
+    SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_BD="${SPIRA_BD:-bd}" \
+    SPIRA_OPERATOR_ACTOR=ryan \
+    SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""       # prevent reading a real spira.conf
-export SPIRA_ID_PREFIX="sp"
 
 cp -r "$HERE/mail/kinds/." "$TMP/kinds/"
 
@@ -157,6 +170,9 @@ mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierg
 # never pins, SPIRA_LOOM_BUDGET_MS included) — law-a-binary-resolves-the-config-it-reads;
 # a fixture SPIRA_HOME that runs a binary needs conf.d, the same way $HERE already is one.
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 
 send_plain() {   # send_plain <mailbox> <from> <subject> -> bare Message-ID on stdout
     local mailbox="$1" from="$2" subject="$3" newest
@@ -221,8 +237,7 @@ is "no-reply message routes to concierge" \
 echo
 echo "repeat guard — normalisation (T1: same subject through mail's own hasher)"
 
-export SPIRA_RUN="$TMP/run"
-export SPIRA_MAIL_REPEAT_WINDOW=3600
+tl_config SPIRA_RUN="$TMP/run" SPIRA_MAIL_REPEAT_WINDOW=3600
 
 qbody() { printf '## Question\n%s\n\n## Default\n%s\n\nDetailed context goes here.\n' "$1" "$2"; }
 
@@ -389,7 +404,8 @@ mkfifo "$FIFO"
 holder_pid=$!
 
 start_ts="$(date +%s)"
-out="$(SPIRA_LOOM_BUDGET_MS=200 run send "$DEADLINE_BOX" --from "A <a@a>" --subject "Never closes" < "$FIFO" 2>&1)"
+tl_config SPIRA_LOOM_BUDGET_MS=200
+out="$(run send "$DEADLINE_BOX" --from "A <a@a>" --subject "Never closes" < "$FIFO" 2>&1)"
 rc=$?
 elapsed=$(( $(date +%s) - start_ts ))
 
@@ -407,6 +423,9 @@ else
 fi
 no_msg="$(ls "$SPIRA_MAIL/$DEADLINE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "no message was delivered from the timed-out send" "0" "${no_msg:-0}"
+# Restore the fixture's own budget — tl_config persists for the rest of the suite,
+# unlike the old per-call env prefix, which reverted on its own after this one call.
+tl_config SPIRA_LOOM_BUDGET_MS=1500
 
 # ==========================================================================
 # MAIL-MUTE (sp-9hwim, design runtime-is-a-release #5): SPIRA_MAIL_MUTE replaces the
@@ -422,6 +441,7 @@ mkdir -p "$SPIRA_MAIL/$MUTE_BOX/new" "$SPIRA_MAIL/$MUTE_BOX/cur" "$SPIRA_MAIL/$M
 
 echo
 echo "unmuted (default): send lands in new/"
+# SPIRA_MAIL_MUTE=0 was already declared at the top of this suite (see the comment there).
 echo "body" | run send "$MUTE_BOX" --from "A <a@a>" --subject "Unmuted" >/dev/null 2>&1
 is "SPIRA_MAIL_MUTE unset: message lands in new/" "1" \
     "$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
@@ -431,7 +451,8 @@ is "SPIRA_MAIL_MUTE unset: nothing lands in cur/" "0" \
 echo
 echo "muted: send is recorded in cur/, already Seen, never wakes new/"
 before_new="$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
-echo "body" | SPIRA_MAIL_MUTE=1 run send "$MUTE_BOX" --from "A <a@a>" --subject "Muted" >/dev/null 2>&1
+tl_config SPIRA_MAIL_MUTE=1
+echo "body" | run send "$MUTE_BOX" --from "A <a@a>" --subject "Muted" >/dev/null 2>&1
 is "SPIRA_MAIL_MUTE=1: new/ does not grow" "$before_new" \
     "$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
 muted_file="$(ls "$SPIRA_MAIL/$MUTE_BOX/cur" 2>/dev/null | grep ':2,S$' | head -1)"
@@ -446,11 +467,15 @@ mkdir -p "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/cur" "$SPIRA_MAIL/co
 conc_new_before="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 conc_cur_before="$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
 printf 'From: Someone <s@s>\nSubject: raw muted\n\nbody\n' \
-    | SPIRA_MAIL_MUTE=1 run sendmail >/dev/null 2>&1
+    | run sendmail >/dev/null 2>&1
 is "SPIRA_MAIL_MUTE=1 sendmail: new/ does not grow" "$conc_new_before" \
     "$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "SPIRA_MAIL_MUTE=1 sendmail: recorded in cur/ instead" "$((conc_cur_before + 1))" \
     "$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
+
+# tl_config persists for the rest of the suite — MUTE=1 set above for the mute section would
+# otherwise silently discard every "lands in new/" assertion below into cur/ instead.
+tl_config SPIRA_MAIL_MUTE=0
 
 echo
 echo "escalation class: an aeon's operator ask must declare one (law-escalate-decisions-not-problems)"

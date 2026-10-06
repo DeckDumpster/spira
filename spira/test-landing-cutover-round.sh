@@ -75,11 +75,15 @@ print(d[0].get("status") or "")'; }
 
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-    SPIRA_CUTOVER_ROUND_LABEL="$CUTOVER_LABEL" \
-        SPIRA_GATE_WORKER=0 PATH="$SH:$PATH" landing-pass land 2>&1
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_HOME_REPO/SPIRA_ID_PREFIX/SPIRA_REPO_MAP/SPIRA_GH/
+    # SPIRA_CUTOVER_ROUND_LABEL/SPIRA_GATE_WORKER are registered keys (per Ryan 2026-10-05,
+    # ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below, which no
+    # process reads them from any more.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_GH="$SH/gh" SPIRA_CUTOVER_ROUND_LABEL="$CUTOVER_LABEL" SPIRA_GATE_WORKER=0
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
+        PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
 # branch <id> <file> <content> [labels-json] — a closed bead with a clean git branch.

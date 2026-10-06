@@ -110,6 +110,12 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE EXPLICITLY, EMPTY: it is a registered key, resolved from SPIRA_TOML
+# alone now — left undeclared it falls to the complete fixture's own (nonexistent) path, and
+# every spira-lc call refuses before reaching the dolt server. Empty matches root's actual
+# password here; switched to the real one below once this suite moves to spira_lc.
+LC_CRED="$TMP/lc.credential"; : > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
@@ -126,6 +132,8 @@ cat "$TMP/grants.log" >&2
 # superuser privileges would be a false green.
 export SPIRA_LC_USER=spira_lc
 export SPIRA_LC_PASSWORD="$PASS"
+printf '%s' "$PASS" > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 lc() { spira-lc "$@"; }
 batch_field() {   # batch_field <batch-id> <column>
@@ -423,8 +431,9 @@ want "the settle summary meters both cascaded members" '"base_withdrawn":2' "$ou
 # commands queue.sh's _lc_cut_batch/_lc_eject_member/_lc_abandon_batch issued (create-bead
 # per member then cut; show-batch for the CAS state/version, then abandon-batch or
 # eject-member) against this suite's already-running server.
-export SPIRA_RUN="$TMP/queue-shell-run"
+SPIRA_RUN="$TMP/queue-shell-run"
 mkdir -p "$SPIRA_RUN/landstate" "$SPIRA_RUN/queue/fixture-repo"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 _lc_cut_batch() {   # _lc_cut_batch <batch-id> <repo> <head> <base> <actor> <id:tip>...
     local batch_id="$1" repo="$2" head="$3" base="$4" actor="$5" _m csv=""; shift 5
     for _m in "$@"; do lc create-bead "${_m%%:*}" >/dev/null 2>&1 || true; csv="${csv:+$csv,}$_m"; done

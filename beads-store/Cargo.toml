@@ -6,6 +6,7 @@ description = "beads-store — commits a beads Dolt store's dirty tracked tables
 
 [dependencies]
 serde_json = "1"
+spira-config = { path = "../spira-config" }
 
 [lib]
 name = "beads_store"

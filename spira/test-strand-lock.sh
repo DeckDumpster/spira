@@ -50,6 +50,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 mkdir -p "$TMP/run"
+# SPIRA_RUN is registered and fixed for the whole suite; declared once here so every
+# `strand check` invocation below (plain env-prefixed, no env -i) picks it up via
+# SPIRA_TOML instead of the no-longer-read environment copy.
+tl_config SPIRA_RUN="$TMP/run"
 
 # A starved partition — one row in strand-classify.py's output format.
 # kind=starved id=- disp=escalate → hits the escalation path in cmd_check.
@@ -65,7 +69,12 @@ COUNT_FILE="$TMP/count"
 echo 0 > "$COUNT_FILE"
 
 # mail stub: records "send" invocations.
-mkdir -p "$TMP/strand-home"
+mkdir -p "$TMP/strand-home/chamber"; ln -s "$HERE/conf.d" "$TMP/strand-home/conf.d"   # a SPIRA_HOME carries the registry
+# SPIRA_CHAMBER is registered too: the complete fixture declares a non-empty bogus value,
+# which chamber_dir_with() prefers over deriving <home>/chamber, breaking strand's own
+# fayth-partition roster probe (lib.sh's fayth_partitions -> cmd_fayth) for every SPIRA_HOME
+# below unless cleared to the home actually in use (sfail round 4, pattern 6/7).
+tl_config SPIRA_CHAMBER="$TMP/strand-home/chamber"
 cat > "$TMP/strand-home/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -77,10 +86,10 @@ chmod +x "$TMP/strand-home/mail"
 # strand check environment: SPIRA_RUN controls STATE path; SPIRA_HOME points to the
 # mail stub; SPIRA_STRAND_GRACE=0 disables the 15-minute grace window.
 CHECK_ENV=(
-    SPIRA_RUN="$TMP/run"
     SPIRA_STRAND_GRACE=0
     SPIRA_LABELS=-
     SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH"
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true
 )
 
 run_check() {
@@ -113,23 +122,36 @@ echo 0 > "$COUNT_FILE"
 LOCKED_FIFO="$TMP/locked.fifo"; PROCEED_FIFO="$TMP/proceed.fifo"
 mkfifo "$LOCKED_FIFO" "$PROCEED_FIFO"
 
-BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME"
+BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME/chamber"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"
 cat > "$BARRIER_HOME/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
-printf locked > "$LOCKED_FIFO"
+printf 'locked\n' > "$LOCKED_FIFO"
 read -r _ < "$PROCEED_FIFO"
 ( flock -x 9; n=\$(cat "$COUNT_FILE"); echo \$((n + 1)) > "$COUNT_FILE" ) 9>"$COUNT_FILE.lock"
 cat >/dev/null
 STUB
 chmod +x "$BARRIER_HOME/mail"
 
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
+# tl_layer, not tl_config: runner 2 races this runner concurrently on the SAME suite
+# override file (CHECK_ENV's SPIRA_HOME is strand-home, not BARRIER_HOME) — a persisting
+# tl_config here would hand runner 2 this runner's chamber. One-call-only SPIRA_TOML.
+# GIT_TERMINAL_PROMPT=0: the new starved-row lane-liveness check (sfail round 5) derives
+# SPIRA_REPO via `git rev-parse --show-toplevel` on every roster probe now — defensive
+# against any git subprocess in that chain blocking on a credential prompt instead of
+# failing fast, which would hang this runner before it ever reaches its mail stub.
+env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
+    SPIRA_TOML="$(tl_layer SPIRA_CHAMBER="$BARRIER_HOME/chamber")" \
     strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
 
-# Blocks until runner 1's mail signals it is inside the critical section.
-read -r _ < "$LOCKED_FIFO"
+# Blocks until runner 1's mail signals it is inside the critical section — bounded, so a
+# runner 1 that never gets there fails the suite in seconds instead of hanging it.
+if ! timeout 30 bash -c 'read -r _ < "$1"' _ "$LOCKED_FIFO"; then
+    bad "runner 1 reached its critical section" "it never did: $(tail -3 "$TMP/runner1.log" 2>/dev/null)"
+    kill "$P1" 2>/dev/null; tl_summary; exit 1
+fi
 
 # Runner 2 now races for the same lock runner 1 still holds. Deterministically declines.
 LOG2="$TMP/runner2.log"
@@ -188,7 +210,7 @@ printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: 
     > "$TMP/fixture-info.tsv"
 
 MAIL_SENT="$TMP/mail-sent-info"
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH" \
+env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH" \
     strand check --from "$TMP/fixture-info.tsv" >/dev/null 2>&1
 n_info="$(cat "$COUNT_FILE")"
 is "info row: mail not called (count unchanged)" "1" "$n_info"
@@ -204,7 +226,8 @@ printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon; 0 of 3 aeon slot
     > "$TMP/fixture-partition.tsv"
 
 ARGS_A="$TMP/mail-args-a"
-mkdir -p "$TMP/home-a"
+mkdir -p "$TMP/home-a/chamber"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"
+tl_config SPIRA_CHAMBER="$TMP/home-a/chamber"
 cat > "$TMP/home-a/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -213,7 +236,8 @@ cat >> "$ARGS_A"
 STUB
 chmod +x "$TMP/home-a/mail"
 
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" PATH="$TMP/home-a:$PATH" \
+env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" PATH="$TMP/home-a:$PATH" \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
     strand check --from "$TMP/fixture-partition.tsv" >/dev/null 2>&1
 
 args_a="$(cat "$ARGS_A" 2>/dev/null || true)"

@@ -41,7 +41,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # `start` now ensures the SessionStart hook is registered (`release session-hook install`),
 # which defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json. Exported for the two direct
 # invocations below; the systemd-run ones do not inherit this and name it explicitly.
-export SPIRA_CLIENT_SETTINGS="$TMP/settings.json"
+tl_config SPIRA_CLIENT_SETTINGS="$TMP/settings.json"
 
 echo "start — session survives the oneshot's cgroup teardown"
 
@@ -54,7 +54,7 @@ tmux -L "$SOCK" kill-server 2>/dev/null || true
 
 rc_start=0
 systemd-run --user --wait --collect --quiet -- \
-    env SPIRA_CLIENT_SETTINGS="$TMP/settings.json" CONCIERGE_SOCKET="$SOCK" CONCIERGE_SESSION="$SOCK" \
+    env SPIRA_TOML="$SPIRA_TOML" CONCIERGE_SOCKET="$SOCK" CONCIERGE_SESSION="$SOCK" \
     bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || rc_start=$?
 
 is "start exits 0 under a simulated oneshot" 0 "$rc_start"
@@ -77,8 +77,9 @@ FAKE_SID_R="resume-launcher-test-$(date +%s)"
 rm -f "$TMP_RUN/concierge-session"
 SOCK_NR="test-concierge-noresume-$$"
 tmux -L "$SOCK_NR" kill-server 2>/dev/null || true
+tl_config SPIRA_RUN="$TMP_RUN"
 systemd-run --user --wait --collect --quiet -- \
-    env SPIRA_RUN="$TMP_RUN" SPIRA_CLIENT_SETTINGS="$TMP/settings.json" \
+    env SPIRA_TOML="$SPIRA_TOML" \
         CONCIERGE_SOCKET="$SOCK_NR" CONCIERGE_SESSION="$SOCK_NR" \
     bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || true
 tmux -L "$SOCK_NR" kill-server 2>/dev/null || true
@@ -94,8 +95,9 @@ fi
 printf '%s\n%s\n' "$FAKE_SID_R" "$TMP_RUN" > "$TMP_RUN/concierge-session"
 SOCK_R="test-concierge-resume2-$$"
 tmux -L "$SOCK_R" kill-server 2>/dev/null || true
+tl_config SPIRA_RUN="$TMP_RUN" SPIRA_WIKI="$TMP_RUN"
 systemd-run --user --wait --collect --quiet -- \
-    env SPIRA_RUN="$TMP_RUN" SPIRA_WIKI="$TMP_RUN" SPIRA_CLIENT_SETTINGS="$TMP/settings.json" \
+    env SPIRA_TOML="$SPIRA_TOML" \
         CONCIERGE_SOCKET="$SOCK_R" CONCIERGE_SESSION="$SOCK_R" \
     bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || true
 tmux -L "$SOCK_R" kill-server 2>/dev/null || true
@@ -125,8 +127,8 @@ printf '%s\n%s\n' "$_dfake_id" "$_ddir" > "$_ddir/concierge-session"
 mkdir -p "$_ddir/projects"    # no transcript for $_dfake_id anywhere under here — genuinely gone
 _dsock="test-concierge-dangle-$$"
 tmux -L "$_dsock" kill-server 2>/dev/null || true
-_dout="$(PATH="$_ddir/bin:$PATH" SPIRA_RUN="$_ddir" SPIRA_WIKI="$_ddir" \
-         SPIRA_TOKEN_PROJECTS="$_ddir/projects" \
+tl_config SPIRA_RUN="$_ddir" SPIRA_WIKI="$_ddir" SPIRA_TOKEN_PROJECTS="$_ddir/projects"
+_dout="$(PATH="$_ddir/bin:$PATH" \
          CONCIERGE_SOCKET="$_dsock" CONCIERGE_SESSION="$_dsock" \
          bash "$HARNESS/concierge.sh" start 2>&1)"; _drc=$?
 _dsess_after="$(cat "$_ddir/concierge-session" 2>/dev/null)"
@@ -168,8 +170,8 @@ sleep 0.3
 
 _rsock="test-concierge-real-$$"
 tmux -L "$_rsock" kill-server 2>/dev/null || true
-_rout="$(PATH="$_rdir/bin:$PATH" SPIRA_RUN="$_rdir" SPIRA_WIKI="$_rdir" \
-         SPIRA_TOKEN_PROJECTS="$_rdir/projects" \
+tl_config SPIRA_RUN="$_rdir" SPIRA_WIKI="$_rdir" SPIRA_TOKEN_PROJECTS="$_rdir/projects"
+_rout="$(PATH="$_rdir/bin:$PATH" \
          CONCIERGE_SOCKET="$_rsock" CONCIERGE_SESSION="$_rsock" \
          bash "$HARNESS/concierge.sh" start 2>&1)"; _rrc=$?
 _rsess_after="$(cat "$_rdir/concierge-session" 2>/dev/null)"
@@ -201,8 +203,9 @@ else
     LTMP="$TMP/layout-d"; mkdir -p "$LTMP"
     LDIR="$LTMP/tmux"; mkdir -p "$LDIR"
     LSESS="cockpit-d"
-    LCONF="$LTMP/spira.conf"
-    printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\nSPIRA_RUN = %s\n' "$HARNESS" "$LTMP/run" > "$LCONF"
+    LCONF="$LTMP/spira.conf"   # unread now (conf.sh no longer reads a legacy spira.conf); kept as a stable name below
+    : > "$LCONF"
+    tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$HARNESS" SPIRA_RUN="$LTMP/run"
     mkdir -p "$LTMP/run"
     # A fake release whose bin/ carries the real `health` binary, so the pane's own
     # PATH (built by `layout` from $SPIRA_RELEASE) can find it by bare name.
@@ -214,12 +217,12 @@ else
 
     FIRST_PANE=$(TMUX_TMPDIR="$LDIR" tmux list-panes -t "$LSESS" -F '#{pane_id}')
     TMUX_TMPDIR="$LDIR" tmux respawn-pane -k -t "$FIRST_PANE" \
-        "SPIRA_RUN=$LTMP/run SPIRA_CONF=$LCONF PATH=$LREL/bin:\$PATH health loop"
+        "SPIRA_CONF=$LCONF SPIRA_TOML=$SPIRA_TOML PATH=$LREL/bin:\$PATH health loop"
     sleep 0.5
 
+    tl_config COCKPIT_RIGHT_PCT=33 COCKPIT_BOTTOM_PCT=30 COCKPIT_CWD="$LTMP" \
+        COCKPIT_MAIL="" COCKPIT_MOUSE=off COCKPIT_CLIENT_IDLE_SECS=0
     TMUX="" TMUX_TMPDIR="$LDIR" SPIRA_RELEASE="$LREL" SPIRA_CONF="$LCONF" SPIRA_REPO="$HARNESS" \
-        COCKPIT_RIGHT_PCT=33 COCKPIT_BOTTOM_PCT=30 COCKPIT_CWD="$LTMP" \
-        COCKPIT_MAIL="" COCKPIT_MOUSE=off COCKPIT_CLIENT_IDLE_SECS=0 \
         "$LAYOUT_SH" up --window "$LSESS:0" 2>/dev/null || true
 
     new_cmd=""

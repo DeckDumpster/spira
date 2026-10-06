@@ -224,7 +224,10 @@ fn notify_health(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOut
             continue;
         };
         let age = (now - prev_at as i64).max(0);
-        if age < ctx.notify_age().unwrap_or(1800) {
+        // ONE SOURCE (per Ryan 2026-10-05): `notify_age()` already refuses rather than
+        // defaulting on a malformed `SPIRA_NOTIFY_AGE` — `?` here, not `.unwrap_or(1800)`,
+        // so that refusal actually reaches the caller instead of being discarded.
+        if age < ctx.notify_age()? {
             continue;
         }
 

@@ -89,13 +89,9 @@ use spira_config::{
 fn describe_locate_failure(outcome: &LocateOutcome) -> String {
     match outcome {
         LocateOutcome::Found(p) => unreachable!("describe_locate_failure called on Found({p:?})"),
+        LocateOutcome::NotFound { tried } if tried.is_empty() => "SPIRA_TOML is not set — it names the one spira.toml".to_string(),
         LocateOutcome::NotFound { tried } => format!(
-            "no spira.toml found; tried: {}",
-            tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-        ),
-        LocateOutcome::LegacyOnly { conf, tried } => format!(
-            "{} exists but no spira.toml — run `spira-config convert` first; tried: {}",
-            conf.display(),
+            "SPIRA_TOML names {}, which is not a file",
             tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
         ),
     }
@@ -111,47 +107,40 @@ fn cmd_locate() -> ExitCode {
             eprintln!("spira-config locate: {}", describe_locate_failure(&outcome));
             ExitCode::from(1)
         }
-        outcome @ LocateOutcome::LegacyOnly { .. } => {
-            eprintln!("spira-config locate: {}", describe_locate_failure(&outcome));
-            ExitCode::from(2)
-        }
     }
 }
 
-fn read_input(file: Option<&str>) -> Result<String, String> {
-    match file {
+/// The config a command reads: `-` is a document on stdin; a named file, or with none the
+/// one `SPIRA_TOML` names, is loaded through [`spira_config::load_strict`]/[`load`] — layers
+/// and all, never read as one literal path.
+fn load_input(file: Option<&str>, strict: bool) -> Result<(SpiraToml, Vec<String>), String> {
+    let path = match file {
         Some("-") => {
             let mut s = String::new();
             std::io::stdin()
                 .read_to_string(&mut s)
                 .map_err(|e| e.to_string())?;
-            Ok(s)
+            return if strict { validate_strict(&s) } else { spira_config::validate_with_warnings(&s) };
         }
-        Some(f) => fs::read_to_string(f).map_err(|e| format!("{f}: {e}")),
-        // FAIL CLOSED (sp-hconl): no file argument means "resolve it the same way conf.sh
-        // does", never "guess the current directory" or "block on stdin" — the two things
-        // this branch did before. An unresolvable config names every path it tried instead
-        // of guessing.
+        Some(f) => PathBuf::from(f),
+        // FAIL CLOSED (sp-hconl): no file argument means the config SPIRA_TOML names, never
+        // "guess the current directory" or "block on stdin".
         None => match locate(None) {
-            LocateOutcome::Found(p) => {
-                fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
-            }
-            outcome => Err(describe_locate_failure(&outcome)),
+            LocateOutcome::Found(p) => p,
+            outcome => return Err(describe_locate_failure(&outcome)),
         },
+    };
+    if strict {
+        spira_config::load_strict(&path)
+    } else {
+        load(&path).map(|d| (d, Vec::new()))
     }
 }
 
 fn cmd_validate(file: Option<&str>) -> ExitCode {
-    let text = match read_input(file) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("spira-config: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
     // STRICT: the config in force must name its id prefix (sp-k6m1m). doctor and the
     // release's pre-activate run this, so a release is never activated over one without it.
-    match validate_strict(&text) {
+    match load_input(file, true) {
         Ok((_, warnings)) => {
             for w in &warnings {
                 eprintln!("spira-config: warning: {w}");
@@ -185,15 +174,8 @@ fn cmd_migrate(file: &str) -> ExitCode {
 }
 
 fn cmd_get(path: &str, file: Option<&str>) -> ExitCode {
-    let text = match read_input(file) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("spira-config: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let doc = match validate(&text) {
-        Ok(d) => d,
+    let doc = match load_input(file, false) {
+        Ok((d, _)) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
             return ExitCode::FAILURE;
@@ -209,15 +191,8 @@ fn cmd_get(path: &str, file: Option<&str>) -> ExitCode {
 }
 
 fn cmd_export_sh(file: Option<&str>) -> ExitCode {
-    let text = match read_input(file) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("spira-config: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    match validate(&text) {
-        Ok(doc) => {
+    match load_input(file, false) {
+        Ok((doc, _)) => {
             print!("{}", export_sh(&doc));
             ExitCode::SUCCESS
         }
@@ -325,7 +300,7 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
         None => locate(None).found(),
     };
     let doc = match toml_path {
-        Some(p) => match fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display())).and_then(|t| validate(&t)) {
+        Some(p) => match load(&p) {
             Ok(d) => Some(d),
             Err(e) => {
                 eprintln!("spira-config resolve: {e}");
@@ -398,14 +373,18 @@ fn cmd_env_bootstrap_sh() -> ExitCode {
 /// non-zero means `conf.sh` must `exit 1` outright. Every diagnostic line is printed here,
 /// to stderr, so `conf.sh` itself prints nothing further.
 fn cmd_check_bd() -> ExitCode {
-    let bd = env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string());
-    let db = env::var("SPIRA_DB").unwrap_or_default();
-    let run = env::var("SPIRA_RUN").unwrap_or_default();
-    let doctor = env::var("SPIRA_DOCTOR").map(|v| !v.is_empty()).unwrap_or(false);
-    let conf_file = env::var("SPIRA_CONF_FILE")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "spira.conf".to_string());
+    // Handed explicitly by conf.sh from the resolved config; a missing one is a refusal.
+    let need = |k: &str| env::var(k).ok().filter(|v| !v.is_empty()).ok_or_else(|| format!("spira-config check-bd: {k} was not handed in — refusing"));
+    let (bd, db, run, conf_file) = match (need("SPIRA_BD"), need("SPIRA_DB"), need("SPIRA_RUN"), need("SPIRA_TOML_FILE")) {
+        (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
+        (a, b, c, d) => {
+            for e in [a.err(), b.err(), c.err(), d.err()].into_iter().flatten() {
+                eprintln!("{e}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    let doctor = env::var("SPIRA_DOCTOR").is_ok_and(|v| !v.is_empty());
     let result = spira_config::env_bootstrap::check_bd_schema(&bd, &db, &run, doctor, &conf_file);
     for m in &result.messages {
         eprintln!("{m}");
@@ -497,10 +476,7 @@ fn cmd_deps(args: &[String]) -> ExitCode {
         Some("require") if args.len() > 1 => {
             let bins: Vec<&str> = args[1..].iter().map(String::as_str).collect();
             let path = env::var("PATH").unwrap_or_default();
-            let conf_file = env::var("SPIRA_CONF_FILE")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "spira.conf".to_string());
+            let conf_file = env::var("SPIRA_TOML_FILE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "$SPIRA_TOML".to_string());
             match spira_config::deps::require(&deps, &bins, &path, &conf_file) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(msg) => {
@@ -554,6 +530,8 @@ fn parse_column(s: &str) -> Option<Column> {
 /// checkout outside its workspaces root, or with a real remote, must halt the whole process
 /// that sourced it, not just this one check.
 fn cmd_repo_containment_check() -> ExitCode {
+    // conf.sh has just resolved and EXPORTED these from the one source of config (lib.sh is
+    // this check's only caller, right after it) — read as resolved config, never as a default.
     let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
     let workspaces = env::var("SPIRA_WORKSPACES").unwrap_or_default();
     let map_text = env::var("SPIRA_REPO_MAP")
@@ -1123,8 +1101,15 @@ fn cmd_fayth(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let roster_override = env::var("SPIRA_FAYTHS").ok();
-    let roster_override = roster_override.as_deref();
+    // The roster is the declared one (spira.fayths), never an environment override.
+    let roster = match spira_config::process::cfg("SPIRA_FAYTHS") {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("spira-config fayth: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let roster_override = Some(roster.as_str());
     match args.first().map(String::as_str) {
         Some("names") => {
             for n in chamber::fayth_names(&home) {

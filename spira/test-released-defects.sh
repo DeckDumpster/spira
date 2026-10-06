@@ -118,14 +118,16 @@ REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$REPO_MAP"
 
 rds() {  # rds [args] -> output of released-defects.sh
+    # SPIRA_REPO_MAP/SPIRA_RUN/SPIRA_VERDICT_WINDOW are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
+    # through env -i, which clears it.
+    tl_config SPIRA_REPO_MAP="$REPO_MAP" SPIRA_RUN="$TMP/run" SPIRA_VERDICT_WINDOW=50
     # HOME="$HOME" (not "$TMP") so the bd shim at ~/.local/bin/bd is reachable.
     # SPIRA_CONF=/nonexistent prevents loading the real ~/.config/spira/spira.conf.
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_VERDICT_WINDOW=50 \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/released-defects.sh" --graph "$GRAPH" "$@" 2>/dev/null
 }
 mkdir -p "$TMP/run"
@@ -171,12 +173,13 @@ echo "a field that cannot be read renders ?, never 0:"
 # still report RELEASED rather than silently dropping the defect.
 REPO_MAP_EMPTY="$TMP/repo-map-empty"
 printf '# empty\n' > "$REPO_MAP_EMPTY"
+# SPIRA_REPO_MAP/SPIRA_RUN/SPIRA_VERDICT_WINDOW are registered keys (per Ryan 2026-10-05,
+# ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+tl_config SPIRA_REPO_MAP="$REPO_MAP_EMPTY" SPIRA_RUN="$TMP/run" SPIRA_VERDICT_WINDOW=50
 out_nomap="$(env -i PATH="$PATH" HOME="$HOME" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_REPO_MAP="$REPO_MAP_EMPTY" \
     SPIRA_REPO=/nonexistent \
-    SPIRA_RUN="$TMP/run" \
-    SPIRA_VERDICT_WINDOW=50 \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$SH/released-defects.sh" --graph "$GRAPH" 2>/dev/null || true)"
 # When repo cannot be found, commits render ? — but the defects are still
 # counted (the fields report absence rather than hiding the record).

@@ -45,6 +45,9 @@ pub struct Env {
     pub db: Option<PathBuf>,
     pub bd: String,
     pub express_label: String,
+    /// `SPIRA_FORGE` — the forge seam `find_repo` hands to `Repo.forge` (bare name on the
+    /// launcher's PATH, sp-gypjk; resolved once, here, not re-read per repo).
+    pub forge: PathBuf,
     pub tsd_bin: Option<PathBuf>,
     pub round_vm: PathBuf,
     /// The `queue` program (by name on the launcher's PATH; a unit test hands in a stub): land-local.
@@ -2612,6 +2615,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         db: None,
         bd: "bd".into(),
         express_label: "express".into(),
+        forge: PathBuf::from("forge"),
         tsd_bin: None,
         round_vm: dir.join("round-vm"),
         queue_bin: dir.join("queue"),

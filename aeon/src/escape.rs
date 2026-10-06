@@ -266,12 +266,16 @@ mod tests {
 
     /// A `Conf` whose capacity pause file lives under `run` — real-file-driven now that
     /// family K is in-process (wave 4.26), replacing the old FakeSeam's
-    /// `_aeon_capacity_paused` stub.
+    /// `_aeon_capacity_paused` stub. Built on `crate::tests::complete_vars()` (every
+    /// registered key declared, per Ryan 2026-10-05: one source of config), not a
+    /// single-key hand-built map — `Conf::i`/`Conf::s` carry no Rust-side default any
+    /// more, so a hand-built `Conf` missing SPIRA_CAPACITY_PROBE_WINDOW resolved it to 0
+    /// instead of 18000, which made `capacity::paused`'s own `left > probe_window` check
+    /// wrongly take the early-probe branch on every pause this far out.
     fn conf_at(run: &Path) -> Conf {
-        let snap = crate::seam::Snapshot {
-            vars: std::collections::BTreeMap::from([("SPIRA_RUN".to_string(), run.display().to_string())]),
-            ..Default::default()
-        };
+        let mut vars = crate::tests::complete_vars();
+        vars.insert("SPIRA_RUN".to_string(), run.display().to_string());
+        let snap = crate::seam::Snapshot { vars, ..Default::default() };
         Conf::new(&snap, Path::new("/home/spira"))
     }
     struct FakeExec(std::sync::Mutex<Option<(String, Vec<String>)>>);

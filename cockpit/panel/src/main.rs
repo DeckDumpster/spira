@@ -66,6 +66,10 @@ const REFRESH: Duration = Duration::from_secs(60);
 
 struct App {
     shared: store::Shared,
+    /// The panel's resolved config (`SPIRA_PATH`, the database, the operator's actor name),
+    /// read once at the top of `main` (per Ryan 2026-10-05: one source of config) and carried
+    /// from here into every write path and into `view_items` for `operator_spoke_last`.
+    cfg: store::Cfg,
     view: View,
     sel: usize,
     mode: Option<String>,
@@ -281,7 +285,7 @@ impl App {
             }
         }
         let s = self.shared.lock().unwrap();
-        let items = store::view_items(&s, self.view, self.dismissed, self.now()).map(|v| {
+        let items = store::view_items(&s, self.view, self.dismissed, self.now(), &self.cfg).map(|v| {
             v.into_iter()
                 .filter(|i| !self.hidden(&i.id))
                 .collect::<Vec<_>>()
@@ -294,7 +298,7 @@ impl App {
                 // A view that is not on screen counts its LIVE items — the dismissed flag
                 // only ever describes the view being looked at. Otherwise the FYI tab would
                 // advertise a history nobody asked to see.
-                store::view_items(&s, *v, false, self.now())
+                store::view_items(&s, *v, false, self.now(), &self.cfg)
                     .ok()
                     .map(|x| x.iter().filter(|i| !self.hidden(&i.id)).count())
             };
@@ -346,6 +350,7 @@ impl App {
 
         let (view, reason, dismissed) = (self.view, reason.to_string(), self.dismissed);
         let now = self.now();
+        let cfg = self.cfg.clone();
         let (errors, inflight, shared, unhide) = (
             Arc::clone(&self.errors),
             Arc::clone(&self.inflight),
@@ -354,7 +359,7 @@ impl App {
         );
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = act(view, &it, &reason, dismissed, what, now) {
+            if let Err(e) = act(view, &it, &reason, dismissed, what, now, &cfg) {
                 errors.lock().unwrap().push(format!("{}: {e}", it.id));
                 // Put it back. The hide was a bet on this write, and the bet lost.
                 if hides {
@@ -362,7 +367,7 @@ impl App {
                 }
             }
             *inflight.lock().unwrap() -= 1;
-            store::refresh(&shared);
+            store::refresh(&shared, &cfg);
         });
 
         let n = self.items().map(|v| v.len()).unwrap_or(0);
@@ -390,6 +395,7 @@ impl App {
         self.pending_rev = self.pending_rev.wrapping_add(1);
         let verb = if self.dismissed { "restoring" } else { self.view.verb(false) };
         self.flash = format!("{verb} {n}…");
+        let cfg = self.cfg.clone();
         let (errors, inflight, shared, view, dismissed) = (
             Arc::clone(&self.errors),
             Arc::clone(&self.inflight),
@@ -399,11 +405,11 @@ impl App {
         );
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = model::act_all(view, &ids, dismissed) {
+            if let Err(e) = model::act_all(view, &ids, dismissed, &cfg) {
                 errors.lock().unwrap().push(e);
             }
             *inflight.lock().unwrap() -= 1;
-            store::refresh(&shared);
+            store::refresh(&shared, &cfg);
         });
         self.sel = 0;
     }
@@ -437,6 +443,7 @@ impl App {
         self.pending_rev = self.pending_rev.wrapping_add(1);
         self.flash = format!("enacting law-{}…", slug.trim_start_matches("law-"));
 
+        let cfg = self.cfg.clone();
         let (errors, inflight, shared, unhide, draft) = (
             Arc::clone(&self.errors),
             Arc::clone(&self.inflight),
@@ -447,7 +454,7 @@ impl App {
         let raw = input.to_string();
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            match enact(&it, &slug, &text) {
+            match enact(&it, &slug, &text, &cfg) {
                 Err(e) => {
                     // The refusal verbatim — the word count and what to do about it — plus
                     // the row back and the text kept. A statute lost to a length limit
@@ -459,7 +466,7 @@ impl App {
                 Ok(()) => *draft.lock().unwrap() = None,
             }
             *inflight.lock().unwrap() -= 1;
-            store::refresh(&shared);
+            store::refresh(&shared, &cfg);
         });
 
         let n = self.items().map(|v| v.len()).unwrap_or(0);
@@ -491,10 +498,11 @@ impl App {
         let Some(it) = self.current() else { return };
         self.flash = format!("commented on {}", it.id);
         let (view, text) = (self.view, text.to_string());
+        let cfg = self.cfg.clone();
         let (errors, inflight) = (Arc::clone(&self.errors), Arc::clone(&self.inflight));
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = comment(view, &it, &text) {
+            if let Err(e) = comment(view, &it, &text, &cfg) {
                 errors.lock().unwrap().push(format!("{}: {e}", it.id));
             }
             *inflight.lock().unwrap() -= 1;
@@ -511,6 +519,7 @@ impl App {
         self.pending.push((it.id.clone(), store::Expect::Closed));
         self.pending_rev = self.pending_rev.wrapping_add(1);
         self.flash = format!("premise rejected: {}", it.id);
+        let cfg = self.cfg.clone();
         let (errors, inflight, shared, unhide) = (
             Arc::clone(&self.errors),
             Arc::clone(&self.inflight),
@@ -520,12 +529,12 @@ impl App {
         let why = why.to_string();
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = reject_premise(&it, &why) {
+            if let Err(e) = reject_premise(&it, &why, &cfg) {
                 errors.lock().unwrap().push(format!("{}: {e}", it.id));
                 unhide.lock().unwrap().push(it.id.clone());
             }
             *inflight.lock().unwrap() -= 1;
-            store::refresh(&shared);
+            store::refresh(&shared, &cfg);
         });
         let n = self.items().map(|v| v.len()).unwrap_or(0);
         self.sel = self.sel.min(n.saturating_sub(1));
@@ -539,6 +548,7 @@ impl App {
     /// the refusal so the operator can amend and retry (law-absence-needs-a-positive-control).
     fn do_enact_law(&mut self, input: &str) {
         let Some(it) = self.current() else { return };
+        let cfg = self.cfg.clone();
         let (errors, inflight, shared, unhide) = (
             Arc::clone(&self.errors),
             Arc::clone(&self.inflight),
@@ -552,7 +562,7 @@ impl App {
         let draft = Arc::clone(&self.draft);
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            match enact_law(&it, &raw) {
+            match enact_law(&it, &raw, &cfg) {
                 Err(e) => {
                     errors.lock().unwrap().push(format!("{}: {e}", it.id));
                     unhide.lock().unwrap().push(it.id.clone());
@@ -564,7 +574,7 @@ impl App {
                 Ok(()) => *draft.lock().unwrap() = None,
             }
             *inflight.lock().unwrap() -= 1;
-            store::refresh(&shared);
+            store::refresh(&shared, &cfg);
         });
         let n = self.items().map(|v| v.len()).unwrap_or(0);
         self.sel = self.sel.min(n.saturating_sub(1));
@@ -576,6 +586,7 @@ impl App {
         self.pending.push((it.id.clone(), store::Expect::Closed));
         self.pending_rev = self.pending_rev.wrapping_add(1);
         self.flash = format!("declined law proposal {}", it.id);
+        let cfg = self.cfg.clone();
         let (errors, inflight, shared, unhide) = (
             Arc::clone(&self.errors),
             Arc::clone(&self.inflight),
@@ -585,12 +596,12 @@ impl App {
         let why = why.to_string();
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = decline_law(&it, &why) {
+            if let Err(e) = decline_law(&it, &why, &cfg) {
                 errors.lock().unwrap().push(format!("{}: {e}", it.id));
                 unhide.lock().unwrap().push(it.id.clone());
             }
             *inflight.lock().unwrap() -= 1;
-            store::refresh(&shared);
+            store::refresh(&shared, &cfg);
         });
         let n = self.items().map(|v| v.len()).unwrap_or(0);
         self.sel = self.sel.min(n.saturating_sub(1));
@@ -607,6 +618,7 @@ impl App {
         self.pending.push((it.id.clone(), store::Expect::Closed));
         self.pending_rev = self.pending_rev.wrapping_add(1);
         self.flash = format!("suit verdict on {}…", it.id);
+        let cfg = self.cfg.clone();
         let (errors, inflight, shared, unhide) = (
             Arc::clone(&self.errors),
             Arc::clone(&self.inflight),
@@ -616,12 +628,12 @@ impl App {
         let verdict = verdict.to_string();
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = suit_verdict(&it, &verdict) {
+            if let Err(e) = suit_verdict(&it, &verdict, &cfg) {
                 errors.lock().unwrap().push(format!("{}: {e}", it.id));
                 unhide.lock().unwrap().push(it.id.clone());
             }
             *inflight.lock().unwrap() -= 1;
-            store::refresh(&shared);
+            store::refresh(&shared, &cfg);
         });
         let n = self.items().map(|v| v.len()).unwrap_or(0);
         self.sel = self.sel.min(n.saturating_sub(1));
@@ -643,9 +655,14 @@ fn primary_reason(view: View) -> &'static str {
 }
 
 fn main() {
+    // Read once, here, through the one door (per Ryan 2026-10-05: one source of config) —
+    // never again via `std::env::var` or `spira_config::process::cfg` directly. Carried from
+    // here into every write path and into `view_items`, via `App.cfg`.
+    let cfg = store::Cfg::load();
+
     let shared: store::Shared = Arc::new(Mutex::new(store::Snapshot::default()));
-    store::refresh(&shared);
-    store::spawn_refresher(Arc::clone(&shared), REFRESH);
+    store::refresh(&shared, &cfg);
+    store::spawn_refresher(Arc::clone(&shared), REFRESH, cfg.clone());
 
     // THE CLOCK EVERY AGE AND EVERY DEADLINE IS MEASURED AGAINST. Read per frame, and passed
     // into the render, which therefore stays a pure function of its inputs.
@@ -667,6 +684,7 @@ fn main() {
 
     let mut app = App {
         shared,
+        cfg,
         frozen_now,
         view: View::Decisions,
         sel: 0,
@@ -809,6 +827,7 @@ fn main() {
             now: app.now(),
             w,
             h,
+            operator_actor: &app.cfg.operator_actor,
         };
         frame(&f)
     };
@@ -1106,7 +1125,7 @@ fn main() {
                 app.pending.clear();
                 app.pending_rev = app.pending_rev.wrapping_add(1);
                 app.flash.clear();
-                store::refresh(&app.shared);
+                store::refresh(&app.shared, &app.cfg);
             }
             KeyCode::Char('d') | KeyCode::Char('x') if n > 0 => {
                 // `d` on a law proposal in DECISIONS opens the decline prompt (optional why).

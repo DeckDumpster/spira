@@ -22,6 +22,10 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
+# round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
+# bead.sh file --for builder cannot find chamber/builder.fayth ("no such persona: builder").
+tl_config SPIRA_CHAMBER="$HERE/chamber"
+
 . "$HERE/conf.sh"
 export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
@@ -53,6 +57,16 @@ testdb_up "test-work-container"
 # A real mailbox root and kind set, never the operator's real maildir.
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$TMP/kinds"
+export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+# round 5 fix (pattern 7): SPIRA_RUN was never declared — mail's repeat-guard state file
+# resolved to the complete fixture's placeholder /fixture/home/spira/run, which this
+# process cannot create ("blocked"/"superseded-by" are the first cases to need it).
+# SPIRA_MAIL_MUTE: the complete fixture declares it true (pattern 2); muted delivery lands
+# in cur/<id>:2,S pre-marked read (mail/src/maildir.rs mail_deliver), not new/ — this suite's
+# "an ask landed in the operator's mailbox" checks literally count new/, so it needs its own
+# unmuted declaration or every ask silently "delivers" into cur and the count never moves.
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_MAIL_MUTE=0
 mkdir -p "$SPIRA_MAIL_KINDS"
 cp -r "$HERE/mail/kinds/." "$SPIRA_MAIL_KINDS/"
 
@@ -63,6 +77,7 @@ cat > "$TMP/repo-map" <<MAP
 testrepo | $TMP | push | origin/main | | |
 MAP
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 mkdir -p "$TMP/data"
 cat > "$TMP/server.yaml" <<YAML
@@ -104,6 +119,11 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
+# resolves to the complete fixture's placeholder /fixture/home/.../spira-lc.credential,
+# which does not exist. Declare this suite's own (empty-password) credential file.
+: > "$TMP/lc-credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential"
 
 "$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
@@ -118,6 +138,7 @@ seed_bead() {   # seed_bead <bead-id>
 }
 
 SOCK="$TMP/spira-lc.sock"
+tl_config SPIRA_LC_SOCKET="$SOCK"
 SPIRA_LC_SOCKET="$SOCK" "$LC_BIN" serve "$SOCK" >"$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do
@@ -126,6 +147,7 @@ for _ in $(seq 1 50); do
 done
 [ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
 export SPIRA_LC_SOCKET="$SOCK"
+tl_config SPIRA_LC_SOCKET="$SOCK"
 
 # ── one real bd bead, filed through bead.sh's own contract, and its lifecycle twin ───
 BID="$(bead.sh file "aeon semantic layer container-tier fixture" --for builder --repo testrepo)"

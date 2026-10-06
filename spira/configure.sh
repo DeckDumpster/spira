@@ -28,7 +28,7 @@
 # USAGE
 #   configure.sh [--out PATH] [--prod PATH] [--max-aeons N]
 #                [--max-live-aeons N|""] [--loom-addr ADDR]
-#                [--dolt-data PATH|""] [--no-repo-map]
+#                [--dolt-data PATH|""]
 #
 # NON-INTERACTIVE — every prompt has an env-var path:
 #   CONFIGURE_OUT             output file (default: ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml)
@@ -54,7 +54,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # an empty string is distinguishable from "not provided yet".
 # ---------------------------------------------------------------------------
 _out="${CONFIGURE_OUT:-}"
-_no_repo_map=
 
 # Trap-key "given" flags — set if the var was exported by the caller.
 _prod_given=;      [ -n "${CONFIGURE_PROD+x}"            ] && _prod_given=1
@@ -77,7 +76,6 @@ while [ $# -gt 0 ]; do
         --max-live-aeons)   _maxlive="$2"; _maxlive_given=1;  shift 2 ;;
         --loom-addr)        _loom="$2";    _loom_given=1;     shift 2 ;;
         --dolt-data)        _dolt="$2";    _dolt_given=1;     shift 2 ;;
-        --no-repo-map)      _no_repo_map=1; shift ;;
         *) printf 'configure: unknown argument: %s\n' "$1" >&2; exit 1 ;;
     esac
 done
@@ -234,20 +232,6 @@ if ! _rt_warn="$(spira-config validate "$_out" 2>&1)"; then
     printf 'configure: ERROR: generated config is invalid:\n%s\n' "$_rt_warn" >&2
     rm -f "$_out"
     exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# Seed repo-map from the example unless disabled or one already exists.
-# ---------------------------------------------------------------------------
-if [ -z "$_no_repo_map" ]; then
-    _conf_dir="$(dirname "$_out")"
-    _map="$_conf_dir/repo-map"
-    if [ -f "$_map" ]; then
-        printf 'configure: repo-map already exists: %s\n' "$_map"
-    else
-        cp "$HERE/repo-map.example" "$_map"
-        printf 'configure: seeded repo-map from repo-map.example — edit %s\n' "$_map"
-    fi
 fi
 
 printf 'configure: wrote %s\n' "$_out"

@@ -18,6 +18,7 @@ testdb_up express-lane || {
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}"
 REPONAME=fixture-repo
 mkdir -p "$RUN/worktree" "$SH"
 
@@ -31,11 +32,17 @@ git -C "$REPO" fetch -q origin
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 cp -r "$HERE/chamber" "$SH/"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SH/chamber"
 
 # Repo-map must exist before any bead.sh call; bdq validates repo: labels against it.
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
 RMAP
+# SPIRA_REPO_MAP is a registered key too — no process reads env for it, and it does not
+# derive from SPIRA_HOME any more either (same gap as SPIRA_CHAMBER above).
+tl_config SPIRA_REPO_MAP="$SH/repo-map"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
@@ -63,7 +70,7 @@ testdb_reset
 testdb_seed <<'SEED'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "express test bead" \
     --for builder --repo fixture-repo --priority 1 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
@@ -77,7 +84,7 @@ testdb_reset
 testdb_seed <<'SEED'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "express test bead" \
     --for builder --repo fixture-repo --priority 1 --express 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
@@ -96,7 +103,7 @@ testdb_reset
 testdb_seed <<'SEED'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "P0 blocker" \
     --for builder --repo fixture-repo --priority 0 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
@@ -112,7 +119,7 @@ testdb_reset
 testdb_seed <<'SEED'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "P0 blocker, express" \
     --for builder --repo fixture-repo --priority 0 --express 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
@@ -128,7 +135,7 @@ testdb_reset
 testdb_seed <<'SEED'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "P1 no express" \
     --for builder --repo fixture-repo --priority 1 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
@@ -145,7 +152,7 @@ testdb_reset
 testdb_seed <<'SEED'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "amend target" \
     --for builder --repo fixture-repo --priority 2 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
@@ -154,7 +161,7 @@ if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
     nowant "amend pre: no express label yet" "express" "$LABELS"
     # Amend with --express.
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+    SPIRA_HOME="$SH" \
         bash "$SH/bead.sh" amend "$BID" --express 2>&1 >/dev/null || true
     LABELS="$(labels_of "$BID")"
     want "amend --express: express label added" "express" "$LABELS"
@@ -195,10 +202,21 @@ chmod +x "$SH/mock-summon"
 # REAL bd store — an open bead is a READY row — ahead of the tree's spira-lc on PATH.
 lc_mirror_bd "$TMP/lc"
 sentinel_run() {
-    PATH="$TMP/lc:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+    # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
+    # the real one) is exec'd as sentinel's own child for its ready reads and reads them as
+    # raw shell variables, never through spira-config — tl_config's declaration never reaches it.
+    PATH="$TMP/lc:$PATH" SPIRA_HOME="$SH" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
         SPIRA_SUMMON="$SH/mock-summon" SUMMONED_FILE="$SUMMONED" SPIRA_CONF=/nonexistent \
         sentinel --summon-pass
 }
+
+# The complete fixture declares queue_throttle_override="off" (a positive control of its
+# own, elsewhere) — ck7_throttled is `stamp_exists && override != "off"`, so that default
+# pins every pass in this suite unthrottled regardless of the stamp file below, and the
+# whole CHECK7 bypass this section exists to prove never fires. Declare the suite's own
+# "no override" value (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_QUEUE_THROTTLE_OVERRIDE=""
 
 # POSITIVE CONTROL: throttle stamp present, no express bead anywhere -> held at 0.
 testdb_reset
@@ -214,7 +232,7 @@ is   "no express bead ready: nothing summoned" \
 
 # THE BYPASS: file a builder bead with --express. Same throttle stamp, same empty pool —
 # now summons despite it.
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "express bypass target" \
     --for builder --repo fixture-repo --priority 1 --express 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"

@@ -1390,22 +1390,22 @@ fn the_context_answer_parses_into_settings_and_rows() {
     let dir = crate::testutil::tmpdir("context-answer");
     let map = dir.join("repomap-fixture");
     fs::write(&map, "spira | /h | queue.local\nother |\n").unwrap();
-    let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-    let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-    std::env::set_var("SPIRA_REPO_MAP", &map);
-    std::env::set_var("SPIRA_HOME_REPO", "spira");
+    // Declared config (the one source): the registry reads the map and home repo from the
+    // SPIRA_TOML it resolves, never from the environment.
+    let prev_toml = std::env::var("SPIRA_TOML").ok();
+    let cfgdir = testkit::TempDir::new("lp-registry-cfg");
+    let toml = spira_config::process::fixture_toml(cfgdir.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+    std::env::set_var("SPIRA_TOML", &toml);
 
     let ans = "run=/r\0db=/db\0land_maxsec=3600\0gate_reserve=2700\0";
-    let (s, repos) = crate::real::parse_context(ans, Path::new("/home")).unwrap();
-    let no_map = crate::real::parse_context("db=x\0", Path::new("/h"));
+    // The home is the checkout's own spira/ (conf.d, the key registry, lives there).
+    let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let (s, repos) = crate::real::parse_context(ans, &real_home).unwrap();
+    let no_map = crate::real::parse_context("db=x\0", &real_home);
 
-    match prev_map {
-        Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-        None => std::env::remove_var("SPIRA_REPO_MAP"),
-    }
-    match prev_home_repo {
-        Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-        None => std::env::remove_var("SPIRA_HOME_REPO"),
+    match prev_toml {
+        Some(v) => std::env::set_var("SPIRA_TOML", v),
+        None => std::env::remove_var("SPIRA_TOML"),
     }
 
     assert_eq!((s.run.as_path(), s.land_maxsec, s.gate_reserve), (Path::new("/r"), 3600, 2700));

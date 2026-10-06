@@ -186,12 +186,22 @@ fn main() {
         let rc = aeon::escape::run(&seam, &exec, &env, &sink, &conf, &summon_bin, &home, &cli.fayth, cli.escape_dry_run, util::now_epoch());
         std::process::exit(rc);
     }
+    // SPIRA_BD is registered but carries no conf.d default ("resolves empty unless set via
+    // environment or the config file") — the real config file always sets it explicitly (per Ryan
+    // 2026-10-05: one source of config), so an empty resolution here refuses by name rather
+    // than guessing "bd". BD_TIMEOUT/SPIRA_BDQ_CONN_RETRIES/SPIRA_BDJSON_FIXTURE are not
+    // registered config keys (spira/conf.d has no entry for any of them).
+    let bd_bin = conf.s("SPIRA_BD");
+    if bd_bin.is_empty() {
+        fatal("SPIRA_BD resolved empty — refusing rather than guessing a bd binary");
+    }
     let bd = BdCli {
-        bd: conf.or("SPIRA_BD", "bd"),
+        bd: bd_bin,
         db: conf.db(),
         timeout_s: conf.n("BD_TIMEOUT", 180).max(1) as u64,
         conn_retries: conf.n("SPIRA_BDQ_CONN_RETRIES", 2).max(1) as u32,
-        fixture: Some(conf.s("SPIRA_BDJSON_FIXTURE")).filter(|s| !s.is_empty()),
+        // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
+        fixture: Some(conf.or("SPIRA_BDJSON_FIXTURE", "")).filter(|s| !s.is_empty()),
         home: home.clone(),
         env: &env,
     };

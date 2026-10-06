@@ -166,7 +166,18 @@ if ! cargo build -q --profile release --workspace --config profile.release.incre
     exit 4
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
-rel_sha="$(target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
+# The round's one source of config: the tree's complete fixture, with this VM's own paths
+# declared over it. Nothing here is searched for or defaulted.
+mkdir -p "$HOME/round-work/.runtime/spira"
+cat > "$HOME/round-config.toml" <<ROUNDCFG
+[spira]
+run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
+releases = "$HOME/round-releases"
+home_repo = "$HOME/round-work"
+batch_maxpar = $maxpar
+ROUNDCFG
+export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
+rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
 export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -192,7 +203,6 @@ else
     exit 3
 fi
 setup_secs=$(( $(date +%s) - t_start ))
-export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 set +e
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
@@ -206,10 +216,11 @@ env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/b
     GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
     cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
+# The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
-    testenv --mode parallel --profile release --suites "$suites" round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
 else
-    testenv --mode parallel --profile release round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
 wait "$unit_pid"; unit_rc=$?
@@ -217,7 +228,7 @@ if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
 else
     echo "round-vm: UNIT-TESTS: FAIL (cargo test rc=$unit_rc):" >&2
-    grep -E '^(test .* FAILED|failures:|---- |error(\[|:))' ~/round-unit-tests.log | head -40 >&2
+    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     [ "$rc" -eq 0 ] && rc=1
 fi
 suites_secs=$(( $(date +%s) - t_start - setup_secs ))
@@ -896,6 +907,7 @@ fn after_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Fields;
     use crate::pool::{Attempt, Spawner};
     use crate::provider::Timing;
     use crate::testutil::{FakeAlarm, FakeProvider, TempDir};
@@ -1270,14 +1282,38 @@ mod tests {
         let run_dir = d.path().join("run");
         let key = d.path().join("host_key");
         fs::write(&key, "k").unwrap();
-        let mut src = BTreeMap::new();
-        src.insert("SPIRA_RUN".to_string(), run_dir.to_string_lossy().to_string());
-        src.insert("SPIRA_ROUND_VM_HOST_ADDR".to_string(), "192.168.1.10".to_string());
-        src.insert("SPIRA_ROUND_VM_CACHE_HOME".to_string(), "/opt/spira/cargo".to_string());
-        src.insert("SPIRA_ROUND_VM_HOST_KEY".to_string(), key.to_string_lossy().to_string());
-        src.insert("SPIRA_ROUND_VM_SSH_TRIES".to_string(), "2".to_string());
-        src.insert("SPIRA_ROUND_VM_BOOT_POLL".to_string(), "0".to_string());
-        let cfg = Config::load(&src).unwrap();
+        // Values passed directly to Config::build (DESIGN.md / round-vm's config migration
+        // notes) — this used to be a fake env Config::load read through; now it is the
+        // Fields literal the old defaults would have produced, with this fixture's own
+        // overrides (host_key/host_addr/cache_home/ssh_tries/boot_poll) spelled out alongside
+        // them instead of layered on top by Config::load itself.
+        let cfg = Config::build(Fields {
+            run: run_dir.to_string_lossy().to_string(),
+            spira_home: None,
+            pve_env: String::new(),
+            ssh_user: "root".to_string(),
+            ssh_port: 22,
+            state_dir: run_dir.join("round-vm").to_string_lossy().to_string(),
+            host_key: key.to_string_lossy().to_string(),
+            host_pubkey: format!("{}.pub", key.to_string_lossy()),
+            host_addr: Some("192.168.1.10".to_string()),
+            cache_home: Some("/opt/spira/cargo".to_string()),
+            testenv_registry: None,
+            vcpus: 16,
+            maxpar: 16,
+            max_retries: 0,
+            retry_interval_secs: 60,
+            mirror_port: 9430,
+            setup_alarm_secs: 180,
+            acquire_deadline_secs: 3600,
+            mailbox: "operator".to_string(),
+            net_iface: "ens18".to_string(),
+            boot_tries: 60,
+            boot_poll_secs: 0,
+            ssh_tries: 2,
+            stream_every_secs: 10,
+            attr_linger_secs: 3600,
+        });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
 

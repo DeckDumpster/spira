@@ -57,19 +57,16 @@ printf '%s | %s | push | main | |\n' "$REPONAME" "$REPO" > "$TMP/repo-map"
 lc_mirror_bd "$TMP/lc"
 
 run_sweep() {
+    tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_ASK_LABEL=needs-ryan \
+        SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL=spira
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
-        SPIRA_BD="${SPIRA_BD:-bd}" \
-        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_REPO_MAP="$TMP/repo-map" \
-        SPIRA_ASK_LABEL=needs-ryan \
-        SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL=spira \
-        groomer sweep "$@" 2>&1
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
+        timeout 30 groomer sweep "$@" 2>&1
 }
 
 labels_of() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }

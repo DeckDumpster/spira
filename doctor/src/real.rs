@@ -124,8 +124,35 @@ impl Default for Real {
     }
 }
 
+// Registered config keys (spira/conf.d) this crate's generic `World::env` seam also
+// serves — $SPIRA_TOML only, through `spira_config::process::cfg`, never the captured
+// conf.sh environment, never the raw environment, never a fallback (per Ryan 2026-10-05:
+// one source of config). Every other name `env()` is called with has no `spira/conf.d`
+// entry and keeps reading the captured `conf.sh` snapshot, exactly as before.
+const RESOLVED_KEYS: &[&str] = &[
+    "COCKPIT_MAIL",
+    "COCKPIT_SESSIONS",
+    "SPIRA_BD",
+    "SPIRA_BD_TAG",
+    "SPIRA_CHAMBER_OVERLAY",
+    "SPIRA_DB",
+    "SPIRA_DOLT_DATA",
+    "SPIRA_INSTANCE",
+    "SPIRA_MAIL_MUTE",
+    "SPIRA_OPERATED",
+    "SPIRA_OVERRIDES",
+    "SPIRA_RELEASES",
+    "SPIRA_REPO_MAP",
+    "SPIRA_ROUND_VM_MIRROR_PORT",
+    "SPIRA_RUN",
+    "SPIRA_SNAP_STALE_S",
+];
+
 impl World for Real {
     fn env(&self, k: &str) -> Option<String> {
+        if RESOLVED_KEYS.contains(&k) {
+            return spira_config::process::cfg(k).ok();
+        }
         self.env.get(k).cloned().or_else(|| std::env::var(k).ok())
     }
 
@@ -471,11 +498,12 @@ impl World for Real {
         cmd.output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
+    /// `SPIRA_SCCACHE_DAV_ADDR` is a registered key (spira/conf.d) with no registry
+    /// default — the one source of config (per Ryan 2026-10-05), through
+    /// `spira_config::process::cfg`, never the raw environment and never a second,
+    /// crate-local document discovery.
     fn sccache_dav_addr(&self) -> Option<String> {
-        let env_map: BTreeMap<String, String> = std::env::vars().collect();
-        let repo = spira_config::resolve::derive_home_repo(&self.home, &env_map);
-        let toml = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
-        resolve_sccache_dav_addr(&self.home, &repo, &env_map, toml.as_ref())
+        spira_config::process::cfg("SPIRA_SCCACHE_DAV_ADDR").ok().filter(|v| !v.is_empty())
     }
 
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
@@ -489,19 +517,6 @@ impl World for Real {
     fn out(&self, s: &str) {
         println!("{s}");
     }
-}
-
-/// [`World::sccache_dav_addr`]'s pure core (sp-xtdqi-3): env first, then `toml`'s `[spira]`
-/// table — `spira_config::resolve::resolve`'s own precedence, the same one
-/// `spira_config::build::Store` uses for a real build. Split out from
-/// `Real::sccache_dav_addr` so a test can drive it with a fixture `home`/`conf.d` and an
-/// explicit, already-parsed document — never real process env or real file discovery,
-/// which would need the crate-wide env lock every other env-mutating test here takes.
-pub(crate) fn resolve_sccache_dav_addr(home: &Path, repo: &Path, env: &BTreeMap<String, String>, toml: Option<&spira_config::SpiraToml>) -> Option<String> {
-    let conf_d = spira_config::resolve::default_conf_d(home);
-    let resolved = spira_config::resolve::resolve(spira_config::resolve::ResolveInput { env, home, repo, toml, conf_d: &conf_d }).ok()?;
-    let v = resolved.get(spira_config::build::STORE_ADDR_ENV);
-    (!v.is_empty()).then(|| v.to_string())
 }
 
 /// `--base-path` of a `git daemon` argv serving `port`; None for any other process.
@@ -675,6 +690,15 @@ mod tests {
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), d.path().display().to_string());
         let real = Real { home: PathBuf::from("/nonexistent-sp-xtdqi-3"), env };
+        // `check_sccache` (below) reads `SPIRA_OPERATED`, a `RESOLVED_KEYS` name — through
+        // `spira_config::process::cfg`, a process-global `OnceLock`. Same reasoning as the
+        // `sccache_show_stats` test below: seed it with the identical real-home + complete
+        // fixture so whichever test's setup wins the race leaves a valid resolution behind
+        // for every later test in this binary, including `tests::
+        // config_files_passes_when_every_registered_key_resolves`.
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(d.path(), &[]);
+        let _cfg_env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
         let help = real.sccache_help().expect("the fake script is reachable through self.env(\"PATH\")");
         assert!(help.contains("WebDAV:    true"), "{help}");
         // check_sccache (lib.rs) is the actual caller this bug broke: FAIL became OK only
@@ -707,9 +731,17 @@ mod tests {
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
         std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
         let real = Real { home, env };
-        // No SPIRA_TOML for this real process to discover; the point here is PATH
-        // resolution and env-var plumbing, covered for the config side by
-        // `resolve_sccache_dav_addr`'s own tests below.
+        // `sccache_show_stats` calls `self.sccache_dav_addr()`, which goes through
+        // `spira_config::process::cfg` unconditionally now (per Ryan 2026-10-05) — its
+        // resolution is a process-global `OnceLock`, so SOME test in this binary has to
+        // seed it with a real, complete fixture before anything touches it, or whichever
+        // test runs first wins with no config at all and poisons the rest (exactly what
+        // broke `tests::config_files_passes_when_every_registered_key_resolves`). This
+        // uses the identical `real_home` + complete-fixture shape that test uses, so
+        // either one winning the race leaves the same, valid resolution behind.
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(d.path(), &[]);
+        let _cfg_env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
         let stats = real.sccache_show_stats().expect("reachable through self.env(\"PATH\")");
         assert!(stats.contains("webdav"), "{stats}");
         let calls = std::fs::read_to_string(&log).unwrap();
@@ -718,50 +750,5 @@ mod tests {
 
     fn conf_d_stub() -> String {
         "TYPE=string\nGROUP=sccache\nDOC=test fixture\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT.\nSPIRA_CONF_DEFAULT_EOF\n".to_string()
-    }
-
-    fn fixture_toml(addr: &str) -> spira_config::SpiraToml {
-        spira_config::validate(&format!("[spira]\nid_prefix = \"sp\"\nsccache_dav_addr = \"{addr}\"\n")).unwrap()
-    }
-
-    /// THE POSITIVE CONTROL for the config-resolution bug (sp-xtdqi-3): the address lives
-    /// ONLY in the host config document — `env` here is deliberately empty, simulating the
-    /// normal case where an operator sets `sccache_dav_addr` in the host config document and exports
-    /// nothing. `conf.sh`'s own bash capture (`World::env`) never carries a NO-DEFAULT key
-    /// like this one even when it IS configured; `resolve_sccache_dav_addr` must still find
-    /// it by resolving in-process, never by reading `World::env`.
-    #[test]
-    fn resolve_sccache_dav_addr_finds_a_key_that_lives_only_in_the_config_document() {
-        let d = testkit::TempDir::new("doctor-resolve-addr");
-        let home = d.path().join("home");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
-        let toml = fixture_toml("192.168.1.56:9431");
-        let env: BTreeMap<String, String> = BTreeMap::new(); // deliberately unexported
-        let addr = resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
-        assert_eq!(addr, Some("192.168.1.56:9431".to_string()));
-    }
-
-    #[test]
-    fn resolve_sccache_dav_addr_prefers_the_environment_over_the_config_document() {
-        let d = testkit::TempDir::new("doctor-resolve-addr-env-wins");
-        let home = d.path().join("home");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
-        let toml = fixture_toml("192.168.1.56:9431");
-        let mut env = BTreeMap::new();
-        env.insert("SPIRA_SCCACHE_DAV_ADDR".to_string(), "10.0.0.9:9431".to_string());
-        let addr = resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
-        assert_eq!(addr, Some("10.0.0.9:9431".to_string()));
-    }
-
-    #[test]
-    fn resolve_sccache_dav_addr_is_none_when_neither_names_a_store() {
-        let d = testkit::TempDir::new("doctor-resolve-addr-none");
-        let home = d.path().join("home");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
-        let env: BTreeMap<String, String> = BTreeMap::new();
-        assert_eq!(resolve_sccache_dav_addr(&home, &home, &env, None), None);
     }
 }

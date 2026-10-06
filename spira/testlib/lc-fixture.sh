@@ -36,6 +36,11 @@ YAML
     "$LCFIX_DOLT" sql-server --config "$LCFIX_DIR/server.yaml" > "$LCFIX_DIR/server.log" 2>&1 &
     LCFIX_PID=$!
     unset SPIRA_LC_SOCKET
+    # The registered half of the connection is declared in this suite's own config layer
+    # (the one source): the fixture's own (empty-password) credential file, and no socket.
+    : > "$LCFIX_DIR/credential"
+    tl_config SPIRA_LC_PASSWORD_FILE="$LCFIX_DIR/credential" SPIRA_LC_SOCKET="" \
+        || { echo "lc-fixture: cannot declare the lifecycle connection" >&2; return 1; }
     export SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$port" SPIRA_LC_DB=spira_lifecycle \
         SPIRA_LC_DATA_DIR="$LCFIX_DIR" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=""
     local up=0
@@ -60,8 +65,8 @@ lcfix_down() {
 }
 
 lcfix_env() {
-    printf 'SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD=' \
-        "$SPIRA_LC_HOST" "$SPIRA_LC_PORT" "$SPIRA_LC_DB" "$SPIRA_LC_DATA_DIR" "$SPIRA_LC_USER"
+    printf 'SPIRA_TOML=%s SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD=' \
+        "$SPIRA_TOML" "$SPIRA_LC_HOST" "$SPIRA_LC_PORT" "$SPIRA_LC_DB" "$SPIRA_LC_DATA_DIR" "$SPIRA_LC_USER"
 }
 
 # lcfix_seed <id> <STATE> [tip] [since-epoch]

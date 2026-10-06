@@ -198,7 +198,7 @@ impl<'a> Run<'a> {
         if id.is_empty() {
             return;
         }
-        let threshold = self.conf.n("SPIRA_RAPID_RECUR_THRESHOLD", 3).max(0) as usize;
+        let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD").max(0) as usize;
         if threshold == 0 {
             return;
         }
@@ -312,10 +312,13 @@ impl<'a> Run<'a> {
         let mut limit = self.fayth.max_concurrent as i64;
         let mut pool = String::new();
         if self.fayth.elastic {
-            if let Some(max) = self.conf.v.get("SPIRA_MAX_AEONS").and_then(|m| m.trim().parse::<i64>().ok()) {
-                limit = max;
-                pool = (if max > have { max - have } else { 0 }).to_string();
-            }
+            // SPIRA_MAX_AEONS is registered (a real spira/conf.d default, 4) — reached
+            // through `Conf::i`, never `self.conf.v` directly: that raw map read used to
+            // let an absent/unparseable value silently skip this whole branch instead of
+            // naming the key (per Ryan 2026-10-05, round 2: a missing key is an error).
+            let max = self.conf.i("SPIRA_MAX_AEONS");
+            limit = max;
+            pool = (if max > have { max - have } else { 0 }).to_string();
         }
         let free = self.sv("fayth_free", &s(&[self.f(), &pool, &own])).text();
         if free.trim().parse::<i64>().ok() == Some(0) {
@@ -444,8 +447,8 @@ impl<'a> Run<'a> {
 
     fn claim(&mut self) -> Result<(), i32> {
         self.take_name();
-        let tries = self.conf.n("SPIRA_CLAIM_RETRIES", 3).max(1) as u32;
-        let delay = Duration::from_secs(self.conf.n("SPIRA_CLAIM_RETRY_DELAY_S", 1).max(0) as u64);
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let ready = match self.ready_set(tries, delay) {
             Ok(j) => j,
             Err(e) => {
@@ -874,8 +877,8 @@ impl<'a> Run<'a> {
         // The bead, bounded; then who else holds the files it names.
         let shown = self.d.bd.bd(&s(&["show", &bead]));
         let body = util::strip_bd_hints(&shown.stdout).trim_end_matches('\n').to_string();
-        let keep = self.conf.n("SPIRA_BRIEF_KEEP_RECURRENCES", 5).max(0) as usize;
-        let max = self.conf.n("SPIRA_BRIEF_NOTES_MAX_CHARS", 8000).max(0) as usize;
+        let keep = self.conf.i("SPIRA_BRIEF_KEEP_RECURRENCES").max(0) as usize;
+        let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
         let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
         let tracked = if self.s.repo.join(".git").exists() {
             let o = self.d.git.git(&self.s.repo, &["ls-files"]);
@@ -966,7 +969,7 @@ impl<'a> Run<'a> {
     /// not — names no memory: the brief would be silently thinned.
     pub fn statutes(&self) -> Result<String, String> {
         let cache = self.conf.s("SPIRA_MEMORIES_CACHE");
-        let age = self.conf.n("SPIRA_MEMORIES_CACHE_AGE", 300);
+        let age = self.conf.i("SPIRA_MEMORIES_CACHE_AGE");
         let mut json = String::new();
         if !cache.is_empty() && Path::new(&cache).is_file() {
             let m = session::mtime(Path::new(&cache));
@@ -975,7 +978,8 @@ impl<'a> Run<'a> {
             }
         }
         if json.trim().is_empty() {
-            let cmd = self.conf.s("SPIRA_MEMORIES_CMD");
+            // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
+            let cmd = self.conf.or("SPIRA_MEMORIES_CMD", "");
             json = if !cmd.is_empty() {
                 self.d.exec.exec("bash", &s(&["-c", &cmd]), None, None).stdout
             } else {
@@ -1004,8 +1008,10 @@ impl<'a> Run<'a> {
             SystemPrompt::Replace => "--system-prompt-file",
             SystemPrompt::Append => "--append-system-prompt-file",
         };
-        let toml = self.conf.s("SPIRA_TOML_FILE");
-        let model = conf::persona_model(self.f(), (!toml.is_empty()).then(|| Path::new(&toml)));
+        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML")).unwrap_or_else(|e| {
+            eprintln!("aeon: FATAL: {e}");
+            std::process::exit(1)
+        });
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
         if self.fayth.project_instructions == "none" {
@@ -1086,7 +1092,7 @@ impl<'a> Run<'a> {
             Err(e) => self.log(&format!("{}: {e} — this session's builds are UNCACHED", self.f())),
         }
         // THE SUMMON JITTER (sp-f4ig1 §3.4): aeons a pass summoned together start apart.
-        let max = self.conf.n(spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT as i64).max(0) as u64;
+        let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
         let seed = ((std::process::id() as u64) << 32)
             ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos() as u64).unwrap_or(0);
         let j = spira_config::admission::jitter(max, seed);
@@ -1137,7 +1143,7 @@ impl<'a> Run<'a> {
             run: self.conf.run.clone(),
             lease_s: self.fayth.lease_seconds(),
             every: Duration::from_secs(self.fayth.heartbeat_seconds.max(1)),
-            wall_min: self.conf.n("SPIRA_THRASH_MINUTES", 20),
+            wall_min: self.conf.i("SPIRA_THRASH_MINUTES"),
         };
         let beat = RealBeat {
             logf: self.s.logf.clone().unwrap_or_default(),

@@ -43,9 +43,12 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 mkdir -p "$TMP/sbin" "$TMP/run" "$TMP/run/events"
 
-# bead.sh refuses a repo: label absent from the map (spira/test-bead-repo-guard.sh); the
-# home repo is $(basename "$TMP") here, so it must have its own row like any other.
-printf '%s | %s | push | origin/main |  |\n' "$(basename "$TMP")" "$TMP" > "$TMP/repo-map"
+# bead.sh refuses a repo: label absent from the map (spira/test-bead-repo-guard.sh).
+# gate-check's red_twice_beads (gate-check/src/main.rs) passes world.home_repo() —
+# SPIRA_HOME_REPO, "spira" — to file_bead's --repo, not the flaky-gh repo (that's only
+# used for the gh API calls). Both rows declared, belt and suspenders.
+printf '%s | %s | push | origin/main |  |\nspira | %s | push | origin/main |  |\ntest-org/test-repo | %s | push | origin/main |  |\n' \
+    "$(basename "$TMP")" "$TMP" "$TMP" "$TMP" > "$TMP/repo-map"
 
 count_red_twice() {
     B list --json 2>/dev/null | python3 -c '
@@ -76,11 +79,20 @@ except Exception:
 }
 
 run_gate_check() {
-    SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
+    # SPIRA_DB is registered too: gate-check.sh sources conf.sh, whose own `resolve --sh-all`
+    # re-exports every registered key from SPIRA_TOML — overwriting a plain env SPIRA_DB
+    # with the complete fixture's bogus default unless it is declared the same way (sfail
+    # round 3, pattern 3/7).
+    # SPIRA_CHAMBER is registered too: bead.sh resolves `--for builder`'s persona through
+    # it, and the complete fixture's own non-empty default shadows the real chamber at
+    # $HERE — bead.sh file was refusing "no such persona: builder" silently (gate-check's
+    # file_bead discards bead.sh's own stderr/exit code entirely), round 6.
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
+        SPIRA_CHAMBER="$HERE/chamber"
+    SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         PATH="$TMP/sbin:$PATH" \
-        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
+        SPIRA_CONF="$TMP/no.conf" \
         gate-check.sh 2>/dev/null
 }
 

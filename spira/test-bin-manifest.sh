@@ -24,7 +24,7 @@ echo "test-bin-manifest.sh"
 # An explicit, minimal environment: a real spira.conf on this box must not decide a verdict
 # (law-gates-run-in-a-clean-environment). SPIRA_CONF names a file that does not exist.
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-eval "$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash -c '
+eval "$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" bash -c '
     . '"$HERE"'/conf.sh 2>/dev/null
     _manifest="$(spira_deps_list)"
     printf "MANIFEST=%q\n" "$_manifest"
@@ -71,9 +71,9 @@ is "every program states a purpose"  "" "$_unpurposed"
 
 # Positive control for the two scans above: an undeclared name must come back untiered and
 # with the fallback purpose, or the scans are not looking at anything.
-_probe_t="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash -c \
+_probe_t="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" bash -c \
     ". $HERE/conf.sh 2>/dev/null; spira_bin_tier spira-no-such-program")"
-_probe_p="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash -c \
+_probe_p="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" bash -c \
     ". $HERE/conf.sh 2>/dev/null; spira_bin_purpose spira-no-such-program")"
 is "an undeclared program falls back to 'optional'" "optional" "$_probe_t"
 is "an undeclared program has no real purpose" "required by the harness" "$_probe_p"

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use archivist::config;
 use archivist::digest;
 use archivist::run;
-use archivist::seam::{locate_home, RealSeam, Seam};
+use archivist::seam::{locate_home, RealSeam};
 
 fn usage() -> ! {
     eprintln!("usage: archivist sweep|list|now|mark|state|digest|record|digest-send ...");
@@ -45,27 +45,29 @@ fn main() {
     dispatch(&cmd, &rest);
 }
 
+/// `config::resolve()` (the one door, `spira_config::process::cfg`/`cfg_parse`) or a named
+/// refusal — never a default.
+fn resolve_cfg() -> config::Env {
+    config::resolve().unwrap_or_else(|e| die(&e))
+}
+
 fn dispatch(cmd: &str, rest: &[String]) {
     match cmd {
         "sweep" => {
-            let (seam, home) = real_seam();
-            let probed = seam.probe();
-            let cfg = config::resolve(&probed);
+            let (seam, _home) = real_seam();
+            let cfg = resolve_cfg();
             let arc = Path::new(&cfg.run).join("archivist");
-            let _ = home;
             run::sweep(&seam, &cfg, &arc);
         }
         "list" => {
             let (seam, _home) = real_seam();
-            let probed = seam.probe();
-            let cfg = config::resolve(&probed);
+            let cfg = resolve_cfg();
             let arc = Path::new(&cfg.run).join("archivist");
             print!("{}", run::list(&seam, &cfg, &arc));
         }
         "now" => {
             let (seam, _home) = real_seam();
-            let probed = seam.probe();
-            let cfg = config::resolve(&probed);
+            let cfg = resolve_cfg();
             let arc = Path::new(&cfg.run).join("archivist");
             let rc = run::now_cmd(&seam, &cfg, &arc, rest.first().map(String::as_str));
             std::process::exit(rc);
@@ -98,9 +100,8 @@ fn dispatch(cmd: &str, rest: &[String]) {
         }
         "digest-send" => {
             let (seam, _home) = real_seam();
-            let tz = seam.conf("SPIRA_TZ");
-            let tz = if tz.is_empty() { "UTC".to_string() } else { tz };
-            let arc = run_arc_dir_via(&seam);
+            let tz = spira_config::process::cfg("SPIRA_TZ").unwrap_or_else(|e| die(&e));
+            let arc = run_arc_dir();
             if run::digest_send(&seam, &arc, &tz).is_err() {
                 std::process::exit(1);
             }
@@ -109,17 +110,11 @@ fn dispatch(cmd: &str, rest: &[String]) {
     }
 }
 
-/// `mark`/`state`/`record` only need `$SPIRA_RUN/archivist` — cheaper than the full
-/// probe `sweep`/`list`/`now` need, but SPIRA_RUN itself may not be exported (conf.sh
-/// sets it without `export`), so this still goes through the lib.sh seam for that one
-/// key rather than trusting the process environment.
+/// `mark`/`state`/`record` only need `$SPIRA_RUN/archivist` — `SPIRA_RUN` is a registered
+/// config key (spira/conf.d), resolved straight from `$SPIRA_TOML` through the one door;
+/// unlike the old lib.sh seam, this does not depend on whether the process environment
+/// happens to export it.
 fn run_arc_dir() -> PathBuf {
-    let (seam, _home) = real_seam();
-    run_arc_dir_via(&seam)
-}
-
-fn run_arc_dir_via(seam: &dyn Seam) -> PathBuf {
-    let run_dir = seam.conf("SPIRA_RUN");
-    let run_dir = if run_dir.is_empty() { "/tmp".to_string() } else { run_dir };
+    let run_dir = spira_config::process::cfg("SPIRA_RUN").unwrap_or_else(|e| die(&e));
     Path::new(&run_dir).join("archivist")
 }

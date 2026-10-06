@@ -13,10 +13,8 @@ use std::sync::Arc;
 async fn main() -> ExitCode {
     let cfg = Config::from_env();
 
-    // `--print-config` resolves the configuration and stops. Two callers: a preflight that
-    // wants to say what this box will actually do, and the suite that holds these defaults to
-    // the configuration file's — a constant that has drifted from the key meant to control it
-    // is worse than no key, because the operator believes they set it.
+    // `--print-config` resolves the configuration and stops: a preflight that wants to say
+    // what this box will actually do, without starting the server.
     if std::env::args().any(|a| a == "--print-config") {
         println!("SPIRA_LOOM_ADDR={}", cfg.addr);
         println!("SPIRA_LOOM_BUDGET_MS={}", cfg.budget.as_millis());

@@ -53,6 +53,15 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 . "$HERE/testlib/lc-fixture.sh"
+# testdb.sh sources conf.sh for its own bookkeeping, which (one source of config, per Ryan
+# 2026-10-05) evals spira_config::resolve()'s FULL output into THIS shell — every registered
+# key, including ones with no default, as a plain shell variable. Before that eval existed, a
+# key the suite never declared stayed truly unset; now cut_repo's own
+# `${SPIRA_BATCH_MAXPAR:-16}` sees the complete fixture's base value (8) instead, because
+# sourcing conf.sh already set it. Unset it here, once, right after the only sourcing that
+# pollutes it, so "unset" in cut_repo means what it always meant: no caller override, use the
+# Concierge's own proven 16 (K1's own positive control for this).
+unset SPIRA_BATCH_MAXPAR
 testdb_require test-batcher-cut
 TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
@@ -94,6 +103,9 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail"; chmod +x "$SH/mail"
 # bd create directly, so the fayth's own FAYTH_LABELS is what a fake chamber has to supply.
 mkdir -p "$SH/chamber"
 cp "$HERE/chamber/batcher.fayth" "$SH/chamber/"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SH/chamber"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
@@ -289,12 +301,22 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
+    # ONE SOURCE OF CONFIG (per Ryan 2026-10-05): the registered keys batcher reads via
+    # spira.toml, not env — declared here, fresh per call, so a caller's own VAR=val prefix
+    # (still read as a plain shell var below) still reaches the binary. The maxpar default
+    # (16, "the Concierge's own proven parallelism") is declared explicitly because K1 below
+    # asserts it as the no-override behaviour, not merely whatever the fixture happens to carry.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
+        SPIRA_FORGE="$SH/forge-fixture.sh" \
+        SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-16}" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    [ -n "${SPIRA_BATCHER_WALL_SECS:-}" ] && tl_config SPIRA_BATCHER_WALL_SECS="$SPIRA_BATCHER_WALL_SECS"
+    [ -n "${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" ] && tl_config SPIRA_RELEASE_RUST_TOOLCHAIN="$SPIRA_RELEASE_RUST_TOOLCHAIN"
+    # SPIRA_RUN ALSO AS PLAIN ENV: spira-lc-stub.sh (below) is a fixture script exec'd by
+    # batcher as a child process, and it reads "${SPIRA_RUN:-/nonexistent}" as a raw shell
+    # variable, never through spira-config — tl_config's declaration never reaches it.
+    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
     STUB_FLAKE_SUITE="${STUB_FLAKE_SUITE:-}" \
     STUB_FLAKE_COUNTER_FILE="${STUB_FLAKE_COUNTER_FILE:-}" \
@@ -303,9 +325,6 @@ cut_repo() {
     STUB_ARGV_LOG="${STUB_ARGV_LOG:-}" \
     STUB_SLEEP_SECS="${STUB_SLEEP_SECS:-}" \
     STUB_EXIT4="${STUB_EXIT4:-}" \
-    SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
-    SPIRA_BATCHER_WALL_SECS="${SPIRA_BATCHER_WALL_SECS:-}" \
-    SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-$TMP/lc-default.log}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
         batcher cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
@@ -608,10 +627,9 @@ is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" 
 echo
 echo "E. judgement-ci: files a judgement bead for a CI-only red:"
 judge_ci() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    SPIRA_HOME="$SH" \
         batcher judgement-ci "$REPONAME" "$@" 2>&1
 }
 
@@ -720,12 +738,10 @@ localmode  | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_other() {
-    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 SPIRA_FORGE="$SH/forge-fixture.sh" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
         batcher cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
@@ -920,12 +936,11 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
-    SPIRA_RELEASES="$LRELEASES" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
+        SPIRA_RELEASES="$LRELEASES" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" \
     STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
         batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
 }

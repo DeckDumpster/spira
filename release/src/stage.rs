@@ -288,6 +288,34 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         ("SPIRA_SCOPE_LABEL".to_string(), o.scope_label.clone()),
     ];
     env.extend(lc_env);
+    // THE ONE SOURCE (per Ryan 2026-10-05): every process in the stage reads config only from
+    // the spec SPIRA_TOML names, never the environment. So the stage declares its own values
+    // in a layer of its own over the parent's complete spec, and runs everything under that.
+    let layer = spira_config::toml_path_at(&root);
+    let declared: Vec<(String, String)> = env
+        .iter()
+        .filter(|(k, _)| sh.join("conf.d").join(k).is_file())
+        .map(|(k, v)| {
+            let path = format!("spira.{}", k.trim_start_matches("SPIRA_").to_ascii_lowercase());
+            // A list key is declared as a list (SPIRA_FAYTHS is the one the stage sets).
+            let v = if k == "SPIRA_FAYTHS" { serde_json::json!(v.split_whitespace().collect::<Vec<_>>()).to_string() } else { v.clone() };
+            (path, v)
+        })
+        .collect();
+    let write = || -> Result<String, String> {
+        fs::write(&layer, "[spira]\n").map_err(|e| format!("{}: {e}", layer.display()))?;
+        let pairs: Vec<(&str, &str)> = declared.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        spira_config::set_paths_in_file(&layer, &pairs)?;
+        Ok(format!("{}:{}", spira_config::process::spec()?, layer.display()))
+    };
+    match write() {
+        Ok(spec) => env.push(("SPIRA_TOML".to_string(), spec)),
+        Err(e) => {
+            crate::stage_lc::stop(&root);
+            let _ = fsutil::remove_tree(&root);
+            return Err(format!("stage: cannot declare the stage's own config: {e}"));
+        }
+    }
     Ok(Stage { root, env })
 }
 

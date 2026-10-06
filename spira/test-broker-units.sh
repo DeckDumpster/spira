@@ -30,19 +30,24 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # get_enable BROKER_ENABLE
 # units-install --list-enable (sp-31dm0: systemd/units.sh is retired; the manifest is
 # install/src/manifest.rs now), one entry per line, in a minimal env.
+RUN_D="$TMP/run"; mkdir -p "$RUN_D"
+WATCHERS_F="$TMP/watchers"; printf '# empty\n' > "$WATCHERS_F"
 get_enable() {
     local broker_enable="$1"
+    # install/src/manifest.rs reads several registered keys to decide the unit set, not
+    # just SPIRA_BROKER_ENABLE — undeclared ones resolve to the complete fixture's
+    # /fixture/home/... paths, which do not exist here, and --list-enable fails silently
+    # under 2>/dev/null (sfail round 3, pattern 7).
+    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_SELF_TEST=0 SPIRA_BROKER_ENABLE="$broker_enable" \
+        SPIRA_RUN="$RUN_D" SPIRA_WATCHERS="$WATCHERS_F"
     env -i \
         PATH="$PATH" \
         HOME="$HOME" \
-        SPIRA_INSTANCE=prod \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_BROKER_ENABLE="$broker_enable" \
-        SPIRA_SELF_TEST=0 \
-        units-install --list-enable 2>/dev/null
+        timeout 30 units-install --list-enable
 }
 
 # ==========================================================================

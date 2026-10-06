@@ -296,22 +296,26 @@ BDSTUB
 
 # Pre-render units for the diff check.
 make_bd_stub 1
+# Constant across every env -i invocation below (the pre-render, and both run_install
+# calls further down, which re-declare only what differs: SPIRA_DB, SPIRA_DOLT_DATA).
+# SPIRA_MAIL: the fixture's own default (/fixture/home/...) isn't writable here —
+# install's units phase ensures every reader mailbox (sp-xp0u2), and a non-writable mail
+# root turns that into "mail: ensure: Permission denied" instead of this suite's own
+# circuit-breaker output (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" \
+    SPIRA_BD="$MOCK_BIN/bd" SPIRA_MAIL="$TMP/mail"
 _rendered="$(env -i \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    "SPIRA_RUN=$FAKE_RUN" \
     "SPIRA_HOME=$SPIRA_DIR" \
-    "SPIRA_PROD=$SPIRA_DIR" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
     SPIRA_INSTALL_AERC_CONSIDERED=1 \
-    "SPIRA_BD=$MOCK_BIN/bd" \
+    SPIRA_TOML="$SPIRA_TOML" \
     units-install prod --render  2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
@@ -329,27 +333,21 @@ unset _rendered _render_rc
 
 run_install() {
     local output_file="$1"
+    tl_config SPIRA_DB="$FAKE_DB" SPIRA_DOLT_DATA="$_DOLT_DATA"
     env -i \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-        "SPIRA_RUN=$FAKE_RUN" \
         "SPIRA_HOME=$SPIRA_DIR" \
-        "SPIRA_PROD=$SPIRA_DIR" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "SPIRA_DB=$FAKE_DB" \
-        "SPIRA_DOLT_DATA=$_DOLT_DATA" \
         "SPIRA_INSTALL_DOLT_WAIT=10" \
         "SPIRA_INSTALL_DOLT_CLOSE_WAIT=3" \
         "SPIRA_INSTALL_DB_WAIT=5" \
+        SPIRA_TOML="$SPIRA_TOML" \
         spira-install prod 2>&1 | tee "$output_file"
     # Return the exit code of install.sh, not tee
     return "${PIPESTATUS[0]}"

@@ -54,8 +54,10 @@ fn parse() -> Result<Opts, String> {
         interval: 30,
         ticks: None,
         json: false,
-        run: env::var_os("SPIRA_RUN").map(PathBuf::from),
-        db: env::var_os("SPIRA_DB").map(PathBuf::from),
+        run: None,
+        db: None,
+        // SPIRA_HOME is not a registered config key (spira/conf.d) — a per-copy fact, read
+        // from the raw environment same as always.
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
         config: None,
     };
@@ -75,6 +77,16 @@ fn parse() -> Result<Opts, String> {
     if o.interval == 0 {
         return Err("--interval must be at least 1".into());
     }
+    // --run/--db explicitly given wins outright; otherwise the one source of config
+    // (SPIRA_RUN/SPIRA_DB, declared in spira.toml) — never a second env-var read.
+    if o.run.is_none() {
+        let v = spira_config::process::cfg("SPIRA_RUN")?;
+        o.run = if v.is_empty() { None } else { Some(PathBuf::from(v)) };
+    }
+    if o.db.is_none() {
+        let v = spira_config::process::cfg("SPIRA_DB")?;
+        o.db = if v.is_empty() { None } else { Some(PathBuf::from(v)) };
+    }
     Ok(o)
 }
 
@@ -88,13 +100,11 @@ enum NoRepos {
 /// with none, or with no spira.toml yet, is IDLE — a fact about the install, said once and
 /// reported by health — never a crash loop. A spira.toml that does not parse is fatal: that is
 /// a fault someone must fix.
-fn queue_repos(cfg: Option<PathBuf>) -> Result<Vec<Repo>, NoRepos> {
+fn queue_repos(cfg: Option<PathBuf>, default_forge: &Path) -> Result<Vec<Repo>, NoRepos> {
     let Some(cfg) = cfg else { return Err(NoRepos::Idle("no spira.toml found".into())) };
     let doc = spira_config::load(&cfg).map_err(NoRepos::Fatal)?;
-    // A repo may name its own forge script; otherwise SPIRA_FORGE, else the release's
-    // `forge` binary by bare name on the launcher's PATH (sp-gypjk, sp-t4y60 — forge.sh is
-    // retired; sp-yv4b3 — this default still named the deleted script).
-    let default_forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("forge"));
+    // A repo may name its own forge script; otherwise `default_forge` (SPIRA_FORGE, the
+    // caller's one resolved value — sp-gypjk, sp-t4y60 — forge.sh is retired).
     let repos: Vec<Repo> = doc
         .repo
         .iter()
@@ -105,7 +115,7 @@ fn queue_repos(cfg: Option<PathBuf>) -> Result<Vec<Repo>, NoRepos> {
             name: name.clone(),
             path: PathBuf::from(&r.path),
             base: r.base.clone().unwrap_or_else(|| "origin/main".into()),
-            forge: r.forge.as_ref().map(PathBuf::from).unwrap_or_else(|| default_forge.clone()),
+            forge: r.forge.as_ref().map(PathBuf::from).unwrap_or_else(|| default_forge.to_path_buf()),
             local: r.mode == spira_config::LandMode::QueueLocal,
         })
         .collect();
@@ -213,19 +223,29 @@ fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &s
 fn watch(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    // SPIRA_QUEUE_DIR/SPIRA_BD/SPIRA_EXPRESS_LABEL/SPIRA_CI_QUEUED_MAX_SECS/SPIRA_FORGE are
+    // registered keys (spira/conf.d) — the one source of config, no crate-local default.
+    let queue_dir = spira_config::process::cfg("SPIRA_QUEUE_DIR")?;
     let env_ = Env {
-        queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
+        queue_dir: if queue_dir.is_empty() { run.join("queue") } else { PathBuf::from(queue_dir) },
         db: o.db.clone(),
-        bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
-        express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
+        bd: spira_config::process::cfg("SPIRA_BD")?,
+        express_label: spira_config::process::cfg("SPIRA_EXPRESS_LABEL")?,
+        // SPIRA_LC_BIN is not a registered config key — a bare binary found on PATH, same as
+        // always.
         lc_bin: lc_bin_from(env::var_os("SPIRA_LC_BIN"), &env::var_os("PATH").unwrap_or_default()),
+        // SPIRA_LC_TIMEOUT is not a registered config key.
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
     };
     let lim = Limits {
+        // QUEUE_WATCH_IDLE_STALL_SECS/QUEUE_WATCH_HEAD_STALL_SECS are not registered config
+        // keys (no spira/conf.d entry, no SPIRA_/COCKPIT_ prefix).
         idle_stall_secs: env::var("QUEUE_WATCH_IDLE_STALL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
         head_stall_secs: env::var("QUEUE_WATCH_HEAD_STALL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(2700),
-        ci_queued_max_secs: env::var("SPIRA_CI_QUEUED_MAX_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
+        ci_queued_max_secs: spira_config::process::cfg_parse("SPIRA_CI_QUEUED_MAX_SECS")?,
     };
+    let default_forge = PathBuf::from(spira_config::process::cfg("SPIRA_FORGE")?);
+    // SPIRA_INCIDENT_SH is not a registered config key.
     let incident_sh = env::var_os("SPIRA_INCIDENT_SH").map(PathBuf::from).unwrap_or_else(|| home.join("incident.sh"));
     let mut states: BTreeMap<String, RepoState> = BTreeMap::new();
     let mut tick = 0u64;
@@ -240,7 +260,7 @@ fn watch(o: &Opts) -> Result<(), String> {
     loop {
         let t = now();
         if repos.is_empty() {
-            match queue_repos(spira_config::discover(o.config.clone())) {
+            match queue_repos(spira_config::discover(o.config.clone()), &default_forge) {
                 Ok(r) => {
                     println!("{} - watching resumed: {} queue-mode repo(s) found", iso(t), r.len());
                     repos = r;
@@ -351,34 +371,13 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
-
-    // Serialises the one test in this crate that touches the real process environment
-    // (SPIRA_FORGE, PATH), and restores both on drop — same pattern as release's
-    // `ENV_LOCK`/`PathGuard` (release/src/tests.rs).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        forge: Option<std::ffi::OsString>,
-    }
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.forge {
-                Some(f) => env::set_var("SPIRA_FORGE", f),
-                None => env::remove_var("SPIRA_FORGE"),
-            }
-        }
-    }
 
     // REGRESSION (sp-yv4b3): the default named the retired `forge.sh`, not the release's
-    // `forge` binary. PATH goes to the spawn only; mutating the process PATH raced the
-    // other tests' forks.
+    // `forge` binary. PATH goes to the spawn only; the default forge is now a plain parameter
+    // (SPIRA_FORGE resolved once by the caller), so this no longer needs to touch the process
+    // environment at all.
     #[test]
     fn queue_repos_default_forge_is_the_bare_release_binary_and_is_actually_reachable() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard { forge: env::var_os("SPIRA_FORGE") };
-        env::remove_var("SPIRA_FORGE");
-
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let dir = testkit::TempDir::new(&format!("queue-watch-default-forge-test-{n}"));
         testkit::write_exe(
@@ -392,7 +391,7 @@ mod tests {
         let cfg = dir.join("spira.toml");
         fs::write(&cfg, "[repo.q]\npath = \"/tmp/q\"\nmode = \"queue\"\n").unwrap();
 
-        let repos = match queue_repos(Some(cfg)) {
+        let repos = match queue_repos(Some(cfg), &PathBuf::from("forge")) {
             Ok(r) => r,
             Err(NoRepos::Idle(w)) => panic!("unexpectedly idle: {w}"),
             Err(NoRepos::Fatal(w)) => panic!("unexpectedly fatal: {w}"),
@@ -466,7 +465,7 @@ mode = "push"
         )
         .unwrap();
 
-        let repos = match queue_repos(Some(cfg)) {
+        let repos = match queue_repos(Some(cfg), &PathBuf::from("forge")) {
             Ok(r) => r,
             Err(NoRepos::Idle(w)) => panic!("unexpectedly idle: {w}"),
             Err(NoRepos::Fatal(w)) => panic!("unexpectedly fatal: {w}"),

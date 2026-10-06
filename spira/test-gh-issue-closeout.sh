@@ -51,6 +51,7 @@ exit 0
 GHSTUB
 chmod +x "$TMP/bin/gh"
 export GHLOG SPIRA_GH="$TMP/bin/gh"
+tl_config SPIRA_GH="$SPIRA_GH"
 
 # --- mail stub: records a call and, with --bead, wires an ask the way the real `mail`
 # binary does (dep relate), so the dedupe tests below see the same tracking bead a real
@@ -99,16 +100,22 @@ RUN="$TMP/run"
 mkdir -p "$RUN/gh-closed" "$RUN/landstate"
 export SPIRA_RUN="$RUN"
 export SPIRA_HOME="$TMP"
+# round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
+# binary reads <home>/conf.d to resolve its config schema at all, even when every value
+# is otherwise declared via tl_config — give this stub home the real registry.
+ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 export SPIRA_HOME_REPO=fixture
 export SPIRA_REPO="$REPO"
 export SPIRA_REPO_DERIVED="$REPO"
 export SPIRA_ASK_LABEL=needs-operator
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_HOME_REPO="$SPIRA_HOME_REPO" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 
 # The repo→path map, deliberately not named like the production config file (this is a
 # fixture gh-intake resolves in-process through spira-config; no fence applies).
 MAPFILE="$TMP/reposmap"
 printf 'fixture | %s\n' "$REPO" > "$MAPFILE"
 export SPIRA_REPO_MAP="$MAPFILE"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 # --- bd fixture ---
 testdb_seed <<JSONL

@@ -123,21 +123,40 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
 
     let paths = release::session_hook::resolve(&release_root, "", tmp.path().join("settings.json")).expect("resolve paths");
 
-    // session.sh's own guard (hooks/session.sh: "SPIRA_PROD IS THE HARNESS systemd
-    // ExecStarts FROM") silences it whenever SPIRA_HOME (derived from its own, physically
-    // resolved location) disagrees with SPIRA_PROD — exactly right in production, where a
-    // second checkout must never print into the operator's real sessions, but it means a
-    // fixture must say, explicitly, that ITS OWN release IS the one in force. `SPIRA_CONF`
-    // (the legacy pre-toml override conf.sh still reads) says so without touching the real
-    // host's config document, and gives the hook a manifest with one real row rather than an
-    // empty one — the "no watchers means no output" case this is not trying to exercise.
+    // `SPIRA_CONF` (the legacy pre-toml override) is DEAD: spira/conf.sh (per Ryan
+    // 2026-10-05) no longer reads it at all — "no legacy spira.conf, no conversion, no
+    // default for any key" (conf.sh's own top-of-file comment). Every value this fixture
+    // needs now goes through `$SPIRA_TOML` instead, via `fixture_toml`'s declare list:
+    //   - `SPIRA_PROD` — session.sh's own guard ("SPIRA_PROD IS THE HARNESS systemd
+    //     ExecStarts FROM") silences the hook whenever its physically-derived SPIRA_HOME
+    //     disagrees with SPIRA_PROD; must name this fixture's own release as the one in
+    //     force, or the hook goes silent exactly as it must in a second, inactive checkout.
+    //   - `SPIRA_RUN` — matches what this test writes session state under.
+    //   - `SPIRA_WATCHERS`/`SPIRA_WATCHERS_OVERLAY` — watchd's own manifest read; the
+    //     complete fixture's placeholder paths for both do not exist, which is
+    //     indistinguishable from "no watchers configured" (this test's whole point is a
+    //     REAL watcher row, not that case) — pointed at this fixture's own manifest, and a
+    //     nonexistent overlay dir (matching an operator who configured none).
     let run_dir = tmp.path().join("run");
     let manifest = tmp.path().join("watchers");
     std::fs::write(&manifest, "probe|daemon|/bin/true\n").unwrap();
-    let conf = tmp.path().join("spira.conf");
-    std::fs::write(&conf, format!("SPIRA_ID_PREFIX = sp\nSPIRA_PROD = {}\nSPIRA_RUN = {}\nSPIRA_WATCHERS = {}\n", release_root.join("spira").display(), run_dir.display(), manifest.display())).unwrap();
+    let prod_s = release_root.join("spira").display().to_string();
+    let run_s = run_dir.display().to_string();
+    let watchers_s = manifest.display().to_string();
+    let overlay_s = tmp.path().join("watchers-overlay-unset").display().to_string();
+    let toml = spira_config::process::fixture_toml(
+        tmp.path(),
+        &[("SPIRA_PROD", &prod_s), ("SPIRA_RUN", &run_s), ("SPIRA_WATCHERS", &watchers_s), ("SPIRA_WATCHERS_OVERLAY", &overlay_s)],
+    );
+    // `spira_config::resolve::locate_home` no longer walks up from the exe's own location
+    // (per Ryan 2026-10-05: named, never searched for) — it needs SPIRA_HOME outright or
+    // SPIRA_RELEASE (every real unit's own shape, release/src/units.rs's `release_values`).
+    // `hook_command()` already carries `SPIRA_RELEASE=<release_root>`, which should derive
+    // the same place, but watchd is handed SPIRA_HOME directly here too, named outright
+    // rather than relying on that derivation chain reaching it unbroken through session.sh.
+    let home_dir = release_root.join("spira").display().to_string();
 
-    let hook_cmd = format!("SPIRA_CONF={} {}", conf.display(), paths.hook_command());
+    let hook_cmd = format!("SPIRA_TOML={} SPIRA_HOME={} {}", toml.display(), home_dir, paths.hook_command());
     let (rc, out) = run_under_minimal_env_as(&home, &hook_cmd, "{\"hook_event_name\":\"SessionStart\",\"source\":\"startup\"}");
     assert_eq!(rc, 0, "session.sh must exit 0 through its registered command under a minimal env; got rc={rc}, output:\n{out}");
     assert!(!out.trim().is_empty(), "session.sh produced no output at all, with a real watcher row in its manifest");
@@ -145,7 +164,15 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     // context_window.current_usage set (even empty) is the client's own "a real API response
     // has happened" signal (ctx-meter.sh: "THE SUPPLIED FIELD WINS") — it needs no real
     // transcript under this fresh HOME to produce its headline.
-    let (rc, out) = run_under_minimal_env_as(&home, &paths.meter_command(), "{\"context_window\": {\"current_usage\": {}, \"total_input_tokens\": 12345}}");
+    //
+    // ctx-meter.sh sources conf.sh too (spira/ctx-meter.sh:45, byte-identical to session.sh's
+    // own line 43) — it needs `SPIRA_TOML`/`SPIRA_HOME` exactly as much as session.sh does.
+    // `paths.meter_command()` alone (unlike `hook_cmd` above) never carried either: the test
+    // passed with rc=1 and silent-empty stdout because conf.sh's own "SPIRA_TOML is not set"
+    // refusal goes to stderr, which `run_under_minimal_env_as` never captures — making a
+    // config refusal indistinguishable from a crash. Same prefix as `hook_cmd`.
+    let meter_cmd = format!("SPIRA_TOML={} SPIRA_HOME={} {}", toml.display(), home_dir, paths.meter_command());
+    let (rc, out) = run_under_minimal_env_as(&home, &meter_cmd, "{\"context_window\": {\"current_usage\": {}, \"total_input_tokens\": 12345}}");
     assert_eq!(rc, 0, "ctx-meter.sh must exit 0 through its registered command under a minimal env; got rc={rc}, output:\n{out}");
     assert!(!out.trim().is_empty(), "ctx-meter.sh produced no output at all");
 }

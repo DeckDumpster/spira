@@ -127,6 +127,65 @@ esac
 _TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 
+# THE ONE SOURCE OF CONFIG (per Ryan 2026-10-05): every process reads the spira.toml SPIRA_TOML
+# names and nothing else — no environment override, no default. Each suite gets its own copy
+# of the complete fixture (every key declared); a suite sets what it is about with tl_config,
+# never `export SPIRA_X=`, which no process reads any more.
+# Layers: the checked-in complete fixture (every key declared) as the base, then this suite's
+# own override file, which holds ONLY what the suite changes.
+_TL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Every repo a suite creates starts on `main`, whatever the host's own init.defaultBranch says:
+# a declared base (origin/main, local/main) is never derived any more, so a fixture repo must
+# actually HAVE the branch its repo-map row names. Git's own env config, so it reaches every
+# git a suite runs (an `env -i` drops it — such a call names its branch itself).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=init.defaultBranch GIT_CONFIG_VALUE_0=main
+_TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira-config/tests/fixtures/complete.toml"
+[ -f "$_TL_CONF_BASE" ] || { echo "testlib: no complete fixture at $_TL_CONF_BASE" >&2; exit 1; }
+_TL_CONF_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tl-conf.XXXXXX")"
+_TL_CONF_OVERRIDE="$_TL_CONF_DIR/$(basename "${BASH_SOURCE[1]:-$0}" .sh).override.toml"
+printf '[spira]\n' > "$_TL_CONF_OVERRIDE"
+export SPIRA_TOML="$_TL_CONF_BASE:$_TL_CONF_OVERRIDE"
+
+# tl_config KEY=value ... — declare config in this suite's override file (SPIRA_FOO -> spira.foo,
+# COCKPIT_FOO -> spira.cockpit_foo). Refuses on a key the schema does not know.
+# A value is given in its shell form and written in the key's registered TYPE: a list as
+# space- or comma-separated words, a bool as 1/0/true/false/yes/no/on/off.
+tl_config() { _tl_declare "$_TL_CONF_OVERRIDE" "$@"; }
+
+# tl_layer KEY=value ... — config for ONE call: prints a SPIRA_TOML value (this suite's layers
+# plus a fresh layer holding just these keys), so nothing persists into the rest of the suite:
+#   SPIRA_TOML="$(tl_layer SPIRA_DB=/nonexistent)" some-binary ...
+tl_layer() {
+    local f
+    f="$(mktemp "$_TL_CONF_DIR/layer.XXXXXX")" || return 1
+    printf '[spira]\n' > "$f"
+    _tl_declare "$f" "$@" || return 1
+    printf '%s' "$SPIRA_TOML:$f"
+}
+
+_tl_declare() {
+    local file="$1" kv k v d t w out; shift
+    for kv in "$@"; do
+        k="${kv%%=*}"; v="${kv#*=}"
+        d="spira.$(printf '%s' "${k#SPIRA_}" | tr '[:upper:]' '[:lower:]')"
+        t="$(sed -n 's/^TYPE=//p' "$_TL_HERE/conf.d/$k" 2>/dev/null | head -1)"
+        case "$t" in
+            list)
+                out=""
+                for w in ${v//,/ }; do out="${out:+$out,}\"$w\""; done
+                v="[$out]" ;;
+            bool)
+                case "$v" in
+                    1|true|yes|on) v=true ;;
+                    0|false|no|off|"") v=false ;;
+                    *) echo "tl_config: $k is a bool, not '$v'" >&2; return 1 ;;
+                esac ;;
+        esac
+        spira-config set "$d" "$v" "$file" >/dev/null \
+            || { echo "tl_config: cannot declare $k" >&2; return 1; }
+    done
+}
+
 _tl_init() {
     [ "$_TL_INITED" = 1 ] && return 0
     _TL_INITED=1
@@ -502,7 +561,8 @@ aeon_fixture_agent() {
         printf 'exec %q "$@"\n' "$shim"
     } > "$outer"
     chmod +x "$outer"
-    export SPIRA_AGENT="$outer"
+    export SPIRA_AGENT="$outer"   # bash-level readers in the suite
+    tl_config SPIRA_AGENT="$outer"   # every binary: the one source
 }
 
 # lc_row_state <id> — the STATE the lifecycle machine on PATH (lc_aeon_mirror, for the aeon
@@ -646,6 +706,11 @@ lc_socket_mirror() {
     local dir="${1:?lc_socket_mirror needs a directory}"
     mkdir -p "$dir"
     export SPIRA_LC_SOCKET="$dir/lc.sock"
+    # round 3 fix (pattern 3/7): SPIRA_LC_SOCKET is a registered key — the plain export
+    # above is for this function's own shell use; a real binary (sending, queue, ...)
+    # only finds this mock's socket through SPIRA_TOML now, or it falls to the complete
+    # fixture's placeholder /run/user/.../spira-lc/sock and reports "did not answer".
+    tl_config SPIRA_LC_SOCKET="$SPIRA_LC_SOCKET"
     rm -f "$SPIRA_LC_SOCKET"
     python3 - "$SPIRA_LC_SOCKET" "$$" <<'PY' >"$dir/server.log" 2>&1 &
 import json, os, socket, subprocess, sys, threading, time

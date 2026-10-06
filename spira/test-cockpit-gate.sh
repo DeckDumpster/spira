@@ -24,6 +24,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
 
 # UC-15 (docs/test-plan/cockpit-observability.md, row 15): each case below calls the one
 # tier function it actually exercises — `cockpit-collect probe now` for the gate-run/proc liveness
@@ -32,16 +33,14 @@ BASE_PATH="$PATH"
 run_now() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         cockpit-collect probe now 2>/dev/null
 }
 run_unsent() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+        SPIRA_TOML="$SPIRA_TOML" \
         BD_TIMEOUT=1 \
         "$@" \
         cockpit-collect probe unsent 2>/dev/null
@@ -130,8 +129,7 @@ echo "gate-run.sh --status emits nothing on stderr:"
 # Use a non-existent branch to trigger exit 3 (nothing running, nothing finished).
 stderr_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     gate-run.sh --status spira/sp-nonexistent spira 2>&1 >/dev/null)" || true
 nowant "no stderr from --status" "No such file" "$stderr_out"
 
@@ -162,8 +160,7 @@ SP_OPS_AGE='10'
 SNAP
 health_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     health once 2>/dev/null)" || true
 want "LAND label in output" "LAND" "$health_out"
 want "rc in output"         "rc"   "$health_out"

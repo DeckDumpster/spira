@@ -27,14 +27,13 @@
 # covers: groomer/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require test-groomer-state
 TMP="$(mktemp -d)"
 testdb_up state || { echo "test-groomer-state: could not build fixture database"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
-
-. "$HERE/testlib.sh"
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -64,17 +63,18 @@ printf '#!/usr/bin/env bash\n[ "$1" = state ] || exec "%s" "$@"\n[ -s "%s/$2" ] 
 chmod +x "$TMP/lcbin/spira-lc"
 
 run_sweep() {
+    tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
+        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_ASK_LABEL=needs-ryan \
+        SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL=spira \
+        SPIRA_BD="${SPIRA_BD:-bd}"
+    # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: the lcbin wrapper execs lc_mirror_bd's spira-lc
+    # stub for every non-`state` verb, and that stub reads them as raw shell variables,
+    # never through spira-config — tl_config's declaration never reaches a child process.
     env -i PATH="$TMP/lcbin:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
-        SPIRA_BD="${SPIRA_BD:-bd}" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_REPO_MAP="$TMP/repo-map" \
-        SPIRA_ASK_LABEL=needs-ryan \
-        SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL=spira \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
         groomer sweep "$@" 2>&1
 }
 

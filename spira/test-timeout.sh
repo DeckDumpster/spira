@@ -56,7 +56,11 @@ echo
 echo "SP_OPS_AGE (cockpit logic):"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
-export SPIRA_HOME="$TMP" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-such.conf"
+# lib.sh sources conf.sh, which resolves every registered key straight from SPIRA_TOML
+# (inherited here — this is the main suite shell, not under env -i), so SPIRA_RUN is
+# declared through tl_config rather than export.
+tl_config SPIRA_RUN="$TMP/run"
+export SPIRA_HOME="$TMP" SPIRA_CONF="$TMP/no-such.conf"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 RUN="$TMP/run"; mkdir -p "$RUN"

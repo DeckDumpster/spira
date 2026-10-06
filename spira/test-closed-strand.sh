@@ -68,10 +68,16 @@ printf '#!/usr/bin/env bash\nprintf %%s\\\\n inactive\n' > "$TMP/systemctl"; chm
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/launch"; chmod +x "$TMP/launch"
 
 sentinel() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=999999 \
-    SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
+    # SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_FAYTHS/SPIRA_NOTIFY/SPIRA_REPO_MAP are
+    # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config,
+    # not the per-call env prefix below, which no process reads them from any more.
+    # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
+        SPIRA_FAYTHS="t" SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_CHAMBER="$SH/chamber"
+    SPIRA_HOME="$SH" \
+    SPIRA_REPO="$REPO" \
+    SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no.conf" PATH="$SH:$PATH" \
         command sentinel 2>&1
@@ -79,9 +85,12 @@ sentinel() {
 
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    # SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_GH are registered keys (per
+    # Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the per-call env
+    # prefix below, which no process reads them from any more.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
     SPIRA_CONF="$TMP/no.conf" PATH="$SH:$PATH" \
         landing-pass land 2>&1
 }
@@ -167,18 +176,28 @@ YAML
         "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && break
         sleep 0.2
     done
+    # round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
+    # resolves to the complete fixture's placeholder /fixture/home/.../spira-lc.credential,
+    # which does not exist. Declare this suite's own (empty-password) credential file.
+    : > "$TMP/lc-data/credential"
+    tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-data/credential"
     LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
             SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
             SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")
     env "${LC_ENV[@]}" "$LC_BIN" admin-apply-ddl "$HERE/../lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1 \
         || { echo "spira_lifecycle schema failed: $(cat "$TMP/lc-schema.log")" >&2; exit 1; }
 
+    # SPIRA_HOME_REPO/SPIRA_SCOPE_LABEL/SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/
+    # SPIRA_FAYTHS/SPIRA_PATH/SPIRA_CERT_WINDOW_MINS are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
+    # through env -i, which clears it and which no process reads these from any more.
+    tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_RUN="$RUN2" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" SPIRA_REPO_MAP="$MAP" \
+        SPIRA_FAYTHS=t SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90
     cout="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 "${LC_ENV[@]}" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-        SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SCOPE" \
-        SPIRA_RUN="$RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
-        SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90 \
+        SPIRA_REPO="$ALPHA" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect once 2>/dev/null)"
 
     cval() { printf '%s' "$cout" | grep "^$1=" | head -1 | sed "s/^$1=//"; }

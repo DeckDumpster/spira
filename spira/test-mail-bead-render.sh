@@ -38,14 +38,30 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up mail-bead-render || { echo "test-mail-bead-render: could not build fixture database"; exit 1; }
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+SPIRA_ID_PREFIX="sp"
+SPIRA_RUN="$TMP/run"
+mkdir -p "$TMP/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
+# SPIRA_MAIL_MUTE=0: the complete fixture's own declared default is true, which silently
+# writes every "rendered block leads the body" message straight to cur/ flagged Seen instead
+# of new/ — body_of() only ever looks in new/, so every render assertion read as empty even
+# though the block was rendered correctly (verified by hand: the muted file in cur/ carries
+# the full "sp-titl01: ... / Status: open / Priority: P3" block).
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" SPIRA_MAIL_MUTE=0 \
+    SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
-export SPIRA_RUN="$TMP/run"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
+export SPIRA_HOME="$HERE"
 
-run() { mail "$@"; }
+run() { timeout 30 mail "$@"; }
 
 body_of() {
     local mailbox="$1" f

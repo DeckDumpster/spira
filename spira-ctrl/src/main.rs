@@ -8,11 +8,12 @@
 //!   ctrl.sh suspended          every suspended subject, one `subject\treason` line each
 //!   ctrl.sh divergence
 //!
-//! `$SPIRA_CTRL` names the one JSON file this reads and writes — resolved from the
-//! environment exactly as conf.sh exports it (`: "${SPIRA_CTRL:=$SPIRA_RUN/control}"`);
-//! this binary does not source conf.sh, since every caller that starts it already has.
-//! `$SPIRA_SYSTEMCTL` is the systemctl seam `divergence` shells to, same variable name
-//! world.sh carries, so one stub covers both in a test.
+//! `spira.ctrl` names the one JSON file this reads and writes — resolved through
+//! `spira_config::process::cfg`, the one door to `$SPIRA_TOML` (per Ryan 2026-10-05: one
+//! source of config); this binary reads no environment override and carries no fallback of
+//! its own. `$SPIRA_SYSTEMCTL` is the systemctl seam `divergence` shells to — not a
+//! registered config key, so it stays a plain env var, same name world.sh carries, so one
+//! stub covers both in a test.
 
 use std::collections::BTreeMap;
 use std::env;
@@ -21,54 +22,27 @@ use std::process::{Command, ExitCode};
 
 use spira_ctrl::{self as ctrl, CtrlData};
 
-/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
-/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
-/// `harness_home` already use. `resolve_for_process` needs a REAL `home/conf.d` to
-/// resolve almost every key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it
-/// refuse outright ("no config registry at conf.d"), exactly what a bare shell with no
-/// `$SPIRA_HOME` exported would otherwise hit.
-fn spira_home() -> PathBuf {
-    if let Ok(h) = env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return PathBuf::from(h);
-        }
-    }
-    let Ok(exe) = env::current_exe() else { return PathBuf::new() };
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors()
-        .skip(1)
-        .take(4)
-        .map(|a| a.join("spira"))
-        .find(|p| p.join("lib.sh").is_file())
-        .unwrap_or_default()
-}
-
 fn die(msg: &str) -> ! {
     eprintln!("ctrl: FATAL: {msg}");
     std::process::exit(1);
 }
 
-/// `spira.run`, resolved in-process through `spira_config` — never the literal `/tmp/spira`
-/// a bare shell used to get whenever `$SPIRA_RUN` itself was unset
-/// (law-a-binary-resolves-the-config-it-reads, sp-ivfu3). REFUSES, named, rather than
-/// guessing, when `spira_config` itself cannot resolve.
-fn spira_run() -> PathBuf {
-    let env_map: BTreeMap<String, String> = env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env_map, &spira_home()).unwrap_or_else(|e| die(&e))
-}
-
-/// `spira.instance`, resolved the same way [`spira_run`] resolves `spira.run` — never a bare
-/// `env::var("SPIRA_INSTANCE").unwrap_or_else(|_| "prod".to_string())`, which skipped the
-/// resolved config document entirely and only ever saw this process's own environment.
+/// `spira.instance`, resolved once through [`spira_config::process::cfg`] — the one door to
+/// `$SPIRA_TOML` (per Ryan 2026-10-05: one source of config). No env read, no fallback to
+/// `"prod"`: an unresolvable config is a named refusal, not a guess.
 fn spira_instance() -> String {
-    let env_map: BTreeMap<String, String> = env::vars().collect();
-    spira_config::resolve::resolve_instance(&env_map, &spira_home()).unwrap_or_else(|e| die(&e))
+    spira_config::process::cfg("SPIRA_INSTANCE").unwrap_or_else(|e| die(&e))
 }
 
+/// `spira.ctrl`, resolved once through [`spira_config::process::cfg`] — the one door to
+/// `$SPIRA_TOML` (per Ryan 2026-10-05: one source of config). No env read, no fallback: the
+/// registry's own default (`$SPIRA_RUN/control`) is already baked into the resolved value.
 fn ctrl_path() -> PathBuf {
-    env::var_os("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|| spira_run().join("control"))
+    spira_config::process::cfg("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|e| die(&e))
 }
 
+/// `$SPIRA_SYSTEMCTL` is not a registered config key (no `spira/conf.d/SPIRA_SYSTEMCTL`) —
+/// left as a plain env seam so a test can stub the systemctl binary.
 fn systemctl_bin() -> String {
     env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string())
 }
@@ -89,11 +63,12 @@ fn sc_lines(args: &[&str]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `today's date in $SPIRA_TZ` — shells to `date(1)` rather than carrying a timezone
+/// `today's date in spira.tz` — shells to `date(1)` rather than carrying a timezone
 /// database in this binary; `do_suspend`'s own `when` computation does the same (`TZ=...
-/// date '+%Y-%m-%d'`), just from bash instead of Rust.
-fn today() -> String {
-    let tz = env::var("SPIRA_TZ").unwrap_or_default();
+/// date '+%Y-%m-%d'`), just from bash instead of Rust. `tz` is `spira.tz`, resolved once at
+/// the top level through [`spira_config::process::cfg`] and passed down — pure logic takes
+/// config as an argument, it does not read it.
+fn today(tz: &str) -> String {
     let mut cmd = Command::new("date");
     cmd.arg("+%Y-%m-%d");
     if !tz.is_empty() {
@@ -161,8 +136,9 @@ fn cmd_suspend(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     };
     let by = env::var("USER").unwrap_or_else(|_| "operator".to_string());
+    let tz = spira_config::process::cfg("SPIRA_TZ").unwrap_or_else(|e| die(&e));
     let mut data = load_or_die();
-    ctrl::suspend(&mut data, subject, &reason, &owner, &today(), &by);
+    ctrl::suspend(&mut data, subject, &reason, &owner, &today(&tz), &by);
     if let Err(e) = ctrl::write_atomic(&ctrl_path(), &data) {
         eprintln!("ctrl: failed to update control file: {e}");
         return ExitCode::from(1);

@@ -277,8 +277,7 @@ pub fn aeons_live_total(cfg: &Config) -> u32 {
 /// fayth is free to declare a different unit/pidfile name than its chamber filename.
 pub fn aeons_live_lanes(cfg: &Config) -> u32 {
     let Some(home) = cfg.home.as_ref() else { return 0 };
-    let env_override = std::env::var("SPIRA_FAYTHS").ok();
-    let lanes = spira_config::chamber::spira_lane_fayths(home, env_override.as_deref());
+    let lanes = spira_config::chamber::spira_lane_fayths(home, cfg.fayths_override.as_deref());
     lanes
         .split_whitespace()
         .map(|f| {
@@ -440,8 +439,6 @@ mod tests {
     }
 
     use super::*;
-    use crate::config::Source;
-    use std::collections::HashMap;
 
     // ---- holder_alive: delegates to sending::reap (wave 4.23, sp-0ffox) -------------------
 
@@ -459,16 +456,6 @@ mod tests {
     }
 
     // ---- aeon_count / aeons_live_lanes / fayth_free (wave 4.23, sp-0ffox) ------------------
-
-    struct Env(HashMap<&'static str, String>);
-    impl Source for Env {
-        fn env(&self, k: &str) -> Option<String> {
-            self.0.get(k).cloned()
-        }
-        fn toml(&self, _: &str) -> Option<String> {
-            None
-        }
-    }
 
     /// `systemctl --user list-units <pattern> --no-legend`, stubbed: echoes `lines`
     /// regardless of its argv, so the test controls the fleet without a real systemd
@@ -488,7 +475,7 @@ mod tests {
             &t,
             &["spira-aeon-builder-1.service loaded active running x", "spira-aeon-builder-2.service loaded active running x"],
         );
-        let cfg = Config::resolve(&Env(HashMap::from([("SPIRA_SYSTEMCTL", sc)])));
+        let cfg = Config { systemctl: sc, ..Config::test_fixture() };
         assert_eq!(cfg.summon, "systemd-run", "the default — exercises the unit-list branch");
         assert_eq!(aeon_count(&cfg, "builder", None), 2);
         assert_eq!(aeon_count(&cfg, "builder", Some("spira-aeon-builder-1.service")), 1, "the caller's own unit is excluded");
@@ -500,10 +487,7 @@ mod tests {
         let t = testkit::TempDir::new("strand-aeon-count-fallback");
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
-        let cfg = Config::resolve(&Env(HashMap::from([
-            ("SPIRA_SUMMON", "mock".to_string()),
-            ("SPIRA_RUN", run.to_string_lossy().into_owned()),
-        ])));
+        let cfg = Config { summon: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         assert_eq!(aeon_count(&cfg, "builder", None), 0, "no pidfiles at all");
         assert_eq!(aeon_count(&cfg, "builder", Some("anything")), 0, "exclude is a no-op off the systemd-run branch");
     }
@@ -517,10 +501,7 @@ mod tests {
         std::fs::write(t.join("chamber/laner.fayth"), "FAYTH_LANE=incident\nFAYTH_NAME=siren\n").unwrap();
         std::fs::write(t.join("chamber/builder.fayth"), "").unwrap(); // not a lane — must not be counted
         let sc = mock_systemctl(&t, &["spira-aeon-siren-1.service loaded active running x"]);
-        let cfg = Config::resolve(&Env(HashMap::from([
-            ("SPIRA_HOME", t.to_string_lossy().into_owned()),
-            ("SPIRA_SYSTEMCTL", sc),
-        ])));
+        let cfg = Config { home: Some(t.to_path_buf()), systemctl: sc, ..Config::test_fixture() };
         assert_eq!(aeons_live_lanes(&cfg), 1);
     }
 
@@ -533,11 +514,8 @@ mod tests {
         std::fs::write(t.join("chamber/laner.fayth"), "FAYTH_MAX_CONCURRENT=1\n").unwrap();
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
-        let cfg = Config::resolve(&Env(HashMap::from([
-            ("SPIRA_HOME", t.to_string_lossy().into_owned()),
-            ("SPIRA_SUMMON", "mock".to_string()), // pid fallback, no real aeons: have=0 throughout
-            ("SPIRA_RUN", run.to_string_lossy().into_owned()),
-        ])));
+        // pid fallback, no real aeons: have=0 throughout
+        let cfg = Config { home: Some(t.to_path_buf()), summon: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         // elastic: pool remainder whole, never subtracting running twice (have is ignored
         // here since the stub always reports 0 — the G18 regression this guards against is
         // "have" double-counted against a pool that already nets it out).
@@ -577,19 +555,9 @@ mod tests {
 
     #[test]
     fn throttle_states_from_the_stamp() {
-        use crate::config::{Config, Source};
-        struct S(PathBuf);
-        impl Source for S {
-            fn env(&self, k: &str) -> Option<String> {
-                (k == "SPIRA_THROTTLE_STAMP").then(|| self.0.to_string_lossy().into_owned())
-            }
-            fn toml(&self, _: &str) -> Option<String> {
-                None
-            }
-        }
         let dir = testkit::TempDir::new("strand-throttle");
         let stamp = dir.join("queue-throttled");
-        let cfg = Config::resolve(&S(stamp.clone()));
+        let cfg = Config { throttle_stamp: Some(stamp.clone()), ..Config::test_fixture() };
         assert_eq!(throttle_line(&throttle(&cfg)), "open\t");
         fs::write(&stamp, "2026-09-29T00:00:00Z depth=14 x\n").unwrap();
         assert_eq!(throttle_line(&throttle(&cfg)), "shut\tdepth 14 >= release-at 8");

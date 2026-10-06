@@ -10,5 +10,5 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # third moment was the one paying least: "what led here" is answered by the moment before
     # the current one, and the one before that is history the trace file already holds. The
     # row it gave back is what INFLOW is built on.
-    : "${SPIRA_COCKPIT_TRACE_LINES:=2}"
+    : "${COCKPIT_TRACE_LINES:=2}"
 SPIRA_CONF_DEFAULT_EOF

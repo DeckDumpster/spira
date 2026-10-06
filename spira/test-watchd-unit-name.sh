@@ -42,12 +42,12 @@ FAKE_RUN="$TMP/run"
 mkdir -p "$FAKE_RUN"
 
 load_watch_unit_name() {
+    tl_config SPIRA_INSTANCE="$1" SPIRA_RUN="$FAKE_RUN"
     env -i \
         PATH="$PATH" \
         HOME="$TMP/fake-home" \
-        SPIRA_INSTANCE="$1" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$FAKE_RUN" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". \"$HERE/conf.sh\"; watch_unit_name \"$2\"" 2>/dev/null
 }
 

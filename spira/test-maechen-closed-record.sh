@@ -85,6 +85,13 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 # SCOPE labels pinned to non-defaults (law-gates-run-in-a-clean-environment).
 ALLW_SCOPE="sptest-cr-allow"
 
+# Constant across every env -i invocation in this suite; sections below re-declare only
+# what differs (SPIRA_SCOPE_LABEL, SPIRA_MAECHEN_LABEL, SPIRA_BD).
+tl_config SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SELFMAP" \
+    SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike \
+    SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 SPIRA_MAECHEN_LANDING_INTERVAL=999
+
 echo "test-maechen-closed-record.sh"
 
 # ==========================================================================================
@@ -102,13 +109,8 @@ JSONL
 
 run_livelock() {
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-        SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
-        SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$SELFMAP" \
-        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe livelock 2>/dev/null
 }
 
@@ -145,13 +147,8 @@ JSONL
 
 run_livelock_uf() {
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-        SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
-        SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$SELFMAP" \
-        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe livelock 2>/dev/null
 }
 
@@ -192,20 +189,14 @@ printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
 _tr_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
+tl_config SPIRA_SCOPE_LABEL="$TR_SCOPE" SPIRA_MAECHEN_LABEL="$TR_MAE" SPIRA_BD="$_tr_bd"
 tr_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
-    SPIRA_BD="$_tr_bd" \
-    SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_MAECHEN_LABEL="$TR_MAE" \
-    SPIRA_SCOPE_LABEL="$TR_SCOPE" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$TRIGSH" 2>&1)"; tr_rc=$?
 
 is   "invalid-closed trigger: exits 0"             0 "$tr_rc"
@@ -229,16 +220,9 @@ tr_out2="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
-    SPIRA_BD="$_tr_bd" \
-    SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_MAECHEN_LABEL="$TR_MAE" \
-    SPIRA_SCOPE_LABEL="$TR_SCOPE" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$TRIGSH" 2>&1)"; tr_rc2=$?
 is   "dedup second run: exits 0"      0          "$tr_rc2"
 want "dedup second run: logs skip"    "skipping" "$tr_out2"
@@ -268,20 +252,14 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 printf 'sp-cr-ant1 quotation: test bead\n' > "$ALLOW_FILE"
 
 _ant_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
+tl_config SPIRA_SCOPE_LABEL="$ANT_SCOPE" SPIRA_MAECHEN_LABEL="$ANT_MAE" SPIRA_BD="$_ant_bd"
 ant_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
-    SPIRA_BD="$_ant_bd" \
-    SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_MAECHEN_LABEL="$ANT_MAE" \
-    SPIRA_SCOPE_LABEL="$ANT_SCOPE" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$TRIGSH" 2>&1)"; ant_rc=$?
 
 is     "allowlisted only: trigger exits 0"    0            "$ant_rc"
@@ -329,22 +307,16 @@ printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
 _e2e_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
+tl_config SPIRA_SCOPE_LABEL="$E2E_SCOPE" SPIRA_MAECHEN_LABEL="$E2E_MAE" SPIRA_BD="$_e2e_bd"
 
 # Step 1: trigger files one bead carrying all three rows.
 e2e_trig1="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
-    SPIRA_BD="$_e2e_bd" \
-    SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_MAECHEN_LABEL="$E2E_MAE" \
-    SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$TRIGSH" 2>&1)"; e2e_rc1=$?
 is   "e2e: trigger run 1 exits 0"           0                      "$e2e_rc1"
 want "e2e: trigger log mentions rows"        "invalid-closed trigger:" "$e2e_trig1"
@@ -365,16 +337,9 @@ e2e_trig2="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
-    SPIRA_BD="$_e2e_bd" \
-    SPIRA_DB="$SPIRA_DB" \
     SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_MAECHEN_LABEL="$E2E_MAE" \
-    SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$TRIGSH" 2>&1)"
 want "e2e: second trigger run logs skipping" "skipping" "$e2e_trig2"
 e2e_bead_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
@@ -395,13 +360,8 @@ printf 'sp-cr-e2e-c follow-up filed as %s\n' "$FOLLOW_ID" >> "$ALLOW_FILE"
 
 # Step 4: detect_invalid_closed via cockpit seam → 0 counted, 1 allowed.
 e2e_final="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-    SPIRA_PATH="${SPIRA_PATH:-}" \
     SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
-    SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_SPIKE_LABEL=spike \
-    SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect probe livelock 2>/dev/null)"
 
 is "e2e: SP_INVALID_CLOSED=0 after pass" "0" \

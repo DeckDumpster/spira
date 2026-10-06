@@ -1,5 +1,9 @@
-//! Configuration (DESIGN.md §2.6): process environment → spira-config's `[spira]` table →
-//! the conf.sh default. strand never reads spira.toml itself; spira-config does.
+//! Configuration (DESIGN.md §2.6). `$SPIRA_TOML` is the one source of config (per Ryan
+//! 2026-10-05): every registered key below goes through `spira_config::process::cfg`/
+//! `cfg_parse`, resolved once per process, no environment override, no Rust-side default
+//! atop a declared value. A handful of fields are NOT registered config at all (test-only
+//! knobs, per-invocation seams like `SPIRA_SYSTEMCTL`/`SPIRA_SUMMON`, or process-identity
+//! like `BEADS_ACTOR`) — those still come from `Source::env`, exactly as before.
 
 use std::path::PathBuf;
 
@@ -42,31 +46,29 @@ pub struct Config {
     pub work_close_types: String,
     /// `SPIRA_ID_PREFIX` (detect_invalid_closed's tracking-reference regex).
     pub id_prefix: String,
+    /// `SPIRA_FAYTHS` — `aeons_live_lanes`' override onto `spira_lane_fayths`'s own chamber
+    /// scan. Read here, once, so that pure probe logic never reads the environment itself.
+    pub fayths_override: Option<String>,
 }
 
-/// A lookup source: `env(key)` and `toml(field)`. Split out so tests can supply both.
+/// The remaining, NOT-registered lookups `resolve` still makes: a test-only knob, a seam
+/// name (`SPIRA_SYSTEMCTL`/`SPIRA_SUMMON`), or process identity (`BEADS_ACTOR`) — none of
+/// these live in `spira/conf.d`, so none of them go through `spira_config::process::cfg`.
 pub trait Source {
     fn env(&self, key: &str) -> Option<String>;
-    fn toml(&self, field: &str) -> Option<String>;
 }
 
-pub struct Live {
-    doc: Option<spira_config::SpiraToml>,
-}
+pub struct Live;
 
 impl Live {
     pub fn load() -> Live {
-        let doc = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
-        Live { doc }
+        Live
     }
 }
 
 impl Source for Live {
     fn env(&self, key: &str) -> Option<String> {
         std::env::var(key).ok()
-    }
-    fn toml(&self, field: &str) -> Option<String> {
-        spira_config::get_path(self.doc.as_ref()?, &format!("spira.{field}"))
     }
 }
 
@@ -77,65 +79,143 @@ impl Config {
         self.claim_bin = claim.into();
         self
     }
+
+    /// A fully-populated baseline `Config` for a test that needs *some* config to drive
+    /// OTHER logic (detectors, probe) — never a route for exercising `resolve`'s own config
+    /// read, which `spira_config::process::fixture_toml` + `SPIRA_TOML` covers instead (see
+    /// `resolve_reads_every_registered_key_from_the_one_toml` below). Field-update syntax
+    /// (`Config { field: x, ..Config::test_fixture() }`) tweaks just what a test cares
+    /// about, the same way `Config`'s fields were varied through a fake `Source` before (per
+    /// Ryan 2026-10-05: one source of config — a fake env/toml can no longer stand in for a
+    /// registered key once `resolve` reads it through the process-wide `cfg` door).
+    pub fn test_fixture() -> Config {
+        Config {
+            db: None,
+            run: None,
+            home: None,
+            bd: "bd".into(),
+            vocab: Vocab {
+                ask: "needs-operator".into(),
+                submitted: "spira-submitted".into(),
+                queue_wait: "spira-queue-waiting".into(),
+                open_children: "spira-open-children".into(),
+                poison: "spira-poison".into(),
+            },
+            ci_label: "awaiting-ci".into(),
+            scope_label: String::new(),
+            no_loop_label: "no-loop".into(),
+            max_aeons: Some(4),
+            max_live_aeons: 0,
+            throttle_release_at: "8".into(),
+            claim_bin: "spira-claim".into(),
+            instance: Some("prod".into()),
+            labels: None,
+            exclude_labels: None,
+            strand_grace: 900,
+            event_cooldown: 3600,
+            bd_timeout: "180".into(),
+            list_snapshot: None,
+            systemctl: "systemctl".into(),
+            summon: "systemd-run".into(),
+            capacity_pause: None,
+            throttle_stamp: None,
+            beads_actor: "harness".into(),
+            incident_label: "incident".into(),
+            groom_ask_label: "groom-asked".into(),
+            work_close_types: "task bug feature".into(),
+            id_prefix: "sp".into(),
+            fayths_override: None,
+        }
+    }
 }
 
 impl Config {
-    pub fn resolve(src: &dyn Source) -> Config {
-        // env set (even to "") wins; else toml; else default. An explicitly empty env value
-        // is a declaration (conf.sh: SPIRA_SCOPE_LABEL="" disables scope restriction).
-        let get = |env: &str, field: &str| src.env(env).or_else(|| if field.is_empty() { None } else { src.toml(field) });
-        let nonempty = |v: Option<String>| v.filter(|s| !s.is_empty());
-        let or = |env: &str, field: &str, def: &str| get(env, field).unwrap_or_else(|| def.to_string());
-        let num = |env: &str, def: i64| src.env(env).and_then(|v| v.trim().parse().ok()).unwrap_or(def);
-        let path = |env: &str| nonempty(src.env(env)).map(PathBuf::from);
+    /// Every REGISTERED key (`spira/conf.d`) goes through `spira_config::process::cfg`/
+    /// `cfg_parse` — the declared value in `$SPIRA_TOML`, resolved once per process, no
+    /// environment override, no literal Rust-side default standing in for an empty
+    /// declaration (per Ryan 2026-10-05: one source of config). `Err` here means the config
+    /// itself could not be resolved (or named a key `conf.d` does not register) — a named
+    /// refusal, propagated to the caller, never a guessed value.
+    ///
+    /// `SPIRA_BD` is the one exception worth flagging: `spira/conf.d/SPIRA_BD` carries no
+    /// default anywhere in `conf.sh` — it resolves empty unless some `spira.toml` sets it
+    /// explicitly. Before this, strand's own Rust-side default of the literal `"bd"` was the
+    /// ONLY place in the whole harness that ever supplied one. Deleting it means an install
+    /// that never set `spira.bd` now refuses here instead of silently finding `bd` on PATH.
+    pub fn resolve(src: &dyn Source) -> Result<Config, String> {
+        use spira_config::process::cfg;
 
-        let scope_label = match src.env("SPIRA_SCOPE_LABEL") {
-            Some(v) => v,
-            None => src.toml("scope_label").or_else(|| src.toml("home_repo")).unwrap_or_default(),
+        let nonempty = |v: String| if v.is_empty() { None } else { Some(v) };
+        let path = |env: &str| src.env(env).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let num_env = |env: &str, def: i64| src.env(env).and_then(|v| v.trim().parse().ok()).unwrap_or(def);
+        let str_env = |env: &str, def: &str| src.env(env).filter(|v| !v.is_empty()).unwrap_or_else(|| def.to_string());
+
+        let max_aeons_raw = cfg("SPIRA_MAX_AEONS")?;
+        let max_aeons = if max_aeons_raw.trim().is_empty() {
+            None
+        } else {
+            Some(
+                max_aeons_raw
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|e| format!("SPIRA_MAX_AEONS = {max_aeons_raw:?} in spira.toml does not parse: {e}"))?,
+            )
         };
-        Config {
-            db: nonempty(get("SPIRA_DB", "db")),
-            run: nonempty(get("SPIRA_RUN", "run")).map(PathBuf::from),
-            home: nonempty(get("SPIRA_HOME", "prod")).map(PathBuf::from),
-            bd: nonempty(get("SPIRA_BD", "bd")).unwrap_or_else(|| "bd".into()),
+        let max_live_raw = cfg("SPIRA_MAX_LIVE_AEONS")?;
+        let max_live_aeons = if max_live_raw.trim().is_empty() {
+            0
+        } else {
+            max_live_raw
+                .trim()
+                .parse::<u32>()
+                .map_err(|e| format!("SPIRA_MAX_LIVE_AEONS = {max_live_raw:?} in spira.toml does not parse: {e}"))?
+        };
+
+        let bd = cfg("SPIRA_BD")?;
+        if bd.is_empty() {
+            return Err(
+                "SPIRA_BD is empty in spira.toml — set spira.bd to the bd binary this install uses (no default exists for this key)"
+                    .to_string(),
+            );
+        }
+
+        Ok(Config {
+            db: nonempty(cfg("SPIRA_DB")?),
+            run: nonempty(cfg("SPIRA_RUN")?).map(PathBuf::from),
+            home: path("SPIRA_HOME"),
+            bd,
             vocab: Vocab {
-                ask: get("SPIRA_ASK_LABEL", "ask_label").unwrap_or_else(resolved_ask_label),
-                submitted: or("SPIRA_SUBMITTED_LABEL", "submitted_label", "spira-submitted"),
-                queue_wait: or("SPIRA_QUEUE_WAIT_LABEL", "queue_wait_label", "spira-queue-waiting"),
-                open_children: or("SPIRA_OPEN_CHILDREN_LABEL", "open_children_label", "spira-open-children"),
+                ask: cfg("SPIRA_ASK_LABEL")?,
+                submitted: cfg("SPIRA_SUBMITTED_LABEL")?,
+                queue_wait: cfg("SPIRA_QUEUE_WAIT_LABEL")?,
+                open_children: cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
                 poison: "spira-poison".into(),
             },
-            // literal-ok: conf.sh's own default; this binary cannot source schema.sh
-            ci_label: or("SPIRA_CI_LABEL", "ci_label", "awaiting-ci"),
-            scope_label,
-            // literal-ok: conf.sh's own default; this binary cannot source schema.sh
-            no_loop_label: or("SPIRA_NO_LOOP_LABEL", "no_loop_label", "no-loop"),
-            max_aeons: get("SPIRA_MAX_AEONS", "max_aeons").and_then(|v| v.trim().parse().ok()),
-            max_live_aeons: get("SPIRA_MAX_LIVE_AEONS", "max_live_aeons")
-                .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(0),
-            throttle_release_at: nonempty(get("SPIRA_QUEUE_THROTTLE_RELEASE_AT", "queue_throttle_release_at"))
-                .unwrap_or_else(|| "8".into()),
+            ci_label: cfg("SPIRA_CI_LABEL")?,
+            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
+            no_loop_label: cfg("SPIRA_NO_LOOP_LABEL")?,
+            max_aeons,
+            max_live_aeons,
+            throttle_release_at: cfg("SPIRA_QUEUE_THROTTLE_RELEASE_AT")?,
             claim_bin: "spira-claim".into(),
-            // conf.sh: an unset SPIRA_INSTANCE is identical to SPIRA_INSTANCE=prod.
-            instance: Some(nonempty(get("SPIRA_INSTANCE", "instance")).unwrap_or_else(|| "prod".into())),
-            labels: nonempty(src.env("SPIRA_LABELS")),
-            exclude_labels: nonempty(src.env("SPIRA_EXCLUDE_LABELS")),
-            strand_grace: num("SPIRA_STRAND_GRACE", 900),
-            event_cooldown: num("SPIRA_EVENT_COOLDOWN", 3600),
-            bd_timeout: nonempty(src.env("BD_TIMEOUT")).unwrap_or_else(|| "180".into()),
+            instance: nonempty(cfg("SPIRA_INSTANCE")?),
+            labels: src.env("SPIRA_LABELS").filter(|v| !v.is_empty()),
+            exclude_labels: src.env("SPIRA_EXCLUDE_LABELS").filter(|v| !v.is_empty()),
+            strand_grace: num_env("SPIRA_STRAND_GRACE", 900),
+            event_cooldown: num_env("SPIRA_EVENT_COOLDOWN", 3600),
+            bd_timeout: str_env("BD_TIMEOUT", "180"),
             list_snapshot: path("SPIRA_LIST_SNAPSHOT"),
-            systemctl: nonempty(src.env("SPIRA_SYSTEMCTL")).unwrap_or_else(|| "systemctl".into()),
-            summon: nonempty(src.env("SPIRA_SUMMON")).unwrap_or_else(|| "systemd-run".into()),
+            systemctl: str_env("SPIRA_SYSTEMCTL", "systemctl"),
+            summon: str_env("SPIRA_SUMMON", "systemd-run"),
             capacity_pause: path("SPIRA_CAPACITY_PAUSE"),
             throttle_stamp: path("SPIRA_THROTTLE_STAMP"),
-            beads_actor: nonempty(src.env("BEADS_ACTOR")).unwrap_or_else(|| "harness".into()),
-            // literal-ok: conf.sh's own derived default; this binary cannot source schema.sh
-            incident_label: or("SPIRA_INCIDENT_LABEL", "incident_label", "incident"),
-            groom_ask_label: or("SPIRA_GROOM_ASK_LABEL", "groom_ask_label", "groom-asked"),
-            work_close_types: or("SPIRA_WORK_CLOSE_TYPES", "work_close_types", "task bug feature"),
-            id_prefix: or("SPIRA_ID_PREFIX", "id_prefix", "sp"),
-        }
+            beads_actor: str_env("BEADS_ACTOR", "harness"),
+            incident_label: cfg("SPIRA_INCIDENT_LABEL")?,
+            groom_ask_label: cfg("SPIRA_GROOM_ASK_LABEL")?,
+            work_close_types: cfg("SPIRA_WORK_CLOSE_TYPES")?,
+            id_prefix: cfg("SPIRA_ID_PREFIX")?,
+            fayths_override: nonempty(cfg("SPIRA_FAYTHS")?),
+        })
     }
 
     /// The exclusions a partition whose fayth declares none falls back to.
@@ -169,36 +249,46 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
-    struct Fake {
-        env: HashMap<&'static str, &'static str>,
-        toml: HashMap<&'static str, &'static str>,
-    }
-    impl Source for Fake {
-        fn env(&self, k: &str) -> Option<String> {
-            self.env.get(k).map(|s| s.to_string())
-        }
-        fn toml(&self, f: &str) -> Option<String> {
-            self.toml.get(f).map(|s| s.to_string())
+    struct NoEnv;
+    impl Source for NoEnv {
+        fn env(&self, _: &str) -> Option<String> {
+            None
         }
     }
 
+    /// The one test in this crate allowed to exercise `resolve`'s own top-level config read
+    /// (per Ryan 2026-10-05: one source of config — every other test in strand drives its
+    /// logic off `Config::test_fixture()` instead, never off a fake env/toml, because
+    /// `spira_config::process::cfg`'s resolution is cached once per TEST BINARY PROCESS: a
+    /// second fixture here would not see its own `SPIRA_TOML`, it would see whichever ran
+    /// first).
     #[test]
-    fn env_then_toml_then_default() {
-        let f = Fake {
-            env: HashMap::from([("SPIRA_ASK_LABEL", "ask-x"), ("SPIRA_SCOPE_LABEL", "")]),
-            toml: HashMap::from([
-                ("ask_label", "ignored"),
-                ("run", "/r"),
-                ("db", "/db"),
-                ("max_aeons", "0"),
-                ("home_repo", "spira"),
-                ("queue_throttle_release_at", "12"),
-            ]),
+    fn resolve_reads_every_registered_key_from_the_one_toml() {
+        let dir = testkit::TempDir::new("strand-config-resolve");
+        let toml = spira_config::process::fixture_toml(
+            &dir,
+            &[
+                ("SPIRA_ASK_LABEL", "ask-x"),
+                ("SPIRA_DB", "/db"),
+                ("SPIRA_RUN", "/r"),
+                ("SPIRA_BD", "bd"),
+                ("SPIRA_MAX_AEONS", "0"),
+                ("SPIRA_SCOPE_LABEL", ""),
+                ("SPIRA_QUEUE_THROTTLE_RELEASE_AT", "12"),
+            ],
+        );
+        // `cfg`'s registry check needs the REAL `spira/conf.d` (every key this test reads
+        // must actually be registered there) — unlike a fixture home with an empty conf.d,
+        // this has to be the checkout's own, so it is found relative to this crate's own
+        // manifest, never by trusting an ancestor search from the test binary's path.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let c = {
+            let _env = testkit::env(&[("SPIRA_HOME", Some(real_home.to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+            Config::resolve(&NoEnv).unwrap()
         };
-        let c = Config::resolve(&f);
-        assert_eq!(c.incident_label, "incident", "default when neither env nor toml sets it");
+
+        assert_eq!(c.incident_label, "incident", "the complete fixture's own declared default");
         assert_eq!(c.groom_ask_label, "groom-asked");
         assert_eq!(c.work_close_types, "task bug feature");
         assert_eq!(c.id_prefix, "sp");
@@ -206,23 +296,9 @@ mod tests {
         assert_eq!(c.run, Some(PathBuf::from("/r")));
         assert_eq!(c.db.as_deref(), Some("/db"));
         assert_eq!(c.max_aeons, Some(0));
-        assert_eq!(c.scope_label, "", "an explicitly empty scope disables it");
+        assert_eq!(c.scope_label, "", "an explicitly empty scope disables it — still Ok, not a refusal");
         assert_eq!(c.throttle_release_at, "12");
         assert_eq!(c.vocab.submitted, "spira-submitted");
         assert_eq!(c.exclude_default(), format!("spira-poison,ask-x,{}", c.ci_label));
-        let f = Fake { env: HashMap::new(), toml: HashMap::from([("home_repo", "spira")]) };
-        assert_eq!(Config::resolve(&f).scope_label, "spira");
-        assert_eq!(Config::resolve(&f).max_aeons, None);
     }
-
-}
-
-fn resolved_ask_label() -> String {
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let home = std::env::var("SPIRA_HOME")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .or_else(|| spira_config::release_env::own_release_root_for_process().map(|r| r.join("spira")))
-        .unwrap_or_default();
-    spira_config::resolve::resolve_ask_label(&env, &home).unwrap_or_default()
 }

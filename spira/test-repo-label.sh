@@ -37,19 +37,23 @@ STUB_BD="$TMP/bd"
 printf '#!/usr/bin/env bash\nprintf "bd-called\\n"; exit 0\n' > "$STUB_BD"
 chmod +x "$STUB_BD"
 
-# Source lib.sh with a fixture environment so it does not read the real database.
+# Source lib.sh with a fixture environment so it does not read the real database. The
+# compiled `bdq` binary each bash -c execs resolves fresh from SPIRA_TOML, never from this
+# process's inherited env, so the registered keys go through tl_config and SPIRA_TOML is
+# threaded through env -i to reach it.
+tl_config SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB_BD"
 run_check() {   # run_check <label-string> -> "ok" or "refused:<stderr>"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB_BD" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_repo_label create title --labels "$2"' \
             -- "$HERE" "$1" 2>&1
 }
 
 run_bdq_create() {  # run_bdq_create <labels> -> combined stdout+stderr, exits as bdq does
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" BD_TIMEOUT=10 \
         bash -c '. "$1/lib.sh"; bdq create title --labels "$2"' \
             -- "$HERE" "$1" 2>&1
 }
@@ -110,9 +114,10 @@ example_first="$(awk 'BEGIN{FS="|"} /^[[:space:]]*#/{next}
     "$EXAMPLE_MAP")"
 
 run_example() {   # run_example <labels>
+    tl_config SPIRA_REPO_MAP="$EXAMPLE_MAP"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$EXAMPLE_MAP" SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" BD_TIMEOUT=10 \
         bash -c '. "$1/lib.sh"; bdq create title --labels "$2"' \
             -- "$HERE" "$1" 2>&1
 }
@@ -139,17 +144,23 @@ echo "though conf.sh's OWN resolution leaves it genuinely unexported, as product
 # X=2` leaves X exported) — so every section above, including the repo-map.example one,
 # accidentally keeps SPIRA_REPO_MAP exported the whole time and never exercises the hazard.
 #
-# This section instead sets NO SPIRA_REPO_MAP at all — only SPIRA_HOME (as every real caller
-# does: a systemd unit, an aeon session, always exports it) — so conf.sh resolves the map
-# itself, through `spira-config resolve`'s own typed export set, which assigns SPIRA_REPO_MAP
-# with a PLAIN statement (confirmed: `declare -p SPIRA_REPO_MAP` after sourcing shows
-# `declare --`, no `-x`). That is the genuine hazard: a value lib.sh's own machinery computed
-# and deliberately left unexported, which the compiled `bdq` binary — spawned as a child
-# process — cannot see unless this shim threads it through explicitly. Checked against the
-# same repo-map.example content the section above already parsed into $example_first.
+# This section instead sets NO SPIRA_REPO_MAP literal in env -i at all — only SPIRA_HOME (as
+# every real caller does: a systemd unit, an aeon session, always exports it) — so conf.sh
+# resolves the map itself, through `spira-config resolve`'s own typed export set, which
+# assigns SPIRA_REPO_MAP with a PLAIN statement (confirmed: `declare -p SPIRA_REPO_MAP` after
+# sourcing shows `declare --`, no `-x`). That is the genuine hazard: a value lib.sh's own
+# machinery computed and deliberately left unexported, which the compiled `bdq` binary —
+# spawned as a child process — cannot see unless this shim threads it through explicitly.
+#
+# conf.sh refuses outright with no SPIRA_TOML at all (per Ryan 2026-10-05), so this section
+# has to pass SPIRA_TOML through for conf.sh's resolution to happen at all — and then declare
+# SPIRA_REPO_MAP there (tl_config) rather than as an env -i literal, so the value conf.sh
+# resolves and plain-assigns is still the same repo-map.example content $example_first was
+# parsed from above.
+tl_config SPIRA_REPO_MAP="$EXAMPLE_MAP"
 run_ambient() {   # run_ambient <labels> -> relies entirely on conf.sh's own resolution
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_HOME="$HERE" SPIRA_DB="$TMP/nodb" \
-        SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
+        BD_TIMEOUT=10 \
         bash -c '. "$1/lib.sh"; bdq create title --labels "$2"' \
             -- "$HERE" "$1" 2>&1
 }

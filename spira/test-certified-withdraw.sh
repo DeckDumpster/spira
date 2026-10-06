@@ -55,7 +55,8 @@ echo "test-certified-withdraw.sh"
 echo
 echo "bead_reopen: CERTIFIED landstate is withdrawn on reopen; other states untouched:"
 
-export SPIRA_RUN="$RUN" SPIRA_REAPLOG="$RUN/reap.log" SPIRA_CONF="$TMP/no-such-conf"
+tl_config SPIRA_RUN="$RUN"
+export SPIRA_REAPLOG="$RUN/reap.log" SPIRA_CONF="$TMP/no-such-conf"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 

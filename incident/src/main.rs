@@ -58,9 +58,22 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
     })
 }
 
+/// Registered config keys (`spira/conf.d`) this crate's generic `env()` seam also serves —
+/// $SPIRA_TOML only, through `spira_config::process::cfg`, never the raw environment, never
+/// a fallback (per Ryan 2026-10-05: one source of config). Every other name `env()` is
+/// called with is NOT in `spira/conf.d` (an ad hoc override with no registry entry, same as
+/// it has always been for the bash function) and keeps the old env/registry/default chain.
+const REGISTERED: &[&str] =
+    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_BD"];
+
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so an explicit env override still wins exactly as it did before this bead.
+/// EXCEPT for a registered key (see [`REGISTERED`]), which this never reads from the
+/// environment at all.
 fn env(name: &str) -> Option<String> {
+    if REGISTERED.contains(&name) {
+        return spira_config::process::cfg(name).ok();
+    }
     raw_env(name).or_else(|| {
         let v = resolved_config().get(name);
         (!v.is_empty()).then(|| v.to_string())
@@ -427,7 +440,15 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     // bd as content, the unfinished ones (READY/WORKING/REWORK) are kept, and bd renders
     // those by id. Filters the same four leading-character classes the bash's
     // `grep -vE '^💡|^warning|^  Fix|^  Or'` drops (bd's own tip/warning chrome).
-    let bd_bin = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into());
+    // SPIRA_BD is a registered key (spira/conf.d) — the one source of config (per Ryan
+    // 2026-10-05), through `spira_config::process::cfg`, never a literal default.
+    let bd_bin = match spira_config::process::cfg("SPIRA_BD") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("incident: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let lc = match spira_config::lc_state::list().map(spira_config::lc_state::index) {
         Ok(m) => m,
         Err(e) => {
@@ -503,7 +524,13 @@ fn main() -> ExitCode {
         // bash's per-subcommand behaviour; every other subcommand refuses up front.
     }
 
-    let bd = RealBd::from_env();
+    let bd = match RealBd::from_env() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("incident: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let mailer = RealMailer;
     let clock = RealClock;
     let provenance = env_cfg.provenance();
@@ -549,30 +576,34 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
-    /// Wave 4.8: `env`/`env_or` now fall back to `spira_config::resolve()` between the raw
-    /// environment and the caller's own default. This is the ONLY test in this binary
-    /// that calls `env`/`resolved_config` — the `OnceLock` inside `resolved_config`
-    /// computes once per process and never resets. SPIRA_HOME points at a throwaway
-    /// fixture with its own `conf.d` (never the real box's).
+    /// A NON-registered name still falls back to `spira_config::resolve()` between the raw
+    /// environment and the caller's own default — unchanged by the `SPIRA_WATCHER_INTERVAL_S`
+    /// migration below, since `SPIRA_NO_SUCH_KEY_AT_ALL_EVER` is not in `spira/conf.d`.
     #[test]
-    fn env_falls_back_to_the_registry_then_the_callers_default() {
-        let dir = testkit::TempDir::new("incident-env");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_WATCHER_INTERVAL_S"),
-            "TYPE=u32\nGROUP=watcher\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_WATCHER_INTERVAL_S:=1800}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-        std::env::remove_var("SPIRA_WATCHER_INTERVAL_S");
-
-        assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("1800".to_string()), "a registry default must reach env() without an env override");
+    fn a_non_registered_name_still_falls_back_through_the_registry() {
         assert_eq!(env("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None);
+    }
 
+    /// `SPIRA_WATCHER_INTERVAL_S` IS registered — per Ryan 2026-10-05 (one source of
+    /// config), `env()` must read it only through `spira_config::process::cfg`, from
+    /// `$SPIRA_TOML`, never from a competing environment override. This is the ONLY test in
+    /// this binary that drives a registered key through `env()`: `cfg`'s resolution is a
+    /// process-global `OnceLock`, computed once and never reset.
+    #[test]
+    fn a_registered_key_never_reads_an_environment_override() {
+        let dir = testkit::TempDir::new("incident-env");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_WATCHER_INTERVAL_S", "1800")]);
+        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
+        // lives), never unset: `cfg()` cannot resolve at all without it.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        std::env::set_var("SPIRA_HOME", &real_home);
+        std::env::set_var("SPIRA_TOML", &toml);
         std::env::set_var("SPIRA_WATCHER_INTERVAL_S", "99");
-        assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("99".to_string()), "an explicit env override still wins over the registry");
-        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("1800".to_string()), "the declared value, never the environment override");
+
+        std::env::remove_var("SPIRA_WATCHER_INTERVAL_S");
+        std::env::remove_var("SPIRA_TOML");
+        std::env::remove_var("SPIRA_HOME");
     }
 }

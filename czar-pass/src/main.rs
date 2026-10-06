@@ -68,9 +68,19 @@ struct Config {
     systemctl: String,
     spira_lc: String,
     repo_map: Option<PathBuf>,
+    /// `SPIRA_CZAR_STAGE_<CLASS>` for every registered class (spira/conf.d), resolved once
+    /// at construction via `cfg` — `stage()` below only ever looks this map up, it never
+    /// reads config itself (per Ryan 2026-10-05: one source of config).
+    stages: std::collections::BTreeMap<String, Stage>,
     now_secs: u64,
     now_iso: String,
 }
+
+/// Every `SPIRA_CZAR_STAGE_*` class this binary knows about (matches spira/conf.d's own
+/// `SPIRA_CZAR_STAGE_*` registrations exactly — a class here with no registered key is a
+/// config-registry bug, not a defaulting decision).
+const CZAR_STAGE_CLASSES: &[&str] =
+    &["ATTRIBUTION_FAILED", "BASE_RED", "CI_RED", "CI_STALLED", "DEADLOCK", "LOOP_STALLED", "POOL_IDLE", "SORT_FAILED", "STARVED"];
 
 /// `SPIRA_*` values a bash process `Config::from_env`'s own callers spawn (`. "$SPIRA_HOME/
 /// lib.sh"` in `summon_fayth_czar`, inheriting this process's own environment) must never
@@ -127,22 +137,64 @@ fn merge_resolved_env() {
     }
 }
 
+/// One source of config (per Ryan 2026-10-05): a registered key's value comes from
+/// `spira_config::process::cfg`, resolved from `$SPIRA_TOML` — never from this process's
+/// own environment, and never with a Rust-side default (every key read through here
+/// already carries its default in spira/conf.d). A resolution failure is a named refusal,
+/// not a silent fallback.
+fn must_cfg(key: &str) -> String {
+    match spira_config::process::cfg(key) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("czar-pass: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn must_cfg_parse<T: std::str::FromStr>(key: &str) -> T
+where
+    T::Err: std::fmt::Display,
+{
+    match spira_config::process::cfg_parse::<T>(key) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("czar-pass: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 impl Config {
     fn from_env() -> Config {
+        // merge_resolved_env() remains for the one thing it still does: making a resolved
+        // value visible to the bash children this process spawns (incident_sh, forge_sh,
+        // ...) that read their own SPIRA_* from their inherited environment. Config's own
+        // fields below no longer round-trip through that merged environment — they read
+        // $SPIRA_TOML directly via `cfg`/`cfg_parse`.
         merge_resolved_env();
-        // sp-ivfu3: `merge_resolved_env` above already set `SPIRA_RUN` in this process's
-        // own environment when `spira_config` could resolve it at all — the only way this
-        // read still comes up empty is a `spira.toml` that failed to parse, and that is a
-        // named refusal now, never the literal `/tmp/spira` a bare shell used to get.
-        let spira_run_str = env::var("SPIRA_RUN").unwrap_or_default();
+        let spira_run_str = must_cfg("SPIRA_RUN");
         if spira_run_str.is_empty() {
-            eprintln!("czar-pass: FATAL: cannot resolve spira.run (SPIRA_RUN is unset and spira_config could not resolve it)");
+            eprintln!("czar-pass: FATAL: cannot resolve spira.run (SPIRA_RUN resolved empty)");
             std::process::exit(1);
         }
         let spira_run = PathBuf::from(&spira_run_str);
         let now = unix_now();
         let iso = compute_now_iso();
+        let stages = CZAR_STAGE_CLASSES
+            .iter()
+            .map(|class| {
+                let key = format!("SPIRA_CZAR_STAGE_{class}");
+                let stage = if must_cfg(&key) == "act" { Stage::Act } else { Stage::Shadow };
+                (class.to_string(), stage)
+            })
+            .collect();
+        let repo_map = must_cfg("SPIRA_REPO_MAP");
         Config {
+            // SPIRA_CZAR_LOG/SPIRA_QUEUE_LOG/SPIRA_CZAR_PASS_MARKER/SPIRA_RECONCILER_STATE/
+            // SPIRA_RECONCILER_STATUS_LOG/SPIRA_LAND_UNIT/SPIRA_SYSTEMCTL/
+            // SPIRA_INCIDENT_SH are not registered config keys (spira/conf.d has no entry
+            // for any of them) — left as plain env reads with their existing defaults.
             czar_log: env::var("SPIRA_CZAR_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("czar.log")),
@@ -156,26 +208,12 @@ impl Config {
             // remain the seams that name another script. forge.sh is retired (sp-t4y60) —
             // sp-yv4b3 found this default still naming the deleted script.
             incident_sh: env::var("SPIRA_INCIDENT_SH").unwrap_or_else(|_| "incident.sh".into()),
-            forge_sh: env::var("SPIRA_FORGE").unwrap_or_else(|_| "forge".into()),
-            queue_dir: env::var("SPIRA_QUEUE_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("queue")),
-            stall_secs: env::var("SPIRA_LOOP_STALL_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(3000),
-            ci_queued_max: env::var("SPIRA_CI_QUEUED_MAX_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(600),
-            ci_red_max: env::var("SPIRA_CI_RED_MAX_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(600),
-            base_unreadable_grace: env::var("SPIRA_BASE_CI_UNREADABLE_GRACE_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(120),
+            forge_sh: must_cfg("SPIRA_FORGE"),
+            queue_dir: PathBuf::from(must_cfg("SPIRA_QUEUE_DIR")),
+            stall_secs: must_cfg_parse("SPIRA_LOOP_STALL_SECS"),
+            ci_queued_max: must_cfg_parse("SPIRA_CI_QUEUED_MAX_SECS"),
+            ci_red_max: must_cfg_parse("SPIRA_CI_RED_MAX_SECS"),
+            base_unreadable_grace: must_cfg_parse("SPIRA_BASE_CI_UNREADABLE_GRACE_SECS"),
             lock_path: spira_run.join("czar-pass.lock"),
             reconciler_state: env::var("SPIRA_RECONCILER_STATE")
                 .map(PathBuf::from)
@@ -187,42 +225,28 @@ impl Config {
             // pool below this can never be a PoolFull trigger, whatever the adaptive ceiling
             // turns out to be, so it is the one threshold this detector can check without
             // replaying batcher's own pool-history math.
-            round_min_n: env::var("SPIRA_QUEUE_ROUND_MIN_N")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(4),
-            round_stall_secs: env::var("SPIRA_QUEUE_ROUND_STALL_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(900),
-            spira_db: env::var("SPIRA_DB").unwrap_or_default(),
-            scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
-            czar_label: env::var("SPIRA_CZAR_LABEL")
-                .unwrap_or_else(|_| "czar-trigger".to_string()),
-            express_label: env::var("SPIRA_EXPRESS_LABEL")
-                .unwrap_or_else(|_| "express".to_string()),
-            land_unit: env::var("SPIRA_LAND_UNIT")
-                .unwrap_or_else(|_| "spira-landing".to_string()),
-            systemctl: env::var("SPIRA_SYSTEMCTL")
-                .unwrap_or_else(|_| "systemctl".to_string()),
+            round_min_n: must_cfg_parse("SPIRA_QUEUE_ROUND_MIN_N"),
+            round_stall_secs: must_cfg_parse("SPIRA_QUEUE_ROUND_STALL_SECS"),
+            spira_db: must_cfg("SPIRA_DB"),
+            scope_label: must_cfg("SPIRA_SCOPE_LABEL"),
+            czar_label: must_cfg("SPIRA_CZAR_LABEL"),
+            express_label: must_cfg("SPIRA_EXPRESS_LABEL"),
+            land_unit: env::var("SPIRA_LAND_UNIT").unwrap_or_else(|_| "spira-landing".to_string()),
+            systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
             spira_lc: "spira-lc".to_string(),
-            repo_map: env::var("SPIRA_REPO_MAP").ok().map(PathBuf::from),
+            repo_map: (!repo_map.is_empty()).then(|| PathBuf::from(repo_map)),
+            stages,
             now_secs: now,
             now_iso: iso,
             spira_run,
         }
     }
 
+    /// Looked up from `self.stages`, resolved once in `from_env` — never a config read of
+    /// its own, so this stays callable from pure detector logic.
     fn stage(&self, class: &str) -> Stage {
-        let key = format!(
-            "SPIRA_CZAR_STAGE_{}",
-            class.to_uppercase().replace('-', "_")
-        );
-        if env::var(&key).as_deref() == Ok("act") {
-            Stage::Act
-        } else {
-            Stage::Shadow
-        }
+        let key = class.to_uppercase().replace('-', "_");
+        self.stages.get(&key).cloned().unwrap_or(Stage::Shadow)
     }
 }
 
@@ -1356,26 +1380,10 @@ mod tests {
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Serialises the two tests below that touch the real process environment (SPIRA_FORGE,
-    // PATH) — same pattern as release's `ENV_LOCK`/`PathGuard` (release/src/tests.rs).
+    // Serialises the tests below that touch the real process environment (SPIRA_HOME,
+    // SPIRA_TOML, SPIRA_CZAR_LABEL, ...) — same pattern as release's `ENV_LOCK`
+    // (release/src/tests.rs).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        forge: Option<std::ffi::OsString>,
-        path: Option<std::ffi::OsString>,
-    }
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.forge {
-                Some(f) => env::set_var("SPIRA_FORGE", f),
-                None => env::remove_var("SPIRA_FORGE"),
-            }
-            match &self.path {
-                Some(p) => env::set_var("PATH", p),
-                None => env::remove_var("PATH"),
-            }
-        }
-    }
 
     // Wave 4.8: merge_resolved_env() must reach a registry key `Config::from_env` never
     // hardcoded a default for (SPIRA_CZAR_LABEL's conf.d default, "czar-trigger", is the
@@ -1388,6 +1396,7 @@ mod tests {
         let saved_home = env::var_os("SPIRA_HOME");
         let saved_label = env::var_os("SPIRA_CZAR_LABEL");
         let saved_max_aeons = env::var_os("SPIRA_MAX_AEONS");
+        let saved_toml = env::var_os("SPIRA_TOML");
         env::remove_var("SPIRA_CZAR_LABEL");
         env::remove_var("SPIRA_MAX_AEONS");
         let dir = testkit::TempDir::new("czar-pass-merge-env");
@@ -1399,6 +1408,14 @@ mod tests {
         )
         .unwrap();
         env::set_var("SPIRA_HOME", &home);
+        // merge_resolved_env() calls resolve_for_process on THIS process's own
+        // environment (it has no env parameter of its own to hand a synthetic one to),
+        // so SPIRA_TOML has to be real and ambient here too (per Ryan 2026-10-05: one
+        // source of config — "SPIRA_TOML is not set" is a refusal, not "defaults only").
+        // The complete fixture's own czar_label ("czar-trigger") already matches what
+        // this synthetic conf.d declares as its default, so no override is needed.
+        let toml = spira_config::process::fixture_toml(&dir, &[]);
+        env::set_var("SPIRA_TOML", &toml);
 
         merge_resolved_env();
 
@@ -1417,6 +1434,10 @@ mod tests {
             Some(v) => env::set_var("SPIRA_MAX_AEONS", v),
             None => env::remove_var("SPIRA_MAX_AEONS"),
         }
+        match saved_toml {
+            Some(v) => env::set_var("SPIRA_TOML", v),
+            None => env::remove_var("SPIRA_TOML"),
+        }
 
         assert_eq!(got_label, Some("czar-trigger".to_string()), "a registry default must reach the real environment");
         assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
@@ -1426,13 +1447,37 @@ mod tests {
     // REGRESSION (sp-yv4b3): production queue-watch went blind — "forge check-status 459:
     // No such file or directory (os error 2)" — because this default named the retired
     // `forge.sh` instead of the release's `forge` binary. Fails on the pre-fix default.
+    //
+    // This is the one test in this binary allowed to drive `Config::from_env` end to end
+    // (per the one-source-of-config rule, `cfg`'s resolution is a `OnceLock` — fixed for
+    // the rest of this process after the first call, so only one test may ever set
+    // `SPIRA_TOML` meaningfully). Every other test that needs a `Config` uses `test_config`
+    // below, passing values directly instead of through the environment.
     #[test]
-    fn config_from_env_defaults_forge_sh_to_the_bare_release_binary() {
+    fn config_from_env_resolves_forge_sh_through_cfg() {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard { forge: env::var_os("SPIRA_FORGE"), path: env::var_os("PATH") };
-        env::remove_var("SPIRA_FORGE");
+        let saved_toml = env::var_os("SPIRA_TOML");
+        let saved_home = env::var_os("SPIRA_HOME");
+        let dir = testkit::TempDir::new("czar-pass-config-from-env");
+        let toml = spira_config::process::fixture_toml(&dir, &[]);
+        env::set_var("SPIRA_TOML", &toml);
+        // The real, checked-in spira/conf.d (this crate's own repo layout: `czar-pass/`
+        // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate
+        // every key `Config::from_env` asks for.
+        env::set_var("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira"));
+
         let cfg = Config::from_env();
-        assert_eq!(cfg.forge_sh, "forge", "default must name the bare release binary, not forge.sh");
+
+        match saved_toml {
+            Some(v) => env::set_var("SPIRA_TOML", v),
+            None => env::remove_var("SPIRA_TOML"),
+        }
+        match saved_home {
+            Some(v) => env::set_var("SPIRA_HOME", v),
+            None => env::remove_var("SPIRA_HOME"),
+        }
+        assert_eq!(cfg.forge_sh, "forge", "Config::from_env must resolve SPIRA_FORGE through cfg(), not an inline default");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     // End-to-end: the default's bare name must reach a stub named `forge` (never `forge.sh`)
@@ -1649,6 +1694,9 @@ mod tests {
             systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
             spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
             repo_map: None,
+            // Every case here runs in Shadow stage (the suite's own doc comment above) —
+            // an empty map's lookup already defaults to Shadow, matching that intent.
+            stages: std::collections::BTreeMap::new(),
             now_secs: now,
             now_iso: "2026-01-01T00:00:00Z".to_string(),
         }

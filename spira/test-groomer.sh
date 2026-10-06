@@ -37,6 +37,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): groomer refuses outright
+# ("neither SPIRA_HOME nor SPIRA_RELEASE is set") without one, and every binary reads
+# <home>/conf.d directly (sfail round 3, pattern 1).
+STUB_HOME="$T/home-stub"; mkdir -p "$STUB_HOME"
+ln -s "$HERE/conf.d" "$STUB_HOME/conf.d"
+
 # Build a stub bd that records its arguments and returns appropriate responses. The stub
 # is queried by checking the recorded argv file; each invocation appends a newline-delimited
 # record. For 'show' commands, return JSON with status field. For other commands, just record.
@@ -76,9 +82,10 @@ chmod +x "$STUB_BD"
 # real config is read; defaults from conf.sh still apply. SPIRA_BD is the stub so no real
 # bd is called. SPIRA_DB is a temp path (bd never runs, so the value does not need to exist).
 run_groomer() {
-    env -i HOME="$T" PATH="$PATH" \
+    tl_config SPIRA_BD="$STUB_BD"
+    env -i SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
+        SPIRA_HOME="$STUB_HOME" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
         groomer "$@" 2>&1

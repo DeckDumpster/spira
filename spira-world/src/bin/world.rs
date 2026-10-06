@@ -74,6 +74,21 @@ fn drain_stamp_or_die() -> PathBuf {
     spira_world::drain_stamp().unwrap_or_else(|e| die(&e))
 }
 
+/// `SPIRA_CTRL`'s declared value — the operational control plane file's path. The declared
+/// default is itself `$SPIRA_RUN/control` (`spira/conf.d/SPIRA_CTRL`), so this is never a
+/// second, Rust-side fallback onto `run_or_die().join("control")` (per Ryan 2026-10-05: one
+/// source of config).
+fn ctrl_path_or_die() -> PathBuf {
+    spira_config::process::cfg("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|e| die(&e))
+}
+
+/// `SPIRA_PROD`'s declared value, resolved once here and handed to [`spira_prod_or_home`] —
+/// never read from the environment inside that pure function.
+fn resolved_prod(home: &std::path::Path) -> PathBuf {
+    let prod = spira_config::process::cfg("SPIRA_PROD").unwrap_or_else(|e| die(&e));
+    spira_prod_or_home(home, &prod)
+}
+
 fn now_iso() -> String {
     Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -357,7 +372,7 @@ fn cmd_stop(args: &[String]) -> i32 {
 
         let mut stray = 0u32;
         let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-        let prod = spira_prod_or_home(&home);
+        let prod = resolved_prod(&home);
         let aeon_paths: Vec<String> = vec![
             home.join("aeon.sh").to_string_lossy().into_owned(),
             prod.join("aeon.sh").to_string_lossy().into_owned(),
@@ -421,9 +436,7 @@ fn cmd_stop(args: &[String]) -> i32 {
 fn cmd_start(args: &[String]) -> i32 {
     let planes = selected_planes(args, &[Plane::Work, Plane::Observability]);
     println!("spira: starting {}", plane_names(&planes));
-    let ctrl_path = env::var_os("SPIRA_CTRL")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| run_or_die().join("control"));
+    let ctrl_path = ctrl_path_or_die();
     let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
     let suspended = spira_ctrl::load_suspended(&ctrl_data);
     let instance = instance_or_die();
@@ -583,7 +596,7 @@ fn cmd_drain(args: &[String]) -> i32 {
     println!("spira: draining — no new aeons; loop, landing and reaping continue");
 
     let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-    let prod = spira_prod_or_home(&home);
+    let prod = resolved_prod(&home);
     let aeon_paths: Vec<String> = vec![
         home.join("aeon.sh").to_string_lossy().into_owned(),
         prod.join("aeon.sh").to_string_lossy().into_owned(),
@@ -669,7 +682,7 @@ fn cmd_status() -> i32 {
         }
     } else {
         println!("spira: not halted by world.sh");
-        let ctrl_path = env::var_os("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|| run_or_die().join("control"));
+        let ctrl_path = ctrl_path_or_die();
         let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
         let suspended = spira_ctrl::load_suspended(&ctrl_data);
         let mut degraded = Vec::new();
@@ -733,8 +746,8 @@ fn cmd_status() -> i32 {
     }
 
     let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-    let prod = spira_prod_or_home(&home);
-    let worker_paths = spira_world::live_worker_paths(&home);
+    let prod = resolved_prod(&home);
+    let worker_paths = spira_world::live_worker_paths(&home, &prod);
     let worker_refs: Vec<&str> = worker_paths.iter().map(String::as_str).collect();
     let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
     println!("  {:<26} {}", "live workers (/proc)", wcount);

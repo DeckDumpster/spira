@@ -87,9 +87,30 @@ printf '%s\n' "${SPIRA_INCIDENT_REF:-}"         >> "$INC_REFS"
 cat > /dev/null
 MOCK
     chmod +x "$mock"
+    # SPIRA_RUN/SPIRA_QUEUE_THROTTLE_DEPTH_AT/STALL_MINS/RELEASE_AT/OVERRIDE are registered
+    # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, always
+    # starting from the complete fixture's own defaults so a call that omits one of the
+    # throttle keys does not inherit an earlier call's override. SPIRA_TC_* stay plain env
+    # vars (not registered) and go through env -i as before. OVERRIDE's own conf.d default
+    # is EMPTY ("no override, decide normally") — "off" is the operator kill switch
+    # (watchtower/src/main.rs: override_off pins admission not-throttled unconditionally,
+    # before depth is even read). Baselining it to "off" here force-disabled every case in
+    # this suite that does not pass its own OVERRIDE=; only the two cases that test the
+    # kill switch itself ("override off — throttle pinned disabled") still set it.
+    local arg env_overrides=()
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_QUEUE_THROTTLE_DEPTH_AT=1000 \
+        SPIRA_QUEUE_THROTTLE_STALL_MINS=50 SPIRA_QUEUE_THROTTLE_RELEASE_AT=12 \
+        SPIRA_QUEUE_THROTTLE_OVERRIDE=""
+    for arg in "$@"; do
+        case "$arg" in
+            SPIRA_TC_*) env_overrides+=("$arg") ;;
+            *)          tl_config "$arg" ;;
+        esac
+    done
+    # round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches); without
+    # it, watchtower has no <home>/conf.d to resolve its config schema at all.
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         SPIRA_THROTTLE_STAMP="$TMP/run/queue-throttled" \
         SPIRA_INCIDENT_SH="$mock" \
@@ -98,7 +119,8 @@ MOCK
         INC_SUBJECTS="$TMP/inc-subjects" \
         INC_CAUSES="$TMP/inc-causes" \
         INC_REFS="$TMP/inc-refs" \
-        "$@" watchtower --throttle-check 2>/dev/null
+        SPIRA_TOML="$SPIRA_TOML" \
+        "${env_overrides[@]}" watchtower --throttle-check 2>/dev/null
 }
 
 stamp_exists() { [ -f "$TMP/run/queue-throttled" ] && echo yes || echo no; }

@@ -59,6 +59,9 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/home/.../chamber. Declare this suite's real one.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
@@ -67,8 +70,15 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+# round 2 fix: the complete fixture now declares scope_label="spira" as its base value, so
+# builder.fayth's FAYTH_LABELS (resolved against aeon's real config, not this shell's unset
+# $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads below never carry —
+# nothing would ever be ready to claim. Declare the empty scope this suite has always meant.
+tl_config SPIRA_SCOPE_LABEL=""
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -79,6 +89,7 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
 aeon_fixture_agent "$BIN/claude"
 command -v aeon >/dev/null 2>&1 \

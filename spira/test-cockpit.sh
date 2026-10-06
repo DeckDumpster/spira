@@ -27,12 +27,16 @@ trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
+# Constant across every env -i invocation below unless re-declared (the ratelim "without a
+# trace" case re-points SPIRA_RUN at EMPTY_RUN further down).
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+    SPIRA_FAYTHS=builder SPIRA_COCKPIT="$TMP"
+
 # A minimal environment: no INVOCATION_ID, no real config, no inherited state.
 run_cockpit() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         cockpit-collect once 2>/dev/null
 }
@@ -83,8 +87,7 @@ chmod +x "$BIN/systemctl"
 rm -f "$RUN/cockpit.env"
 env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     INVOCATION_ID="inv-42" MOCK_INVOCATION_ID="inv-42" \
     cockpit-collect once >/dev/null 2>&1
 if [ -f "$RUN/cockpit.env" ]; then
@@ -128,9 +131,7 @@ echo "the may-write fence and the collect-loop guard, driven directly:"
 may_write() {
     env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        SPIRA_COCKPIT="$TMP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         cockpit-collect --test-may-write 2>/dev/null
 }
@@ -139,9 +140,7 @@ may_write() {
 run_loop_guard() {
     env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        SPIRA_COCKPIT="$TMP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         cockpit-collect --test-loop-guard
 }
@@ -177,8 +176,7 @@ TRACE
 
 rl_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect probe ratelim 2>/dev/null)"
 
 want  "five_hour utilisation present"        "SP_RATELIM_5H="     "$rl_out"
@@ -197,10 +195,10 @@ echo
 echo "ratelim: without a trace (empty run dir):"
 
 EMPTY_RUN="$TMP/empty-run"; mkdir -p "$EMPTY_RUN"
+tl_config SPIRA_RUN="$EMPTY_RUN"
 rl_empty="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$EMPTY_RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect probe ratelim 2>/dev/null)"
 
 want "SP_RATELIM_5H is '?'" "SP_RATELIM_5H=?" "$rl_empty"

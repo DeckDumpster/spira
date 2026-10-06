@@ -22,14 +22,17 @@ fn every_real_registry_key_resolves_without_error() {
     let mut env = std::collections::BTreeMap::new();
     env.insert("HOME".to_string(), "/home/parity-test".to_string());
 
+    // ONE SOURCE, EVERY KEY REQUIRED: the complete fixture spira.toml must declare every key
+    // the real registry names — a key added to spira/conf.d without a declaration fails here.
+    let doc = spira_config::validate(include_str!("fixtures/complete.toml")).expect("the complete fixture validates");
     let resolved = spira_config::resolve::resolve(spira_config::resolve::ResolveInput {
         env: &env,
         home: &home,
         repo: &repo,
-        toml: None,
+        toml: Some(&doc),
         conf_d: &conf_d,
     })
-    .expect("every real conf.d default should evaluate (see eval.rs's module doc for the shapes it supports)");
+    .expect("every registered key must be declared in the complete spira.toml");
 
     // Every key the registry names has SOME resolved value (possibly empty) — resolve never
     // silently drops a key the registry knows about.

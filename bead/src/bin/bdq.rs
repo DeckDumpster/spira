@@ -35,10 +35,14 @@ fn main() {
 }
 
 fn cmd_latency() -> i32 {
-    let path = match env_nonempty("SPIRA_RUN") {
-        Some(run) => format!("{run}/bdq/latency.log"),
-        None => {
-            eprintln!("bdq __latency: SPIRA_RUN is unset");
+    let path = match spira_config::process::cfg("SPIRA_RUN") {
+        Ok(run) if !run.is_empty() => format!("{run}/bdq/latency.log"),
+        Ok(_) => {
+            eprintln!("bdq __latency: SPIRA_RUN resolved empty");
+            return 1;
+        }
+        Err(e) => {
+            eprintln!("bdq __latency: {e}");
             return 1;
         }
     };
@@ -102,16 +106,16 @@ fn cmd_fence(args: &[String]) -> i32 {
                 None => 0,
             }
         }
-        "destructive" => match env_nonempty("SPIRA_ASK_LABEL") {
-            Some(ask_label) => match check_destructive(&rest, &ask_label) {
+        "destructive" => match spira_config::process::cfg("SPIRA_ASK_LABEL") {
+            Ok(ask_label) => match check_destructive(&rest, &ask_label) {
                 Some(msg) => {
                     eprint!("{msg}");
                     1
                 }
                 None => 0,
             },
-            None => {
-                eprintln!("bash: SPIRA_ASK_LABEL: SPIRA_ASK_LABEL is unset — source conf.sh");
+            Err(e) => {
+                eprintln!("bdq: {e}");
                 1
             }
         },
@@ -156,8 +160,20 @@ fn cmd_json_count() -> i32 {
 // =========================================================================================
 
 fn cmd_ghq(args: &[String]) -> i32 {
+    // GH_TIMEOUT is not a registered config key (spira/conf.d has no entry) — left as a
+    // plain env read with its existing default.
     let gh_timeout = env_or("GH_TIMEOUT", "120");
-    let gh_bin = env_or("SPIRA_GH", "gh");
+    // SPIRA_GH's own registered default is empty — empty is this key's documented sentinel
+    // for "the system gh" (spira/conf.d/SPIRA_GH), not a missing-value fallback, so mapping
+    // it to "gh" here is the key's own semantics, not a second default on top of cfg's.
+    let gh_bin = match spira_config::process::cfg("SPIRA_GH") {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => "gh".to_string(),
+        Err(e) => {
+            eprintln!("bdq: {e}");
+            return 1;
+        }
+    };
     Command::new("timeout")
         .arg(&gh_timeout)
         .arg(&gh_bin)
@@ -220,10 +236,10 @@ fn cmd_bdq(args: &[String]) -> i32 {
             eprint!("{msg}");
             return 1;
         }
-        let ask_label = match env_nonempty("SPIRA_ASK_LABEL") {
-            Some(v) => v,
-            None => {
-                eprintln!("bash: SPIRA_ASK_LABEL: SPIRA_ASK_LABEL is unset — source conf.sh");
+        let ask_label = match spira_config::process::cfg("SPIRA_ASK_LABEL") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("bdq: {e}");
                 return 1;
             }
         };
@@ -263,20 +279,36 @@ fn cmd_bdq(args: &[String]) -> i32 {
     }
 
     // Refuse rather than fall through to bd's own auto-discovery (sp-agdzk/sp-25b7s).
-    let db = match env_nonempty("SPIRA_DB") {
-        Some(d) => d,
-        None => {
+    // SPIRA_DB is registered but deliberately carries no conf.d default (an explicitly
+    // empty SPIRA_DB means "no database for this run" and must survive, per spira/conf.d/
+    // SPIRA_DB's own doc) — so a resolved-but-empty value is this refusal, not a
+    // resolution failure.
+    let db = match spira_config::process::cfg("SPIRA_DB") {
+        Ok(d) if !d.is_empty() => d,
+        Ok(_) => {
             eprintln!("bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)");
+            return 1;
+        }
+        Err(e) => {
+            eprintln!("bdq: {e}");
             return 1;
         }
     };
 
+    // SOP_APPLIED_TRACE / SOP_APPLIED_TRACE_FILE are not SPIRA_*/COCKPIT_* names at all —
+    // not registered config keys, left as plain env reads.
     let sop_trace_on = env_or("SOP_APPLIED_TRACE", "") == "1";
     let trace_file: Option<String> = if sop_trace_on {
-        Some(env_nonempty("SOP_APPLIED_TRACE_FILE").unwrap_or_else(|| {
-            let run = env_nonempty("SPIRA_RUN").unwrap_or_else(|| "/tmp".to_string());
-            format!("{run}/sop/trace.log")
-        }))
+        match env_nonempty("SOP_APPLIED_TRACE_FILE") {
+            Some(tf) => Some(tf),
+            // No default (per Ryan 2026-10-05: one source of config, decided): an
+            // unresolvable SPIRA_RUN just means this opt-in debug trace does not get
+            // written this call, never a guessed "/tmp" location.
+            None => spira_config::process::cfg("SPIRA_RUN")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(|run| format!("{run}/sop/trace.log")),
+        }
     } else {
         None
     };
@@ -287,7 +319,23 @@ fn cmd_bdq(args: &[String]) -> i32 {
     }
     let t0 = trace_file.as_ref().map(|_| date_now_utc_nanos());
 
-    let bd_bin = env_or("SPIRA_BD", "bd");
+    // SPIRA_BD is registered but carries no conf.d default ("resolves empty unless set via
+    // environment or the config file") — the real config file always sets it explicitly, so an
+    // empty resolution here is treated the same as a resolution failure, not a literal
+    // "bd" fallback.
+    let bd_bin = match spira_config::process::cfg("SPIRA_BD") {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => {
+            eprintln!("bdq: SPIRA_BD resolved empty — refusing rather than guessing a bd binary");
+            return 1;
+        }
+        Err(e) => {
+            eprintln!("bdq: {e}");
+            return 1;
+        }
+    };
+    // BD_TIMEOUT is not a registered config key (spira/conf.d has no entry) — left as a
+    // plain env read with its existing default.
     let timeout_s = env_or("BD_TIMEOUT", "180");
     let mut call_args: Vec<String> = args.to_vec();
     let mut forced: Option<(String, claimdesc::LiveClaim, String)> = None;
@@ -339,7 +387,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
             }
         }
     }
-    if let Some(run) = env_nonempty("SPIRA_RUN") {
+    if let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()) {
         let dir = format!("{run}/bdq");
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(format!("{dir}/latency.log")) {
@@ -412,5 +460,11 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
         bd_capture(timeout_s, bd_bin, db, &["update", id, "--set-metadata", &format!("{}={hash}", claimdesc::HASH_KEY)]);
     }
     bd_capture(timeout_s, bd_bin, db, &["note", id, &claimdesc::override_note(&actor, claim, reason)]);
-    claimdesc::notify_live_aeon(id, &claimdesc::holder_message(&actor, reason));
+    // Best-effort notification: by this point `cfg` has already resolved successfully at
+    // least once in this process (SPIRA_DB/SPIRA_BD above), so these two cannot newly
+    // fail; `unwrap_or_default` only ever matters if SPIRA_RUN/SPIRA_MAIL themselves
+    // resolve empty, which `notify_live_aeon` already treats as "nothing to notify".
+    let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+    let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+    claimdesc::notify_live_aeon(id, &claimdesc::holder_message(&actor, reason), &run, &mail);
 }

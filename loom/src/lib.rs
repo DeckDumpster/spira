@@ -43,13 +43,6 @@ const PAGE_HTML: &str = include_str!("../static/loom.html");
 const MODEL_JS: &str = include_str!("../static/model.js");
 const APP_JS: &str = include_str!("../static/app.js");
 
-/// The defaults the CODE carries. Each one is also a key in the harness's configuration file
-/// with the same default, and a suite asserts the two agree — a constant that drifts from the
-/// key meant to control it is worse than no key, because the operator believes they set it.
-pub const DEFAULT_BUDGET_MS: u64 = 1500;
-pub const DEFAULT_CACHE_S: u64 = 15;
-pub const DEFAULT_ADDR: &str = "127.0.0.1:8788";
-
 #[derive(Clone, Debug)]
 pub struct Config {
     /// The beads project directory `bd -C` is pointed at. There is deliberately NO default:
@@ -79,13 +72,6 @@ pub struct Config {
     pub systemctl: String,
 }
 
-fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(default)
-}
-
 fn refuse(why: &str) -> ! {
     eprintln!("loom: {why}");
     std::process::exit(1)
@@ -93,28 +79,24 @@ fn refuse(why: &str) -> ! {
 
 impl Config {
     pub fn from_env() -> Config {
+        use spira_config::process::{cfg, cfg_parse};
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| refuse(&e));
         Config {
-            db: std::env::var("SPIRA_DB").unwrap_or_default(),
-            extra_path: std::env::var("SPIRA_PATH")
-                .unwrap_or_default()
+            db: cfg("SPIRA_DB").unwrap_or_else(|e| refuse(&e)),
+            extra_path: cfg("SPIRA_PATH")
+                .unwrap_or_else(|e| refuse(&e))
                 .split(':')
                 .filter(|d| !d.is_empty())
                 .map(str::to_string)
                 .collect(),
-            budget: Duration::from_millis(env_u64("SPIRA_LOOM_BUDGET_MS", DEFAULT_BUDGET_MS)),
-            cache: Duration::from_secs(env_u64("SPIRA_LOOM_CACHE_S", DEFAULT_CACHE_S)),
-            addr: std::env::var("SPIRA_LOOM_ADDR")
-                .ok()
-                .filter(|a| !a.is_empty())
-                .unwrap_or_else(|| DEFAULT_ADDR.to_string()),
-            bd: std::env::var("SPIRA_BD")
-                .ok()
-                .filter(|b| !b.is_empty())
-                .unwrap_or_else(|| "bd".to_string()),
-            run: std::env::var("SPIRA_RUN").unwrap_or_default(),
+            budget: Duration::from_millis(cfg_parse::<u64>("SPIRA_LOOM_BUDGET_MS").unwrap_or_else(|e| refuse(&e))),
+            cache: Duration::from_secs(cfg_parse::<u64>("SPIRA_LOOM_CACHE_S").unwrap_or_else(|e| refuse(&e))),
+            addr: cfg("SPIRA_LOOM_ADDR").unwrap_or_else(|e| refuse(&e)),
+            bd: cfg("SPIRA_BD").unwrap_or_else(|e| refuse(&e)),
+            run: cfg("SPIRA_RUN").unwrap_or_else(|e| refuse(&e)),
             instance: spira_config::resolve::resolve_instance(&env, &home).unwrap_or_else(|e| refuse(&e)),
+            // SPIRA_SYSTEMCTL is not a registered config key — test-only override, left as env.
             systemctl: std::env::var("SPIRA_SYSTEMCTL")
                 .ok()
                 .filter(|s| !s.is_empty())

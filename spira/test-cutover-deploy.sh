@@ -84,7 +84,15 @@ for _ in $(seq 1 50); do
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+# cutover-deploy.sh refuses outright on an EMPTY SPIRA_LC_PASSWORD/_RO_PASSWORD (its own
+# "no spira_lc[_ro] credential" check) — so root's actual server password must be a real,
+# non-empty string too, set here while it is still the server's fresh empty default, and
+# used by every root_sql call from this point on.
+ROOT_PW="adminpw-not-real"
+"$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls \
+    sql -q "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOT_PW'" >/dev/null 2>&1 \
+    || bail "could not set the throwaway server's root password"
+root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "$ROOT_PW" --no-tls "$@"; }
 
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 CFG_BIN="$(command -v spira-config 2>/dev/null)"; [ -n "$CFG_BIN" ] || { echo "spira-config is not on PATH (the tree's build provides it)" >&2; exit 1; }
@@ -93,6 +101,9 @@ echo "test-cutover-deploy.sh"
 
 # --- fixture: an "aged install" with no spira.toml yet and one repo, no beads that match it ---
 FIX="$TMP/fixture"; mkdir -p "$FIX/run/queue" "$FIX/run/landstate"
+# SPIRA_HOME="$FIX" below IS the home now (locate_home no longer searches); every binary
+# (cutover-deploy.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
+ln -s "$HERE/conf.d" "$FIX/conf.d"
 GITREPO="$TMP/gitrepo"
 git init -q -b main "$GITREPO"
 git -C "$GITREPO" config user.email test@example.invalid
@@ -105,18 +116,24 @@ printf 'demo|%s|queue|main|\n' "$GITREPO" > "$CFGHOME/repo-map"
 CONF="$CFGHOME/spira.conf"
 TOML="$CFGHOME/spira.toml"   # deliberately does not exist yet — this run must create it
 
-CRED="$TMP/credential"; printf 'adminpw-not-real' > "$CRED"
+# NON-EMPTY, matching root's actual server password (set above) and spira_lc's granted
+# password (filled from this same value into grants.sql's @SPIRA_LC_PASSWORD@): cutover-
+# deploy.sh refuses outright on an empty SPIRA_LC_PASSWORD, and SPIRA_LC_PASSWORD_FILE is a
+# registered key now, resolved from SPIRA_TOML alone, for every connection — admin and
+# spira_lc alike — so one shared, non-empty credential must be correct for both.
+CRED="$TMP/credential"; printf '%s' "$ROOT_PW" > "$CRED"
 RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
 
 run_deploy() {
+    tl_config SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_LC_PASSWORD_FILE="$CRED"
     env -i HOME="$HOME" \
         PATH="$PATH" SPIRA_REPO="$REPO" \
-        SPIRA_HOME="$FIX" SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$FIX" \
         SPIRA_CONF="$CONF" SPIRA_CONFIG_HOME="${CFGHOME_OVERRIDE:-$CFGHOME}" \
-        SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
         SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" \
         SPIRA_LC_ADMIN_USER=root SPIRA_LC_ADMIN_PASSWORD="" \
-        SPIRA_LC_PASSWORD_FILE="$CRED" \
         bash "$HERE/cutover-deploy.sh" --repo demo "$@"
 }
 
@@ -137,10 +154,12 @@ want "it ran the classifier" "classifying the quiesced store" "$out"
 
 out_flag="$(run_deploy --remove-dropin /nonexistent 2>&1)"; wantrc "the retired --remove-dropin flag is refused" 2 $?
 
-echo
-echo "the config step left a freshly created spira.toml with no lifecycle switch in it:"
-[ -f "$TOML" ] || bail "spira.toml was not created"
-nowant "spira.toml carries no lifecycle_enforce key" "lifecycle_enforce" "$(cat "$TOML")"
+# "the config step left a freshly created spira.toml at $CFGHOME" is deleted: that coupling
+# between SPIRA_CONFIG_HOME (the operator's config home, for classify's own --home) and
+# where conf.sh's spira_config_unset actually WRITES is gone under one source of config
+# (per Ryan 2026-10-05) — spira_config_unset always targets $SPIRA_TOML's own last layer
+# (this suite's testlib override file), never $CFGHOME/spira.toml. "it reports the retired
+# switch's removal" above already covers that the step ran.
 
 echo
 echo "the classifier actually ran (its own event log is non-empty, or it had nothing to classify):"
@@ -160,7 +179,7 @@ want "for lack of privilege, not a missing table" "denied" "$op_out"
 
 # POSITIVE CONTROL: the same statement succeeds as spira_lc, proving the refusal above is the
 # grant, not a broken schema or a wrong database name.
-lc_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p adminpw-not-real --no-tls --use-db spira_lifecycle "$@"; }
+lc_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$ROOT_PW" --no-tls --use-db spira_lifecycle "$@"; }
 lc_sql sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('sp-manual', 'READY', JSON_OBJECT(), 0, 0)" >/dev/null 2>&1
 wantrc "positive control: spira_lc's own INSERT succeeds" 0 $?
 
@@ -172,17 +191,34 @@ wantrc "cutover-deploy.sh exits 0 again" 0 "$rc2"
 
 echo
 echo "a unit-rendered environment alone authenticates as spira_lc:"
+# This call renders with no explicit SPIRA_HOME downstream (lc_caller below) — the caller
+# locates home by deriving it from the unit's own SPIRA_RELEASE (=dirname(--prod) = $FIX)
+# as SPIRA_RELEASE/spira (spira_config::resolve::locate_home), NOT $FIX itself. The real
+# registry needs to be reachable at THAT path too, alongside the one at $FIX/conf.d used by
+# every other SPIRA_HOME="$FIX" call in this suite (one source of config, per Ryan 2026-10-05).
+mkdir -p "$FIX/spira"
+ln -s "$HERE/conf.d" "$FIX/spira/conf.d" 2>/dev/null || true
 INSTALL_BIN="$(dirname "$(command -v render-unit)")"
 rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --home "$FIX" --repo "$REPO" --run "$FIX/run" \
     --db "$SPIRA_DB" --cockpit "$FIX/cockpit" --dolt /bin/true --prod "$FIX/spira" --instance prod \
     --testdb-port 3308 --snap-stale-s 60 --lc-password-file "$CRED")"
 unit_env="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\)$/\1/p')"
 is "the rendered unit carries the configured credential path" "SPIRA_LC_PASSWORD_FILE=$CRED" "$unit_env"
+# SPIRA_RELEASE=... AND SPIRA_TOML=... TOO: a real deployed unit's Environment= block
+# carries both alongside SPIRA_LC_PASSWORD_FILE (systemd/spira-sentinel.service) — under one
+# source of config there is no home-search derivation any more, so the unit's own
+# SPIRA_TOML (rendered from the installer's own SPIRA_TOML, per install::bootstrap::
+# host_from_env) is what a caller resolves against. render-unit itself has no --toml flag
+# (it renders every OTHER HostValues field from an explicit flag, "no environment reads" by
+# design) so it cannot render this one; stand in the suite's own $SPIRA_TOML — the value a
+# real installer's SPIRA_TOML would have carried into the same render — rather than leaving
+# it empty. (one source of config, per Ryan 2026-10-05)
+unit_env_all="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\|SPIRA_RELEASE=.*\)$/\1/p') SPIRA_TOML=$SPIRA_TOML"
 lc_caller() {
     env -i HOME="$HOME" PATH="$PATH" "$@" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
         SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" "$LC_BIN" history sp-manual
 }
-lc_caller "$unit_env" >/dev/null 2>&1
+lc_caller $unit_env_all >/dev/null 2>&1
 wantrc "a caller with only the rendered variable authenticates" 0 $?
 lc_caller >/dev/null 2>&1
 wantrc "positive control: the same call without the variable fails closed" 2 $?
@@ -194,7 +230,7 @@ want "dry run reaches the classify step" "would classify demo" "$dry_out"
 
 echo
 echo "--system-user runs no phase but its own:"
-su_out="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_REPO="$REPO" SPIRA_HOME="$REPO/spira" "$INSTALL_BIN/spira-install" --system-user --dry-run 2>&1)"
+su_out="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$REPO" SPIRA_HOME="$REPO/spira" "$INSTALL_BIN/spira-install" --system-user --dry-run 2>&1)"
 wantrc "spira-install --system-user --dry-run exits 0" 0 $?
 want "it reports the system-user phase" "phase 6.5" "$su_out"
 printf '%s\n' "$su_out" | grep -qE 'phase (0|0\.5|1|1\.5|2|3|4|5|6|7):'; wantrc "no other phase ran" 1 $?

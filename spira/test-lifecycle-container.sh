@@ -111,6 +111,10 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE is registered and resolves ambiently via cfg() to the complete
+# fixture's own nonexistent path, preferred over SPIRA_LC_PASSWORD above unless cleared
+# (sfail round 3, pattern 7 — same cause as test-canary.sh).
+tl_config SPIRA_LC_PASSWORD_FILE=""
 
 "$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
@@ -243,7 +247,8 @@ want "the row is exactly as it was before the killed transaction" "\"version\":\
 # on a private socket and benches calls routed through it, which is what a real deploy with
 # the system-user service installed would give every caller.
 SOCK="$TMP/spira-lc.sock"
-SPIRA_LC_SOCKET="$SOCK" "$BIN" serve "$SOCK" >"$TMP/serve.log" 2>&1 &
+tl_config SPIRA_LC_SOCKET="$SOCK"
+"$BIN" serve "$SOCK" >"$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do
     [ -S "$SOCK" ] && break
@@ -251,14 +256,16 @@ for _ in $(seq 1 50); do
 done
 [ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
 
-export SPIRA_LC_SOCKET="$SOCK"
-
 BENCH_N=100
 > "$TMP/bench.times"
 > "$TMP/fallback.times"
 for i in $(seq 1 "$BENCH_N"); do
     bid="sp-bench-$i"
     seed_bead "$bid"
+    # Reset to the real socket: the previous iteration's fallback case below left the
+    # override pointed at a nonexistent one, and SPIRA_LC_SOCKET is registered — no plain
+    # env prefix reaches spira-lc any more, only this suite's own SPIRA_TOML override.
+    tl_config SPIRA_LC_SOCKET="$SOCK"
     start_ns=$(date +%s%N)
     "$BIN" event bead "$bid" --expect READY --version 0 --actor bench \
         --kind '{"Claim":{"holder":"bench","lease_until":1}}' >/dev/null 2>&1
@@ -267,8 +274,9 @@ for i in $(seq 1 "$BENCH_N"); do
 
     fbid="sp-fallback-$i"
     seed_bead "$fbid"
+    tl_config SPIRA_LC_SOCKET="$TMP/no-such-socket"
     start_ns=$(date +%s%N)
-    SPIRA_LC_SOCKET="$TMP/no-such-socket" "$BIN" event bead "$fbid" --expect READY --version 0 --actor bench \
+    "$BIN" event bead "$fbid" --expect READY --version 0 --actor bench \
         --kind '{"Claim":{"holder":"bench","lease_until":1}}' >/dev/null 2>&1
     end_ns=$(date +%s%N)
     echo $(( (end_ns - start_ns) / 1000000 )) >> "$TMP/fallback.times"

@@ -27,22 +27,26 @@ fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
 
-/// SPIRA_DB/SPIRA_BD/SPIRA_HOME/SPIRA_RUN — every closeout-side verb needs all four.
+/// SPIRA_DB/SPIRA_BD (registered config, read through `spira_config::process::cfg` — per
+/// Ryan 2026-10-05, the one source of config) plus SPIRA_HOME/SPIRA_RUN, neither of which
+/// is a registered key: SPIRA_HOME names where to find `$SPIRA_TOML` in the first place, and
+/// SPIRA_RUN's resolution (`resolve_run_dir`) also judges the result against the instance's
+/// containment, not a plain key lookup `cfg` could replace outright.
 fn closeout_env() -> Result<(String, String, String, PathBuf), String> {
     let home = spira_config::resolve::locate_home_for_process()?;
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let db = spira_config::resolve::resolve_key(&env, &home, "SPIRA_DB")?;
-    let bd_bin = env_nonempty("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    let bd_bin = spira_config::process::cfg("SPIRA_BD")?;
     let run = spira_config::resolve::resolve_run_dir(&env, &home)?;
     Ok((db, bd_bin, home.to_string_lossy().into_owned(), run))
 }
 
-fn closeout_ctx(run: PathBuf) -> Ctx {
-    Ctx {
+fn closeout_ctx(run: PathBuf) -> Result<Ctx, String> {
+    Ok(Ctx {
         run,
-        ask_label: env_nonempty("SPIRA_ASK_LABEL").unwrap_or_default(),
-        grace_secs: std::env::var("SPIRA_GH_ASK_GRACE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(3600),
-    }
+        ask_label: spira_config::process::cfg("SPIRA_ASK_LABEL")?,
+        grace_secs: spira_config::process::cfg_parse("SPIRA_GH_ASK_GRACE_SECS")?,
+    })
 }
 
 fn closeout_cmd(args: &[String]) -> ExitCode {
@@ -57,10 +61,17 @@ fn closeout_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let ctx = match closeout_ctx(run) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
-    let log = closeout::gh_issue_closeout(&d, &closeout_ctx(run), &args[0], &args[1], Path::new(&args[2]));
+    let log = closeout::gh_issue_closeout(&d, &ctx, &args[0], &args[1], Path::new(&args[2]));
     for l in log {
         println!("{l}");
     }
@@ -79,11 +90,18 @@ fn unlanded_scan_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let ctx = match closeout_ctx(run) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let log = closeout::gh_unlanded_scan(&d, &closeout_ctx(run), now);
+    let log = closeout::gh_unlanded_scan(&d, &ctx, now);
     for l in log {
         println!("{l}");
     }
@@ -112,10 +130,17 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let ctx = match closeout_ctx(run) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
-    let (log, _found, _closed, _skipped, _dry) = closeout::backfill(&d, &closeout_ctx(run), dry_run);
+    let (log, _found, _closed, _skipped, _dry) = closeout::backfill(&d, &ctx, dry_run);
     for l in log {
         println!("{l}");
     }
@@ -156,8 +181,7 @@ fn main() -> ExitCode {
     }
 
     let (db, spira_home) = match spira_config::resolve::locate_home_for_process().and_then(|home| {
-        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let db = spira_config::resolve::resolve_key(&env, &home, "SPIRA_DB")?;
+        let db = spira_config::process::cfg("SPIRA_DB")?;
         Ok((db, home.to_string_lossy().into_owned()))
     }) {
         Ok(v) => v,
@@ -166,19 +190,31 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let bd_bin = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string());
+    macro_rules! cfg_or_refuse {
+        ($key:expr) => {
+            match spira_config::process::cfg($key) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("gh-intake: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+        };
+    }
+    let bd_bin = cfg_or_refuse!("SPIRA_BD");
+    // SPIRA_MAIL_BIN is not a registered config key (no spira/conf.d entry).
     let mail_bin = std::env::var("SPIRA_MAIL_BIN").unwrap_or_else(|_| "mail".to_string());
 
-    let repo = spira_config::resolve::key_for_process("SPIRA_GH_INTAKE_REPO").unwrap_or_default();
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_else(|_| "spira".to_string());
-    let lane = std::env::var("SPIRA_PLAN_LABEL").unwrap_or_else(|_| "plan".to_string());
-    let bead_repo = spira_config::resolve::key_for_process("SPIRA_GH_INTAKE_BEAD_REPO")
-        .unwrap_or_else(|_| repo.rsplit('/').next().unwrap_or("").to_string());
-    let priority = std::env::var("SPIRA_GH_INTAKE_PRIORITY").unwrap_or_else(|_| "1".to_string());
+    let repo = cfg_or_refuse!("SPIRA_GH_INTAKE_REPO");
+    let scope = cfg_or_refuse!("SPIRA_SCOPE_LABEL");
+    let lane = cfg_or_refuse!("SPIRA_PLAN_LABEL");
+    let bead_repo = cfg_or_refuse!("SPIRA_GH_INTAKE_BEAD_REPO");
+    let priority = cfg_or_refuse!("SPIRA_GH_INTAKE_PRIORITY");
     if !logic::valid_priority(&priority) {
         eprintln!("gh-intake: SPIRA_GH_INTAKE_PRIORITY is {priority} — it must be 0-4");
         return ExitCode::from(2);
     }
+    // SPIRA_GH_INTAKE_API is not a registered config key (no spira/conf.d entry).
     let api = std::env::var("SPIRA_GH_INTAKE_API").unwrap_or_else(|_| logic::GITHUB_API.to_string());
 
     let cfg = Config {

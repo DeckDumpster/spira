@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
-use crate::cfg::Context;
+use crate::cfg::{Context, Declared};
 use crate::host::{Clock, Host, Out, Runner, Sink, Spec};
 use crate::pass::{Mode, Sentinel};
 
@@ -164,6 +164,90 @@ impl World {
         );
         Context::parse(&b).unwrap()
     }
+
+    /// Every REGISTERED key `Cfg` needs (`Declared`), built the same way `ctx()` builds
+    /// its `Context` — defaults overridable per-test via `extra` — but never through
+    /// `cfg()`/`$SPIRA_TOML`: a literal fixture, so these tests stay independent of
+    /// `spira_config::process::cfg`'s process-wide cache (one source of config).
+    pub fn declared(&self, extra: &[(&str, &str)]) -> Declared {
+        let run = self.run.to_string_lossy().into_owned();
+        let mut env: Vec<(&str, &str)> = vec![
+            ("SPIRA_RUN", &run),
+            ("SPIRA_DB", "/db"),
+            ("SPIRA_BD", "bd"),
+            ("SPIRA_SCOPE_LABEL", "spira"),
+            ("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: test fixture
+            ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
+            ("SPIRA_INCIDENT_LABEL", "incident"),
+            ("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting"),
+            ("SPIRA_OPEN_CHILDREN_LABEL", ""),
+            ("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
+            ("SPIRA_WORK_CLOSE_TYPES", "task bug feature"),
+            ("SPIRA_RECLAIM_GRACE_SECS", "10800"),
+            ("SPIRA_CHECK5_MAX_FILE", "5"),
+            ("SPIRA_CHECK5_MAX_RESOLVE", "50"),
+            // literal-ok: the pre-migration Rust default this fixture stands in for, so
+            // existing argv assertions (dispatch tests' RuntimeMaxSec=3600) don't drift.
+            // spira/conf.d/SPIRA_LAND_MAXSEC's own declared default is 5400.
+            ("SPIRA_LAND_MAXSEC", "3600"),
+            ("SPIRA_MAX_AEONS", ""),
+            ("SPIRA_MAX_LIVE_AEONS", ""),
+            ("SPIRA_LANES_MAX_LIVE", ""),
+            ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
+            ("SPIRA_EXPRESS_LABEL", "express"),
+            ("SPIRA_SUMMON_LOCK_WAIT", "30"),
+            ("SPIRA_LANES", "ops groomer qa maechen czar warden"),
+            ("SPIRA_REPO_MAP", ""),
+            ("SPIRA_GH", ""),
+            ("SPIRA_BATCH_MAXPAR", ""),
+        ];
+        let owned: Vec<(String, String)> = extra
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        env.retain(|(k, _)| !owned.iter().any(|(x, _)| x == k));
+        for (k, v) in &owned {
+            env.push((k.as_str(), v.as_str()));
+        }
+        let get = |k: &str| {
+            env.iter()
+                .rev()
+                .find(|(x, _)| *x == k)
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_default()
+        };
+        let opt = |k: &str| {
+            let v = get(k);
+            if v.is_empty() { None } else { v.parse().ok() }
+        };
+        Declared {
+            run: PathBuf::from(get("SPIRA_RUN")),
+            db: get("SPIRA_DB"),
+            bd: get("SPIRA_BD"),
+            scope: get("SPIRA_SCOPE_LABEL"),
+            ask: get("SPIRA_ASK_LABEL"),
+            no_loop: get("SPIRA_NO_LOOP_LABEL"),
+            incident_label: get("SPIRA_INCIDENT_LABEL"),
+            queue_wait: get("SPIRA_QUEUE_WAIT_LABEL"),
+            open_children: get("SPIRA_OPEN_CHILDREN_LABEL"),
+            submitted: get("SPIRA_SUBMITTED_LABEL"),
+            work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
+            reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),
+            c5_max_file: get("SPIRA_CHECK5_MAX_FILE").parse().unwrap_or(5),
+            c5_max_resolve: get("SPIRA_CHECK5_MAX_RESOLVE").parse().unwrap_or(50),
+            land_maxsec: get("SPIRA_LAND_MAXSEC"),
+            max_aeons: opt("SPIRA_MAX_AEONS"),
+            max_live_aeons: opt("SPIRA_MAX_LIVE_AEONS"),
+            lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
+            queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
+            express_label: get("SPIRA_EXPRESS_LABEL"),
+            summon_lock_wait: get("SPIRA_SUMMON_LOCK_WAIT").parse().unwrap_or(30),
+            lanes: get("SPIRA_LANES"),
+            repo_map: get("SPIRA_REPO_MAP"),
+            gh: get("SPIRA_GH"),
+            batch_maxpar: get("SPIRA_BATCH_MAXPAR"),
+        }
+    }
 }
 
 /// testkit::write_exe, never write + chmod: see testkit/DESIGN.md (ETXTBSY).
@@ -267,6 +351,7 @@ pub fn run_mode<'a>(
     let s = Sentinel::new(
         h,
         w.ctx(extra, repos),
+        w.declared(extra),
         &w.home,
         mode,
         "/opt/bin/sentinel".into(),
@@ -552,7 +637,7 @@ fn ask_already_open_queries_open_asks_by_label_and_matches_the_subject_substring
         ok(r#"[{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open"}]"#)
     });
     let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
-    let s = Sentinel::new(h, w.ctx(&[], None), &w.home, Mode::Report, "sentinel".into(), "p".into());
+    let s = Sentinel::new(h, w.ctx(&[], None), w.declared(&[]), &w.home, Mode::Report, "sentinel".into(), "p".into());
     assert!(s.ask_already_open("Spira is landing nothing"), "{}", sink.text());
     assert!(!s.ask_already_open("no bead carries this subject"));
 }
@@ -1901,6 +1986,15 @@ fn probe_failure_is_reported() {
     assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
 }
 
+// ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
+// hazard): every test below that resolves config takes this lock. `spira_config::repos::
+// registry_env` now drops any inherited `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` outright and
+// resolves them only from `$SPIRA_TOML` (per Ryan 2026-10-05: one source of config) — so a
+// test that used to hand them to `resolve_repos`/`Registry::from_env` as a plain env map
+// now needs a real `spira_config::process::fixture_toml` fixture and the real `SPIRA_TOML`
+// env var pinned at it instead.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// `resolve_repos` (sp-k6lku, "wave 4.13"): a trait seam over the registry, not a bash
 /// probe — the fixture here is a real repo-map FILE, the thing `spira_config::repos`
 /// itself reads, not a faked `repo_root`/`spira_landrefs` bash function (which is exactly
@@ -1911,16 +2005,34 @@ fn probe_failure_is_reported() {
 /// seam had).
 #[test]
 fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let saved = std::env::var("SPIRA_TOML").ok();
     let d = testkit::TempDir::new("sentinel-resolve-repos");
+    let home = d.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // A home lives in a checkout (as in production), so the forwarded SPIRA_REPO is that
+    // checkout itself, not an override of the home repo's root.
+    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&home).status().unwrap().success());
+    std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), home.join("conf.d")).unwrap();
     let map = d.join("repo-map");
     std::fs::write(&map, "other|/nonexistent/other|queue.local||\n").unwrap();
-    let mut vars = std::collections::BTreeMap::new();
-    vars.insert("SPIRA_REPO_MAP".to_string(), map.to_string_lossy().into_owned());
-    vars.insert("SPIRA_HOME_REPO".to_string(), "spira".to_string());
-    vars.insert("SPIRA_REPO".to_string(), "/h".to_string());
-    vars.insert("SPIRA_REPO_DERIVED".to_string(), "/h".to_string());
+    // SPIRA_REPO_MAP/SPIRA_HOME_REPO are registered keys now — the only way in is a real
+    // spira.toml, not entries in the `vars` map handed to `resolve_repos`.
+    let toml = spira_config::process::fixture_toml(
+        &d,
+        &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
+    );
+    std::env::set_var("SPIRA_TOML", &toml);
 
-    let repos = crate::resolve_repos(&vars, Path::new("/h"));
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("SPIRA_REPO".to_string(), home.to_string_lossy().into_owned());
+
+    let repos = crate::resolve_repos(&vars, &home);
+
+    match saved {
+        Some(v) => std::env::set_var("SPIRA_TOML", v),
+        None => std::env::remove_var("SPIRA_TOML"),
+    }
 
     let spira = repos.iter().find(|r| r.name == "spira").expect("home repo always present");
     assert_eq!(spira.root, None, "unmapped — never a guessed default of the home checkout");
@@ -1932,13 +2044,15 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
     assert!(other.landrefs.is_empty(), "no declared base and no real checkout to ask — refuse, never guess");
 }
 
-// ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
-// hazard): the one test below that resolves config takes this lock, and pins SPIRA_TOML to
-// a nonexistent path — locate()'s own exclusive-pin rule ("not a file" means "no config",
-// never "keep looking") — so it never depends on, or interferes with, a real operator
-// spira.toml on the machine running this suite.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+// `resolve_for_process` requires `$SPIRA_TOML` to name a file that actually exists
+// (`crate::load` reads it — "every listed file must exist", spira-config/src/lib.rs's
+// `load_layered`) — a missing pin is a hard refusal, not "no config, use defaults" the way
+// `locate()`'s own richer `LocateOutcome` still treats it. So this test points `SPIRA_TOML`
+// at a real `spira_config::process::fixture_toml` fixture (every key declared, including
+// the ones `resolve()` now refuses to guess, e.g. SPIRA_REPO_MAP) instead of a nonexistent
+// path — it still never depends on, or interferes with, a real operator spira.toml on the
+// machine running this suite. `ENV_LOCK` (declared above, shared with the repo-registry
+// test) is what keeps this safe under parallel test threads.
 #[test]
 fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     let _g = ENV_LOCK.lock().unwrap();
@@ -1950,7 +2064,13 @@ fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
         "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CI_PARK_MAX:=9}\"\nSPIRA_CONF_DEFAULT_EOF\n",
     )
     .unwrap();
-    std::env::set_var("SPIRA_TOML", w.dir.join("no-such-spira.toml"));
+    // The generic registry pass only visits a key present in `conf_d` above, but still
+    // prefers a toml declaration over that file's own default expression — so the fixture
+    // declares SPIRA_CI_PARK_MAX=9 explicitly too, rather than trusting the complete
+    // fixture's own baked-in value (it declares a different one) to agree with the assert
+    // below.
+    let toml = spira_config::process::fixture_toml(&w.dir, &[("SPIRA_CI_PARK_MAX", "9")]);
+    std::env::set_var("SPIRA_TOML", toml);
 
     // @vars already carries SPIRA_HOME_REPO_RESOLVED from the (fixed) script itself —
     // merge_resolved_config must never override it — and nothing else, matching the
@@ -1988,10 +2108,15 @@ fn roster_warnings_name_each_left_out_persona_once() {
         None,
     );
     let ctx = || Context::parse(&b).unwrap();
+    // SPIRA_RUN/SPIRA_DB above are the probe's identity Context, not `d`: `Cfg` now takes
+    // registered-key values from `Declared` only, so this test's own roster-stamp
+    // assertion (`w.run.join(...)`) needs `d.run` set to match.
+    let declared = || Declared { run: w.run.clone(), db: "/db".into(), ..Declared::test_default() };
     let h = Host::new(&r, &clock, &sink);
     Sentinel::new(
         &h,
         ctx(),
+        declared(),
         &w.home,
         Mode::Report,
         "x".into(),
@@ -2009,6 +2134,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
     Sentinel::new(
         &h2,
         ctx(),
+        declared(),
         &w.home,
         Mode::Report,
         "x".into(),
@@ -2288,9 +2414,11 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     let (_t, old, new) = two_releases("argv");
     let path = format!("{old}/bin:{old}/spira:/usr/bin");
     let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
+    let extra = [("SPIRA_RELEASE", old.as_str()), ("PATH", path.as_str())];
     let s = Sentinel::new(
         h,
-        w.ctx(&[("SPIRA_RELEASE", old.as_str()), ("PATH", path.as_str())], None),
+        w.ctx(&extra, None),
+        w.declared(&extra),
         &w.home,
         Mode::SummonOnly,
         "/opt/bin/sentinel".into(),

@@ -55,7 +55,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::{registry, spira_string_map, SpiraToml};
+use crate::{registry, SpiraToml};
 
 /// What `resolve` was given. Every per-copy fact (`home`, `repo`) is an explicit input, never
 /// self-located — a compiled binary has no `BASH_SOURCE` to stand in for "where conf.sh
@@ -154,11 +154,9 @@ pub fn derive_home_repo(home: &Path, env: &BTreeMap<String, String>) -> std::pat
 /// (wave4-decomposition.md bead sp-mz7dn, "wave 4.8"). `home`/`repo` are the caller's own
 /// per-copy facts — [`resolve`] never self-locates them, and neither does this (see
 /// [`derive_home_repo`] for `repo`, when the caller does not already have it). The
-/// `spira.toml` in force is located the same way `spira-config locate` reports (no explicit
-/// file pin): [`crate::discover`]`(None)` then [`crate::load`]; a config file that fails to
-/// parse is a `String` error a caller can print and bail on, the same as every other
-/// `spira_config` entry point already does, rather than a new enum variant [`resolve`]
-/// itself would have to carry for an IO step it otherwise never performs.
+/// config is the one source `SPIRA_TOML` names in the `env` map handed in (a file, or
+/// base:override layers) — nothing is searched for, and an unset or unreadable one is an
+/// error a caller prints and bails on.
 pub fn resolve_for_process(
     home: &Path,
     repo: &Path,
@@ -173,11 +171,14 @@ fn resolve_process(
     env: &BTreeMap<String, String>,
     run: fn(ResolveInput<'_>) -> Result<Resolved, ResolveError>,
 ) -> Result<Resolved, String> {
-    let toml_path = crate::discover(None);
-    let doc = match &toml_path {
-        Some(p) => Some(crate::load(p)?),
-        None => None,
-    };
+    // ONE SOURCE: the file $SPIRA_TOML names. Unset or missing is a refusal, never "no config".
+    // From the env this call was HANDED, like every other input — never the process's own.
+    let spec = env
+        .get("SPIRA_TOML")
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| "SPIRA_TOML is not set — it names the one source of config (a file, or base:override); refusing".to_string())?;
+    let toml_path = std::path::PathBuf::from(spec);
+    let doc = Some(crate::load(&toml_path)?);
     let conf_d = default_conf_d(home);
     run(ResolveInput {
         env,
@@ -189,48 +190,6 @@ fn resolve_process(
     .map_err(|e| e.to_string())
 }
 
-/// The harness home used ONLY to judge an explicit `SPIRA_RUN`'s containment (sp-bp249
-/// follow-up) — never for the ordinary derived-default path below, which keeps trusting the
-/// caller's own `home` exactly as it always has. Climbs the same three rungs the rest of the
-/// codebase climbs when `SPIRA_HOME` is absent: `$SPIRA_HOME` itself (if it carries a real
-/// registry), else `$SPIRA_RELEASE/spira` (every unit that sets `SPIRA_RUN` without
-/// `SPIRA_HOME` still carries `SPIRA_RELEASE` — law-a-binary-resolves-the-config-it-reads),
-/// else the `home` the caller already handed in (its own best-effort locate). NEVER falls
-/// through to an empty/relative path for [`registry::load`] to turn into the literal
-/// "no config registry at conf.d" — when none of the three carries a `conf.d`, the refusal
-/// names exactly which were missing or empty.
-fn containment_home(env: &BTreeMap<String, String>, home: &Path) -> Result<PathBuf, String> {
-    let has_registry = |p: &Path| !p.as_os_str().is_empty() && p.join("conf.d").is_dir();
-    let spira_home = env.get("SPIRA_HOME").filter(|v| !v.is_empty());
-    if let Some(h) = spira_home.map(PathBuf::from) {
-        if has_registry(&h) {
-            return Ok(h);
-        }
-    }
-    let spira_release = env.get("SPIRA_RELEASE").filter(|v| !v.is_empty());
-    if let Some(r) = spira_release {
-        let h = PathBuf::from(r).join("spira");
-        if has_registry(&h) {
-            return Ok(h);
-        }
-    }
-    if has_registry(home) {
-        return Ok(home.to_path_buf());
-    }
-    Err(format!(
-        "cannot resolve the harness home to check spira.run's containment: SPIRA_HOME is {}, \
-         SPIRA_RELEASE is {}, and the fallback home ({}) has no conf.d",
-        match spira_home {
-            Some(h) => format!("set to {h} but it has no conf.d"),
-            None => "unset".to_string(),
-        },
-        match spira_release {
-            Some(r) => format!("set to {r} but {r}/spira has no conf.d"),
-            None => "unset".to_string(),
-        },
-        if home.as_os_str().is_empty() { "none given".to_string() } else { home.display().to_string() },
-    ))
-}
 
 /// [`resolve_for_process`] for a long-lived binary that must stay live on a bad config:
 /// the error is named on stderr, then the empty [`Resolved`] is returned. Call once per start.
@@ -254,34 +213,15 @@ pub fn resolve_or_say(who: &str, home: &Path, repo: &Path, env: &BTreeMap<String
 /// to an empty string (the derived default never does this, but a hand-written `spira.toml`
 /// with `run = ""` could).
 pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<PathBuf, String> {
-    // An explicit SPIRA_RUN skips the repo-map walk (unrelated checkouts are not this key's
-    // business) but is still judged itself: a confined instance may not name a run dir
-    // outside its workspaces root. That judgement needs SPIRA_INSTANCE/SPIRA_WORKSPACES,
-    // which means a REAL config registry — [`containment_home`], not the bare `home` the
-    // caller handed in, since that is routinely whatever a caller's own best-effort
-    // ancestor-walk produced (sp-bp249 follow-up: a release's `bin/<tool>` is routinely a
-    // symlink into a build-artifacts tree with no `spira/` anywhere nearby, so the walk
-    // comes back empty — and every caller of THIS function already had `SPIRA_RELEASE` in
-    // its own environment the whole time, per law-a-binary-resolves-the-config-it-reads).
-    if let Some(v) = env.get("SPIRA_RUN").filter(|v| !v.is_empty()) {
-        let home = containment_home(env, home)?;
-        let repo = derive_home_repo(&home, env);
-        let resolved = resolve_process(&home, &repo, env, resolve_unchecked)
-            .map_err(|e| format!("cannot resolve spira.run: {e}"))?;
-        crate::containment::check_path(
-            resolved.get("SPIRA_INSTANCE"),
-            resolved.get("SPIRA_WORKSPACES"),
-            "SPIRA_RUN",
-            v,
-        )?;
-        return Ok(PathBuf::from(v));
-    }
+    // spira.run from the one file, judged against the instance's confinement — no environment
+    // override and no fallback home (per Ryan 2026-10-05: one source of config).
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.run: {e}"))?;
     let run = resolved.get("SPIRA_RUN");
     if run.is_empty() {
-        return Err("spira.run resolved empty — refusing to guess a run directory".to_string());
+        return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
     }
+    crate::containment::check_path(resolved.get("SPIRA_INSTANCE"), resolved.get("SPIRA_WORKSPACES"), "SPIRA_RUN", run)?;
     Ok(PathBuf::from(run))
 }
 
@@ -289,9 +229,6 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
 /// otherwise `spira.toml` / the registry default. Never a literal fallback — a systemd unit
 /// does not export it, and a guessed label hides asks from the operator's queue.
 pub fn resolve_ask_label(env: &BTreeMap<String, String>, home: &Path) -> Result<String, String> {
-    if let Some(v) = env.get("SPIRA_ASK_LABEL").filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve ask label: {e}"))?;
     let v = resolved.get("SPIRA_ASK_LABEL");
@@ -313,9 +250,6 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     // `SPIRA_INSTANCE`'s own rule is also `:=` (`resolve_colon`), and a caller that
     // already has it explicitly has no need of the containment check the rest of
     // `resolve` runs unconditionally, over repos this key never touches.
-    if let Some(v) = env.get("SPIRA_INSTANCE").filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.instance: {e}"))?;
     let instance = resolved.get("SPIRA_INSTANCE");
@@ -325,12 +259,8 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     Ok(instance.to_string())
 }
 
-/// Any one registry key, resolved like [`resolve_run_dir`]: a non-empty env value wins, else
-/// full resolution; a named refusal when neither yields a value.
+/// Any one registry key, from the one config file; a named refusal when it resolves empty.
 pub fn resolve_key(env: &BTreeMap<String, String>, home: &Path, key: &str) -> Result<String, String> {
-    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve {key}: {e}"))?;
     match resolved.get(key) {
@@ -339,18 +269,17 @@ pub fn resolve_key(env: &BTreeMap<String, String>, home: &Path, key: &str) -> Re
     }
 }
 
-/// `SPIRA_HOME` from the environment, else the first directory beside the executable's
-/// release or cargo layout that holds `lib.sh`; a named refusal when neither exists.
-pub fn locate_home(env: &BTreeMap<String, String>, exe: &Path) -> Result<PathBuf, String> {
+/// `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; a named refusal when neither is set.
+pub fn locate_home(env: &BTreeMap<String, String>, _exe: &Path) -> Result<PathBuf, String> {
+    // Named, never searched for (per Ryan 2026-10-05): SPIRA_HOME, else the release this
+    // process runs from ($SPIRA_RELEASE/spira, which every unit sets). Neither is a refusal.
     if let Some(h) = env.get("SPIRA_HOME").filter(|h| !h.is_empty()) {
         return Ok(PathBuf::from(h));
     }
-    let dir = exe.parent().ok_or_else(|| "SPIRA_HOME is not set and the executable has no parent directory".to_string())?;
-    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
-        .into_iter()
-        .find(|c| c.join("lib.sh").is_file())
-        .map(|c| c.canonicalize().unwrap_or(c))
-        .ok_or_else(|| "SPIRA_HOME is not set and no spira/lib.sh sits beside the executable".to_string())
+    if let Some(r) = env.get("SPIRA_RELEASE").filter(|r| !r.is_empty()) {
+        return Ok(PathBuf::from(r).join("spira"));
+    }
+    Err("neither SPIRA_HOME nor SPIRA_RELEASE is set — refusing to search for the harness home".to_string())
 }
 
 /// [`locate_home`] for this process.
@@ -362,9 +291,6 @@ pub fn locate_home_for_process() -> Result<PathBuf, String> {
 /// [`resolve_run_dir`] for this process: locates home, then resolves.
 pub fn run_dir_for_process() -> Result<PathBuf, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    if let Some(v) = env.get("SPIRA_RUN").filter(|v| !v.is_empty()) {
-        return Ok(PathBuf::from(v));
-    }
     let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
     resolve_run_dir(&env, &home)
 }
@@ -372,9 +298,6 @@ pub fn run_dir_for_process() -> Result<PathBuf, String> {
 /// [`resolve_key`] for this process: locates home, then resolves.
 pub fn key_for_process(key: &str) -> Result<String, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
     resolve_key(&env, &home, key)
 }
@@ -586,14 +509,21 @@ impl std::fmt::Display for ResolveError {
 /// renamed key nothing in this module ever looks up by name is simply never read, which is
 /// no different from bash's own gate silently doing nothing for the same key.
 fn toml_key_map(doc: &SpiraToml) -> BTreeMap<String, String> {
-    spira_string_map(doc)
+    crate::spira_value_map(doc, true)
         .into_iter()
         .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
         .collect()
 }
 
-fn seed(key: &str, env: &BTreeMap<String, String>, toml_map: &BTreeMap<String, String>) -> Option<String> {
-    env.get(key).cloned().or_else(|| toml_map.get(key).cloned())
+/// A key's value: the declaration in spira.toml, and nothing else — never the environment,
+/// never a default (per Ryan 2026-10-05: one source of config).
+fn seed(key: &str, _env: &BTreeMap<String, String>, toml_map: &BTreeMap<String, String>) -> Option<String> {
+    toml_map.get(key).cloned()
+}
+
+fn undeclared(key: &str) -> String {
+    let k = key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase();
+    format!("{key} is not declared: spira.toml has no spira.{k} — every key is required; refusing")
 }
 
 /// The `:=` rule: the seed counts only if it is non-empty: an env or toml value of `""`
@@ -604,9 +534,10 @@ fn resolve_colon(
     toml_map: &BTreeMap<String, String>,
     default: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
+    let _ = default;
     match seed(key, env, toml_map) {
-        Some(v) if !v.is_empty() => Ok(v),
-        _ => default(),
+        Some(v) => Ok(v),
+        None => Err(undeclared(key)),
     }
 }
 
@@ -618,9 +549,10 @@ fn resolve_eq(
     toml_map: &BTreeMap<String, String>,
     default: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
+    let _ = default;
     match seed(key, env, toml_map) {
         Some(v) => Ok(v),
-        None => default(),
+        None => Err(undeclared(key)),
     }
 }
 
@@ -759,37 +691,6 @@ fn compute_home_repo_default(repo: &Path) -> String {
     }
 }
 
-/// `_spira_repo_file` (bash `spira_conf_file`): the legacy `spira.conf` path in force, or
-/// `None` — an explicit `SPIRA_CONF` pin that does not exist means "no file", not "keep
-/// looking" (same exclusive-pin rule `spira-config locate` already enforces for
-/// `SPIRA_TOML`).
-fn legacy_conf_file(env: &BTreeMap<String, String>) -> Option<String> {
-    if let Some(p) = env.get("SPIRA_CONF") {
-        return Path::new(p).is_file().then(|| p.clone());
-    }
-    for c in [
-        format!("{}/spira/spira.conf", xdg_config_home(env)),
-        "/etc/spira/spira.conf".to_string(),
-    ] {
-        if Path::new(&c).is_file() {
-            return Some(c);
-        }
-    }
-    None
-}
-
-/// `_spira_repo_map_candidate`: an explicit `SPIRA_HOME` (every Rust caller's is, by
-/// construction — see [`ResolveInput`]'s own doc) puts its own `repo-map` first, then the
-/// legacy conf file's directory, then the tracked `repo-map.example`.
-fn repo_map_candidate(env: &BTreeMap<String, String>, home: &str) -> Option<String> {
-    let legacy_dir = legacy_conf_file(env).map(|c| crate::eval::sh_dirname(&c));
-    let mut candidates = vec![format!("{home}/repo-map")];
-    if let Some(d) = legacy_dir {
-        candidates.push(format!("{d}/repo-map"));
-    }
-    candidates.push(format!("{home}/repo-map.example"));
-    candidates.into_iter().find(|c| Path::new(c).is_file())
-}
 
 /// `spira_conf_defaults` plus `spira_containment_check`, ported.
 pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
@@ -1069,8 +970,10 @@ fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> 
     set!("SPIRA_AGENT", agent);
 
     // 30. SPIRA_REPO_MAP
+    // DECLARED, NEVER DISCOVERED (per Ryan 2026-10-05): no search of SPIRA_HOME, the conf
+    // file's directory or a shipped example — a missing declaration is refused by name.
     let repo_map = resolve_colon("SPIRA_REPO_MAP", env, &toml_map, || {
-        Ok(repo_map_candidate(env, &home_str).unwrap_or_else(|| format!("{home_str}/repo-map")))
+        Err("SPIRA_REPO_MAP is not declared: set spira.repo_map in spira.toml (or SPIRA_REPO_MAP) to the repo map's path".to_string())
     })
     .map_err(ResolveError::Registry)?;
     set!("SPIRA_REPO_MAP", repo_map.clone());
@@ -1117,6 +1020,21 @@ mod tests {
         assert_eq!(resolve_or_say("test", &home, &home, &env), Resolved::default());
     }
 
+    /// THE ONE SOURCE: a key spira.toml does not declare is refused by name — never
+    /// defaulted, never read from the environment (per Ryan 2026-10-05).
+    #[test]
+    fn an_undeclared_key_is_refused_by_name_even_when_the_environment_sets_it() {
+        let ws = testkit::TempDir::new("spira-config-resolve-undeclared");
+        let (home, repo) = fixture_home_repo(&ws);
+        let doc = crate::unset_path(&crate::fixture_doc(&BTreeMap::new()), "spira.run").unwrap();
+        let e = env(&[("HOME", "/h"), ("SPIRA_RUN", "/from/the/environment")]);
+        let err = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") })
+            .expect_err("an undeclared spira.run must refuse");
+        let msg = err.to_string();
+        assert!(msg.contains("SPIRA_RUN") && msg.contains("spira.run"), "{msg}");
+        assert!(!msg.contains("/from/the/environment"), "the environment must not be read: {msg}");
+    }
+
     fn fixture_home_repo(workspaces: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
         let repo = workspaces.join("spira-harness");
         std::fs::create_dir_all(repo.join("spira/conf.d")).unwrap();
@@ -1141,31 +1059,6 @@ mod tests {
         assert!(status.success(), "git {args:?} failed in {dir:?}");
     }
 
-    #[test]
-    fn hand_written_defaults_derive_from_home_and_repo() {
-        let ws = testkit::TempDir::new("spira-config-resolve-hand");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput {
-            env: &e,
-            home: &home,
-            repo: &repo,
-            toml: None,
-            conf_d: &home.join("conf.d"),
-        })
-        .unwrap();
-        assert_eq!(r.get("SPIRA_HOME_REPO"), "spira-harness");
-        assert_eq!(r.get("SPIRA_INSTANCE"), "prod");
-        assert_eq!(r.get("SPIRA_DB"), "/h/.local/share/spira/db");
-        assert_eq!(r.get("SPIRA_RUN"), "/h/.local/share/spira/run");
-        assert_eq!(r.get("SPIRA_WORKSPACES"), ws.display().to_string());
-        assert_eq!(r.get("SPIRA_CERTIFY_SUITES"), "on");
-        assert_eq!(r.get("SPIRA_AGENT"), "claude");
-        assert_eq!(r.get("SPIRA_SCOPE_LABEL"), "spira-harness");
-        assert_eq!(r.get("SPIRA_RELEASES"), format!("{}/spira-releases", ws.display()));
-        assert_eq!(r.get("SPIRA_PROD"), format!("{}/spira-releases/current/spira", ws.display()));
-    }
 
     #[test]
     fn gate_outcome_constants_resolve_fixed_and_ignore_env_and_toml() {
@@ -1177,7 +1070,7 @@ mod tests {
         // configurable NO_VERDICT could be set to 0, turning every withheld verdict into a
         // pass (this module's own doc).
         let e = env(&[("HOME", "/h"), ("SPIRA_GATE_NOVERDICT", "0"), ("SPIRA_GATE_BASEFAIL", "0")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
             .unwrap();
         assert_eq!(r.get("SPIRA_GATE_NOVERDICT"), "75");
         assert_eq!(r.get("SPIRA_GATE_BASEFAIL"), "76");
@@ -1185,56 +1078,8 @@ mod tests {
         assert!(EXPORT_KEYS.contains(&"SPIRA_GATE_BASEFAIL"));
     }
 
-    #[test]
-    fn non_prod_instance_suffixes_db_and_run_but_not_dolt_data() {
-        let ws = testkit::TempDir::new("spira-config-resolve-instance");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert_eq!(r.get("SPIRA_DB"), "/h/.local/share/spira-test/db");
-        assert_eq!(r.get("SPIRA_RUN"), "/h/.local/share/spira-test/run");
-        assert_eq!(r.get("SPIRA_DOLT_DATA"), "/h/.local/share/spira/dolt");
-    }
 
-    #[test]
-    fn env_wins_outright_even_when_toml_also_sets_it() {
-        let ws = testkit::TempDir::new("spira-config-resolve-env-wins");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let toml_text = "[spira]\ninstance = \"from-toml\"\n";
-        let doc = crate::validate(toml_text).unwrap();
-        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "from-env")]);
-        let r = resolve(ResolveInput {
-            env: &e,
-            home: &home,
-            repo: &repo,
-            toml: Some(&doc),
-            conf_d: &home.join("conf.d"),
-        })
-        .unwrap();
-        assert_eq!(r.get("SPIRA_INSTANCE"), "from-env");
-    }
 
-    #[test]
-    fn toml_wins_over_default_when_env_is_silent() {
-        let ws = testkit::TempDir::new("spira-config-resolve-toml-wins");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let toml_text = "[spira]\ninstance = \"from-toml\"\n";
-        let doc = crate::validate(toml_text).unwrap();
-        let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput {
-            env: &e,
-            home: &home,
-            repo: &repo,
-            toml: Some(&doc),
-            conf_d: &home.join("conf.d"),
-        })
-        .unwrap();
-        assert_eq!(r.get("SPIRA_INSTANCE"), "from-toml");
-    }
 
     #[test]
     fn preserve_empty_keys_keep_an_explicit_empty_env_value() {
@@ -1242,48 +1087,13 @@ mod tests {
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
         let e = env(&[("HOME", "/h"), ("SPIRA_DB", "")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
             .unwrap();
         assert_eq!(r.get("SPIRA_DB"), "");
     }
 
-    #[test]
-    fn home_repo_falls_back_to_manifest_then_to_the_directory_name() {
-        let ws = testkit::TempDir::new("spira-config-resolve-manifest");
-        let repo = ws.join("spira-releases").join("spira-20261001T000000Z");
-        std::fs::create_dir_all(repo.join("spira/conf.d")).unwrap();
-        std::fs::write(repo.join("MANIFEST"), "repo brain\nrelease-repo rgantt/spira\n").unwrap();
-        let home = repo.join("spira");
-        let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert_eq!(r.get("SPIRA_HOME_REPO"), "brain");
-        assert_eq!(r.get("SPIRA_RELEASE_REPO"), "rgantt/spira");
-    }
 
-    #[test]
-    fn home_repo_is_empty_for_a_timestamped_release_dir_with_no_manifest() {
-        let ws = testkit::TempDir::new("spira-config-resolve-timestamp");
-        let repo = ws.join("spira-20261001T000000Z");
-        std::fs::create_dir_all(repo.join("spira/conf.d")).unwrap();
-        let home = repo.join("spira");
-        let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert_eq!(r.get("SPIRA_HOME_REPO"), "");
-    }
 
-    #[test]
-    fn spira_claude_deprecation_warns_and_fills_agent() {
-        let ws = testkit::TempDir::new("spira-config-resolve-claude");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/h"), ("SPIRA_CLAUDE", "my-claude")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert_eq!(r.get("SPIRA_AGENT"), "my-claude");
-        assert!(r.warnings.iter().any(|w| w.contains("SPIRA_CLAUDE is deprecated")), "{:?}", r.warnings);
-    }
 
     #[test]
     fn a_lifecycle_switch_saying_off_refuses_the_resolve() {
@@ -1291,12 +1101,12 @@ mod tests {
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
         let off = env(&[("HOME", "/h"), ("SPIRA_LIFECYCLE_ENFORCE", "0")]);
-        let e = resolve(ResolveInput { env: &off, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+        let e = resolve(ResolveInput { env: &off, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&off)), conf_d: &home.join("conf.d") })
             .unwrap_err()
             .to_string();
         assert!(e.contains("sp-v62vn") && e.contains("Exit:"), "{e}");
         let on = env(&[("HOME", "/h"), ("SPIRA_LIFECYCLE_ENFORCE", "1")]);
-        let r = resolve(ResolveInput { env: &on, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+        let r = resolve(ResolveInput { env: &on, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&on)), conf_d: &home.join("conf.d") })
             .unwrap();
         assert!(r.warnings.iter().any(|w| w.contains("SPIRA_LIFECYCLE_ENFORCE is retired")), "{:?}", r.warnings);
         assert!(!r.values.contains_key("SPIRA_LIFECYCLE_ENFORCE"));
@@ -1308,40 +1118,12 @@ mod tests {
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
         let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
             .unwrap();
         assert!(!r.values.contains_key("SPIRA_HOME"));
         assert!(!r.values.contains_key("SPIRA_REPO"));
     }
 
-    #[test]
-    fn registry_keys_resolve_generically_including_dependent_ones() {
-        let ws = testkit::TempDir::new("spira-config-resolve-registry");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let conf_d = home.join("conf.d");
-        std::fs::write(
-            conf_d.join("SPIRA_QUEUE_BATCH_MAX"),
-            "TYPE=u32\nGROUP=queue\nDOC=x\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_QUEUE_BATCH_MAX:=8}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::fs::write(
-            conf_d.join("SPIRA_QUEUE_THROTTLE_DEPTH_AT"),
-            "TYPE=u32\nGROUP=queue\nDOC=x\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_QUEUE_THROTTLE_DEPTH_AT:=$(( ${SPIRA_QUEUE_BATCH_MAX:-8} * 2 ))}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::fs::write(
-            conf_d.join("SPIRA_COCKPIT"),
-            "TYPE=string\nGROUP=cockpit\nDOC=x\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_COCKPIT:=$(dirname \"$SPIRA_HOME\")/cockpit}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &conf_d }).unwrap();
-        assert_eq!(r.get("SPIRA_QUEUE_BATCH_MAX"), "8");
-        assert_eq!(r.get("SPIRA_QUEUE_THROTTLE_DEPTH_AT"), "16");
-        // SPIRA_COCKPIT := $(dirname "$SPIRA_HOME")/cockpit, and SPIRA_HOME is `repo/spira`.
-        assert_eq!(r.get("SPIRA_COCKPIT"), format!("{}/cockpit", repo.display()));
-    }
 
     #[test]
     fn a_containment_violation_refuses_the_whole_resolve() {
@@ -1353,10 +1135,11 @@ mod tests {
         let outside_root = testkit::TempDir::new("spira-config-resolve-containment-outside");
         let outside = outside_root.join("elsewhere");
         std::fs::create_dir_all(&outside).unwrap();
-        // The repo-map lives where SPIRA_REPO_MAP's own default would look: $SPIRA_HOME/repo-map.
-        std::fs::write(home.join("repo-map"), format!("x|{}\n", outside.display())).unwrap();
-        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test")]);
-        let err = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+        // The repo map is declared (spira.repo_map), never discovered.
+        let map = ws.join("repo-map");
+        std::fs::write(&map, format!("x|{}\n", outside.display())).unwrap();
+        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test"), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_WORKSPACES", ws.path().to_str().unwrap())]);
+        let err = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
             .unwrap_err();
         match err {
             ResolveError::Containment(v) => assert!(v[0].contains("is confined to"), "{v:?}"),
@@ -1370,7 +1153,7 @@ mod tests {
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
         let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
             .unwrap();
         let sh = r.to_sh(EXPORT_KEYS);
         for forbidden in ["SPIRA_HOME=", "SPIRA_REPO=", "SPIRA_REPO_MAP=", "SPIRA_FAYTHS=", "SPIRA_MAX_AEONS="] {
@@ -1449,111 +1232,30 @@ mod tests {
 
     #[test]
     fn resolve_for_process_matches_resolve_given_the_same_inputs() {
-        // discover(None), unlike resolve() itself, reads THIS PROCESS's real environment
-        // (SPIRA_TOML/XDG_CONFIG_HOME/HOME/$SPIRA_CONF), never the `env` map passed to
-        // resolve() — exactly the box this machine's own operator spira.toml under
-        // ~/.config/spira would otherwise fall into. Clear and repoint all four so this
-        // test gets the same "nothing resolves" answer on every machine, not only one
-        // with no real config, the hazard spira-config's own locate.rs tests guard the
-        // same way.
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> =
-            names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
+        // Both read the one file the passed env's SPIRA_TOML names — never the process's own.
         let ws = testkit::TempDir::new("spira-config-resolve-for-process");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        std::env::set_var("HOME", "/h");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
-
-        let e = env(&[("HOME", "/h")]);
-        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") }).unwrap();
+        let toml = crate::fixture_toml_file(ws.path(), &BTreeMap::new());
+        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
+        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&BTreeMap::new())), conf_d: &home.join("conf.d") }).unwrap();
         let via_wrapper = resolve_for_process(&home, &repo, &e).unwrap();
-
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
         assert_eq!(direct, via_wrapper);
     }
 
-    /// sp-ivfu3: `resolve_run_dir`/`resolve_instance` are the one place a Rust caller gets
-    /// `spira.run`/`spira.instance` instead of a bare `env SPIRA_RUN || "/tmp/spira"` (or
-    /// `SPIRA_INSTANCE` unset-means-unqualified) literal. The derived default (no explicit
-    /// env or toml value) still produces a real path/instance, not a refusal.
-    #[test]
-    fn resolve_run_dir_and_instance_use_the_derived_default_with_no_literal_fallback() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
-        let ws = testkit::TempDir::new("spira-config-resolve-run-dir");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        std::env::set_var("HOME", "/h");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
-
-        let e = env(&[("HOME", "/h")]);
-        let run = resolve_run_dir(&e, &home).unwrap();
-        let instance = resolve_instance(&e, &home).unwrap();
-
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
-        assert_eq!(run, PathBuf::from("/h/.local/share/spira/run"), "never the /tmp/spira literal");
-        assert_eq!(instance, "prod");
-    }
 
     /// An env override still wins outright, exactly as `SPIRA_RUN` always has — this is
     /// what makes a systemd unit, which sets it explicitly, keep working unchanged.
     #[test]
-    fn resolve_ask_label_env_override_wins_and_empty_env_falls_to_config() {
-        let mut env = BTreeMap::new();
-        env.insert("SPIRA_ASK_LABEL".to_string(), "ask-x".to_string());
-        assert_eq!(resolve_ask_label(&env, Path::new("/nonexistent")).unwrap(), "ask-x");
-        env.insert("SPIRA_ASK_LABEL".to_string(), String::new());
-        let got = resolve_ask_label(&env, Path::new("/nonexistent"));
-        assert!(got.map(|v| !v.is_empty()).unwrap_or(true));
+    fn resolve_ask_label_reads_the_declaration_never_the_environment() {
+        let ws = testkit::TempDir::new("spira-config-ask-label");
+        // The REAL registry, where SPIRA_ASK_LABEL is a key.
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_ASK_LABEL", "declared-ask")]));
+        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_ASK_LABEL", "from-the-environment")]);
+        assert_eq!(resolve_ask_label(&e, &home).unwrap(), "declared-ask");
     }
 
-    #[test]
-    fn resolve_run_dir_env_override_wins() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
-        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-override");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        std::env::set_var("HOME", "/h");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
-
-        let override_run = ws.join("run-override");
-        let e = env(&[("HOME", "/h"), ("SPIRA_RUN", override_run.to_str().unwrap()), ("SPIRA_INSTANCE", "test")]);
-        let run = resolve_run_dir(&e, &home).unwrap();
-        let instance = resolve_instance(&e, &home).unwrap();
-
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
-        assert_eq!(run, override_run);
-        assert_eq!(instance, "test");
-    }
 
     /// A `spira.toml` that fails to parse is the named refusal `resolve_run_dir` returns —
     /// never a literal path a caller could mistake for a real answer.
@@ -1587,52 +1289,6 @@ mod tests {
         assert!(err.contains("cannot resolve spira.run"), "{err}");
     }
 
-    /// sp-ivfu3-2: an explicit `SPIRA_RUN` must win OUTRIGHT, before `resolve_for_process`
-    /// ever runs — `spira_containment_check` is `resolve`'s own unconditional last step,
-    /// judging every OTHER registered checkout against the confined workspace, and has
-    /// nothing to do with this key. `mail`'s own test fixture pins `SPIRA_RUN` but runs
-    /// inside a containment-confined instance whose ambient repo-map names a checkout
-    /// outside it; before this fix, `resolve_run_dir` called full resolution regardless
-    /// and that UNRELATED violation refused the whole thing — "mail: FATAL: cannot
-    /// resolve spira.run" even though `SPIRA_RUN` itself was never in doubt.
-    #[test]
-    fn resolve_run_dir_env_override_bypasses_an_unrelated_containment_violation() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
-        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-containment");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        // A genuine containment violation: a repo-map entry outside the workspaces root —
-        // the exact fixture `a_containment_violation_refuses_the_whole_resolve` (above)
-        // already proves fails resolve() on its own.
-        let outside_root = testkit::TempDir::new("spira-config-resolve-run-dir-containment-outside");
-        let outside = outside_root.join("elsewhere");
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(home.join("repo-map"), format!("x|{}\n", outside.display())).unwrap();
-        std::env::set_var("HOME", "/h");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
-
-        let explicit = ws.join("explicit-run");
-        let with_override = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test"), ("SPIRA_RUN", explicit.to_str().unwrap())]);
-        let got = resolve_run_dir(&with_override, &home);
-        let without_override = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test")]);
-        let err = resolve_run_dir(&without_override, &home);
-
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
-        assert_eq!(got.unwrap(), explicit, "the override must bypass containment entirely");
-        // Positive control: without the override, the SAME fixture still refuses — the
-        // violation is real, not vacuously absent (law-absence-needs-a-positive-control).
-        assert!(err.is_err(), "the fixture's own containment violation must still refuse with no override");
-    }
 
     fn run_dir_under_instance(instance: &str, run: impl Fn(&Path) -> String) -> (Result<PathBuf, String>, String) {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1647,7 +1303,9 @@ mod tests {
         std::env::set_var("HOME", "/h");
         std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
         let value = run(ws.path());
-        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", instance), ("SPIRA_RUN", &value)]);
+        let declared = env(&[("SPIRA_INSTANCE", instance), ("SPIRA_RUN", &value), ("SPIRA_WORKSPACES", ws.path().to_str().unwrap())]);
+        let toml = crate::fixture_toml_file(ws.path(), &declared);
+        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
         let got = resolve_run_dir(&e, &home);
         for (n, v) in saved {
             match v {
@@ -1677,78 +1335,7 @@ mod tests {
         assert_eq!(got.unwrap(), PathBuf::from(value));
     }
 
-    /// sp-bp249 follow-up: `ctrl`'s own best-effort `home` (an ancestor-walk off its own
-    /// exe) comes back empty whenever `bin/ctrl` is really a symlink into a build-artifacts
-    /// tree with no `spira/` nearby — exactly what testenv's staged release layout does.
-    /// `SPIRA_HOME` is unset too (every unit, and testenv's own `suspend_request`, exports
-    /// only `SPIRA_RELEASE` and `PATH`), so the containment check this function now has to
-    /// run must still find a real registry via `$SPIRA_RELEASE/spira`, never by handing
-    /// `registry::load` the caller's empty `home` and letting it build a bare relative
-    /// `"conf.d"`.
-    #[test]
-    fn resolve_run_dir_with_explicit_run_falls_back_to_spira_release_when_spira_home_is_unset() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
-        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-release-home");
-        let (_release_home, release_repo) = fixture_home_repo(&ws.join("release"));
-        run_git(&release_repo, &["init", "-q"]);
-        std::env::set_var("HOME", "/h");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
 
-        let run_target = ws.join("run").display().to_string();
-        let e = env(&[("HOME", "/h"), ("SPIRA_RELEASE", release_repo.to_str().unwrap()), ("SPIRA_RUN", &run_target)]);
-        // The caller's own `home` is empty — its ancestor-walk already failed, exactly as
-        // `ctrl::spira_home()`'s `unwrap_or_default()` leaves it.
-        let got = resolve_run_dir(&e, Path::new(""));
-
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
-        assert_eq!(
-            got.unwrap(),
-            PathBuf::from(&run_target),
-            "must resolve via $SPIRA_RELEASE/spira/conf.d, not refuse on the caller's empty home"
-        );
-    }
-
-    /// The other half: when NOTHING can supply a registry — no `SPIRA_HOME`, no
-    /// `SPIRA_RELEASE`, and the caller's own `home` is empty — this must refuse with a
-    /// message naming what was missing, never silently hand `registry::load` a relative
-    /// `"conf.d"` the way the un-fixed code did.
-    #[test]
-    fn resolve_run_dir_with_explicit_run_and_no_resolvable_home_names_what_was_missing() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
-        std::env::set_var("HOME", "/h");
-        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-no-home");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
-
-        let e = env(&[("HOME", "/h"), ("SPIRA_RUN", "/tmp/some-run")]);
-        let err = resolve_run_dir(&e, Path::new("")).expect_err("no home anywhere must refuse, not guess");
-
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
-        assert!(err.contains("SPIRA_HOME") && err.contains("SPIRA_RELEASE"), "{err}");
-        assert!(
-            !err.contains("at conf.d") && err != "no config registry at conf.d",
-            "must never surface the bare relative path: {err}"
-        );
-    }
 }
 
 #[cfg(test)]
@@ -1767,15 +1354,6 @@ mod lc_socket_tests {
         assert_eq!(lc_socket_default(true, 1000), LC_SYSTEM_SOCKET);
     }
 
-    #[test]
-    fn an_explicit_value_still_wins_over_either_default() {
-        let env: BTreeMap<String, String> = [("SPIRA_LC_SOCKET".to_string(), "/x/sock".to_string())].into();
-        let got = resolve_colon("SPIRA_LC_SOCKET", &env, &BTreeMap::new(), || Ok(lc_socket_default(false, 7))).unwrap();
-        assert_eq!(got, "/x/sock");
-        let empty: BTreeMap<String, String> = [("SPIRA_LC_SOCKET".to_string(), String::new())].into();
-        let got = resolve_colon("SPIRA_LC_SOCKET", &empty, &BTreeMap::new(), || Ok(lc_socket_default(false, 7))).unwrap();
-        assert_eq!(got, "/run/user/7/spira-lc/sock", "an empty value defaults, the := rule");
-    }
 }
 
 #[cfg(test)]

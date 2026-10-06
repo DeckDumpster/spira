@@ -29,17 +29,18 @@ pub fn lib_sh_sources(home: &Path) -> bool {
         .unwrap_or(false)
 }
 
-const RESOLVED_KEYS: &[&str] = &["SPIRA_RELEASES", "SPIRA_RELEASE_REPO", "SPIRA_GH_INTAKE_REPO"];
+// Registered config keys (spira/conf.d) this crate's generic `env()` seam also serves —
+// $SPIRA_TOML only, never the raw environment, never a fallback (per Ryan 2026-10-05).
+const RESOLVED_KEYS: &[&str] = &["SPIRA_RELEASES", "SPIRA_RELEASE_REPO", "SPIRA_GH_INTAKE_REPO", "SPIRA_GH", "SPIRA_RUN"];
 
 pub struct Real {
     pub home: PathBuf,
     registry: OnceCell<spira_config::repos::Registry>,
-    releases: OnceCell<Option<String>>,
 }
 
 impl Real {
     pub fn new(home: PathBuf) -> Real {
-        Real { home, registry: OnceCell::new(), releases: OnceCell::new() }
+        Real { home, registry: OnceCell::new() }
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -53,13 +54,6 @@ impl Real {
     /// `ref_remote` and `ref_branch` below all read this same registry.
     fn registry(&self) -> &spira_config::repos::Registry {
         self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
-    }
-
-    fn resolved_releases(&self) -> Option<String> {
-        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let repo = spira_config::resolve::derive_home_repo(&self.home, &env);
-        let r = spira_config::resolve::resolve_for_process(&self.home, &repo, &env).ok()?;
-        Some(r.get("SPIRA_RELEASES").to_string()).filter(|v| !v.is_empty())
     }
 
     fn git(&self, repo: &Path, args: &[&str]) -> (bool, String) {
@@ -274,7 +268,17 @@ impl World for Real {
         }
     }
     fn which(&self, name: &str) -> Option<String> {
-        let path = self.env("PATH")?;
+        // PATH is not a registered config key, so this can never actually fail — but
+        // `env()` is now fallible in general, and `which()` has no Result of its own to
+        // propagate into, so a resolution failure (impossible here) refuses loudly and
+        // answers "not found" rather than silently reading it as PATH being unset.
+        let path = match self.env("PATH") {
+            Ok(v) => v?,
+            Err(e) => {
+                eprintln!("skew: {e}");
+                return None;
+            }
+        };
         std::env::split_paths(&path).map(|d| d.join(name)).find(|p| is_exec(p)).map(|p| p.to_string_lossy().into_owned())
     }
     fn is_executable(&self, p: &Path) -> bool {
@@ -282,7 +286,11 @@ impl World for Real {
     }
     fn gh_release_list(&self, slug: &str) -> Result<String, String> {
         let gh_timeout = std::env::var("GH_TIMEOUT").unwrap_or_else(|_| "120".to_string());
-        let gh = std::env::var("SPIRA_GH").unwrap_or_else(|_| "gh".to_string());
+        // SPIRA_GH's own declared meaning (spira/conf.d/SPIRA_GH): "empty means the system
+        // gh" — not a Rust-invented default, the registered key's own empty-is-a-value
+        // contract, read once through the `env()` seam (which routes it through
+        // `spira_config::process::cfg`, never the raw environment).
+        let gh = self.env("SPIRA_GH")?.filter(|v| !v.is_empty()).unwrap_or_else(|| "gh".to_string());
         let out = Command::new("timeout")
             .arg(&gh_timeout)
             .arg(&gh)
@@ -328,16 +336,16 @@ impl World for Real {
         let out = Command::new("date").arg("-u").arg("+%Y%m%dT%H%M%SZ").output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     }
-    fn env(&self, k: &str) -> Option<String> {
-        let set = std::env::var(k).ok().filter(|v| !v.is_empty() || k == "SPIRA_ALLOW_FOREIGN_HARNESS");
-        if set.is_some() || !RESOLVED_KEYS.contains(&k) {
-            return set;
+    fn env(&self, k: &str) -> Result<Option<String>, String> {
+        if RESOLVED_KEYS.contains(&k) {
+            // The one source of config: $SPIRA_TOML, resolved once per process — never the
+            // raw environment, never a fallback (per Ryan 2026-10-05). A resolution failure
+            // (missing $SPIRA_TOML, a bad/missing config file, ...) is a real error and must
+            // surface as one — never collapsed into the same `None` a legitimately-unset,
+            // unregistered env var would produce.
+            return spira_config::process::cfg(k).map(Some);
         }
-        if k == "SPIRA_RELEASES" {
-            return self.releases.get_or_init(|| self.resolved_releases()).clone();
-        }
-        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        spira_config::resolve::resolve_key(&env, &self.home, k).ok()
+        Ok(std::env::var(k).ok().filter(|v| !v.is_empty() || k == "SPIRA_ALLOW_FOREIGN_HARNESS"))
     }
     fn is_symlink(&self, p: &Path) -> bool {
         std::fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false)
@@ -367,11 +375,27 @@ impl World for Real {
     }
 
     fn stamp_read(&self, key: &str) -> Option<String> {
-        let run = std::env::var("SPIRA_RUN").ok()?;
+        // SPIRA_RUN is a registered key; a resolution failure here is real and must refuse
+        // loudly rather than be read as "no stamp dir configured."
+        let run = match self.env("SPIRA_RUN") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("skew: {e}");
+                return None;
+            }
+        }
+        .filter(|v| !v.is_empty())?;
         std::fs::read_to_string(Path::new(&run).join(key)).ok()
     }
     fn stamp_write(&self, key: &str, val: &str) {
-        let Ok(run) = std::env::var("SPIRA_RUN") else { return };
+        let run = match self.env("SPIRA_RUN") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("skew: {e}");
+                return;
+            }
+        };
+        let Some(run) = run.filter(|v| !v.is_empty()) else { return };
         let dir = PathBuf::from(&run);
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join(key), val);

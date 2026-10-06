@@ -43,8 +43,13 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
@@ -60,7 +65,8 @@ BIN="$TMP/bin"; mkdir -p "$BIN"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
-export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-world-stop: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'

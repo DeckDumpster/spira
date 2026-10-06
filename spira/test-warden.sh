@@ -36,12 +36,20 @@ chmod +x "$STUB"
 lc_fix_init "$T/lc"
 
 run_trigger() {
+    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB"
+    # EXTRA_ENV: a registered key (e.g. SPIRA_WARDEN_LABEL) goes to tl_config too; anything
+    # else stays a plain env assignment for the env -i call below.
+    local extra_env=() kv k
+    for kv in ${EXTRA_ENV:-}; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
+    done
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
-        SPIRA_CONF="$T/none.conf" SPIRA_BD="$STUB" BD_LOG_PATH="$LOG" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
+        SPIRA_CONF="$T/none.conf" BD_LOG_PATH="$LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" BD_CREATE_FAIL="${BD_CREATE_FAIL:-}" \
-        SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$MAP" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
-        ${EXTRA_ENV:-} warden-trigger.sh 2>&1
+        "${extra_env[@]}" warden-trigger.sh 2>&1
 }
 
 echo "test-warden.sh"
@@ -85,9 +93,13 @@ echo; echo "LABEL: configured non-default label is used"
 out="$(EXTRA_ENV="SPIRA_WARDEN_LABEL=custom-watch" run_trigger)"
 want "custom label in create args" "custom-watch" "$(cat "$LOG")"
 lack "default label absent when overridden" "warden-sweep" "$(cat "$LOG")"
+tl_config SPIRA_WARDEN_LABEL=warden-sweep
 
 echo; echo "PARTITION: warden claims only its sweep, never plan work"
-export SPIRA_HOME="$HERE" SPIRA_RUN="$T/run" SPIRA_CONF="$T/none.conf"
+export SPIRA_HOME="$HERE" SPIRA_CONF="$T/none.conf"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at the real chamber fayth_get below reads from.
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 wl="$(fayth_get warden FAYTH_LABELS)"

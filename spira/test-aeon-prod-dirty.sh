@@ -89,8 +89,12 @@ export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+# The complete fixture declares a non-empty SPIRA_CHAMBER ("/fixture/home/.../chamber");
+# nothing derives it from SPIRA_HOME any more (sfail round 2, pattern 6) — without this
+# the aeon never finds this fixture's builder.fayth at all.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # builder.fayth: excludes spira-poison so beads from completed cases are skipped.
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
@@ -104,7 +108,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 
 # ---- shim: stands in for claude -------------------------------------------------------
 # conf.sh replaces $PATH entirely, so a PATH shim silently runs the real model.
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS
+BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP HARNESS
+tl_config SPIRA_AGENT="$BIN/claude"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"

@@ -63,12 +63,12 @@ JSON
 # cockpit-collect probe sops — just the SOP section, not the full probe. The seam exists for this
 # purpose: it is the same function probe() calls, so what is tested is what runs.
 run_sops() {    # run_sops [env KEY=val ...] — extra env entries are prepended before bash
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nodb" SPIRA_BDJSON_FIXTURE="$TMP/shelf.json" \
-        SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_FAYTHS=t \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_BDJSON_FIXTURE="$TMP/shelf.json" \
         SPIRA_SOP_LEDGER="$LEDGER" SPIRA_NOW="$NOW" \
         "$@" \
         cockpit-collect probe sops 2>/dev/null

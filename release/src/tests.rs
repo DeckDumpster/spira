@@ -4,7 +4,7 @@
 
 use crate::activate::{self, Ctx};
 use crate::build::{self, BuildOpts, Cargo};
-use crate::config::{Config, Env, Flags};
+use crate::config::{Config, Env, Flags, Registered};
 use crate::fsutil;
 use crate::git::Git;
 use crate::install::{self, InstallOpts, Unpack};
@@ -132,21 +132,20 @@ impl World {
         World::with_git(FakeGit::default())
     }
     fn with_git(git: FakeGit) -> World {
-        World::with_git_and_env(git, &[])
+        World::with_git_and_reg(git, Registered::default())
     }
-    /// [`World::with_git`] plus extra environment entries (sp-xtdqi-2) — for a case that
-    /// needs a host key `with_git` never sets (e.g. `SPIRA_SCCACHE_DAV_ADDR`'s env-bootstrap
-    /// path) without touching every other test's fixed env.
-    fn with_git_and_env(git: FakeGit, extra: &[(&str, &str)]) -> World {
+    /// [`World::with_git`] with extra registered config (sp-xtdqi-2) — for a case that needs
+    /// a host key `with_git` never sets (e.g. `SPIRA_SCCACHE_DAV_ADDR`) without touching
+    /// every other test's fixed config. `reg.instance` is always overridden to `"prod"`
+    /// regardless of what the caller passes — every other test's unit names depend on it.
+    fn with_git_and_reg(git: FakeGit, reg: Registered) -> World {
         let sb = Sandbox::new();
         let mut env = Env::new();
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
-        env.insert("SPIRA_INSTANCE".into(), "prod".into());
-        for (k, v) in extra {
-            env.insert(k.to_string(), v.to_string());
-        }
+        env.insert("SPIRA_TOML".into(), "/host/cfg.toml".into());
+        let reg = Registered { instance: "prod".into(), ..reg };
         let flags = Flags { releases: Some(sb.p().join("rel")), run: Some(sb.p().join("run")), keep: Some(2) };
-        let cfg = Config::resolve_with(&flags, &env, None).unwrap();
+        let cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
         fs::create_dir_all(sb.p().join("units")).unwrap();
         World { sb, cfg, git }
     }
@@ -584,17 +583,17 @@ fn verify_runs_the_releases_own_pre_activate_and_refuses_without_one() {
 #[test]
 fn pre_activate_env_builds_the_release_own_path_and_release_var() {
     let mut env = Env::new();
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
     env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
-    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/h/.local/bin:/h/.cargo/bin\"\n").unwrap();
-    let cfg = Config::resolve_with(&Flags::default(), &env, Some(toml)).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/h/.local/bin:/h/.cargo/bin".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let rel = PathBuf::from("/e").join(A);
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[0], (spira_config::RELEASE_ENV.to_string(), rel.display().to_string()));
     assert_eq!(envs[1], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin", rel.display(), rel.display())));
 
     // No tail configured: PATH ends at the system directories, same as `release_path`.
-    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[1].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
 }
@@ -605,10 +604,9 @@ fn pre_activate_env_builds_the_release_own_path_and_release_var() {
 #[test]
 fn pre_activate_env_refuses_a_tail_inside_a_release_or_checkout() {
     let mut env = Env::new();
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
     env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
-    let bad: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/x/spira-releases/def/bin\"\n").unwrap();
-    let cfg = Config::resolve_with(&Flags::default(), &env, Some(bad)).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/x/spira-releases/def/bin".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let rel = PathBuf::from("/e").join(A);
     let e = verify::pre_activate_env(&cfg, &rel).unwrap_err();
     assert!(e.contains("spira-releases"), "{e}");
@@ -724,7 +722,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE", "SPIRA_TOML"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
@@ -775,11 +773,24 @@ fn every_shipped_service_renders_the_configured_path_tail_after_the_system_dirs(
 fn every_shipped_service_renders_against_real_host_values() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_INSTANCE", "SPIRA_REPO_MAP", "SPIRA_SCCACHE_DAV_ADDR"] {
-        env.insert(k.into(), format!("/host/{k}"));
-    }
-    let c = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    env.insert("SPIRA_TOML".into(), "/host/cfg.toml".into());
+    env.insert("DOLT".into(), "/host/DOLT".into());
+    let reg = Registered {
+        releases: "/e".into(),
+        releases_keep: "10".into(),
+        run: "/host/SPIRA_RUN".into(),
+        db: "/host/SPIRA_DB".into(),
+        dolt_data: "/host/SPIRA_DOLT_DATA".into(),
+        testdb_data: "/host/SPIRA_TESTDB_DATA".into(),
+        testdb_port: "3308".into(),
+        snap_stale_s: "60".into(),
+        watchtower_start_timeout_s: "360".into(),
+        instance: "/host/SPIRA_INSTANCE".into(),
+        repo_map: "/host/SPIRA_REPO_MAP".into(),
+        sccache_dav_addr: "/host/SPIRA_SCCACHE_DAV_ADDR".into(),
+        ..Default::default()
+    };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let host = c.host_values().unwrap();
     let rel = Path::new("/r/spira-releases").join(A);
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
@@ -941,13 +952,16 @@ fn activate_is_unaffected_by_a_gated_template_that_was_never_installed() {
     assert!(!w.units().join("sccache-dav.service").exists());
 }
 
-/// THE SECOND HALF of sp-xtdqi-2: an operator without this release's schema yet (so
-/// the config document cannot carry `sccache_dav_addr`) can still bootstrap an activation by
-/// exporting the variable — `host_values` reads env-then-config like every other key here,
-/// never config alone.
+/// THE SECOND HALF of sp-xtdqi-2, updated for the one-source-of-config rule (per Ryan
+/// 2026-10-05): `SPIRA_SCCACHE_DAV_ADDR` no longer has an environment-bootstrap path of its
+/// own — once the config file declares it, `host_values` carries it through exactly like every
+/// other registered key.
 #[test]
-fn activate_renders_the_address_once_the_gate_key_is_set_via_env() {
-    let w = World::with_git_and_env(FakeGit { extra: vec![("systemd/sccache-dav.service".into(), sccache_dav_template(), false)], ..Default::default() }, &[("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")]);
+fn activate_renders_the_address_once_the_gate_key_is_configured() {
+    let w = World::with_git_and_reg(
+        FakeGit { extra: vec![("systemd/sccache-dav.service".into(), sccache_dav_template(), false)], ..Default::default() },
+        Registered { sccache_dav_addr: "192.168.1.56:9431".into(), ..Default::default() },
+    );
     w.build(A).unwrap();
     fs::write(w.units().join("sccache-dav.service"), "stale\n").unwrap();
     let sc = FakeSystemctl::new(w.units());
@@ -1179,40 +1193,37 @@ fn prune_after_activate_keeps_current_and_previous_and_removes_the_rest() {
 // ---------------------------------------------------------------- config
 
 #[test]
-fn config_resolves_roots_from_flags_env_then_toml_and_refuses_when_nothing_does() {
+fn config_resolves_roots_from_flags_then_config_and_refuses_when_nothing_does() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
-    assert!(Config::resolve_with(&Flags::default(), &env, None).unwrap_err().contains("no releases directory"));
-    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\nworkspaces = \"/w\"\nrun = \"/r\"\nreleases_keep = \"7\"\n").unwrap();
-    let c = Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap();
+    assert!(Config::resolve_with(&Flags::default(), &env, None, &Registered::default()).unwrap_err().contains("no releases directory"));
+    // `reg.releases` is already fully resolved here (as `cfg("SPIRA_RELEASES")` would hand
+    // it — the `workspaces`-derived default is `spira_config`'s own job, not this crate's).
+    let reg = Registered { releases: "/w/spira-releases".into(), run: "/r".into(), releases_keep: "7".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!((c.releases.clone(), c.run.clone(), c.keep), (PathBuf::from("/w/spira-releases"), Some(PathBuf::from("/r")), 7));
     assert_eq!(c.unit_dir, PathBuf::from("/h/.config/systemd/user"));
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
-    assert_eq!(Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap().releases, PathBuf::from("/e"));
+    let reg2 = Registered { releases: "/e".into(), ..reg.clone() };
+    assert_eq!(Config::resolve_with(&Flags::default(), &env, None, &reg2).unwrap().releases, PathBuf::from("/e"));
     let f = Flags { releases: Some("/f".into()), ..Default::default() };
-    assert_eq!(Config::resolve_with(&f, &env, Some(toml)).unwrap().releases, PathBuf::from("/f"));
+    assert_eq!(Config::resolve_with(&f, &env, None, &reg2).unwrap().releases, PathBuf::from("/f"));
 }
 
 #[test]
-fn host_values_carries_the_configured_path_tail_env_over_config_and_refuses_a_bad_one() {
+fn host_values_carries_the_configured_path_tail_and_refuses_a_bad_one() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
     // Nothing configured: the tail is empty, not an error.
-    let c = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(""));
-    // The typed key.
-    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/h/.local/bin:/h/.cargo/bin\"\n").unwrap();
-    let c = Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap();
+    // The configured key.
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/h/.local/bin:/h/.cargo/bin".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/h/.local/bin:/h/.cargo/bin"));
-    // The environment wins over the typed key.
-    let mut env2 = env.clone();
-    env2.insert("SPIRA_PATH".into(), "/x/bin".into());
-    let c = Config::resolve_with(&Flags::default(), &env2, Some(toml)).unwrap();
-    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/x/bin"));
     // A tail entry inside a release is refused, naming it.
-    let bad: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/x/spira-releases/def/bin\"\n").unwrap();
-    let c = Config::resolve_with(&Flags::default(), &env, Some(bad)).unwrap();
+    let bad = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/x/spira-releases/def/bin".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &bad).unwrap();
     let e = c.host_values().unwrap_err();
     assert!(e.contains("spira-releases"), "{e}");
 }
@@ -1242,25 +1253,28 @@ fn parse_rfc3339_refuses_anything_it_did_not_write() {
 
 #[test]
 fn hotfix_alert_hours_defaults_to_four_and_is_configurable() {
+    // SPIRA_HOTFIX_ALERT_HOURS is not a registered key (no spira/conf.d/ entry) — it still
+    // reads the raw environment/document, so this test is unchanged by the one-source-of-
+    // config migration apart from supplying `reg.releases` directly.
     let mut base = Env::new();
     base.insert("HOME".into(), "/h".into());
-    base.insert("SPIRA_RELEASES".into(), "/e".into());
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
 
-    let cfg = Config::resolve_with(&Flags::default(), &base, None).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &base, None, &reg).unwrap();
     assert_eq!(cfg.hotfix_alert_hours().unwrap(), 4);
 
     let mut env = base.clone();
     env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "1".into());
-    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(cfg.hotfix_alert_hours().unwrap(), 1);
 
     let toml: spira_config::SpiraToml = spira_config::validate("[spira]\nhotfix_alert_hours = 9\n").unwrap();
-    let cfg = Config::resolve_with(&Flags::default(), &base, Some(toml)).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &base, Some(toml), &reg).unwrap();
     assert_eq!(cfg.hotfix_alert_hours().unwrap(), 9);
 
     let mut env = base;
     env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "nope".into());
-    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert!(cfg.hotfix_alert_hours().unwrap_err().contains("SPIRA_HOTFIX_ALERT_HOURS"));
 }
 
@@ -1318,7 +1332,8 @@ fn a_configured_threshold_changes_when_status_alerts() {
     env.insert("SPIRA_UNIT_DIR".into(), w.cfg.unit_dir.display().to_string());
     env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "1".into());
     let flags = Flags { releases: Some(w.cfg.releases.clone()), run: w.cfg.run.clone(), keep: Some(2) };
-    let low_cfg = Config::resolve_with(&flags, &env, None).unwrap();
+    let reg = Registered { instance: "prod".into(), ..Default::default() };
+    let low_cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
     assert!(activate::status(&low_cfg).unwrap().contains("ALERT hotfix"));
 }
 
@@ -1361,7 +1376,8 @@ fn install_world() -> (Sandbox, Config) {
     let mut env = Env::new();
     env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
     let flags = Flags { releases: Some(sb.p().join("rel")), run: None, keep: Some(2) };
-    let cfg = Config::resolve_with(&flags, &env, None).unwrap();
+    let reg = Registered { instance: "prod".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
     fs::create_dir_all(sb.p().join("units")).unwrap();
     (sb, cfg)
 }

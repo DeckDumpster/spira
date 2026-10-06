@@ -47,7 +47,7 @@ ts_iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 
 # run_report — run against the fixture files, controlling the exact window
 run_report() {
-    SPIRA_RUN="$SPIRA_RUN_DIR" \
+    tl_config SPIRA_RUN="$SPIRA_RUN_DIR"
     SPIRA_SOP_LEDGER="$SOP_LEDGER" \
     SPIRA_CONF=/dev/null \
     model-switch-report.sh \

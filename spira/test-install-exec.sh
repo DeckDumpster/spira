@@ -43,25 +43,34 @@ esac
 exit 0
 MOCK
 chmod +x "$MOCK_BIN/systemctl"
-for t in loginctl spira-supervise; do
+# `release` TOO: units-install unconditionally runs `release session-hook install` as part
+# of its own install (sp-7jr34), and the real `release` binary resolves its own release root
+# from the complete fixture's default (a fixed /fixture/... "current" symlink) whose
+# hooks/session.sh is not executable here — a harmless note, but one that lands in this
+# suite's captured output and trips the "not executable" substring check. What's under test
+# here is ExecStart executability, not the session hook, so it gets the same stub treatment
+# as systemctl/loginctl/spira-supervise above.
+for t in loginctl spira-supervise release; do
     printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$t"; chmod +x "$MOCK_BIN/$t"
 done
 
 # inst [args] — units-install in a minimal environment; TEST_PROD overrides SPIRA_PROD.
 inst() {
     > "$MOCK_LOG"
+    # SPIRA_MAIL TOO: the complete fixture's own default is a fixed /fixture/... path (never
+    # writable here — HOME is $TMP/home, not the fixture tree), and units-install's bootstrap
+    # ensures the concierge mailbox exists as one of its steps; under one source of config
+    # that default is never derived from SPIRA_RUN at runtime, so it must be declared.
+    tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
+        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" "SPIRA_MAIL=$SPIRA_RUN_DIR/mail" \
+        "SPIRA_PROD=${TEST_PROD-$PROD}" "SPIRA_COCKPIT=$REAL_COCKPIT"
     env -i \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_TOML=$SPIRA_TOML" \
         "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=${TEST_PROD-$PROD}" \
         "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
         "MOCK_LOG=$MOCK_LOG" \
         SPIRA_INSTALL_FORCE=1 \
         units-install "$@" 2>&1
@@ -91,8 +100,9 @@ want    "noexec: output says 'not executable'" "not executable" "$noexec_out"
 
 echo
 echo "CONF EMPTY — SPIRA_PROD= (empty) is preserved, not replaced by default:"
+tl_config SPIRA_PROD=
 conf_result="$(
-    env -i "PATH=$PATH" "HOME=$TMP/home" SPIRA_CONF=/nonexistent SPIRA_PROD= \
+    env -i "PATH=$PATH" "HOME=$TMP/home" SPIRA_CONF=/nonexistent "SPIRA_TOML=$SPIRA_TOML" \
         bash -c '. '"$HERE/conf.sh"'; printf "%s" "${SPIRA_PROD:-__EMPTY__}"' 2>/dev/null
 )"
 [ "$conf_result" = "__EMPTY__" ] && ok "conf empty: SPIRA_PROD= preserved as empty" \

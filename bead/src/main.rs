@@ -126,22 +126,6 @@ fn s(strs: &[&str]) -> Vec<String> {
     strs.iter().map(|s| s.to_string()).collect()
 }
 
-/// `spira_config::resolve::resolve_for_process`, called in-process (wave 4.9, sp-k80sa:
-/// this replaces `bead.sh`'s own narrow `export SPIRA_HOME SPIRA_REPO_MAP
-/// SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_CZAR_LABEL`, which only existed to carry
-/// those across the `exec` boundary into this binary). `home` is this process's own
-/// `--home` argument, never read back out of `$SPIRA_HOME` — that var is a per-copy fact
-/// `spira_config::resolve` deliberately never derives, so it must be the caller's own
-/// input, not something this resolves. A failure (no config document resolves, or a parse
-/// error) yields an empty `Resolved`, matching this crate's existing "missing config
-/// degrades to the caller's own default" behaviour everywhere else.
-fn resolved_config(home: &str) -> spira_config::resolve::Resolved {
-    let home_path = Path::new(home);
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home_path, &env_map);
-    spira_config::resolve::resolve_or_say("bead", home_path, &repo, &env_map)
-}
-
 /// `FAYTH_LABELS`, plainly evaluated — delegates to `spira_config::chamber::fayth_get`
 /// (sp-xsnid retired this crate's OWN hand-rolled bash-bridge, which carried an
 /// independently-drifted three-key label overlay — `SPIRA_CZAR_LABEL`/
@@ -254,25 +238,34 @@ fn schema_name(home: &str, key: &str) -> String {
 // Repository map / env helpers
 // =========================================================================================
 
-/// `SPIRA_REPO_MAP`, resolved in-process (wave 4.9, sp-k80sa) rather than read back out of
-/// this binary's own environment — `bead.sh` no longer re-exports it across the `exec`
-/// boundary (see `resolved_config`'s own doc).
-fn load_repos(home: &str) -> std::collections::BTreeMap<String, spira_config::RepoSection> {
-    let path = match resolved_config(home).values.get("SPIRA_REPO_MAP") {
-        Some(p) if !p.is_empty() => p.clone(),
-        _ => return std::collections::BTreeMap::new(),
-    };
+/// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
+/// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
+/// chamber/registry PATHS (`chamber_home`/`chamber_dir`/`fayth_names`), never which
+/// config file is in force.
+fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection> {
+    let path = cfg_label("SPIRA_REPO_MAP");
+    if path.is_empty() {
+        return std::collections::BTreeMap::new();
+    }
     match std::fs::read_to_string(&path) {
         Ok(content) => repos_by_name(&content),
         Err(_) => std::collections::BTreeMap::new(),
     }
 }
 
-fn env_default(key: &str, default: &str) -> String {
-    env::var(key)
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| default.to_string())
+/// One source of config (per Ryan 2026-10-05): a registered key's value, through
+/// `spira_config::process::cfg`, resolved from `$SPIRA_TOML`. Several of these keys treat
+/// a resolved empty string as a legitimate, documented value (SPIRA_SCOPE_LABEL's "no
+/// scope exclusion", in particular) — that passes straight through unchanged. Only an
+/// actual resolution failure refuses, naming the key; it is never silently substituted.
+fn cfg_label(key: &str) -> String {
+    match spira_config::process::cfg(key) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 // =========================================================================================
@@ -334,7 +327,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         i += 1;
     }
 
-    let repos = load_repos(home);
+    let repos = load_repos();
     if let Some(r) = &repo {
         if !repos.contains_key(r) {
             let valid = repos.keys().cloned().collect::<Vec<_>>().join(" ");
@@ -366,7 +359,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
     };
-    let express_label = env_default("SPIRA_EXPRESS_LABEL", "express");
+    let express_label = cfg_label("SPIRA_EXPRESS_LABEL");
 
     if submitted && kind != "work" {
         eprintln!("bead: --submitted applies only to work beads");
@@ -416,7 +409,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         let mut labels = work_labels(&fayth_labels, &repo, &express_label, express);
         if submitted {
             labels.push(',');
-            labels.push_str(&env_default("SPIRA_SUBMITTED_LABEL", "spira-submitted"));
+            labels.push_str(&cfg_label("SPIRA_SUBMITTED_LABEL"));
         }
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
@@ -533,7 +526,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let mut changed = String::new();
     let mut rc = 0;
     if express {
-        let express_label = env_default("SPIRA_EXPRESS_LABEL", "express");
+        let express_label = cfg_label("SPIRA_EXPRESS_LABEL");
         rc |= bdq_status(home, &s(&["label", "add", &id, &express_label]));
         changed.push_str("Marked express.");
     }
@@ -564,7 +557,13 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         changed.push_str("Description updated.");
     }
 
-    notify_live_aeon(&id, &changed);
+    // Best-effort notification, same as bdq's own `acknowledge_forced_edit`: the real
+    // amend above has already landed, so a config-resolution failure here must not abort
+    // and lose `rc` — `notify_live_aeon` already treats an empty SPIRA_RUN/SPIRA_MAIL as
+    // "nothing to notify".
+    let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+    let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+    notify_live_aeon(&id, &changed, &run, &mail);
     rc
 }
 
@@ -583,7 +582,7 @@ fn cmd_contract(home: &str) -> i32 {
     print!("{}", schema_kinds_passthrough(home));
     println!();
     println!("REPOS");
-    print!("{}", repos_section(&load_repos(home)));
+    print!("{}", repos_section(&load_repos()));
     0
 }
 
@@ -606,14 +605,21 @@ fn cmd_event(args: &[String]) -> i32 {
     // always setting SPIRA_RUN. Matched here as a plain string join, not `Path::join` on an
     // empty base (which would silently go relative instead) — see DESIGN.md "event".
     // Unset or empty SPIRA_RUN is refused by name (sp-0c1wz): the old join made a relative
-    // path and the event vanished with rc 0. Every real caller's conf.sh environment sets it.
-    let run_dir = match env::var("SPIRA_RUN") {
+    // path and the event vanished with rc 0. SPIRA_RUN is a registered key, so this now
+    // reads it through `cfg` rather than the process environment directly.
+    let run_dir = match spira_config::process::cfg("SPIRA_RUN") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
-        _ => {
-            eprintln!("spira_event: SPIRA_RUN is unset — refusing rather than drop the event");
+        Ok(_) => {
+            eprintln!("spira_event: SPIRA_RUN resolved empty — refusing rather than drop the event");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("spira_event: {e}");
             return 2;
         }
     };
+    // SPIRA_EVENT_COOLDOWN / SPIRA_NOW are not registered config keys (spira/conf.d has no
+    // entry for either) — left as plain env reads with their existing defaults.
     let cooldown: i64 = env::var("SPIRA_EVENT_COOLDOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(3600);
     let now: i64 = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
         std::time::SystemTime::now()
@@ -639,7 +645,7 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     let labels_csv = args.first().cloned().unwrap_or_default();
     let ty = args.get(1).map(String::as_str).unwrap_or("task");
     let labels = labels_csv.replace(',', " ");
-    let scope = env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope = cfg_label("SPIRA_SCOPE_LABEL");
     if !scope.is_empty() && !labels.split_whitespace().any(|l| l == scope) {
         return 0;
     }
@@ -651,7 +657,7 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
         })
         .collect();
     let partitions = chamber_partitions(&personas, &scope);
-    let no_loop = env::var("SPIRA_NO_LOOP_LABEL").unwrap_or_default();
+    let no_loop = cfg_label("SPIRA_NO_LOOP_LABEL");
     // A bead being filed is about to wait for dispatch.
     let (_, out) = lint_judge(&labels, true, ty, &partitions.join(" "), &no_loop);
     if out.iter().any(|l| l.starts_with("no partition label")) {
@@ -683,13 +689,13 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     // NOTE: the scope exclusion here defaults to EMPTY, not "spira" — `_bead_lint` itself
     // reads `${SPIRA_SCOPE_LABEL:-}`, a different default than `file`'s `schema.sh name
     // scope` call. Preserved exactly; see DESIGN.md.
-    let scope_for_partitions = env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope_for_partitions = cfg_label("SPIRA_SCOPE_LABEL");
     let partitions = chamber_partitions(&personas, &scope_for_partitions);
     let partitions_joined = partitions.join(" ");
 
-    let no_loop_label = env::var("SPIRA_NO_LOOP_LABEL").unwrap_or_default();
-    let ask_label = env::var("SPIRA_ASK_LABEL").unwrap_or_default();
-    let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
+    let no_loop_label = cfg_label("SPIRA_NO_LOOP_LABEL");
+    let ask_label = cfg_label("SPIRA_ASK_LABEL");
+    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
 
     let mut n = 0u32;
     let mut bad = 0u32;
@@ -871,7 +877,7 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
     };
 
     if is_blocks_type(dep_type.as_deref()) {
-        let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
+        let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
         let (_, out) = bdq_capture(home, &s(&["show", &depid, "--json"]));
         let target_labels = parse_show_row(&out).map(|r| r.labels).unwrap_or_default();
         if target_labels.iter().any(|l| l == &incident_label) {

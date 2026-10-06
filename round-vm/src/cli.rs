@@ -8,7 +8,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use crate::alarm::MailAlarm;
-use crate::config::{Config, EnvThenToml, PveEnv};
+use crate::config::{Config, PveEnv};
 use crate::pool::{Attempt, Deps, Pool, Spawner};
 use crate::procs::{block_termination_signals, command};
 use crate::provider::Timing;
@@ -24,7 +24,7 @@ fn secs_env(key: &str, default: u64) -> Duration {
 
 /// One attempt's worth of provider, built from config and pve.env read NOW (G7).
 pub fn real_attempt() -> Result<Attempt, String> {
-    let cfg = Config::load(&EnvThenToml::load())?;
+    let cfg = Config::load()?;
     let pubkey = std::fs::read_to_string(&cfg.host_pubkey)
         .map_err(|_| format!("round-vm: SPIRA_ROUND_VM_HOST_PUBKEY not readable: {}", cfg.host_pubkey.display()))?;
     let env = PveEnv::load(&cfg.pve_env_path, &|k| std::env::var(k).ok())?;
@@ -140,7 +140,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
     } else {
         None
     };
-    let cfg = match Config::load(&EnvThenToml::load()) {
+    let cfg = match Config::load() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");

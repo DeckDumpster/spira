@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::cfg::{Cfg, Context};
+use crate::cfg::{Cfg, Context, Declared};
 use crate::host::{Host, Io, Out, Spec};
 use crate::seams;
 use crate::store::{self, Bd, Snapshot};
@@ -127,12 +127,13 @@ impl<'a> Sentinel<'a> {
     pub fn new(
         h: &'a Host<'a>,
         ctx: Context,
+        declared: Declared,
         home: &Path,
         mode: Mode,
         exe: String,
         pass_id: String,
     ) -> Sentinel<'a> {
-        let cfg = Cfg::from_context(&ctx, home);
+        let cfg = Cfg::from_context(&ctx, home, declared);
         let tally_file = cfg
             .run
             .join(format!(".sentinel-tally.{}", std::process::id()));

@@ -66,7 +66,7 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         w.err(format!("queue.sh publish: cannot resolve {base}"));
         return FAIL;
     };
-    match w.lib.divergence(&c.s.queue_dir, &name, &path, &forge_sha, &head_sha) {
+    match w.lib.divergence(&c.s.mailbox, &c.s.queue_dir, &name, &path, &forge_sha, &head_sha) {
         Divergence::Ancestor => {}
         Divergence::Diverged(foreign) => {
             w.err(format!(

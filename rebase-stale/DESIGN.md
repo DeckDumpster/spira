@@ -89,7 +89,8 @@ gate, and on green writes the landstate/queue entry itself.
 |---|---|
 | `SPIRA_HOME` (lib.sh, queue.sh) | environment (conf.sh exports it; required) |
 | repo path, land ref, home repo | lib.sh `repo_root` / `spira_landref` / `spira_home_repo` — the repo-map resolvers every queue caller uses, the same seam `batcher-cut::find_repo` uses; never a second parser |
-| `SPIRA_RUN`, `SPIRA_REBASE_STALE_LOG`, `SPIRA_DB`, `SPIRA_BD`, `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | environment (conf.sh exports), falling back to the `spira-config` library (`[spira] run / rebase_stale_log / db / bd / git_name / git_email`) when unset |
+| `SPIRA_RUN`, `SPIRA_REBASE_STALE_LOG`, `SPIRA_DB`, `SPIRA_BD`, `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | `spira_config::process::cfg` — the one door: `$SPIRA_TOML`, resolved once per process; no environment read, no default; a missing/unresolvable key refuses, naming it. `SPIRA_DB` resolving to the empty string is the declared "no database for this run", not a missing value. |
+| `SPIRA_REAPLOG`, `SPIRA_FORMAT_TIMEOUT` | not registered config keys (no `spira/conf.d/` entry) — plain environment reads, each with its own default (`$SPIRA_RUN/reap.log`, `300`) |
 
 ## Liveness: live holder vs leftover worktree
 

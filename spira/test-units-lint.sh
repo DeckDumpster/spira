@@ -28,6 +28,9 @@ mkdir -p "$TMP/home"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
 ln -s "$HERE"/*.sh "$CLONE/spira/"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, and the *.sh glob above never matches the conf.d directory.
+ln -s "$HERE/conf.d" "$CLONE/spira/conf.d"
 
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2), found by name
 # on the suite's PATH (sp-gypjk).
@@ -76,9 +79,24 @@ printf 'test-units-lint.sh\n'
 # three. SPIRA_HOME = $CLONE/spira (this suite's own clone, never the real checkout, per
 # the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
 # SPIRA_HOME is exactly what the comment below this block is testing).
-rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    SPIRA_HOME="$CLONE/spira" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD= \
-    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" units-install --render 2>"$TMP/render.err")"
+tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD="" \
+    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" SPIRA_DB="$RUN/db" SPIRA_DOLT_DATA=""
+# SPIRA_LC_PASSWORD_FILE above no longer reaches units-install's render for this key: it is
+# PROCEDURAL (spira_config::resolve::lc_credential_default), computed straight from
+# XDG_CONFIG_HOME/HOME with no environment-override rung at all (one source of config, per
+# Ryan 2026-10-05) — point XDG_CONFIG_HOME under $RUN so the computed default lands
+# somewhere paths_are_configured() accepts, instead of this suite's own $TMP/home.
+# SPIRA_DOLT_DATA="" (one source of config, per Ryan 2026-10-05): the complete fixture
+# declares a non-empty dolt_data, so manifest.rs's dolt-data gate — previously closed by an
+# unset/derived-empty default — now renders dolt-tmp-prune.service/.timer into this pass too.
+# That unit is a sanctioned, documented exception to law-isolate-greedy-work-in-vms (it
+# genuinely carries CPUQuota=/Nice=/IOSchedulingClass= on purpose, sp-n1l7y) that this
+# suite's render fixture never meant to exercise — it checks three specific "prod" units plus
+# the watch template, not dolt's own unit. Declaring it empty restores this suite's original,
+# pre-migration scope instead of weakening the global "no CPUQuota=" assertion below.
+rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$CONF" \
+    XDG_CONFIG_HOME="$RUN/xdg-config" \
+    SPIRA_HOME="$CLONE/spira" units-install --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
 # Rust binary elsewhere in UNITS, not rendered here) — informational, not a render failure.
@@ -90,11 +108,23 @@ block() {  # block <unit-name> -> its rendered content
 
 # EVERY PATH IN A RENDERED UNIT MUST COME FROM CONFIGURATION. Both roots are pinned to
 # non-defaults above, so a path written as a literal in a template cannot pass by coincidence.
+#
+# $SPIRA_TOML ITSELF IS ALSO AN ALLOWED VALUE (one source of config, per Ryan 2026-10-05):
+# every unit now carries `Environment=SPIRA_TOML=@SPIRA_TOML@` (sp-v62vn follow-up — the
+# launched process reaches its config the same way this installer did), so its literal value
+# — this suite's own base:override pair, neither of which lives under $CLONE or $RUN — shows
+# up as a "path" in every rendered unit. That is the suite's own configuration passed through
+# unchanged, not a template literal, so it is exempted by exact match only — a stray real path
+# that merely starts with one half of $SPIRA_TOML still gets caught.
 paths_are_configured() {  # paths_are_configured <label> <unit-text>
     local stray="" p
     while IFS= read -r p; do
         [ -n "$p" ] || continue
-        case "$p" in "$CLONE"|"$CLONE"/*|"$RUN"|"$RUN"/*) ;; *) stray="$stray $p" ;; esac
+        case "$p" in
+            "$CLONE"|"$CLONE"/*|"$RUN"|"$RUN"/*) ;;
+            "$SPIRA_TOML") ;;
+            *) stray="$stray $p" ;;
+        esac
     done < <(sed 's|file://|file:|' <<< "$2" | grep -oE '[=:]/[^ ]+' | sed 's/^[=:]//')
     is "$1: every path in it came from configuration" "" "$stray"
 }
@@ -140,7 +170,7 @@ paths_are_configured "spira-watch@ (alpha)" "$watch_unit"
 # staleness is noticed doubles the wait the threshold was set to allow (UC-operator-channel-28).
 notify_tmr="$(block spira-notify-prod.timer)"
 period="$(sed -n 's/^OnUnitActiveSec=\([0-9]*\)min$/\1/p' <<< "$notify_tmr")"
-default_age="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent" \
+default_age="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/nonexistent" \
     bash -c ". '$CLONE/spira/conf.sh'; printf '%s' \"\$SPIRA_NOTIFY_AGE\"")"
 is "the notify timer states a period in minutes" "yes" "$([ -n "$period" ] && echo yes || echo no)"
 is "the threshold has a default"                 "yes" "$([ -n "$default_age" ] && echo yes || echo no)"
@@ -178,9 +208,14 @@ printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s
 # reaches it. Left to the conf file alone, @SPIRA_PROD_ROOT@ fell back to dirname(SPIRA_HOME)
 # — this container's own real checkout root, not PRODROOT — so ExecStart pointed at this
 # box's /workspace/bin/sentinel (not yet built in this pass) instead of PRODROOT/bin's stub.
-env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" SPIRA_WATCHERS="$MAN" \
+# SPIRA_MAIL no longer derives from SPIRA_RUN (one source of config, per Ryan 2026-10-05):
+# left to the fixture's own default, install's own "mail ensure concierge" step tries to
+# create the mailbox under the fictional /fixture/home/... tree and refuses with
+# "Permission denied".
+tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" \
+    SPIRA_PROD="$PRODROOT/spira" SPIRA_MAIL="$RUN/mail"
+env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/install.conf" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_PROD="$PRODROOT/spira" \
     units-install > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"

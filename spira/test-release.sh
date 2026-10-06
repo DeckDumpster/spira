@@ -90,22 +90,20 @@ REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/trunk | sp | |\n' "$REPO" > "$REPO_MAP"
 
 run_cut() {   # run_cut [args] -> stdout
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$SH" \
-        SPIRA_ID_PREFIX=sp \
         bash "$SH/release.sh" cut "$@" 2>&1
 }
 
 run_show() {  # run_show <tag> -> stdout
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$SH" \
-        SPIRA_ID_PREFIX=sp \
         bash "$SH/release.sh" show "$@" 2>&1
 }
 

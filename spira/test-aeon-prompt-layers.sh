@@ -46,8 +46,13 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 command -v aeon >/dev/null 2>&1 \
@@ -58,7 +63,8 @@ BIN="$TMP/bin"; mkdir -p "$BIN"
 # `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
 # lifecycle terms, ahead of the tree's spira-lc on PATH.
 lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
-export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
 aeon_fixture_agent "$BIN/claude"
 
@@ -91,6 +97,14 @@ FAYTH
     # A minimal chamber .md with the <!-- task --> marker so the split exercises the path.
     printf 'You are test persona %s.\n\nStanding rule: never guess.\n\n<!-- task -->\n\n## The bead\n{{BEAD}}\n\n## Finishing\nClose {{BEAD_ID}}.\n' \
         "$name" > "$SPIRA_HOME/chamber/$name.md"
+    # persona.<name>.model: aeon::conf::persona_model refuses outright when a fayth's
+    # model is undeclared (no built-in fallback, per Ryan 2026-10-05) — the complete
+    # fixture declares every REAL persona's model but has never heard of this suite's own
+    # fayths. tl_config only knows the SPIRA_FOO -> spira.foo mapping, not [persona.*]
+    # tables, so this sets the dotted path directly (same pattern as
+    # test-aeon-teardown-e2e.sh's sweeper fixture).
+    spira-config set "persona.$name.model" claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
+        || { printf 'make_fayth: could not declare persona.%s.model\n' "$name" >&2; exit 1; }
 }
 
 make_bead() {           # make_bead -> prints bead id
@@ -135,13 +149,14 @@ echo "groomer system.md has the five operations; task.md has the finishing contr
 # ==========================================================================================
 # Use a real groomer fayth to verify the content split meets the acceptance criteria.
 # Run through the real chamber file (not the test stub), using a groomer bead.
-# HOME/SPIRA_CONF/SPIRA_TOML pinned to the fixture: sourcing conf.sh unguarded picks up
-# whatever spira.conf/spira.toml the ambient HOME happens to have, and the auto-convert
-# path WRITES there (sp-zs04v.2 — a suite that can reach ~/.config/spira is a production
-# write, not a test).
-GROOMER_LABEL="$(env -i PATH="$PATH" HOME="$TMP" SPIRA_HOME="$SPIRA_HOME" \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_TOML="$TMP/no.toml" \
-    bash -c '. "$SPIRA_HOME/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_GROOMER_LABEL:-groomer}"')"
+#
+# GROOMER_LABEL is this suite's OWN SPIRA_GROOMER_LABEL — already resolved into this shell
+# by testdb.sh's sourcing of conf.sh (via testlib.sh's SPIRA_TOML) at the top of this file —
+# not a fresh env -i resolve against a deliberately-missing conf/toml: conf.sh refuses
+# outright with no SPIRA_TOML now (per Ryan 2026-10-05), so that old trick no longer answers
+# with a usable fallback, and the real aeon process below resolves this exact same key from
+# this exact same SPIRA_TOML anyway, so reusing it is also the only way the two agree.
+GROOMER_LABEL="${SPIRA_GROOMER_LABEL:-groom}"
 BID_G="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "groomer layers test" --type task \
     -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$GROOMER_LABEL,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"

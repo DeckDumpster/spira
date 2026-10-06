@@ -47,7 +47,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # further down still needs them.
 # ======================================================================================
 TMP="$(mktemp -d)"
-export SPIRA_DB="${SPIRA_DB:-$TMP/no-such-db}" SPIRA_RUN="$TMP/run"
+export SPIRA_DB="${SPIRA_DB:-$TMP/no-such-db}"
+tl_config SPIRA_RUN="$TMP/run"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 

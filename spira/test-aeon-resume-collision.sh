@@ -48,9 +48,13 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# now (no longer derived from SPIRA_HOME when unset), so the fixture persona built below
+# under $SPIRA_HOME/chamber would otherwise never be found.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -62,7 +66,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
     > "$SPIRA_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP
+tl_config SPIRA_AGENT="$BIN/claude"
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
 aeon_fixture_agent "$BIN/claude"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the

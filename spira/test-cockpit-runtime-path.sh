@@ -30,11 +30,15 @@ printf '# empty\n' > "$HARNESS/spira/watchers"
 # conf_two <key>: source conf.sh and print SPIRA_RUN<TAB><key-value>.
 # Receives no SPIRA_HOME so conf.sh derives it from BASH_SOURCE[0] = $HARNESS/spira/conf.sh.
 # HOME is a scratch dir so $HOME/.config is isolated from the real operator config.
+tl_config SPIRA_WATCHERS="$HARNESS/spira/watchers"
 conf_two() {
     local key="$1"; shift
-    env -i "$@" PATH="$PATH" HOME="$TMP/home" \
+    # Extra key=val overrides are registered keys (SPIRA_PREFIX_MAP below) — declared via
+    # tl_config (the one source of config) rather than passed through env -i, which strips them.
+    [ $# -gt 0 ] && tl_config "$@"
+    env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c \
         ". '$HARNESS/spira/conf.sh'
          printf '%s\t%s' \"\${SPIRA_RUN:-}\" \"\${${key}:-}\"" 2>/dev/null
@@ -55,6 +59,9 @@ case "$val_pm_wrong" in
     *) ok "positive control: harness-dir path correctly excluded from .config/spira check" ;;
 esac
 
+# Revert the positive control's override so this call sees the undeclared (fixture-default)
+# value, not the harness-dir path just declared above.
+spira-config unset spira.prefix_map "$_TL_CONF_OVERRIDE" >/dev/null
 result_pm="$(conf_two SPIRA_PREFIX_MAP)"
 val_pm="$(printf '%s' "$result_pm" | cut -f2)"
 case "$val_pm" in

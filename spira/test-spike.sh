@@ -64,18 +64,23 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 # NON-DEFAULTS, all three. `notes` is not `docs/spikes` and `research` is not `spike`, so a
 # literal written into confine.sh or into lib.sh fails here rather than passing by luck.
-export SPIRA_SPIKE_LABEL=research
-export SPIRA_SPIKE_DIR=notes/spikes
-export SPIRA_SPIKE_PATHS="notes/spikes sources"
-export SPIRA_ASK_LABEL=needs-a-human
+SPIRA_SPIKE_LABEL=research
+SPIRA_SPIKE_DIR=notes/spikes
+SPIRA_SPIKE_PATHS="notes/spikes sources"
+SPIRA_ASK_LABEL=needs-a-human
+tl_config SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" \
+    SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 
 # ======================================================================================
 echo
 echo "the partition is the spike's own:"
 # ======================================================================================
-export SPIRA_RUN="$TMP/run"
+SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
 mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # `summon_fayth` is a `sentinel --summon` shim now (wave 4.27, family G, sp-gzmd2): a real
 # subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
 # probe — the same one-line symlink trick test-summon-fayth.sh's own `aeon --escape`
@@ -91,6 +96,9 @@ ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/aeon"
 chmod +x "$SPIRA_HOME/aeon"
 export PATH="$SPIRA_HOME:$PATH"   # summon_fayth launches the aeon on PATH; a stub here
+# Readiness is the lifecycle's (sp-860zj): the bd fixture is told to fayth_ready in lifecycle
+# terms — open is READY, the spira-poison label and the ask label are holds.
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 SUMMONED="$TMP/summoned.txt"
 export SPIRA_SUMMON="$TMP/summon.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$SUMMONED" > "$SPIRA_SUMMON"
@@ -245,10 +253,10 @@ lc_path_stub "$SH" "$TMP/lcfix"
 
 land() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$LREPO" \
-    SPIRA_HOME_REPO=home SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" \
-    SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO=home \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" \
+        SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS"
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$LREPO" \
         landing-pass land 2>&1
 }
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '

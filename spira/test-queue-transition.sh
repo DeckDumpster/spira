@@ -92,17 +92,30 @@ chmod +x "$SH/forge-fixture.sh"
 
 export SPIRA_CONF=/nonexistent
 export SPIRA_HOME="$SH"
-export SPIRA_HOME_REPO="$REPONAME"
 export SPIRA_REPO="$REPO"
-export SPIRA_RUN="$RUN"
-export SPIRA_QUEUE_DIR="$QDIR"
-export SPIRA_REPO_MAP="$RMAP"
-export SPIRA_FORGE="$SH/forge-fixture.sh"
-export SPIRA_RELEASES="$RELEASES"
 # queue/DESIGN.md §8 D12: these hand-built heads were never gated; the named override lands them.
 export SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged"
-export SPIRA_QUEUE_TRANSITION_POLLSEC=1
-export SPIRA_QUEUE_TRANSITION_MAXSEC=5
+tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" \
+    SPIRA_REPO_MAP="$RMAP" SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_RELEASES="$RELEASES" \
+    SPIRA_QUEUE_TRANSITION_POLLSEC=1 SPIRA_QUEUE_TRANSITION_MAXSEC=5
+# queue.sh's own `agrees()` (transition.rs) refuses unless the legacy repo-map row and
+# spira.toml's repo.<name>.{mode,base} already match — the complete fixture declares no
+# [repo.fixtrans] at all, reading as mode="" base="" ("already disagree"). Declare this
+# suite's own row, matching $RMAP's initial queue.local|local/main exactly; queue.sh's own
+# transitions keep it in sync afterward by writing the same (writable, last-layer) file.
+# THREE SEPARATE `spira-config set` calls do not work here: `path` and `mode` are both
+# mandatory, non-Option fields of [repo.<name>] (spira-config/src/lib.rs RepoSection), and
+# every `set` re-validates the WHOLE document before writing — a call setting only one of
+# them leaves the table with the other missing, so write_doc's validate() refuses every one
+# of the three in turn (silently: stdout was empty, and the real error was on stderr, above
+# the TAP output this harness's tail-only capture never showed). Append the complete table
+# directly instead, so every field exists from the first read.
+cat >> "$_TL_CONF_OVERRIDE" <<REPOFIXTRANS
+[repo.fixtrans]
+path = "$REPO"
+mode = "queue.local"
+base = "local/main"
+REPOFIXTRANS
 
 queue() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \

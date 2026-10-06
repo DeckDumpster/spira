@@ -35,10 +35,16 @@ fn cmd_commit(args: &[String]) {
         Ok(v) => v,
         Err(()) => usage(),
     };
-    let spira_dolt_data = std::env::var("SPIRA_DOLT_DATA").ok();
+    let spira_dolt_data = match spira_config::process::cfg("SPIRA_DOLT_DATA") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
     let dolt_bin = std::env::var("BEADS_STORE_DOLT_BIN").unwrap_or_else(|_| "dolt".to_string());
 
-    let engine = match beads_store::resolve(&db, spira_dolt_data.as_deref()) {
+    let engine = match beads_store::resolve(&db, Some(&spira_dolt_data)) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("{e}");
@@ -76,9 +82,15 @@ fn cmd_push(args: &[String]) {
     let (Some(db), Some(remote)) = (db, remote) else {
         usage()
     };
-    let spira_dolt_data = std::env::var("SPIRA_DOLT_DATA").ok();
+    let spira_dolt_data = match spira_config::process::cfg("SPIRA_DOLT_DATA") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
     let dolt_bin = std::env::var("BEADS_STORE_DOLT_BIN").unwrap_or_else(|_| "dolt".to_string());
-    let engine = match beads_store::resolve(&db, spira_dolt_data.as_deref()) {
+    let engine = match beads_store::resolve(&db, Some(&spira_dolt_data)) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("{e}");

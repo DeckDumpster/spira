@@ -50,10 +50,65 @@ fn tmp_exe(content: &str) -> Tmp {
     Tmp { path: p.to_string_lossy().into_owned(), _dir: dir }
 }
 
+/// This crate's own `spira/` tree — `conf.d` lives here. Every subprocess test's
+/// `SPIRA_HOME` must point somewhere with a `conf.d` beside it (triage guide: "the tree's
+/// spira dir") — a custom chamber fixture ([`chamber_home`]) gets one by symlink.
+const REAL_SPIRA_HOME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira");
+
+/// A complete, throwaway config file (every registered key declared;
+/// `spira_config::process::fixture_toml`) with `declare`'s overrides — kept alive as long
+/// as the caller holds the returned `Tmp`.
+fn toml_fixture(declare: &[(&str, &str)]) -> Tmp {
+    let dir = testkit::TempDir::new("spira-claim-toml");
+    let p = spira_config::process::fixture_toml(&dir, declare);
+    Tmp { path: p.to_string_lossy().into_owned(), _dir: dir }
+}
+
+/// `dispatch` now reads every registered key through `spira_config::process::cfg`, which
+/// caches per PROCESS (per Ryan 2026-10-05: one source of config) — so a unit test cannot
+/// vary it in-process. This execs the real `spira-claim` binary instead: a fresh process
+/// per call, with a fresh throwaway config file (`toml_fixture`, no overrides) and
+/// `SPIRA_HOME` pointed at this crate's own tree.
 fn run(args: &[&str], stdin: &str) -> Outcome {
-    let _env = testkit::env_read();
-    let a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    dispatch(&a, &mut stdin.as_bytes())
+    run_cfg(args, stdin, &[], &[])
+}
+
+/// [`run`], plus `toml_declare` (registered-key overrides for the subprocess's own
+/// throwaway config file — `SPIRA_BD`, labels, `SPIRA_CLAIM_RETRIES`, … everything
+/// `spira/conf.d` registers; raw env no longer reaches any of these) and `extra_env`
+/// (anything else the subprocess should see: `SPIRA_HOME` for a fayth chamber, `PATH`, the
+/// few still-unregistered knobs). `SPIRA_HOME` defaults to [`REAL_SPIRA_HOME`] unless
+/// `extra_env` overrides it. One `testkit::env` call for everything: its lock is not
+/// reentrant, so a caller must never also be holding it.
+fn run_cfg(args: &[&str], stdin: &str, toml_declare: &[(&str, &str)], extra_env: &[(&str, Option<&str>)]) -> Outcome {
+    let toml = toml_fixture(toml_declare);
+    let mut edits: Vec<(&str, Option<&str>)> = vec![("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.as_str()))];
+    edits.extend_from_slice(extra_env);
+    let _env = testkit::env(&edits);
+    exec_spira_claim(args, stdin)
+}
+
+/// The compiled `spira-claim` binary, fed `args`/`stdin`, its exit code/stdout/stderr
+/// folded into an [`Outcome`] the same shape `dispatch` used to return directly.
+fn exec_spira_claim(args: &[&str], stdin: &str) -> Outcome {
+    use std::io::Write;
+    // The binary cargo built beside this test executable (tests/bin_is_built.rs makes it
+    // build): <target>/<profile>/deps/<this-test> -> <target>/<profile>/spira-claim.
+    let bin = std::env::current_exe().unwrap().parent().and_then(|d| d.parent()).unwrap().join("spira-claim");
+    let mut child = std::process::Command::new(&bin)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn spira-claim");
+    child.stdin.take().expect("its stdin").write_all(stdin.as_bytes()).expect("write stdin");
+    let out = child.wait_with_output().expect("wait for spira-claim");
+    Outcome {
+        code: out.status.code().unwrap_or(-1),
+        out: String::from_utf8_lossy(&out.stdout).into_owned(),
+        err: String::from_utf8_lossy(&out.stderr).into_owned(),
+    }
 }
 
 fn ev(id: &str, t: &str, v: &str, at: &str) -> serde_json::Value {
@@ -395,8 +450,12 @@ fn machine_mode_unreachable_machine_is_cannot_tell() {
     // Unreachable by construction: no spira-lc on PATH. Inheriting the caller's PATH and
     // SPIRA_LC_* reached the production store from the gate and passed only while it was slow.
     let no_lc = testkit::TempDir::new("spira-claim-no-lc");
-    let _env = testkit::env(&[("PATH", Some(no_lc.path().to_str().unwrap()))]);
-    let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs], &ready);
+    let o = run_cfg(
+        &["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs],
+        &ready,
+        &[],
+        &[("PATH", Some(no_lc.path().to_str().unwrap()))],
+    );
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
     assert!(o.err.contains("the machine must answer"), "{}", o.err);
 }
@@ -410,15 +469,12 @@ fn b_stacked_on_a() -> String {
 #[test]
 fn cli_stack_reports_the_certified_prerequisites_tip() {
     let bd = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a()));
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-    ]);
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"0","tip":"abc123"},
     ]).to_string());
     let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
-    let o = run(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "");
+    let o = run_cfg(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd.as_str())], &[]);
     assert_eq!(o.code, 0, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!(v["claimable"], true);
@@ -429,15 +485,12 @@ fn cli_stack_reports_the_certified_prerequisites_tip() {
 #[test]
 fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
     let bd = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a()));
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-    ]);
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"4","tip":"abc123"},
     ]).to_string());
     let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
-    let o = run(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "");
+    let o = run_cfg(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd.as_str())], &[]);
     assert_eq!(o.code, 3, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!(v["claimable"], false);
@@ -523,14 +576,12 @@ esac"#);
         Some(rows) => fake_lc_path(rows),
         None => Tmp { path: format!("{}:/usr/bin:/bin", no_lc.to_string_lossy()), _dir: testkit::TempDir::new("spira-claim-epics-path") },
     };
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_LC_BIN", None),
-        ("PATH", Some(path.as_str())),
-    ]);
-    let o = run(&["epics"], r#"[{"id":"a","parent":"sp-E"},{"id":"b","parent":"sp-F"}]"#);
-    o
+    run_cfg(
+        &["epics"],
+        r#"[{"id":"a","parent":"sp-E"},{"id":"b","parent":"sp-F"}]"#,
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", "")],
+        &[("SPIRA_LC_BIN", None), ("PATH", Some(path.as_str()))],
+    )
 }
 
 #[test]
@@ -578,6 +629,10 @@ fn sh(body: &str) -> Tmp {
 }
 
 /// `<home>/chamber/<name>.fayth` per entry, `(name, FAYTH_LABELS, FAYTH_EXCLUDE_LABELS)`.
+/// A test that points `SPIRA_HOME` here (to get this chamber) also hands
+/// `spira_config::process::cfg`'s own home-location the SAME directory — so it needs a
+/// `conf.d` too, or config resolution refuses ("no config registry at …"). Symlinked to
+/// the real tree's, never copied: this fixture is not the one being tested.
 fn chamber_home(fayths: &[(&str, &str, &str)]) -> Tmp {
     let dir = testkit::TempDir::new("spira-claim-chamber");
     let chamber: PathBuf = dir.join("chamber");
@@ -585,7 +640,17 @@ fn chamber_home(fayths: &[(&str, &str, &str)]) -> Tmp {
     for (name, labels, exclude) in fayths {
         std::fs::write(chamber.join(format!("{name}.fayth")), format!("FAYTH_LABELS=\"{labels}\"\nFAYTH_EXCLUDE_LABELS=\"{exclude}\"\n")).unwrap();
     }
+    std::os::unix::fs::symlink(std::path::Path::new(REAL_SPIRA_HOME).join("conf.d"), dir.join("conf.d")).unwrap();
     Tmp { path: dir.to_string_lossy().into_owned(), _dir: dir }
+}
+
+/// `SPIRA_CHAMBER` for a [`chamber_home`] fixture, to `toml_declare` — `spira.chamber`
+/// (the registered key `spira_config::chamber::chamber_dir` actually reads) otherwise
+/// comes from the baseline fixture's own declared value, never the chamber this test
+/// just built (Concierge, 2026-10-05: "spira.chamber comes from the complete fixture …
+/// so 'no fayth in the chamber'").
+fn chamber_path(home: &Tmp) -> String {
+    format!("{}/chamber", home.as_str())
 }
 
 #[test]
@@ -601,12 +666,12 @@ fn ready_args_cli_prints_one_token_a_line_in_order() {
 fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
     let bd = sh("echo 'dolt: connection refused' >&2; exit 1");
     let path = fake_lc_path(&lc_ready(&["a"]));
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("PATH", Some(path.as_str())),
-    ]);
-    let o = run(&["ready-count", "plan", "spira-poison", "--noloop-label", "no-loop"], ""); // literal-ok: fixture value
+    let o = run_cfg(
+        &["ready-count", "plan", "spira-poison", "--noloop-label", "no-loop"], // literal-ok: fixture value
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", "")],
+        &[("PATH", Some(path.as_str()))],
+    );
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "a failed query is not a clean zero (sp-3ntca)");
     assert!(o.err.contains("connection refused"), "{}", o.err);
 }
@@ -615,28 +680,29 @@ fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
 fn ready_count_cli_real_count() {
     let bd = sh(&format!("echo '{}'", plan_rows(&["a", "b", "c"])));
     let path = fake_lc_path(&lc_ready(&["a", "b", "c"]));
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_SCOPE_LABEL", None),
-        ("SPIRA_NO_LOOP_LABEL", None),
-        ("PATH", Some(path.as_str())),
-    ]);
-    let o = run(&["ready-count", "plan", ""], "");
+    // `machine_claimable` applies `scope_label` BEFORE the <labels> argument does — the
+    // baseline fixture's own "spira" would filter out every "plan"-only bead here; this
+    // test means unscoped readiness, so it declares no scope restriction.
+    let o = run_cfg(
+        &["ready-count", "plan", ""],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_SCOPE_LABEL", "")],
+        &[("PATH", Some(path.as_str()))],
+    );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "3", ""));
 }
 
 #[test]
 fn claim_retry_cli_succeeds_first_try_with_no_argv_parsing() {
     let bd = sh("echo '[{\"id\":\"sp-a\"}]'");
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_TOML", None),
-    ]);
     // "--label" and "--claim" here are BD's flags, not spira-claim's — dispatch must pass
     // them through untouched rather than parsing them as its own.
-    let o = run(&["claim-retry", "ready", "--limit", "0", "--claim", "--label", "plan"], "");
+    let o = run_cfg(
+        &["claim-retry", "ready", "--limit", "0", "--claim", "--label", "plan"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", "")],
+        &[],
+    );
     assert_eq!(o.code, 0);
     assert!(o.out.contains("sp-a"), "{}", o.out);
 }
@@ -644,29 +710,27 @@ fn claim_retry_cli_succeeds_first_try_with_no_argv_parsing() {
 #[test]
 fn claim_retry_cli_retries_past_a_transient_failure() {
     let log = tmp("");
-    let toml = tmp("[spira]\nclaim_retries = \"3\"\nclaim_retry_delay_s = \"0\"\n");
     let bd = sh(&format!(
         "n=$(wc -l < {log}); printf 'x\\n' >> {log}; if [ \"$n\" -lt 1 ]; then echo boom >&2; exit 1; fi; echo '[]'"
     ));
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_TOML", Some(toml.as_str())),
-    ]);
-    let o = run(&["claim-retry", "ready", "--limit", "0"], "");
+    let o = run_cfg(
+        &["claim-retry", "ready", "--limit", "0"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_CLAIM_RETRIES", "3"), ("SPIRA_CLAIM_RETRY_DELAY_S", "0")],
+        &[],
+    );
     assert_eq!((o.code, o.out.as_str()), (0, "[]\n"), "the contention case: the second attempt finds the real (empty) result");
 }
 
 #[test]
 fn claim_retry_cli_exhausts_and_reports_one_stderr_line_with_empty_stdout() {
-    let toml = tmp("[spira]\nclaim_retries = \"2\"\nclaim_retry_delay_s = \"0\"\n");
     let bd = sh("echo 'dolt: connection refused' >&2; exit 1");
-    let _env = testkit::env(&[
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_TOML", Some(toml.as_str())),
-    ]);
-    let o = run(&["claim-retry", "ready"], "");
+    let o = run_cfg(
+        &["claim-retry", "ready"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_CLAIM_RETRIES", "2"), ("SPIRA_CLAIM_RETRY_DELAY_S", "0")],
+        &[],
+    );
     assert_eq!((o.code, o.out.as_str()), (1, ""));
     assert!(o.err.contains("query failed after 2 attempt(s)"), "{}", o.err);
     assert!(o.err.contains("connection refused"), "{}", o.err);
@@ -675,79 +739,86 @@ fn claim_retry_cli_exhausts_and_reports_one_stderr_line_with_empty_stdout() {
 #[test]
 fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
     let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_FAYTHS", None),
-        ("SPIRA_TOML", None),
-        // What conf.sh's derivation would hold by the time the bash shim threads them
-        // through — a bare `cargo test` process has no conf.sh behind it.
-        ("SPIRA_QUEUE_WAIT_LABEL", Some("spira-queue-waiting")),
-        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
-        ("SPIRA_OPEN_CHILDREN_LABEL", Some("spira-open-children")),
-    ]);
-    let o = run(&["fayth-exclude", "builder", "qa-proposed"], "");
+    let chamber = chamber_path(&home);
+    // The three shared labels are the baseline fixture's own declared values
+    // (spira-queue-waiting/spira-submitted/spira-open-children) — no override needed.
+    let o = run_cfg(
+        &["fayth-exclude", "builder", "qa-proposed"],
+        "",
+        &[("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_HOME", Some(home.as_str()))],
+    );
     assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-submitted,spira-open-children,fayth:ops");
     assert_eq!(o.code, 0);
 }
 
 #[test]
-fn fayth_exclude_cli_defaults_to_empty_when_nothing_is_configured() {
-    // THE REGRESSION THIS GUARDS (found by test-unclaimable.sh going red): lib.sh's
-    // `ready_shared_exclude`/`READY_ARGS`/`ready_raw_args` never hardcode a label default
-    // themselves — only conf.sh's derivation does, and a suite that sources lib.sh alone
-    // (most of them) never runs conf.sh at all. A hardcoded conf.d default here would
-    // silently add exclusions no bash caller ever asked for.
+fn fayth_exclude_cli_refuses_rather_than_default_when_config_does_not_resolve() {
+    // THE REGRESSION `fayth_exclude_cli_defaults_to_empty_when_nothing_is_configured` USED
+    // TO GUARD (found by test-unclaimable.sh going red): lib.sh's `ready_shared_exclude`/
+    // `READY_ARGS`/`ready_raw_args` never hardcoded a label default themselves — only
+    // conf.sh's derivation did, and a suite that sourced lib.sh alone (most of them) never
+    // ran conf.sh at all, so "nothing configured" had to mean "no exclusions", never a
+    // silent, uninvited one. Per Ryan 2026-10-05 (one source of config), "nothing
+    // configured" is no longer expressible as a quiet empty default — the config file not
+    // resolving at all is now a refusal that names the problem, not a default of any kind.
+    // Concierge decision (2026-10-05, sp-hh599): a config-load failure is an ERROR (rc 1,
+    // `Outcome::error`), never `CANNOT_TELL` (2) — callers read that 2 as "no fayth /
+    // nothing there", not "something is broken".
     let home = chamber_home(&[("builder", "spira,plan", "")]);
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_FAYTHS", None),
-        ("SPIRA_TOML", None),
-        ("SPIRA_QUEUE_WAIT_LABEL", None),
-        ("SPIRA_SUBMITTED_LABEL", None),
-        ("SPIRA_OPEN_CHILDREN_LABEL", None),
-        ("SPIRA_NO_LOOP_LABEL", None),
-    ]);
-    let o = run(&["fayth-exclude", "builder", ""], "");
-    let args = run(&["ready-args", "--raw"], "");
-    assert_eq!((o.code, o.out.as_str()), (0, ""));
-    assert_eq!(args.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n", "no --exclude-label when SPIRA_NO_LOOP_LABEL is unset");
+    let o = run_cfg(
+        &["fayth-exclude", "builder", ""],
+        "",
+        &[],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test"))],
+    );
+    assert_eq!(o.code, 1, "{}", o.err);
+    assert!(o.err.contains("config"), "{}", o.err);
+}
+
+/// A declared-empty `SPIRA_NO_LOOP_LABEL` (still a resolved value, just "") still means "no
+/// exclusion" — the behaviour the old defaults-to-empty test also checked, now reached by
+/// an explicit declaration rather than by nothing being configured at all.
+#[test]
+fn ready_args_cli_raw_carries_no_exclude_label_when_no_loop_label_is_declared_empty() {
+    let o = run_cfg(&["ready-args", "--raw"], "", &[("SPIRA_NO_LOOP_LABEL", "")], &[]);
+    assert_eq!(o.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n");
 }
 
 #[test]
 fn shared_exclude_cli_the_three_labels_ready_shared_exclude_carried() {
     // test-dispatch-open-children.sh calls `ready_shared_exclude` directly, not through
-    // `fayth_exclude` — this verb exists only for that caller. The three env vars below
-    // are what conf.sh's derivation would hold by the time the bash shim threads them
-    // through; a bare `cargo test` process has no conf.sh behind it at all.
-    let _env = testkit::env(&[
-        ("SPIRA_QUEUE_WAIT_LABEL", Some("spira-queue-waiting")),
-        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
-        ("SPIRA_OPEN_CHILDREN_LABEL", Some("spira-open-children")),
-    ]);
+    // `fayth_exclude` — this verb exists only for that caller. The baseline fixture's own
+    // declared values (spira-queue-waiting/spira-submitted/spira-open-children) are what
+    // conf.sh's derivation would hold once it ran; no override needed.
     let o = run(&["shared-exclude"], "");
     assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-submitted,spira-open-children"));
 }
 
+/// All three shared labels declared empty (a legitimate, resolved "no restriction" — not
+/// "nothing configured", which is a refusal now; see `fayth_exclude_cli_refuses_rather_
+/// than_default_when_config_does_not_resolve`) still carries no exclusions.
 #[test]
-fn shared_exclude_cli_defaults_to_empty_when_unset() {
-    let _env = testkit::env(&[
-        ("SPIRA_QUEUE_WAIT_LABEL", None),
-        ("SPIRA_SUBMITTED_LABEL", None),
-        ("SPIRA_OPEN_CHILDREN_LABEL", None),
-        ("SPIRA_TOML", None),
-    ]);
-    let o = run(&["shared-exclude"], "");
+fn shared_exclude_cli_empty_when_every_label_is_declared_empty() {
+    let o = run_cfg(
+        &["shared-exclude"],
+        "",
+        &[("SPIRA_QUEUE_WAIT_LABEL", ""), ("SPIRA_SUBMITTED_LABEL", ""), ("SPIRA_OPEN_CHILDREN_LABEL", "")],
+        &[],
+    );
     assert_eq!((o.code, o.out.as_str()), (0, ""));
 }
 
 #[test]
 fn fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero() {
     let home = chamber_home(&[]);
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_READY_CACHE", None),
-    ]);
-    let o = run(&["fayth-ready", "nosuchpersona"], "");
+    let chamber = chamber_path(&home);
+    let o = run_cfg(
+        &["fayth-ready", "nosuchpersona"],
+        "",
+        &[("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None)],
+    );
     assert_eq!((o.code, o.out.as_str()), (2, "0"));
     assert!(o.err.contains("no fayth in the chamber"), "{}", o.err);
 }
@@ -755,17 +826,15 @@ fn fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero() {
 #[test]
 fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
     let home = chamber_home(&[("probe", "plan", "")]);
+    let chamber = chamber_path(&home);
     let bd = sh("echo 'Error: the database is locked by another dolt process' >&2; exit 1");
     let path = fake_lc_path(&lc_ready(&["a"]));
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_READY_CACHE", None),
-        ("SPIRA_FAYTHS", None),
-        ("PATH", Some(path.as_str())),
-    ]);
-    let o = run(&["fayth-ready", "probe"], "");
+    let o = run_cfg(
+        &["fayth-ready", "probe"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
+    );
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "the fayth file is right there — this is not the no-fayth code");
     assert!(o.err.contains("locked by another dolt process"), "{}", o.err);
     assert!(!o.err.contains("no fayth"), "{}", o.err);
@@ -781,20 +850,27 @@ fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
 #[test]
 fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens() {
     let home = chamber_home(&[("ops", "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL", "spira-poison,$SPIRA_ASK_LABEL")]);
+    let chamber = chamber_path(&home);
     let bd = sh("echo 'bd must not be called — a widened query must never reach the store' >&2; exit 1");
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_READY_CACHE", None),
-        ("SPIRA_FAYTHS", None),
-        ("SPIRA_TOML", Some("/no/such/host-config-document")),
-        ("XDG_CONFIG_HOME", None),
-        ("SPIRA_INCIDENT_LABEL", None),
-        ("SPIRA_ASK_LABEL", None),
-        ("SPIRA_SCOPE_LABEL", None),
-    ]);
-    let o = run(&["fayth-ready", "ops"], "");
+    // The references under test resolve EMPTY — not undeclared: declared empty, which
+    // `fayth_label_overlay`'s own `resolve_for_process` accepts (per Ryan 2026-10-05, a
+    // key's declared "" is itself an answer), so this config file still resolves overall
+    // (`store::load_config` needs ask_label/scope_label too) and the refusal comes from
+    // `fayth_predicate`'s bare-reference check alone.
+    let o = run_cfg(
+        &["fayth-ready", "ops"],
+        "",
+        &[
+            ("SPIRA_BD", bd.as_str()),
+            ("SPIRA_DB", ""),
+            ("SPIRA_FAYTHS", "[]"),
+            ("SPIRA_CHAMBER", &chamber),
+            ("SPIRA_INCIDENT_LABEL", ""),
+            ("SPIRA_ASK_LABEL", ""),
+            ("SPIRA_SCOPE_LABEL", ""),
+        ],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None)],
+    );
     assert_eq!((o.code, o.out.as_str()), (3, "0"), "stderr: {}", o.err);
     assert!(o.err.contains("SPIRA_INCIDENT_LABEL"), "the refusal must name the exact reference: {}", o.err);
     assert!(!o.err.contains("no fayth in the chamber"), "{}", o.err);
@@ -808,17 +884,15 @@ fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens
 #[test]
 fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
     let home = chamber_home(&[("concierge", "", "")]);
+    let chamber = chamber_path(&home);
     let bd = sh("echo '[]'");
     let path = fake_lc_path("[]");
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_READY_CACHE", None),
-        ("SPIRA_FAYTHS", None),
-        ("PATH", Some(path.as_str())),
-    ]);
-    let o = run(&["fayth-ready", "concierge"], "");
+    let o = run_cfg(
+        &["fayth-ready", "concierge"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
+    );
     assert_eq!((o.code, o.out.as_str()), (0, "0"), "a declared-empty literal predicate must never refuse: {}", o.err);
 }
 
@@ -828,21 +902,23 @@ fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
 /// above uses for "no such fayth file", so `sentinel::summon::fayth_ready`'s `2 =>
 /// ReadyAnswer::NoFayth` mapping could not tell "SPIRA_HOME is not set" apart from "this
 /// chamber genuinely has no builder.fayth", and skipped every fayth every pass forever,
-/// silently (this bead's own repro). A `cargo test` binary has no release root above it
-/// either (no top-level `bin/` anywhere this checkout's own ancestors hold a `spira/`), so
-/// `fayth_home` still cannot resolve here — but the FAILURE MODE must change: a home that
-/// could not be resolved is "could not evaluate" (rc 1, the same bucket
-/// `fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect` already occupies),
-/// never "no fayth in the chamber" (rc 2). law-a-control-that-cannot-check-must-refuse.
+/// silently (this bead's own repro).
+///
+/// Per Ryan 2026-10-05, `dispatch` now loads `Config` (`store::load_config`, every
+/// registered key) BEFORE any verb runs, for every verb but `decide`. With `SPIRA_HOME`
+/// unset, that load fails first (`spira_config::process::cfg`'s own home-location) —
+/// before `cmd_fayth_ready` ever reaches its own `fayth_home()` check — but the
+/// Concierge's sp-hh599 decision keeps this bead's own contract intact at the dispatch
+/// boundary: a config-load failure is `Outcome::error` (rc 1), never `CANNOT_TELL` (rc 2,
+/// which every caller reads as "no fayth / nothing there"). So rc 1 ("could not
+/// evaluate") and rc 2 ("no fayth in the chamber") stay the two distinct buckets this bead
+/// named, exactly as before — just reached one layer higher up, at config load rather than
+/// at `fayth_home()` itself.
 #[test]
 fn fayth_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", None),
-    ]);
-    let o = run(&["fayth-ready", "builder"], "");
-    assert_eq!((o.code, o.out.as_str()), (1, "0"), "stderr: {}", o.err);
+    let o = run_cfg(&["fayth-ready", "builder"], "", &[], &[("SPIRA_HOME", None)]);
+    assert_eq!((o.code, o.out.as_str()), (1, ""), "stderr: {}", o.err);
     assert!(!o.err.contains("no fayth in the chamber"), "stderr: {}", o.err);
-    assert!(!o.err.contains("is not set"), "stderr: {} — SPIRA_HOME must self-resolve, not refuse on an unset env var", o.err);
 }
 
 /// The same self-resolution, proven positively rather than by its failure mode: with
@@ -870,71 +946,62 @@ fn fayth_home_pure_function_prefers_the_env_override_and_falls_back_to_the_relea
 #[test]
 fn fayth_ready_cli_real_count_including_zero() {
     let home = chamber_home(&[("probe", "plan", "")]);
+    let chamber = chamber_path(&home);
     let bd_zero = sh("echo '[]'");
     let path_zero = fake_lc_path("[]");
-    let zero = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd_zero.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_READY_CACHE", None),
-        ("SPIRA_FAYTHS", None),
-        ("PATH", Some(path_zero.as_str())),
-    ]);
-    let o = run(&["fayth-ready", "probe"], "");
+    // `machine_claimable` applies `scope_label` before the fayth's own predicate does —
+    // "probe"'s FAYTH_LABELS is bare "plan", so the baseline fixture's "spira" scope
+    // would filter out every bead below; this test means unscoped readiness.
+    let o = run_cfg(
+        &["fayth-ready", "probe"],
+        "",
+        &[("SPIRA_BD", bd_zero.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path_zero.as_str()))],
+    );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "0", ""));
-    drop(zero);
 
     let seven = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
     let bd_seven = sh(&format!("echo '{}'", plan_rows(&seven)));
     let path = fake_lc_path(&lc_ready(&seven));
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd_seven.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_READY_CACHE", None),
-        ("SPIRA_FAYTHS", None),
-        ("SPIRA_SCOPE_LABEL", None),
-        ("SPIRA_NO_LOOP_LABEL", None),
-        ("PATH", Some(path.as_str())),
-    ]);
-    let o2 = run(&["fayth-ready", "probe"], "");
+    let o2 = run_cfg(
+        &["fayth-ready", "probe"],
+        "",
+        &[("SPIRA_BD", bd_seven.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
+    );
     assert_eq!((o2.code, o2.out.as_str()), (0, "7"), "{}", o2.err);
 }
 
 #[test]
 fn fayth_ready_cli_cache_fast_path_skips_the_query_entirely() {
     let home = chamber_home(&[("probe", "plan", "")]);
+    let chamber = chamber_path(&home);
     let cache = tmp("probe 9\nother 1\n");
     let bd = sh("echo 'bd must not be called' >&2; exit 1");
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_READY_CACHE", Some(cache.as_str())),
-        ("SPIRA_FAYTHS", None),
-    ]);
-    let o = run(&["fayth-ready", "probe"], "");
+    let o = run_cfg(
+        &["fayth-ready", "probe"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", Some(cache.as_str()))],
+    );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "9", ""));
 }
 
 #[test]
 fn bulk_ready_by_fayth_cli_buckets_one_fetch_by_the_chamber_roster() {
     let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
+    let chamber = chamber_path(&home);
     let bd = sh(
         r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"b","labels":["spira","ops-trigger"]},{"id":"c","labels":["spira","plan","spira-submitted"]}]'"#,
     );
     let path = fake_lc_path(&lc_ready(&["a", "b", "c"]));
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_SCOPE_LABEL", None),
-        ("SPIRA_NO_LOOP_LABEL", None),
-        ("PATH", Some(path.as_str())),
-        ("SPIRA_FAYTHS", None),
-        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
-        ("SPIRA_QUEUE_WAIT_LABEL", None),
-    ]);
-    let o = run(&["bulk-ready-by-fayth"], "");
+    // SPIRA_SUBMITTED_LABEL is the baseline fixture's own declared value already.
+    let o = run_cfg(
+        &["bulk-ready-by-fayth"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str()))],
+    );
     assert_eq!(o.out, "builder 1\nops 1\n", "c is dropped by the shared spira-submitted exclusion");
 }
 
@@ -944,24 +1011,19 @@ fn bulk_ready_by_fayth_cli_excludes_exactly_what_fayth_ready_excludes() {
     // a builder, so neither count may include them — the bulk count once did, and the
     // sentinel summoned a builder for them every pass.
     let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
+    let chamber = chamber_path(&home);
     let bd = sh(
         r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"e","labels":["spira","plan","spira-open-children"]},{"id":"f","labels":["spira","plan","fayth:ops"]}]'"#,
     );
     let path = fake_lc_path(&lc_ready(&["a", "e", "f"]));
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_SCOPE_LABEL", None),
-        ("SPIRA_NO_LOOP_LABEL", None),
-        ("PATH", Some(path.as_str())),
-        ("SPIRA_READY_CACHE", None),
-        ("SPIRA_FAYTHS", None),
-        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
-        ("SPIRA_OPEN_CHILDREN_LABEL", Some("spira-open-children")),
-        ("SPIRA_QUEUE_WAIT_LABEL", None),
-    ]);
-    let o = run(&["bulk-ready-by-fayth"], "");
+    // SPIRA_SUBMITTED_LABEL/SPIRA_OPEN_CHILDREN_LABEL are the baseline fixture's own
+    // declared values already.
+    let o = run_cfg(
+        &["bulk-ready-by-fayth"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str())), ("SPIRA_READY_CACHE", None)],
+    );
     assert_eq!(o.out, "builder 1\nops 0\n", "{}", o.err);
 }
 
@@ -992,18 +1054,19 @@ fn fake_lc_path(lc: &str) -> Tmp {
 
 fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
     let home = chamber_home(&[("probe", "plan", "")]);
+    let chamber = chamber_path(&home);
     let bd = sh(&format!("case \"$*\" in *--id*) echo '{recs}';; *) echo '{ready}';; esac"));
     let path = fake_lc_path(lc);
-    let _env = testkit::env(&[
-        ("SPIRA_HOME", Some(home.as_str())),
-        ("SPIRA_BD", Some(bd.as_str())),
-        ("SPIRA_DB", None),
-        ("SPIRA_READY_CACHE", None),
-        ("SPIRA_FAYTHS", None),
-        ("PATH", Some(path.as_str())),
-    ]);
-    let o = run(verb, "");
-    o
+    // `machine_claimable` applies `scope_label` before any fayth predicate or <labels>
+    // argument does — every fixture bead here carries only "plan", never "spira", so the
+    // baseline fixture's own scope would filter them all out; these tests mean unscoped
+    // readiness.
+    run_cfg(
+        verb,
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
+    )
 }
 
 const ENFORCE_READY: &str = r#"[{"id":"S","priority":1,"labels":["plan"]},

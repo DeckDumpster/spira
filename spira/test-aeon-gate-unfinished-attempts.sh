@@ -45,14 +45,15 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
 # a --home with no conf.d used to resolve silently to nothing instead of refusing.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
@@ -63,7 +64,7 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+BIN="$TMP/bin"; mkdir -p "$BIN"; SPIRA_AGENT="$BIN/claude"; export TMP; tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The claim goes through the lifecycle (sp-860zj): the bd fixture is told to the aeon in
 # lifecycle terms, or nothing is claimed and the session never runs.
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"

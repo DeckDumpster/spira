@@ -23,6 +23,9 @@ printf 'FAYTH_NAME=x\nFAYTH_STATUTE_CORE="law-chamber-core-a, law-chamber-core-b
 printf 'FAYTH_NAME=y\n' > "$TMP/good/y.fayth"
 printf 'FAYTH_NAME=z\nFAYTH_STATUTE_CORE="law-chamber-core-a,law-retired-and-renamed"\n' > "$TMP/bad/z.fayth"
 
+# chamber-core-check.sh reads SPIRA_DB directly from its own process environment
+# (DB="${SPIRA_DB:?...}") — it never sources conf.sh, so this is a plain env prefix, not
+# registered-key config.
 out="$(SPIRA_DB="$SPIRA_DB" "$CHECK" "$TMP/good" 2>&1)"; rc=$?
 is "every declared slug resolving passes" 0 "$rc"
 

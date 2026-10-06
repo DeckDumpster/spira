@@ -20,6 +20,9 @@ pub struct Real {
     status: String,
     settings: BTreeMap<String, String>,
     pub submitted_label: String,
+    /// `SPIRA_GH`, a registered config key — empty for a `Real::minimal` instance (the
+    /// chokepoint subcommands never call `pr_merged_tip`, so it is never resolved for them).
+    gh: String,
     beads: RefCell<Option<BTreeMap<String, Value>>>,
     /// The sweep's one `spira-lc list`, keyed by bead id: the claim witness for every bead
     /// the pass judges (sp-mve9i).
@@ -61,14 +64,26 @@ impl Real {
                 Repo { name, root, queued }
             })
             .collect();
-        r.submitted_label = r.setting("submitted", "spira-submitted");
+        // SPIRA_SUBMITTED_LABEL/SPIRA_GH are registered config keys (spira/conf.d) — the one
+        // source of config, read here rather than through the lib.sh context seam's own
+        // (now-removed) `${VAR:-default}` echoes.
+        r.submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?;
+        r.gh = spira_config::process::cfg("SPIRA_GH")?;
         Ok((r, repos))
     }
 
     /// No context seam call at all — just `home`/`status`, for a caller that only needs
     /// the Base/Bead seams (each self-contained) and never the repository registry.
     pub fn minimal(home: PathBuf, status: Option<String>) -> Real {
-        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), beads: RefCell::new(None), claims: RefCell::new(None) }
+        Real {
+            home,
+            status: status.unwrap_or_default(),
+            settings: BTreeMap::new(),
+            submitted_label: String::new(),
+            gh: String::new(),
+            beads: RefCell::new(None),
+            claims: RefCell::new(None),
+        }
     }
 
     fn setting(&self, k: &str, default: &str) -> String {
@@ -86,8 +101,8 @@ impl Real {
         spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home)
     }
 
-    /// `$SPIRA_RUN`, read straight from the environment — not through the context seam's
-    /// own `run=` echo of the same variable, so this works whether or not that seam ran.
+    /// `SPIRA_RUN`, through [`run_dir`] — not through the context seam, so this works
+    /// whether or not that seam ran.
     pub fn run(&self) -> PathBuf {
         run_dir()
     }
@@ -253,7 +268,7 @@ impl World for Real {
     fn pr_merged_tip(&self, repo: &Path, br: &str) -> Option<String> {
         let o = Command::new("timeout")
             .arg(self.setting("gh_timeout", "120"))
-            .arg(self.setting("gh", "gh"))
+            .arg(&self.gh)
             .args(["pr", "view", br, "--json", "state,headRefOid", "-q", r#"select(.state=="MERGED") | .headRefOid"#])
             .current_dir(repo)
             .stdin(Stdio::null())
@@ -341,14 +356,17 @@ mod tests {
     }
 }
 
-/// `spira.run` resolved in-process (env override, then the config); the process refuses,
-/// named, when it cannot — an empty run directory would put the reap log at the filesystem
-/// root.
+/// `SPIRA_RUN`, a registered config key (spira/conf.d) — the one source of config, through
+/// `spira_config::process::cfg`; the process refuses, named, when it cannot resolve. An
+/// empty run directory would put the reap log at the filesystem root.
 pub fn run_dir() -> PathBuf {
-    spira_config::resolve::run_dir_for_process().unwrap_or_else(|e| {
-        eprintln!("sending: {e}");
-        std::process::exit(1)
-    })
+    match spira_config::process::cfg("SPIRA_RUN") {
+        Ok(v) => PathBuf::from(v),
+        Err(e) => {
+            eprintln!("sending: {e}");
+            std::process::exit(1)
+        }
+    }
 }
 
 /// `$SPIRA_REAPLOG`, else `reap.log` under [`run_dir`].

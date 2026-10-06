@@ -34,9 +34,9 @@ ingest() {
     # against every real checkout the map names as "outside" its workspace. A path that does
     # not exist reads as "no map to check" (containment.rs's own read_repo_map -> None),
     # which is not a violation.
-    SPIRA_HOME="$HERE" SPIRA_REPO="$HERE/.." SPIRA_RUN="$T/run" SPIRA_DB="$T/db" \
-        PATH="$T/sbin:$PATH" SPIRA_PATH="$T/sbin" SPIRA_CONF="$T/no.conf" \
-        SPIRA_REPO_MAP="$T/no-such-map" \
+    tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/db" SPIRA_PATH="$T/sbin" SPIRA_REPO_MAP="$T/no-such-map"
+    SPIRA_HOME="$HERE" SPIRA_REPO="$HERE/.." \
+        PATH="$T/sbin:$PATH" SPIRA_CONF="$T/no.conf" \
         tsd-ingest.sh "$@"
 }
 

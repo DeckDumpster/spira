@@ -47,7 +47,7 @@ lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"
 # broken gitdir, so auto-derivation would produce "workspace" instead.
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF=/tmp/.spira-test-noconf-$$   # nonexistent — no conf file loaded
-export SPIRA_HOME_REPO=spira
+tl_config SPIRA_HOME_REPO=spira
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -86,8 +86,14 @@ trap cleanup EXIT INT TERM
 
 testdb_up unclaimable_wt || { echo "test-unclaimable-worktree: could not build fixture database"; exit 1; }
 
+# detect_unclaimable_ready is now `sentinel --detect-unclaimable`, which reads bead state
+# from the lifecycle machine (`spira-lc list`), not from bd directly — with no stand-in, it
+# has no machine to ask and reports nothing (sfail round 3, pattern 8).
+lc_mirror_bd "$TMP/lc"; export SPIRA_LC_BIN
+
 # Source production lib.sh so detect_unclaimable_ready is available for case 3.
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 acted=0; progressed=0
 act()      { acted=$((acted+1)); }
 progress() { progressed=$((progressed+1)); act "$@"; }
@@ -101,15 +107,34 @@ echo "test-unclaimable-worktree.sh"
 # Unsets SPIRA_HOME so conf.sh derives it from BASH_SOURCE (the fake lib.sh path),
 # not from this test's exported SPIRA_HOME. Also unsets label vars so the modified
 # conf.sh sets them to partition:plan/incident. Keeps SPIRA_DB for the fixture.
+#
+# NOTE (per Ryan 2026-10-05, the one-source-of-config law): detect_unclaimable_ready is now
+# a one-line shim onto the compiled `sentinel --detect-unclaimable`, which resolves every
+# registered key (SPIRA_DB included) fresh from SPIRA_TOML, never from inherited env — the
+# `-u SPIRA_PLAN_LABEL` etc. unsets and conf.sh's old `: "${SPIRA_PLAN_LABEL:=plan}"` bash
+# defaults this suite's sed patch targets are both gone from conf.sh already, so the
+# "worktree sees partition:plan" half of this fixture no longer has a mechanism to construct
+# — sourcing $FAKE_WT/spira/lib.sh vs $HERE/lib.sh now runs the exact same compiled binary.
+# Only SPIRA_DB is fixed here (tl_config, so sentinel queries the actual fixture database);
+# the worktree-divergence simulation this suite's "case 1/2/3" rest on is flagged in the
+# batch report rather than redesigned.
+# SPIRA_FAYTHS/SPIRA_CHAMBER undeclared resolve to the complete fixture's own nonexistent
+# chamber path — sentinel then has no fayth partition to match beads' labels against, so
+# nothing is ever "unclaimable" (same cause as test-cockpit-reachable.sh's orphan case).
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_FAYTHS=builder SPIRA_CHAMBER="$HERE/chamber"
 run_from_worktree() {
-    env -u SPIRA_HOME \
+    # SPIRA_HOME IS THE HOME now (locate_home no longer searches) — sentinel refuses/hangs
+    # with none at all, so it is pointed at the worktree's own copy (which carries conf.d,
+    # being a full `cp -r "$HERE"`) rather than unset (sfail round 2, pattern 1).
+    timeout 30 env \
         -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
         -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
         -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
         -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
         -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
-        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_HOME="$FAKE_WT/spira" \
         SPIRA_CONF="$TMP/no-such.conf" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
         bash -c ". \"$FAKE_WT/spira/lib.sh\"; detect_unclaimable_ready" 2>/dev/null
 }
 

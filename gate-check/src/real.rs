@@ -11,12 +11,19 @@ use std::process::{Command, Stdio};
 pub struct Real {
     pub home: PathBuf,
     pub db: Option<String>,
+    /// `SPIRA_BD`, resolved once at the process's top level (`spira_config::process::cfg`)
+    /// and handed down — no literal `"bd"` fallback here; an unset/empty value is
+    /// the config file's own answer (see `spira/conf.d/SPIRA_BD`), not this crate's to invent.
+    bd: String,
+    /// `SPIRA_FLAKY_GH_REPO`, resolved the same way — empty means "no scan" per
+    /// `spira/conf.d/SPIRA_FLAKY_GH_REPO`.
+    flaky_repo: Option<String>,
     registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl Real {
-    pub fn new(home: PathBuf, db: Option<String>) -> Real {
-        Real { home, db, registry: OnceCell::new() }
+    pub fn new(home: PathBuf, db: Option<String>, bd: String, flaky_repo: Option<String>) -> Real {
+        Real { home, db, bd, flaky_repo, registry: OnceCell::new() }
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -31,8 +38,7 @@ impl Real {
     }
 
     fn bd(&self) -> Command {
-        let bd = std::env::var("SPIRA_BD").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "bd".to_string());
-        let mut c = Command::new(bd);
+        let mut c = Command::new(&self.bd);
         if let Some(db) = &self.db {
             c.arg("-C").arg(db);
         }
@@ -153,7 +159,7 @@ impl World for Real {
     }
 
     fn flaky_repo(&self) -> Option<String> {
-        let repo = std::env::var("SPIRA_FLAKY_GH_REPO").ok().filter(|v| !v.is_empty())?;
+        let repo = self.flaky_repo.clone()?;
         let has_gh = Command::new("sh").arg("-c").arg("command -v gh").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         if has_gh { Some(repo) } else { None }
     }

@@ -39,6 +39,7 @@ use batcher::core::{
 };
 use batcher::attrib::JobResult;
 use io::{Env, Land, Repo};
+use spira_config::process::{cfg, cfg_parse};
 
 struct Opts {
     cmd: String,
@@ -62,11 +63,15 @@ fn parse() -> Result<Opts, String> {
     let mut a = env::args().skip(1);
     let cmd = a.next().ok_or("missing command")?;
     let repo = a.next().unwrap_or_default();
+    // SPIRA_HOME is a per-copy fact (which checkout this process runs from), not something
+    // spira.toml declares — it stays a bare env read. SPIRA_RUN/SPIRA_DB ARE registered keys
+    // (spira/conf.d), so once no `--run`/`--db` flag names them explicitly below, they are
+    // read through the one door (`cfg`), not this process's own environment.
     let mut o = Opts {
         cmd,
         repo,
-        run: env::var_os("SPIRA_RUN").map(PathBuf::from),
-        db: env::var_os("SPIRA_DB").map(PathBuf::from),
+        run: None,
+        db: None,
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
         round_vm: None,
         suites: None,
@@ -84,6 +89,18 @@ fn parse() -> Result<Opts, String> {
             "--members" => o.members = Some(val()?),
             "--evidence" => o.evidence = Some(val()?),
             other => return Err(format!("unknown flag {other}")),
+        }
+    }
+    if o.run.is_none() {
+        let v = cfg("SPIRA_RUN")?;
+        if !v.trim().is_empty() {
+            o.run = Some(PathBuf::from(v));
+        }
+    }
+    if o.db.is_none() {
+        let v = cfg("SPIRA_DB")?;
+        if !v.trim().is_empty() {
+            o.db = Some(PathBuf::from(v));
         }
     }
     Ok(o)
@@ -117,16 +134,13 @@ fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     if base.is_empty() {
         return Err(format!("{name}: spira_landref could not resolve a base ref"));
     }
-    let forge = default_forge();
+    // SPIRA_FORGE, resolved once at the top level into `env_.forge` (env_for) — not re-read
+    // here. forge.sh is retired (sp-t4y60); sp-yv4b3 found a Rust-level default still naming
+    // the deleted script, which blinded production queue-watch ("forge check-status 459: No
+    // such file or directory (os error 2)") — the bare-`forge` default now lives in
+    // spira/conf.d/SPIRA_FORGE, the one source, not here.
+    let forge = env_.forge.clone();
     Ok(Repo { name: name.to_string(), path: PathBuf::from(path), base, forge, land })
-}
-
-/// Bare name on the launcher's PATH (sp-gypjk); forge.sh is retired (sp-t4y60) — sp-yv4b3
-/// found this default still naming the deleted script, which blinded production queue-watch
-/// ("forge check-status 459: No such file or directory (os error 2)"). Factored out so the
-/// regression has a seam to call without faking lib.sh's repo-map (see `tests` below).
-pub(crate) fn default_forge() -> PathBuf {
-    env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("forge"))
 }
 
 fn now() -> u64 {
@@ -138,46 +152,24 @@ fn default_round_vm() -> PathBuf {
     PathBuf::from("round-vm")
 }
 
-/// `SPIRA_*` values a bash process this binary spawns (`io::lib_call`'s own `. lib.sh`)
-/// must never see pre-set — the same per-copy-fact / host-policy keys `cockpit-collect`'s
-/// `bootstrap_config` names (wave4-decomposition.md row (b)).
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
-
-/// Wave 4.8 ("retire conf re-import seams in Rust"): every `env::var(...)` read in this
-/// function (and `default_forge`/`q_minutes` right after it runs) used to see only this
-/// process's own already-set environment — no spira.toml load at all
-/// (wave4-decomposition.md row (b) names batcher-cut by file: SPIRA_FORGE, SPIRA_QUEUE_DIR,
-/// SPIRA_QUEUE_BATCH_WAIT, SPIRA_RELEASE_RUST_TOOLCHAIN, SPIRA_GIT_*). Merges
-/// `spira_config::resolve()`'s in-process answer into THIS process's own environment once,
-/// using the ALREADY-resolved `home` (which already reflects `--home` over `SPIRA_HOME` —
-/// never recomputed independently here) — inserting a key only when it is not already set
-/// and never one of [`NEVER_EXPORTED`]. Best-effort: a missing registry or a containment
-/// refusal leaves the environment exactly as it was.
-fn merge_resolved_env(home: &Path) {
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-    {
-        let resolved = spira_config::resolve::resolve_or_say("batcher-cut", home, &repo, &env_map);
-        for (k, v) in resolved.values {
-            if NEVER_EXPORTED.contains(&k.as_str()) {
-                continue;
-            }
-            if env::var_os(&k).is_none() {
-                env::set_var(k, v);
-            }
-        }
-    }
-}
-
-fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
-    merge_resolved_env(&home);
-    Env {
+/// Every field sourced from a registered `spira/conf.d` key is read exactly once here, through
+/// `spira_config::process::cfg`/`cfg_parse` — THE ONE DOOR (per Ryan 2026-10-05: one source of
+/// config) — and handed down as a plain field from here on; nothing downstream re-reads the
+/// environment. A key that cannot be resolved is a refusal naming it, never a Rust-level
+/// default standing in for it. `SPIRA_BATCHER_ROUND_SLOTS`/`SPIRA_BATCHER_POLL_SECS`/
+/// `SPIRA_LC_TIMEOUT`/`SPIRA_VERDICTS`/`SPIRA_BATCHER_LAND_LOCK_ATTEMPTS`/
+/// `SPIRA_BATCHER_LAND_LOCK_WAIT` are NOT registered keys (`ls spira/conf.d/` does not name
+/// them) — they stay bare `env::var` reads with their existing defaults, unchanged by this
+/// migration.
+fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
+    Ok(Env {
         home: home.clone(),
         run: run.clone(),
-        queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
+        queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
         db: o.db.clone(),
-        bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
-        express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
+        bd: cfg("SPIRA_BD")?,
+        express_label: cfg("SPIRA_EXPRESS_LABEL")?,
+        forge: PathBuf::from(cfg("SPIRA_FORGE")?),
         // Every harness tool by name, on the launcher's PATH (sp-gypjk).
         tsd_bin: Some(PathBuf::from("tsd-write")),
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
@@ -187,20 +179,17 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
-        maxpar: env::var("SPIRA_BATCH_MAXPAR").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(16),
-        wall_secs: env::var("SPIRA_BATCHER_WALL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(3600),
-        rust_toolchain: {
-            let v = env::var("SPIRA_RELEASE_RUST_TOOLCHAIN").unwrap_or_default();
-            if v.trim().is_empty() { "1.82.0".to_string() } else { v }
-        },
-        git_name: env::var("SPIRA_GIT_NAME").unwrap_or_else(|_| "spira".into()),
-        git_email: env::var("SPIRA_GIT_EMAIL").unwrap_or_else(|_| "spira@spira.invalid".into()),
+        maxpar: cfg_parse::<u32>("SPIRA_BATCH_MAXPAR")?,
+        wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
+        rust_toolchain: cfg("SPIRA_RELEASE_RUST_TOOLCHAIN")?,
+        git_name: cfg("SPIRA_GIT_NAME")?,
+        git_email: cfg("SPIRA_GIT_EMAIL")?,
         lc_bin: Some(PathBuf::from("spira-lc")),
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
         land_lock_wait: std::time::Duration::from_secs(env::var("SPIRA_BATCHER_LAND_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(30)),
-    }
+    })
 }
 
 fn cut(o: &Opts) -> Result<(), String> {
@@ -209,7 +198,7 @@ fn cut(o: &Opts) -> Result<(), String> {
     if o.repo.is_empty() {
         return Err("repo name required".into());
     }
-    let env_ = env_for(o, home, run);
+    let env_ = env_for(o, home, run)?;
     let repo = find_repo(&env_, &o.repo)?;
 
     // The machine must answer before anything changes.
@@ -220,7 +209,7 @@ fn cut(o: &Opts) -> Result<(), String> {
         ));
     }
 
-    let wait_secs = env::var("SPIRA_QUEUE_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
+    let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     let Some(_lock) = io::wait_lock(&env_, &repo.name, wait_secs)? else {
         return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
     };
@@ -230,7 +219,7 @@ fn cut(o: &Opts) -> Result<(), String> {
     let hist = io::pool_history(&env_.run, &repo.name, pool.len());
     let n = adaptive_n(hist);
     let last_arrival = pool.iter().map(|m| m.certified_at).max();
-    let q_minutes: u64 = env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse::<u64>().ok()).map(|s| s / 60).unwrap_or(30);
+    let q_minutes: u64 = cfg_parse::<u64>("SPIRA_QUEUE_BATCH_WAIT")? / 60;
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());
@@ -941,7 +930,7 @@ fn judgement_ci(o: &Opts) -> Result<(), String> {
         return Err("no red suites given — nothing to judge".into());
     };
 
-    let env_ = env_for(o, home, run);
+    let env_ = env_for(o, home, run)?;
     let repo = find_repo(&env_, &o.repo)?;
     let id = io::file_judgement(&env_, &repo, &j, &members, &evidence)?;
     println!("id={id}");
@@ -975,81 +964,52 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    // Serialises the one test in this crate that touches the real process environment
-    // (SPIRA_FORGE) — same pattern as release's `ENV_LOCK`/`PathGuard` (release/src/tests.rs).
+    // Serialises the one test in this crate that drives `spira_config::process::cfg` (through
+    // `env_for`) off a real `$SPIRA_TOML`: `process::config()` resolves and caches ONCE per
+    // process (a `OnceLock`), so this must be the only call anywhere in this binary's test
+    // suite that reaches it — same pattern as release's `ENV_LOCK`/`PathGuard`
+    // (release/src/tests.rs).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    struct EnvGuard(Option<std::ffi::OsString>);
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.0 {
-                Some(f) => env::set_var("SPIRA_FORGE", f),
-                None => env::remove_var("SPIRA_FORGE"),
-            }
-        }
-    }
-
-    // REGRESSION (sp-yv4b3): production queue-watch went blind because this default named
-    // the retired `forge.sh` instead of the release's `forge` binary. Fails on the pre-fix
-    // default (`forge.sh`).
+    // THE ONE DOOR (per Ryan 2026-10-05: one source of config): env_for() reads every
+    // registered key through `spira_config::process::cfg`/`cfg_parse`, never its own
+    // environment and never a Rust-level default. `fixture_toml` declares every key
+    // (spira-config's own complete fixture); the three overrides below prove a value
+    // written to `spira.toml` reaches `Env` end to end, through the real resolver.
     #[test]
-    fn default_forge_is_the_bare_release_binary_when_spira_forge_is_unset() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard(env::var_os("SPIRA_FORGE"));
-        env::remove_var("SPIRA_FORGE");
-        assert_eq!(default_forge(), PathBuf::from("forge"), "default must name the bare release binary, not forge.sh");
-    }
-
-    #[test]
-    fn default_forge_still_honours_an_explicit_spira_forge_override() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard(env::var_os("SPIRA_FORGE"));
-        env::set_var("SPIRA_FORGE", "/some/other/forge.sh");
-        assert_eq!(default_forge(), PathBuf::from("/some/other/forge.sh"));
-    }
-
-    // Wave 4.8: merge_resolved_env() must reach a registry key this crate never hardcoded
-    // a default for, and must never leak a NEVER_EXPORTED key into this process's own
-    // environment.
-    #[test]
-    fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
+    fn env_for_reads_every_registered_key_through_the_one_door() {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved_toml = env::var_os("SPIRA_TOML");
-        let saved_wait = env::var_os("SPIRA_QUEUE_BATCH_WAIT");
-        let saved_max_aeons = env::var_os("SPIRA_MAX_AEONS");
-        env::remove_var("SPIRA_QUEUE_BATCH_WAIT");
-        env::remove_var("SPIRA_MAX_AEONS");
-        let dir = testkit::TempDir::new("batcher-cut-merge-env");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_QUEUE_BATCH_WAIT"),
-            "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_QUEUE_BATCH_WAIT:=1800}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        let saved_home = env::var_os("SPIRA_HOME");
 
-        merge_resolved_env(&home);
+        let dir = testkit::TempDir::new("batcher-cut-env-for");
+        let toml = spira_config::process::fixture_toml(
+            &dir,
+            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600")],
+        );
+        env::set_var("SPIRA_TOML", &toml);
+        // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
+        // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every
+        // key `env_for` asks for.
+        env::set_var("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira"));
 
-        let got_wait = env::var("SPIRA_QUEUE_BATCH_WAIT").ok();
-        let got_max_aeons = env::var_os("SPIRA_MAX_AEONS");
+        let o = Opts { cmd: "cut".into(), repo: "r".into(), run: None, db: None, home: None, round_vm: None, suites: None, members: None, evidence: None };
+        let env_ = env_for(&o, dir.join("home"), dir.join("run"));
 
         match saved_toml {
             Some(v) => env::set_var("SPIRA_TOML", v),
             None => env::remove_var("SPIRA_TOML"),
         }
-        match saved_wait {
-            Some(v) => env::set_var("SPIRA_QUEUE_BATCH_WAIT", v),
-            None => env::remove_var("SPIRA_QUEUE_BATCH_WAIT"),
+        match saved_home {
+            Some(v) => env::set_var("SPIRA_HOME", v),
+            None => env::remove_var("SPIRA_HOME"),
         }
-        match saved_max_aeons {
-            Some(v) => env::set_var("SPIRA_MAX_AEONS", v),
-            None => env::remove_var("SPIRA_MAX_AEONS"),
-        }
-
-        assert_eq!(got_wait, Some("1800".to_string()), "a registry default must reach the real environment");
-        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
+        let env_ = env_.expect("env_for resolves through the one door given a complete spira.toml");
         let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(env_.bd, "bd-fixture", "a registered key's declared value must reach Env, not a Rust-level default");
+        assert_eq!(env_.forge, PathBuf::from("forge-fixture"));
+        assert_eq!(env_.wall_secs, 3600);
     }
 }
 

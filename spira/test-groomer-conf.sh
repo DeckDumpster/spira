@@ -26,11 +26,11 @@ echo "test-groomer-conf.sh"
 echo
 echo "SPIRA_GROOMER_LABEL is in the conf key list and defaults to 'groom'"
 # ==========================================================================================
-keys="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" \
+keys="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_CONF_KEYS"' 2>/dev/null)"
 want "SPIRA_GROOMER_LABEL is in the key list" "SPIRA_GROOMER_LABEL" "$keys"
 
-val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" \
+val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_GROOMER_LABEL"' 2>/dev/null)"
 is   "SPIRA_GROOMER_LABEL defaults to groom" "groom" "$val"
 
@@ -38,7 +38,7 @@ is   "SPIRA_GROOMER_LABEL defaults to groom" "groom" "$val"
 echo
 echo "groomer lane is in SPIRA_LANES default"
 # ==========================================================================================
-lanes="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" \
+lanes="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_LANES"' 2>/dev/null)"
 want "groomer lane is in SPIRA_LANES default" "groomer" "$lanes"
 
@@ -49,7 +49,8 @@ echo "groomer.fayth declares FAYTH_LANE=groomer"
 # Groomer is a party persona, not a task fayth. It must declare a lane so it draws from its
 # own capacity rather than from SPIRA_MAX_AEONS.
 if [ -f "$HERE/chamber/groomer.fayth" ]; then
-    lane_val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_DB="$T/db" \
+    tl_config SPIRA_DB="$T/db"
+    lane_val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
         bash -c '. "'"$HERE"'/conf.sh" && . "'"$HERE"'/chamber/groomer.fayth" && printf "%s" "${FAYTH_LANE:-}"' 2>/dev/null)"
     is   "groomer.fayth FAYTH_LANE=groomer" "groomer" "$lane_val"
 else
@@ -63,7 +64,8 @@ echo "groomer.fayth declares FAYTH_GROOM_ESCALATION_CHECK=1"
 # The escalation check in aeon.sh is activated by this key. Without it, a groom pass
 # that claims ESCALATED without filing an ask bead is never caught.
 if [ -f "$HERE/chamber/groomer.fayth" ]; then
-    gesc_val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_DB="$T/db" \
+    tl_config SPIRA_DB="$T/db"
+    gesc_val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
         bash -c '. "'"$HERE"'/conf.sh" && . "'"$HERE"'/chamber/groomer.fayth" && printf "%s" "${FAYTH_GROOM_ESCALATION_CHECK:-}"' 2>/dev/null)"
     is   "groomer.fayth FAYTH_GROOM_ESCALATION_CHECK=1" "1" "$gesc_val"
 else

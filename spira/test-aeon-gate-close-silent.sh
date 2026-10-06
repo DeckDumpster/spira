@@ -41,14 +41,15 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 export REPO
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
 # a --home with no conf.d used to resolve silently to nothing instead of refusing.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | queue | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 echo "test-aeon-gate-close-silent.sh"
 

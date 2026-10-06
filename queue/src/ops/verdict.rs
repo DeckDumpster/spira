@@ -129,6 +129,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             let _ = std::fs::remove_file(&pfile);
             landing_log(&c.s.run, &format!("QUEUE PUBLISH_ABANDONED {} repo={name} pr={pr} state={s}", w.clock.now()));
             w.lib.notify(
+                &c.s.mailbox,
                 name,
                 &format!("publish PR {pr} abandoned ({s})"),
                 &format!("PR {pr} for {name} is {s}, not open — retiring the publish record without moving {remote}/{forge_branch}. A closed-unmerged PR is never green regardless of what its CI says; the next publish carries anything since."),
@@ -149,6 +150,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
                     "verdict {name}: publish PR {pr} green but {remote}/{forge_branch} would not fast-forward — something moved it; leaving the record for a hand look"
                 ));
                 w.lib.notify(
+                    &c.s.mailbox,
                     name,
                     &format!("publish PR {pr} green but fast-forward refused"),
                     &format!("{remote}/{forge_branch} did not fast-forward to {head} for PR {pr} — something else moved it. Left open for a hand look."),
@@ -158,7 +160,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             w.forge.pr_close(&c.s.forge, path, &pr);
             let _ = std::fs::remove_file(&pfile);
             landing_log(&c.s.run, &format!("QUEUE PUBLISH_GREEN {} repo={name} pr={pr} head={head}", w.clock.now()));
-            w.lib.notify(name, &format!("publish PR {pr} merged"), &format!("{remote}/{forge_branch} fast-forwarded to {head} (PR {pr})."));
+            w.lib.notify(&c.s.mailbox, name, &format!("publish PR {pr} merged"), &format!("{remote}/{forge_branch} fast-forwarded to {head} (PR {pr})."));
             w.out(format!("verdict {name}: publish PR {pr} green — {remote}/{forge_branch} fast-forwarded to {head}"));
             OK
         }
@@ -215,6 +217,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     let suites_s = if suites.is_empty() { "none".to_string() } else { suites.clone() };
     landing_log(&c.s.run, &format!("QUEUE PUBLISH_RED {} repo={name} pr={pr} suites={suites_s} fix_forward={fid_s}", w.clock.now()));
     w.lib.notify(
+        &c.s.mailbox,
         name,
         &format!("publish PR {pr} red"),
         &format!("PR {pr} red (suites: {suites_s}). Fix-forward bead: {}.", fid.clone().unwrap_or_else(|| "<create failed>".into())),
@@ -546,6 +549,7 @@ fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_br
     w.out(format!("verdict {name}: PR {pr} landed by fast-forward ({})", b.head));
     lc_land(w, b);
     w.lib.notify(
+        &c.s.mailbox,
         name,
         &format!("PR {pr} merged (fast-forward)"),
         &format!("PR {pr} merged onto {base_branch} by fast-forward (head {}). Members: {}", b.head, b.members_str()),
@@ -617,7 +621,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
         if w.git.worktree_add_detached(b.path, &wt, cur) {
             let mut conflict = None;
             for m in &b.members {
-                if !w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip) {
+                if !w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip, &c.s.git_name, &c.s.git_email) {
                     w.git.merge_abort(&wt);
                     conflict = Some(m.id.clone());
                     break;
@@ -633,7 +637,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
                         return FAIL;
                     }
                     w.out(format!("verdict {name}: PR {pr} rebuilt on moved base ({cur}) — re-pushed (head {h})"));
-                    w.lib.notify(name, &format!("PR {pr} rebuilt (base moved)"), &format!("PR {pr} rebuilt onto moved base {cur} and force-pushed (head {h})."));
+                    w.lib.notify(&c.s.mailbox, name, &format!("PR {pr} rebuilt (base moved)"), &format!("PR {pr} rebuilt onto moved base {cur} and force-pushed (head {h})."));
                     return OK;
                 }
             } else if let Some(id) = conflict {

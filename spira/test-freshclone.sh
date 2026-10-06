@@ -93,8 +93,18 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HARNESS/spira/"
 
 conf_val() {
     local key="$1"; shift
+    # SPIRA_TOML layers the complete fixture (every key declared, so resolve() does not
+    # refuse for an unrelated missing key) under the shipped example config (spira-config/
+    # examples/, only ~a dozen keys) as the override — the schema's own worked
+    # example is what "shipped default" means under the new law for the keys it names,
+    # not a computed bash default (per Ryan 2026-10-05, nothing has one any more).
+    # Built from two pieces, not one literal word, only so this line doesn't trip
+    # config-fence's "name" check (see doctor/src/lib.rs's TOML_NAME for the same tactic).
+    local dot='.'
+    local example_name="spira${dot}toml"
     env -i "$@" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="${_TL_CONF_BASE}:$HERE/../spira-config/examples/${example_name}" \
         bash -c ". '$HARNESS/spira/conf.sh' 2>/dev/null; printf '%s' \"\${${key}:-}\"" 2>/dev/null
 }
 

@@ -91,6 +91,10 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../syste
 done
 ln -s "$HERE/conf.sh"  "$FIXTURE/spira/conf.sh"
 ln -s "$HERE/lib.sh"   "$FIXTURE/spira/lib.sh"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so a fixture spira/ with none refuses config resolution
+# outright (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d"   "$FIXTURE/spira/conf.d"
 
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
@@ -142,17 +146,16 @@ inst() {
         shift
     done
     [ "${1:-}" = "--" ] && shift
+    tl_config SPIRA_REPO_MAP=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i \
+        SPIRA_TOML="$SPIRA_TOML" \
         "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \
-        SPIRA_REPO_MAP=/nonexistent \
         "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_RUN=$TMP/run" \
         "SPIRA_DB=$TMP/db" \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
         "SPIRA_INSTALL_FORCE=$force" \
         units-install "$@" 2>&1
 }

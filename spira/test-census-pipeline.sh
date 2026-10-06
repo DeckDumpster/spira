@@ -242,21 +242,19 @@ chmod +x "$T/spira-lc-stub"
 
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
     local rundir="$1"; shift
+    tl_config SPIRA_BD="$FAKE_BD" SPIRA_DB="$T/fixture.db" \
+        SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
+        SPIRA_RUN="$rundir" SPIRA_REPO_MAP="$T/no-repo-map" \
+        SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}"
     env SPIRA_NOW="$CENSUS_FIXED_HOST_EPOCH" \
         SPIRA_LC_BIN="$T/spira-lc-stub" \
-        SPIRA_BD="$FAKE_BD" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
         SPIRA_CONF="$T/no-conf" \
         SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$rundir" \
         SPIRA_REPO="${CENSUS_REPO:-$T/norepo}" \
-        SPIRA_REPO_MAP="$T/no-repo-map" \
         CENSUS_SQL_FILE="$CENSUS_SQL_FILE" \
         CENSUS_SQL_RC="${CENSUS_SQL_RC:-0}" \
         CENSUS_SKEW_FILE="$CENSUS_SKEW_FILE" \
         CENSUS_SKEW_RC="${CENSUS_SKEW_RC:-0}" \
-        SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}" \
         CENSUS_LIST_ARGS_FILE="${CENSUS_LIST_ARGS_FILE:-}" \
         CENSUS_OPEN_JSON="${CENSUS_OPEN_JSON:-}" \
         CENSUS_CLOSED_JSON="${CENSUS_CLOSED_JSON:-}" \
@@ -518,7 +516,8 @@ END
 chmod +x "$_fake_dir/bd"
 
 _retry_rc=0
-CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir" \
+tl_config SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir"
+CENSUS_RETRY_DELAY_S=0 \
     census_events_run_sql >/dev/null 2>/dev/null || _retry_rc=$?
 is "retry: succeeds after 2 failures" "0" "$_retry_rc"
 is "retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
@@ -532,7 +531,8 @@ chmod +x "$_fake_dir/bd_fail"
 
 _fail_err=""
 _fail_rc=0
-_fail_err="$(CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir" \
+tl_config SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir"
+_fail_err="$(CENSUS_RETRY_DELAY_S=0 \
     census_events_run_sql 2>&1 >/dev/null)" || _fail_rc=$?
 is    "all-fail: returns non-zero" "1" "$_fail_rc"
 want  "all-fail: driver error in final message" "i/o timeout" "$_fail_err"

@@ -138,6 +138,15 @@ fn ctx() -> Ctx {
         ("SPIRA_RELEASE", "/rel"),
         // The box's own tool tail (sp-c7b85) — cargo, for the tree builds a gate step runs.
         ("SPIRA_PATH", "/box/.cargo/bin"),
+        // ONE SOURCE (per Ryan 2026-10-05): engine.rs no longer falls back to a literal
+        // default when one of these is absent from `Ctx.vars` — that is now `cfg`'s job,
+        // once, at the real `Real::context()`. The fixture stands in for that resolved
+        // value here, at `spira/conf.d`'s own default (`SPIRA_GATE_SUITES`'s registered
+        // default is a file path; "on" is this suite's own convention for "not off", and
+        // the engine only ever tests this value against the literal "off").
+        ("SPIRA_GATE_TIMEOUT", "2700"),
+        ("SPIRA_GATE_SUITES", "on"),
+        ("SPIRA_GATE_BUDGET", "300"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }

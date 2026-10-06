@@ -3,7 +3,7 @@
 //! `python3 -c` (DESIGN.md "Design"). The BFS itself ([`reachable_bfs`]) is pure and unit
 //! tested directly; only the data gathering (bd, the ctrl file, the chamber) is impure.
 
-use super::{push, Kv};
+use super::{push, Cfg, Kv};
 use crate::io;
 use serde_json::Value;
 use spira_config::lc_state;
@@ -103,15 +103,15 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
     (reachable.len(), all_ids.len())
 }
 
-pub fn reachable_keys() -> Kv {
+pub fn reachable_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope = cfg.scope_label.as_str();
     // The universe is every work bead the machine has as claimable or WORKING (what bd's
     // `open,in_progress` meant); bd supplies only its labels and edges.
     let mut args = vec!["list", "--all", "--limit", "0"];
     if !scope.is_empty() {
         args.push("--label");
-        args.push(&scope);
+        args.push(scope);
     }
     let raw = io::bdjson(&args);
     let Some((rows, lc)) = io::bd_rows(raw).zip(super::lc::state_index()) else {
@@ -136,9 +136,9 @@ pub fn reachable_keys() -> Kv {
     }
 
     let mut suspended: Vec<LabelSet> = Vec::new();
-    let ctrl_path = std::env::var("SPIRA_CTRL").unwrap_or_default();
+    let ctrl_path = cfg.ctrl.as_str();
     if !ctrl_path.is_empty() {
-        if let Ok(content) = std::fs::read_to_string(&ctrl_path) {
+        if let Ok(content) = std::fs::read_to_string(ctrl_path) {
             if let Ok(Value::Object(ctrl)) = serde_json::from_str::<Value>(&content) {
                 for (subj, ops) in &ctrl {
                     let has_suspend = ops.as_array().map(|a| a.iter().any(|v| v.as_str() == Some("suspend"))).unwrap_or(false)

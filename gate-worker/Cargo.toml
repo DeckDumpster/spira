@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 landing-pass = { path = "../landing-pass" }
 libc = "0.2"
+spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

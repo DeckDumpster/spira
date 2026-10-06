@@ -48,6 +48,7 @@ exit 0
 EOF
 chmod +x "$STUB_BD"
 export SPIRA_BD="$STUB_BD" SPIRA_DB="$TMP/no-such-db"
+tl_config SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB"
 # sp-mve9i: the Sending's claim witness reads the lifecycle row, never bd status; with no
 # lifecycle store here a stand-in service tells it the fixture's bd story in lifecycle terms
 # (testlib.sh lc_socket_mirror) — a machine that does not answer would hold every branch.
@@ -79,10 +80,10 @@ export SPIRA_RUN="$RUN" SPIRA_REAPLOG="$RUN/reap.log"
 printf '%s | %s | queue | | |\n%s | %s | push | | |\n%s | %s | queue.local | | |\n' \
     "$QNAME" "$QREPO" "$PNAME" "$PREPO" "$QLNAME" "$QLREPO" > "$TMP/repo-map"
 export SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO="$PNAME" SPIRA_REPO="$PREPO"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_HOME_REPO="$SPIRA_HOME_REPO"
 
 sending() {
-    SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
-    SPIRA_REPO="$PREPO" SPIRA_HOME_REPO="$PNAME" SPIRA_REPO_MAP="$TMP/repo-map" \
+    SPIRA_HOME="$HERE" SPIRA_REPO="$PREPO" \
         command sending --no-fetch "$@" 2>&1
 }
 branch_exists() {   # branch_exists <repo> <branch>

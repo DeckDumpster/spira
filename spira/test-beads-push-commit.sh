@@ -138,7 +138,8 @@ echo "real test — beads-push.sh commits dirty tables and pushes:"
 
 # The statute written above is still dirty in the database; beads-push.sh must
 # commit it, then push, then the clone must find it.
-push_out="$(SPIRA_DB="$SPIRA_DB" bash "$ROOT/beads-push.sh" 2>&1)"
+tl_config SPIRA_DB="$SPIRA_DB"
+push_out="$(bash "$ROOT/beads-push.sh" 2>&1)"
 push_rc=$?
 is "beads-push.sh exits 0" "0" "$push_rc"
 
@@ -164,7 +165,8 @@ DBNAME="$(ls "$EMBDIR" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -
 MANIFEST="$EMBDIR/$DBNAME/.dolt/noms/manifest"
 
 manifest_before="$(cat "$MANIFEST" 2>/dev/null)"
-SPIRA_DB="$SPIRA_DB" bash "$ROOT/beads-push.sh" >/dev/null 2>&1
+tl_config SPIRA_DB="$SPIRA_DB"
+bash "$ROOT/beads-push.sh" >/dev/null 2>&1
 manifest_after="$(cat "$MANIFEST" 2>/dev/null)"
 is "no-op: clean state produces no new commit" "$manifest_before" "$manifest_after"
 

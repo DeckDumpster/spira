@@ -62,13 +62,12 @@ chmod +x "$BIN/curl"
 
 printf 'fake-key-content\n' > "$TMP/fake-key.pem"
 
+tl_config SPIRA_GH_APP_ID=12345 SPIRA_GH_APP_INSTALLATION_ID=67890 SPIRA_GH_APP_KEY="$TMP/fake-key.pem"
 out="$(env -i \
     HOME="$TMP" \
     PATH="$BIN:$TOOLS:/usr/bin:/bin" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_GH_APP_ID=12345 \
-    SPIRA_GH_APP_INSTALLATION_ID=67890 \
-    SPIRA_GH_APP_KEY="$TMP/fake-key.pem" \
     bash "$CRED_HELPER" get 2>/dev/null)"
 want "protocol=https in output"            "protocol=https"            "$out"
 want "host=github.com in output"           "host=github.com"           "$out"
@@ -82,9 +81,11 @@ echo "3. CREDENTIAL HELPER — exits non-zero without credentials"
 # This proves the check is real: if SPIRA_GH_APP_ID is absent the helper
 # must fail rather than silently emitting a blank or recycled credential.
 rc_nc=0
+tl_config SPIRA_GH_APP_ID="" SPIRA_GH_APP_INSTALLATION_ID="" SPIRA_GH_APP_KEY=""
 out_nc="$(env -i \
     HOME="$TMP" \
     PATH="$BIN:$TOOLS:/usr/bin:/bin" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF=/nonexistent \
     bash "$CRED_HELPER" get 2>&1)" || rc_nc=$?
 wantrc "no credentials → non-zero exit" 1 "$rc_nc"
@@ -96,7 +97,7 @@ echo "4. CREDENTIAL HELPER — store and erase are no-ops (exit 0, no output)"
 # =========================================================================
 for action in store erase; do
     rc_noop=0
-    out_noop="$(env -i HOME="$TMP" PATH="$BIN:$TOOLS:/usr/bin:/bin" SPIRA_CONF=/nonexistent \
+    out_noop="$(env -i HOME="$TMP" PATH="$BIN:$TOOLS:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
         bash "$CRED_HELPER" "$action" 2>&1)" || rc_noop=$?
     wantrc "$action exits 0" 0 "$rc_noop"
     is     "$action emits nothing" "" "$out_noop"
@@ -117,16 +118,25 @@ EOF
 chmod +x "$BIN/git"
 
 rm -f "$TMP/git-args"
+tl_config SPIRA_RUN="$TMP/run"
+# queue-helpers git-push (queue/src/ops/helpers.rs git_push_cmd) reads SPIRA_GH_APP_ID and
+# SPIRA_GH_APP_INSTALLATION_ID with a raw std::env::var, deliberately: queue-helpers.rs's own
+# doc comment says this leaf binary resolves no harness context (bd, spira-lc, conf.sh) at
+# all, so a config problem elsewhere can never break a plain git/mail primitive. tl_config
+# alone is not enough either: conf.sh's own "WHAT IS EXPORTED, AND WHAT MUST NEVER BE" list
+# does not carry SPIRA_GH_APP_* at all, so even a value tl_config lands correctly in this
+# shell's own SPIRA_GH_APP_ID never reaches a child process. Export it ourselves AFTER
+# sourcing lib.sh, so conf.sh's own (unexported) resolve of the registered key runs first
+# and our plain env wins last (one source of config, per Ryan 2026-10-05).
 (
     export PATH="$BIN:$PATH"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
-    export SPIRA_RUN="$TMP/run"
-    export SPIRA_GH_APP_ID=99999
-    export SPIRA_GH_APP_INSTALLATION_ID=11111
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
+    export SPIRA_GH_APP_ID=99999
+    export SPIRA_GH_APP_INSTALLATION_ID=11111
     rm -f "$TMP/git-args"
     spira_git_push "$TMP/fake-repo" -q origin main
 ) 2>/dev/null || true
@@ -142,14 +152,14 @@ echo
 echo "6. spira_git_push — plain git push when App creds are not configured"
 # =========================================================================
 rm -f "$TMP/git-args"
+tl_config SPIRA_RUN="$TMP/run"
+# No SPIRA_GH_APP_ID/SPIRA_GH_APP_INSTALLATION_ID exported into this subshell at all (see
+# section 5's note) — app_configured in git_push_cmd reads them raw and unset is unset.
 (
     export PATH="$BIN:$PATH"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
-    export SPIRA_RUN="$TMP/run"
-    unset SPIRA_GH_APP_ID           2>/dev/null || true
-    unset SPIRA_GH_APP_INSTALLATION_ID 2>/dev/null || true
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
     rm -f "$TMP/git-args"

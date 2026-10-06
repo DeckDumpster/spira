@@ -56,7 +56,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 lc_socket_mirror "$TMP/lcsock"
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_REPO="$REPO"
 # THE HOME IS NAMED, NEVER INFERRED. slay and `sending destroy-branch` find lib.sh through
 # $SPIRA_HOME, else by walking up from their own canonical exe path. conf.sh sets SPIRA_HOME
@@ -67,7 +67,7 @@ export SPIRA_REPO="$REPO"
 # every tree, base included. test-sending.sh names SPIRA_HOME="$HERE" the same way.
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 export SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
 printf '# fixture\n' > "$TMP/repo-map"
 

@@ -58,8 +58,11 @@ SESS=$(tmux list-panes -t "$WIN" -F '#{pane_id}')
 # Every var the real health.sh loop needs is embedded directly in the pane's own command
 # line — the fixture must not depend on whatever environment happened to start the tmux
 # server.
-HEALTH_CMD="SPIRA_CONF='$CONF' SPIRA_HOME='$HERE' SPIRA_REPO='$TMP' SPIRA_RUN='$TMP/.runtime' \
-SPIRA_DB='$TMP/nodb' SPIRA_REPO_MAP='$TMP/no-map' SPIRA_FAYTHS=t \
+tl_config SPIRA_RUN="$TMP/.runtime" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+    SPIRA_FAYTHS=t
+# Every var the health process needs is embedded directly in the pane's command line,
+# including SPIRA_TOML, rather than relying on whatever environment started the tmux server.
+HEALTH_CMD="SPIRA_CONF='$CONF' SPIRA_HOME='$HERE' SPIRA_REPO='$TMP' SPIRA_TOML='$SPIRA_TOML' \
 SPIRA_SYSTEMCTL='$MOCK_SYSTEMCTL' SPIRA_HEALTH_TICK=$TICK '$HEALTH' loop"
 HP=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS" "$HEALTH_CMD")
 tmux set-option -p -t "$HP" @cockpit health
@@ -125,13 +128,11 @@ sleep 0.2
 is "SEEN RED: no pane in the window is tagged" "" \
     "$(tmux list-panes -t "$WIN2" -F '#{@cockpit}' 2>/dev/null | grep -v '^$')"
 
+tl_config SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_RUN="$TMP/.runtime" COCKPIT_CLIENT_IDLE_SECS=0
 SPIRA_RELEASE="$ROOT" \
-SPIRA_COCKPIT="$ROOT/cockpit" \
 SPIRA_REPO="$TMP" \
-SPIRA_RUN="$TMP/.runtime" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
-COCKPIT_CLIENT_IDLE_SECS=0 \
     "$ROOT/bin/layout" ensure >/dev/null 2>&1 || true
 sleep 0.5
 

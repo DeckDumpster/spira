@@ -55,7 +55,10 @@ fn main() -> ExitCode {
 /// an empty string the same way a bash positional does, so a short call just fails the
 /// whitelist rather than erroring. `SPIRA_RUN` unset behaves exactly as `"${SPIRA_RUN:-}"`
 /// did: an empty root, never a refusal — this call is best-effort end to end, and the
-/// `lib.sh` shim above it already swallows any error this returns.
+/// `lib.sh` shim above it already swallows any error this returns. `tsd` cannot depend on
+/// `spira-config` (`spira-config` itself depends on `tsd`, to write its own admission
+/// rows — cfg() is unavailable here on pain of a cycle), so this is a raw env read, not
+/// the one door; the caller shell already resolved `$SPIRA_RUN` before exec'ing this.
 fn run_escape(args: &[String]) -> Result<(), String> {
     let root = PathBuf::from(env::var("SPIRA_RUN").unwrap_or_default());
     escape_row(
@@ -114,6 +117,10 @@ fn run(args: &[String]) -> Result<(), String> {
             "family {family:?} must start with a letter and contain only lowercase letters, digits and hyphens"
         ));
     }
+    // `tsd` stays a leaf library/binary (`spira-config` depends on it, so it cannot depend
+    // back on `spira-config` without a cycle) — SPIRA_RUN is a registered config key, but
+    // this binary cannot reach the one door for it, so a raw env read is this crate's own,
+    // explicit exception: callers that have it resolved should prefer passing `--root`.
     let root = match root.or_else(|| env::var("SPIRA_RUN").ok().map(PathBuf::from)) {
         Some(r) => r,
         None => return Err("no --root and SPIRA_RUN is unset".to_string()),

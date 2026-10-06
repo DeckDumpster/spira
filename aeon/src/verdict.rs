@@ -258,7 +258,7 @@ impl Run<'_> {
         let superseded = row.as_ref().is_some_and(|r| r.superseded());
         let delivers = row.as_ref().map(|r| r.delivers()).unwrap_or_default();
         let issue_type = row.as_ref().and_then(|r| r.issue_type.clone()).unwrap_or_default();
-        let window = self.conf.n("SPIRA_VERDICT_WINDOW", 400);
+        let window = self.conf.i("SPIRA_VERDICT_WINDOW");
         let land_refs = match spira_config::repos::landrefs(&self.conf.repos, &repo) {
             Some((base, Some(local))) => format!("{base} {local}"),
             Some((base, None)) => base,
@@ -271,7 +271,7 @@ impl Run<'_> {
         self.log(&format!("{f}: {id} status={st} committed={cy} superseded={sup} delivers={}", if delivers.is_empty() { "none" } else { &delivers }));
 
         // ---- close_verdict: the same decision sentinel CHECK 5 makes, natively in each crate ----
-        let delivers_timeout = self.conf.n("SPIRA_DELIVERS_CHECK_TIMEOUT", 60).max(1) as u64;
+        let delivers_timeout = self.conf.i("SPIRA_DELIVERS_CHECK_TIMEOUT").max(1) as u64;
         let cv = close_verdict(self.d.bd, self.d.exec, delivers_timeout, &id, closed, superseded, &delivers, committed, self.s.session_epoch);
         match (cv.outcome.as_str(), cv.reason.as_str()) {
             ("keep", "delivers") => self.log(&format!("{f}: {id} closed with nothing committed and NOT reopened — {}", cv.msg)),
@@ -387,21 +387,25 @@ impl Run<'_> {
         // ---- close-time workflow-run fence (law-a-workflow-lands-on-its-own-run) ----
         if closed && committed {
             if self.conf.set_nonempty("SPIRA_WORKFLOW_RUN_CONSIDERED") {
-                self.log(&format!("{f}: {id} workflow-run fence skipped (SPIRA_WORKFLOW_RUN_CONSIDERED={})", self.conf.s("SPIRA_WORKFLOW_RUN_CONSIDERED")));
+                // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
+                self.log(&format!(
+                    "{f}: {id} workflow-run fence skipped (SPIRA_WORKFLOW_RUN_CONSIDERED={})",
+                    self.conf.or("SPIRA_WORKFLOW_RUN_CONSIDERED", "")
+                ));
             } else {
                 // aeon.sh passed SPIRA_DB="$DB" under `set -u`; with DB unset the check never
                 // ran and read as OK. It runs here exactly when bash's would (DESIGN.md §8).
                 let r = match self.d.env.original.get("DB") {
                     Some(db) => {
-                        let wf = self.conf.or("SPIRA_WORKFLOW_ONLY_PATHS", "spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh");
+                        let wf = self.conf.s("SPIRA_WORKFLOW_ONLY_PATHS");
                         let a = s(&[
                             &format!("BEAD_ID={id}"),
-                            &format!("SPIRA_BD={}", self.conf.or("SPIRA_BD", "bd")),
+                            &format!("SPIRA_BD={}", self.conf.s("SPIRA_BD")),
                             &format!("SPIRA_DB={db}"),
                             &format!("SPIRA_REPO={repo}"),
                             &format!("BRANCH={branch}"),
                             &format!("BASE={base}"),
-                            &format!("SPIRA_GH_API={}", self.conf.or("SPIRA_GH_API", "https://api.github.com")),
+                            &format!("SPIRA_GH_API={}", self.conf.s("SPIRA_GH_API")),
                             &format!("SPIRA_WORKFLOW_ONLY_PATHS={wf}"),
                             "workflow-run-check.py",
                         ]);

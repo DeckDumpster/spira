@@ -92,34 +92,32 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
+mkdir -p "$RUN/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail (the divergence alarm) appends
+# every send there (sfail round 3, pattern 7).
+# SPIRA_MAIL_KINDS undeclared resolves to the complete fixture's own unwritable release
+# tree, so lint refuses the divergence alarm's send outright ("unknown kind") before it ever
+# reaches the concierge mailbox; SPIRA_MAIL_MUTE defaults to true for the same reason.
+tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
+    SPIRA_MAIL_INDEX="$RUN/mail/index" SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_MUTE=0 \
+    SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP" SPIRA_FORGE="$SH/forge-fixture.sh" \
+    SPIRA_RELEASES="$RELEASES" SPIRA_CONCIERGE_INBOX="$RUN/watchd/concierge-inbox.log"
 queue() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_MAIL="$RUN/mail" \
-    SPIRA_QUEUE_DIR="$QDIR" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
-    SPIRA_RELEASES="$RELEASES" \
-        SPIRA_HOME="$SH" command queue "$@" 2>&1
+        timeout 30 queue "$@" 2>&1
 }
 verdict() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_MAIL="$RUN/mail" \
-    SPIRA_QUEUE_DIR="$QDIR" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
     FIXTURE_RED_SUITES="${RED_SUITES:-}" \
     FIXTURE_PR_STATE="${PR_STATE:-open}" \
-        SPIRA_HOME="$SH" command queue verdict "$REPONAME" 2>&1
+        timeout 30 queue verdict "$REPONAME" 2>&1
 }
 # mk_bins <head> — land-local now refuses without a --with-bins corpus for the tree it is
 # landing; every head this suite lands needs one (see test-land-local-release.sh for the

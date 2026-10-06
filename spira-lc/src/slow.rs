@@ -23,7 +23,9 @@ fn log_path() -> Option<std::path::PathBuf> {
     if let Some(p) = std::env::var("SPIRA_SLOW_QUERY_LOG").ok().filter(|p| !p.is_empty()) {
         return Some(p.into());
     }
-    std::env::var("SPIRA_RUN").ok().filter(|r| !r.is_empty()).map(|r| std::path::Path::new(&r).join("slow-queries.log"))
+    // SPIRA_RUN is declared config (spira/conf.d): the one source is $SPIRA_TOML (per Ryan
+    // 2026-10-05), never this process's own environment.
+    spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()).map(|r| std::path::Path::new(&r).join("slow-queries.log"))
 }
 
 /// SQL with every literal replaced by `?`, whitespace collapsed, and value lists folded, so

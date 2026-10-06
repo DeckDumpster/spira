@@ -34,6 +34,71 @@ fn push(out: &mut Kv, k: &str, v: impl Into<String>) {
     out.push((k.to_string(), v.into()));
 }
 
+/// Every registered config key this probe library reads, resolved ONCE through
+/// `spira_config::process::cfg`/`cfg_parse` (the one door, per Ryan 2026-10-05: one source of
+/// config) and passed down to every `*_keys` function that needs a value — never read a
+/// second time via `std::env::var`. Built by [`Cfg::load`], called once per `once`/`probe`
+/// invocation (`main::cmd_once`/`cmd_probe`), after `io::bootstrap_config` (which still
+/// exports resolved config into this process's own environment, but only so the frozen
+/// `lib.sh` bridge's children see it — never as a second path back into this crate's own
+/// Rust logic). `Default` exists for tests only: every field defaults to empty/zero, never a
+/// value a test should mistake for a resolved one — a test sets exactly the field(s) its
+/// assertion is about.
+#[derive(Default)]
+pub struct Cfg {
+    pub instance: String,
+    pub trace_lines: i64,
+    pub max_live_aeons: i64,
+    pub lanes_max_live: String,
+    pub scope_label: String,
+    pub czar_label: String,
+    pub wiki: String,
+    pub mail: String,
+    pub queue_dir: String,
+    pub express_label: String,
+    pub queue_batch_max: i64,
+    pub queue_batch_wait: i64,
+    pub cert_window_mins: i64,
+    pub prod: String,
+    pub ci_label: String,
+    pub queue_wait_label: String,
+    /// `0` is a declared, deliberate value ("set it to 0 to disable the deadline" — conf.d's
+    /// own doc), not an absence — `awaiting_ci_section` (core_detail.rs) checks for it
+    /// explicitly rather than treating every elapsed second as overdue.
+    pub ci_park_max: i64,
+    pub ctrl: String,
+    pub repo_map: String,
+}
+
+impl Cfg {
+    pub fn load() -> Result<Cfg, String> {
+        use spira_config::process::{cfg, cfg_parse};
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let home = io::home_dir();
+        Ok(Cfg {
+            instance: spira_config::resolve::resolve_instance(&env, &home)?,
+            trace_lines: cfg_parse::<i64>("COCKPIT_TRACE_LINES")?,
+            max_live_aeons: cfg_parse::<i64>("SPIRA_MAX_LIVE_AEONS")?,
+            lanes_max_live: cfg("SPIRA_LANES_MAX_LIVE")?,
+            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
+            czar_label: cfg("SPIRA_CZAR_LABEL")?,
+            wiki: cfg("SPIRA_WIKI")?,
+            mail: cfg("SPIRA_MAIL")?,
+            queue_dir: cfg("SPIRA_QUEUE_DIR")?,
+            express_label: cfg("SPIRA_EXPRESS_LABEL")?,
+            queue_batch_max: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_MAX")?,
+            queue_batch_wait: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_WAIT")?,
+            cert_window_mins: cfg_parse::<i64>("SPIRA_CERT_WINDOW_MINS")?,
+            prod: cfg("SPIRA_PROD")?,
+            ci_label: cfg("SPIRA_CI_LABEL")?,
+            queue_wait_label: cfg("SPIRA_QUEUE_WAIT_LABEL")?,
+            ci_park_max: cfg_parse::<i64>("SPIRA_CI_PARK_MAX")?,
+            ctrl: cfg("SPIRA_CTRL")?,
+            repo_map: cfg("SPIRA_REPO_MAP")?,
+        })
+    }
+}
+
 /// Render a [`Kv`] as the raw `KEY=value` lines a probe subcommand prints on stdout —
 /// exactly what `cockpit.sh <subcommand>` echoed, unquoted (the supervisor's fragment/merge
 /// layer is the only place that quotes).
@@ -50,27 +115,27 @@ pub fn render(kv: &Kv) -> String {
 
 /// `probe()`: the full backward-compatible serial pass `cockpit.sh once`/`loop` ran, in the
 /// bash's own order. SP_AT first (`now_keys` emits it as its first line), SP_PASS_SECS last.
-pub fn full_pass() -> Kv {
+pub fn full_pass(cfg: &Cfg) -> Kv {
     let start = io::now();
     let mut out = Kv::new();
-    out.extend(now_keys());
-    out.extend(core_detail::core_detail_keys());
+    out.extend(now_keys(cfg));
+    out.extend(core_detail::core_detail_keys(cfg));
     out.extend(core_counts_keys());
-    out.extend(slots_keys());
+    out.extend(slots_keys(cfg));
     out.extend(admission::admission_keys());
-    out.extend(unsent::unsent_keys());
-    out.extend(queue::queue_keys());
-    out.extend(reachable::reachable_keys());
-    out.extend(sphere_keys());
-    out.extend(repo_label_keys());
+    out.extend(unsent::unsent_keys(cfg));
+    out.extend(queue::queue_keys(cfg));
+    out.extend(reachable::reachable_keys(cfg));
+    out.extend(sphere_keys(cfg));
+    out.extend(repo_label_keys(cfg));
     out.extend(strand_keys());
     out.extend(dup_refs_keys());
     out.extend(livelock_keys());
     out.extend(sop_keys());
     out.extend(ratelim::ratelim_keys());
-    out.extend(statute_keys());
+    out.extend(statute_keys(cfg));
     out.extend(drift_keys());
-    out.extend(czar_triggers_keys());
+    out.extend(czar_triggers_keys(cfg));
     out.push(("SP_PASS_SECS".to_string(), (io::now() - start).to_string()));
     out
 }
@@ -84,31 +149,31 @@ pub fn dedup_first_wins(kv: Kv) -> Kv {
 }
 
 /// Dispatch by the same subcommand names `spira/cockpit.sh`'s case statement used.
-pub fn run(subcommand: &str) -> Option<Kv> {
+pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
     match subcommand {
-        "now" => Some(now_keys()),
+        "now" => Some(now_keys(cfg)),
         "core" => {
-            let mut kv = core_detail::core_detail_keys();
+            let mut kv = core_detail::core_detail_keys(cfg);
             kv.extend(core_counts_keys());
             Some(kv)
         }
-        "core_detail" => Some(core_detail::core_detail_keys()),
-        "slots" => Some(slots_keys()),
+        "core_detail" => Some(core_detail::core_detail_keys(cfg)),
+        "slots" => Some(slots_keys(cfg)),
         "admission" => Some(admission::admission_keys()),
-        "unsent" => Some(unsent::unsent_keys()),
-        "queue" => Some(queue::queue_keys()),
-        "reachable" => Some(reachable::reachable_keys()),
-        "sphere" => Some(sphere_keys()),
-        "repo_labels" => Some(repo_label_keys()),
+        "unsent" => Some(unsent::unsent_keys(cfg)),
+        "queue" => Some(queue::queue_keys(cfg)),
+        "reachable" => Some(reachable::reachable_keys(cfg)),
+        "sphere" => Some(sphere_keys(cfg)),
+        "repo_labels" => Some(repo_label_keys(cfg)),
         "livelock" => Some(livelock_keys()),
         "dup_refs" => Some(dup_refs_keys()),
         "strands" => Some(strand_keys()),
         "ratelim" => Some(ratelim::ratelim_keys()),
         "sops" => Some(sop_keys()),
-        "statute" => Some(statute_keys()),
+        "statute" => Some(statute_keys(cfg)),
         "drift" => Some(drift_keys()),
-        "mail" => Some(mail_keys()),
-        "czar_triggers" => Some(czar_triggers_keys()),
+        "mail" => Some(mail_keys(cfg)),
+        "czar_triggers" => Some(czar_triggers_keys(cfg)),
         "sending" => Some(sending_keys()),
         _ => None,
     }
@@ -118,7 +183,7 @@ pub fn run(subcommand: &str) -> Option<Kv> {
 // now_keys — fast tier: /proc and the filesystem only, no bd/git.
 // ---------------------------------------------------------------------------------------
 
-pub fn now_keys() -> Kv {
+pub fn now_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let start = io::now();
     push(&mut out, "SP_AT", start.to_string());
@@ -205,7 +270,7 @@ pub fn now_keys() -> Kv {
                     push(&mut out, &format!("SP_AEON{i}_{k}"), v.to_string());
                 }
             }
-            let tl: i64 = std::env::var("SPIRA_COCKPIT_TRACE_LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+            let tl: i64 = cfg.trace_lines;
             if tl > 0 {
                 let tail = aeon::trace::trace_tail(&log_path, &mark, tl as usize);
                 let lines: Vec<&str> = tail.lines().map(sanitize_line).collect();
@@ -221,9 +286,9 @@ pub fn now_keys() -> Kv {
     }
     push(&mut out, "SP_AEON_N", i.to_string());
 
-    push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer"));
+    push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer", &cfg.instance));
     push(&mut out, "SP_SENTINEL_AGE", age_of(&run.join("sentinel.log")));
-    push(&mut out, "SP_OPS_TIMER", unit_active_key("ops", "timer"));
+    push(&mut out, "SP_OPS_TIMER", unit_active_key("ops", "timer", &cfg.instance));
 
     let mut ops_age = age_of(&run.join("ops.log"));
     if let Ok(entries) = std::fs::read_dir(&run) {
@@ -238,7 +303,7 @@ pub fn now_keys() -> Kv {
     }
     push(&mut out, "SP_OPS_AGE", ops_age);
 
-    push(&mut out, "SP_AURON_TIMER", unit_active_key("auron", "timer"));
+    push(&mut out, "SP_AURON_TIMER", unit_active_key("auron", "timer", &cfg.instance));
     push(&mut out, "SP_AURON_AGE", age_of(&run.join("auron.status")));
     let auron_status = run.join("auron.status");
     if auron_status.is_file() {
@@ -409,13 +474,13 @@ fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, u
 
 /// `spira_unit` (wave 4.10, sp-wqj3o: family C7's home is `spira_config::unit`, read
 /// in-process here instead of shelling into lib.sh via `io::lib_call` — the one bash bridge
-/// this bead names explicitly). `SPIRA_INSTANCE`/`SPIRA_SYSTEMCTL` are read straight from
-/// the environment, the same per-copy-fact reading every other direct env reader in this
-/// crate already does (see `capacity_pause_file`, above).
-fn unit_active_key(fayth: &str, kind: &str) -> String {
-    let instance = std::env::var("SPIRA_INSTANCE").unwrap_or_default();
+/// this bead names explicitly). `instance` is the caller's resolved `SPIRA_INSTANCE`
+/// (`Cfg::load`); `SPIRA_SYSTEMCTL` is not a registered config key, so it is still read
+/// straight from the environment, the same per-copy-fact reading `capacity_pause_file`
+/// (above) does for its own non-registered key.
+fn unit_active_key(fayth: &str, kind: &str, instance: &str) -> String {
     let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
-    let unit = spira_config::unit::resolve_unit(fayth, kind, &instance, &systemctl);
+    let unit = spira_config::unit::resolve_unit(fayth, kind, instance, &systemctl);
     match io::unit_active(&unit) {
         Some(true) => "1".to_string(),
         Some(false) => "0".to_string(),
@@ -504,24 +569,17 @@ pub fn core_counts_keys() -> Kv {
 // slots_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn slots_keys() -> Kv {
+pub fn slots_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let home = io::home_dir();
     let live = io::lib_call(&home, "aeons_live_total", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LIVE", live.clone());
 
-    // SPIRA_MAX_AEONS is never set into this process's own environment (io::NEVER_EXPORTED)
-    // — read io::max_aeons() instead of std::env::var directly.
     let pool: i64 = io::max_aeons().parse().ok().unwrap_or(0);
-    let lane_fayths = io::lib_call(&home, "spira_lane_fayths", &[]).unwrap_or_default();
-    let mut lt = 0i64;
-    for f in lane_fayths.split_whitespace() {
-        let ln: i64 = io::lib_call(&home, "fayth_get", &[f, "FAYTH_MAX_CONCURRENT", "1"])
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(1);
-        lt += ln;
-    }
-    let ceiling = std::env::var("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(pool + lt);
+    // SPIRA_MAX_LIVE_AEONS now carries a real, always-declared value (the config file); the
+    // pool+lanes computation this ceiling used to fall back to when the key resolved empty
+    // is gone with that default.
+    let ceiling = cfg.max_live_aeons;
     push(&mut out, "SP_SLOTS_CEILING", ceiling.to_string());
 
     // A failed live read must never resolve to a reassuring free count.
@@ -531,7 +589,7 @@ pub fn slots_keys() -> Kv {
     };
     push(&mut out, "SP_SLOTS_FREE", free);
     push(&mut out, "SP_SLOTS_POOL", pool.to_string());
-    push(&mut out, "SP_SLOTS_LANES_CAP", std::env::var("SPIRA_LANES_MAX_LIVE").unwrap_or_default());
+    push(&mut out, "SP_SLOTS_LANES_CAP", cfg.lanes_max_live.clone());
 
     let lanes_live = io::lib_call(&home, "aeons_live_lanes", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LANES_LIVE", lanes_live);
@@ -562,7 +620,7 @@ pub fn slots_keys() -> Kv {
 // sphere_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn sphere_keys() -> Kv {
+pub fn sphere_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     // A work bead's state is the lifecycle row's (design §3.4); `None` renders `?`.
     let lc_rows = lc::state_index();
@@ -571,7 +629,7 @@ pub fn sphere_keys() -> Kv {
         Some(lc) => push(&mut out, "SP_POISON", poison_count(lc).to_string()),
     }
 
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0", "--label", &label]));
@@ -611,10 +669,9 @@ pub fn sphere_keys() -> Kv {
 // repo_label_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn repo_label_keys() -> Kv {
+pub fn repo_label_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let map_path = std::env::var("SPIRA_REPO_MAP").unwrap_or_default();
-    let Ok(map_content) = std::fs::read_to_string(&map_path) else {
+    let Ok(map_content) = std::fs::read_to_string(&cfg.repo_map) else {
         push(&mut out, "SP_REPO_UNMAPPED", "?");
         push(&mut out, "SP_REPO_ABSENT", "?");
         return out;
@@ -700,7 +757,10 @@ pub fn dup_refs_keys() -> Kv {
 /// process-equivalent pass (DESIGN.md: data fetching goes through `io` each time), and
 /// `groomer`/`maechen-trigger` resolve their own copy the same independent way.
 fn strand_cfg() -> strand::config::Config {
-    strand::config::Config::resolve(&strand::config::Live::load())
+    strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
+        eprintln!("cockpit-collect: {e}");
+        std::process::exit(1)
+    })
 }
 
 pub fn livelock_keys() -> Kv {
@@ -831,10 +891,10 @@ const CZAR_CLASSES: &[(&str, &str)] = &[
     ("incident:queue-loop-stalled", "STALL"),
 ];
 
-pub fn czar_triggers_keys() -> Kv {
+pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let label = std::env::var("SPIRA_CZAR_LABEL").unwrap_or_else(|_| "czar-trigger".to_string());
-    let raw = io::bdjson(&["list", "--label", &label, "--all", "--limit", "0", "--brief"]);
+    let label = cfg.czar_label.as_str();
+    let raw = io::bdjson(&["list", "--label", label, "--all", "--limit", "0", "--brief"]);
     let rows = match &raw {
         Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s.trim()).ok().map(|v| match v {
             Value::Array(a) => a,
@@ -985,9 +1045,9 @@ pub fn sop_keys() -> Kv {
 // statute_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn statute_keys() -> Kv {
+pub fn statute_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let wiki = std::env::var("SPIRA_WIKI").unwrap_or_default();
+    let wiki = &cfg.wiki;
     if wiki.is_empty() {
         push(&mut out, "SP_STATUTE_DB_N", "?");
         push(&mut out, "SP_STATUTE_PAGE_N", "?");
@@ -1064,11 +1124,11 @@ pub fn drift_keys() -> Kv {
 // mail_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn mail_keys() -> Kv {
+pub fn mail_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let now = io::now();
-    let mail_base = std::env::var("SPIRA_MAIL").unwrap_or_default();
-    let dir = Path::new(&mail_base).join("concierge");
+    let mail_base = &cfg.mail;
+    let dir = Path::new(mail_base).join("concierge");
     let new_dir = dir.join("new");
     if mail_base.is_empty() || !new_dir.is_dir() {
         push(&mut out, "SP_MAIL_UNREAD", "?");

@@ -41,8 +41,10 @@ echo "T1: argument parsing — before testdb/bd is ever touched, no store"
 # would fail with a store error instead of the usage message asserted for.
 T1TMP="$(mktemp -d)"; trap 'rm -rf "$T1TMP"' EXIT INT TERM
 slay_noargv() {   # slay_noargv <args...> -> stdout+stderr, with SLAY_RC set
+    tl_config SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store"
     SLAY_OUT="$(env -i PATH="$PATH" HOME="$T1TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$T1TMP/no.conf" SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store" \
+        SPIRA_CONF="$T1TMP/no.conf" \
+        SPIRA_TOML="$SPIRA_TOML" \
         slay "$@" 2>&1)"
     SLAY_RC=$?
 }
@@ -135,16 +137,22 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP/lc-data"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
+# (root, no password) credential file, declared (SPIRA_LC_SOCKET already unset above).
+: > "$TMP/lc-credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential" SPIRA_LC_SOCKET=""
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_REPO="$REPO"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$TMP/repo-map"
 printf '# fixture — empty\n' > "$TMP/repo-map"
 
 git init -q --bare -b main "$REMOTE"

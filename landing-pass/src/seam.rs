@@ -326,10 +326,13 @@ mod tests {
         // 1;;` branch for an unmapped name.
         let map = dir.join("repomap-fixture");
         std::fs::write(&map, format!("spira | {} | queue.local\nother | {}\nghost |\n", h.display(), o.display())).unwrap();
-        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-        std::env::set_var("SPIRA_REPO_MAP", &map);
-        std::env::set_var("SPIRA_HOME_REPO", "spira");
+        // Declared config (the one source): the registry reads the map and home repo from
+        // the SPIRA_TOML it resolves, never from the environment.
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), dir.join("conf.d")).unwrap();
+        let prev_toml = std::env::var("SPIRA_TOML").ok();
+        let cfgdir = testkit::TempDir::new("lp-seam-registry-cfg");
+        let toml = spira_config::process::fixture_toml(cfgdir.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+        std::env::set_var("SPIRA_TOML", &toml);
 
         let lib = r#"SPIRA_RUN=/run/x; SPIRA_TOML_FILE=/cfg/doc
 log() { echo "L $*"; }
@@ -344,13 +347,9 @@ log() { echo "L $*"; }
             crate::real::parse_context(&split(&out).answer, &dir)
         })();
 
-        match prev_map {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        match prev_home_repo {
-            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        match prev_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
         }
 
         let (s, repos) = result.unwrap();

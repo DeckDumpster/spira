@@ -38,15 +38,15 @@ mkdir -p "$T/run"
 # SPIRA_CONF at a nonexistent path so no host config leaks verdicts into the suite
 # (law-gates-run-in-a-clean-environment).
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
+tl_config SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_DB="$T/db"
+tl_config SPIRA_DB="$T/db"
 export SPIRA_BDQ_CONN_BACKOFF_MS=0
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
 BIN="$T/bin"; mkdir -p "$BIN"
-export SPIRA_BD="$BIN/bd"
+SPIRA_BD="$BIN/bd"; tl_config SPIRA_BD="$SPIRA_BD"
 CALLS="$T/calls"
 export CALLS
 

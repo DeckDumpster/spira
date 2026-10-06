@@ -37,6 +37,12 @@ COCKPIT="$HERE/../cockpit"
 T="$(mktemp -d)"
 TM="$(mktemp -d)"
 export TMUX_TMPDIR="$T"
+
+# SPIRA_RUN: this suite never declared it, so rebuild/layout resolved the complete
+# fixture's own default ("/fixture/home/spira/run", not writable here) instead of a real
+# directory (sfail round 3, pattern 7).
+RUNDIR="$T/run"; mkdir -p "$RUNDIR"
+tl_config SPIRA_RUN="$RUNDIR"
 cleanup() {
     TMUX_TMPDIR="$T" tmux kill-server 2>/dev/null || true
     TMUX_TMPDIR="$TM" tmux kill-server 2>/dev/null || true
@@ -75,8 +81,8 @@ chmod +x "$FAKE_MAIL"
 # on PATH; cockpit-remote stays a script, pointed at explicitly since SPIRA_COCKPIT is
 # not set in this fixture.
 VIEW="$COCKPIT/remote/cockpit-remote"
-rebuild()      { TMUX_TMPDIR="$T"  SPIRA_VIEW="$VIEW" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="" command rebuild "$@" 2>&1; }
-rebuild_mail() { TMUX_TMPDIR="$TM" SPIRA_VIEW="$VIEW" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="$FAKE_MAIL" command rebuild "$@" 2>&1; }
+rebuild()      { tl_config SPIRA_VIEW="$VIEW" COCKPIT_MAIL=""; TMUX_TMPDIR="$T" COCKPIT_CONCIERGE="$FAKE_CONC" command rebuild "$@" 2>&1; }
+rebuild_mail() { tl_config SPIRA_VIEW="$VIEW" COCKPIT_MAIL="$FAKE_MAIL"; TMUX_TMPDIR="$TM" COCKPIT_CONCIERGE="$FAKE_CONC" command rebuild "$@" 2>&1; }
 
 echo "test-cockpit-rebuild.sh"
 
@@ -165,7 +171,8 @@ if [ -z "$sess_p5" ]; then
 else
     TMUX_TMPDIR=$T tmux respawn-pane -k -t "$sess_p5" "sleep 60" 2>/dev/null
     sleep 1
-    out5="$(TMUX_TMPDIR=$T SPIRA_VIEW="$VIEW" COCKPIT_CONCIERGE="$FAKE_CONC_BARE" \
+    tl_config SPIRA_VIEW="$VIEW"
+    out5="$(TMUX_TMPDIR=$T COCKPIT_CONCIERGE="$FAKE_CONC_BARE" \
         command rebuild 2>&1)"; rc5=$?
     is   "positive control: rebuild fails when session pane has no brief" "1" "$rc5"
     want "positive control: verify names the session pane as the failure" \

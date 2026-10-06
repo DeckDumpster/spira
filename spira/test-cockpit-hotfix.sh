@@ -32,10 +32,13 @@ mkdir -p "$TMP/repo/.runtime/spira" "$TMP/home" "$TMP/bin"
 printf '#!/bin/sh\necho active\n' > "$TMP/bin/mock-systemctl"
 chmod +x "$TMP/bin/mock-systemctl"
 
+tl_config SPIRA_RUN="$TMP/repo/.runtime/spira"
 pane() {  # pane -> stripped rendering of a single `once` frame at SPIRA_RUN
     env -i PATH="$PATH" HOME="$TMP/home" TERM=dumb LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP/repo" SPIRA_RUN="$TMP/repo/.runtime/spira" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP/repo" \
         SPIRA_SYSTEMCTL="$TMP/bin/mock-systemctl" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$PANE" once 40 100 2>/dev/null \
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
 }

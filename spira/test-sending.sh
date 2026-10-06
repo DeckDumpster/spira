@@ -91,6 +91,10 @@ export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 unset SPIRA_LC_SOCKET
+# SPIRA_LC_PASSWORD_FILE is registered and resolves ambiently via cfg() to the complete
+# fixture's own nonexistent path, preferred over SPIRA_LC_PASSWORD above unless cleared
+# (sfail round 3, pattern 7 — same cause as test-canary.sh).
+tl_config SPIRA_LC_PASSWORD_FILE=""
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
@@ -153,7 +157,8 @@ PY
 esac
 EOF
 chmod +x "$STUB_BD"
-export SPIRA_BD="$STUB_BD" STUB_BEADS_DIR SPIRA_DB="$TMP/no-such-db"
+export STUB_BEADS_DIR SPIRA_DB="$TMP/no-such-db"
+tl_config SPIRA_BD="$STUB_BD"
 
 bead() {   # bead <id> <status> [dependencies-json] [labels-json] -> writes the fixture row
     local id="$1" status="$2" deps="${3:-[]}" labs="${4:-[]}"
@@ -180,7 +185,8 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate"
-export SPIRA_RUN="$RUN" SPIRA_REAPLOG="$RUN/reap.log"
+export SPIRA_REAPLOG="$RUN/reap.log"
+tl_config SPIRA_RUN="$RUN"
 
 OTHER="$TMP/other"; git init -q -b main "$OTHER"   # no remote, no commit: base unresolvable
 
@@ -195,9 +201,10 @@ printf '%s | %s | push | | |\nother | %s | push | | |\n' "$HOME_REPO" "$REPO" "$
 STATUS_FILE="$TMP/status-from"
 
 sending() {
-    SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" SPIRA_GH="$STUB_GH" \
-    SPIRA_REPO_MAP="$TMP/repo-map" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$HOME_REPO" \
+        SPIRA_GH="$STUB_GH" SPIRA_REPO_MAP="$TMP/repo-map"
+    SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_REPO="$REPO" \
         command sending --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
 }
 branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/$1" 2>/dev/null; }
@@ -544,9 +551,10 @@ seed_lc sp-dry SUBMITTED
 DHOME="$(basename "$DREPO")"
 printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 
-dry_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$DRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
-    SPIRA_REPO="$DREPO" SPIRA_HOME_REPO="$DHOME" SPIRA_REAPLOG="$DRUN/reap.log" \
-    SPIRA_REPO_MAP="$TMP/dry-repo-map" \
+tl_config SPIRA_RUN="$DRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$DHOME" \
+    SPIRA_REPO_MAP="$TMP/dry-repo-map"
+dry_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_REPO="$DREPO" SPIRA_REAPLOG="$DRUN/reap.log" \
         command sending --dry-run --no-fetch 2>&1)"
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
@@ -583,9 +591,10 @@ seed_lc sp-fail SUBMITTED
 FHOME="$(basename "$FREPO")"
 printf '%s | %s | push | main | |\n' "$FHOME" "$FREPO" > "$TMP/fail-repo-map"
 
-fail_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$FRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
-    SPIRA_REPO="$FREPO" SPIRA_HOME_REPO="$FHOME" SPIRA_REAPLOG="$FRUN/reap.log" \
-    SPIRA_REPO_MAP="$TMP/fail-repo-map" \
+tl_config SPIRA_RUN="$FRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$FHOME" \
+    SPIRA_REPO_MAP="$TMP/fail-repo-map"
+fail_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_REPO="$FREPO" SPIRA_REAPLOG="$FRUN/reap.log" \
         command sending --no-fetch 2>&1)"
 fail_rc=$?
 want "sp-fail is reported FAILED" "FAILED sp-fail" "$fail_out"

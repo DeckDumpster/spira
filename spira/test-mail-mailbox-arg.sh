@@ -23,13 +23,28 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_ID_PREFIX="sp"
+mkdir -p "$TMP/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
+# SPIRA_MAIL_MUTE=0: the complete fixture's own declared default is true, which silently
+# writes every "creates the mailbox on demand" send to cur/ Seen instead of new/.
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" \
+    SPIRA_MAIL_MUTE=0 \
+    SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_BD="${SPIRA_BD:-bd}" \
+    SPIRA_OPERATOR_ACTOR=ryan \
+    SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
+export SPIRA_HOME="$HERE"
 mkdir -p "$SPIRA_MAIL_KINDS"
 
-run() { mail "$@"; }
+run() { timeout 30 mail "$@"; }
 
 no_mailbox_created() {  # <name> <label>
     [ -e "$SPIRA_MAIL/$1" ] && bad "$2: no mailbox created" "found $SPIRA_MAIL/$1" \

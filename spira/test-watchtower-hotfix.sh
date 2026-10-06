@@ -69,12 +69,18 @@ chmod +x "$INC_MOCK"
 # wt_file: runs watchtower for real (writes the prompt file and drives escalations),
 # with $RELEASE_MOCK standing in for `release` and $INC_MOCK capturing incident.sh calls.
 wt_file() {
+    # SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$TMP/run"
+    # round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches); without
+    # it, watchtower has no <home>/conf.d to resolve its config schema at all.
     env -i PATH="$TMP:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$INC_MOCK" \
         SPIRA_TEST_CAPTURE="$TMP/captured.txt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_TOML="$SPIRA_TOML" \
         watchtower 2>/dev/null
 }
 # `release` must resolve by bare name (the box's own convention, sp-gypjk): symlink it

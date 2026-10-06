@@ -16,12 +16,16 @@ pub struct RealBd {
 }
 
 impl RealBd {
-    pub fn from_env() -> RealBd {
-        RealBd {
-            bd_bin: std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
+    /// `SPIRA_BD` is a registered key (spira/conf.d) — the one source of config (per Ryan
+    /// 2026-10-05), through `spira_config::process::cfg`, never a literal default.
+    /// `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES` carry no `spira/conf.d/<KEY>` entry, so they
+    /// stay ad hoc environment reads, unchanged.
+    pub fn from_env() -> Result<RealBd, String> {
+        Ok(RealBd {
+            bd_bin: spira_config::process::cfg("SPIRA_BD")?,
             timeout_secs: std::env::var("BD_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(180),
             retries: std::env::var("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
-        }
+        })
     }
 
     fn run(&self, db: &str, args: &[&str]) -> Result<(i32, String, String), String> {

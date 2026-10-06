@@ -149,7 +149,8 @@ else
         "$TSD_BIN" --family suite-timing --root "$RUN8" --host h1 --ts 2026-09-25T00:00:00Z \
             --field-str suite=fixture.sh --field "wall_secs=$v"
     done
-    qout() { SPIRA_HOME="$T" SPIRA_RUN="$RUN8" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+    qout() { tl_config SPIRA_RUN="$RUN8"
+             SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
                 tsd-query.sh "$@" 2>&1; }
 
     out="$(qout baseline suite-timing wall_secs 999999)"
@@ -203,7 +204,8 @@ if [ -z "$DUCKDB_BIN" ]; then
     echo "SKIP section 11: duckdb not found — tsd-query.sh needs it on PATH"
 else
     RUN9="$T/run9"; mkdir -p "$RUN9"
-    qout9() { SPIRA_HOME="$T" SPIRA_RUN="$RUN9" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+    qout9() { tl_config SPIRA_RUN="$RUN9"
+              SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
                 tsd-query.sh "$@" 2>&1; }
 
     "$TSD_BIN" --family suite-timing --root "$RUN9" --host ancient-local --ts 2026-09-24T22:00:00Z \

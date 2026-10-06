@@ -30,6 +30,11 @@ printf '# empty\n' > "$HARNESS/spira/watchers"
 TESTDB="$TMP/testdb"
 mkdir -p "$TESTDB/.beads"
 
+# SPIRA_WATCHERS/SPIRA_BD/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare them via tl_config rather than through source_conf's env -i, which no
+# process reads them from any more.
+tl_config SPIRA_WATCHERS="$HARNESS/spira/watchers" SPIRA_BD="$TMP/bin/bd" SPIRA_DB="$TESTDB"
+
 LOCK_MSG='Error: failed to open database: embeddeddolt: init schema: embeddeddolt: open db: failed to load database "db": the database is locked by another dolt process'
 
 make_lock_bd() {
@@ -57,9 +62,7 @@ source_conf() {
         PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-        SPIRA_BD="$TMP/bin/bd" \
-        SPIRA_DB="$TESTDB" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf 'REACHED-PAST-GUARD\n'" 2>&1) || rc=$?
     printf '%s' "$out"

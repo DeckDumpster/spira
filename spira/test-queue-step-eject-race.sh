@@ -80,22 +80,16 @@ RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 run() {
-    env -i $(lcfix_env) PATH="$STUBBIN:$PATH" HOME="$TMP" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_BD="$SH/bd-stub.sh" SPIRA_HOME_REPO="$REPONAME" \
+        SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 \
+        SPIRA_QUEUE_CI_IDLE_SEC=600 SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$SH/forge-fake.sh"
+    env -i SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$STUBBIN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
-        SPIRA_RUN="$RUN" \
         SPIRA_DB="${SPIRA_DB:-/nonexistent}" \
-        SPIRA_BD="$SH/bd-stub.sh" \
         BD_LOG="$BD_LOG" \
-        SPIRA_HOME_REPO="$REPONAME" \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        SPIRA_QUEUE_CI_MAXSEC=3600 \
-        SPIRA_QUEUE_CI_IDLE_SEC=600 \
-        SPIRA_QUEUE_INFRA_RETRIES=2 \
-        SPIRA_FORGE="$SH/forge-fake.sh" \
         FORGE_LOG="$FORGE_LOG" \
-        SPIRA_HOME="$SH" queue "$@" 2>&1
+        queue "$@" 2>&1
 }
 
 TIP="aabbcc1100000000000000000000000000000001"

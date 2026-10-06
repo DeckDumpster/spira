@@ -75,14 +75,19 @@ printf '# tasks\n' > "$WIKI/wiki/tasks.md"
 git -C "$WIKI" add wiki/seed.md wiki/tasks.md
 git -C "$WIKI" commit -qm "seed wiki"
 git -C "$WIKI" push -q origin main 2>/dev/null
-export SPIRA_WIKI="$WIKI"
+tl_config SPIRA_WIKI="$WIKI"
 
 export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/wiki-commit.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
@@ -93,7 +98,9 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS WIKI ORIGIN REPO
+BIN="$TMP/bin"; mkdir -p "$BIN"
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP HARNESS WIKI ORIGIN REPO
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"

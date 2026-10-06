@@ -76,27 +76,19 @@ seed() {   # seed <id>
         "$1" | testdb_seed
 }
 
+tl_config SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP" \
+    SPIRA_RELEASES="$RELEASES" SPIRA_HOME_REPO=fixq
 run() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO=fixq \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_QUEUE_DIR="$QDIR" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RELEASES="$RELEASES" \
     SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 run_lockheld() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO=fixq \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_QUEUE_DIR="$QDIR" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RELEASES="$RELEASES" \
     SPIRA_QUEUE_LOCK_HELD=1 \
     SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
@@ -174,11 +166,13 @@ echo "3 — repo not in queue.local mode is refused"
 # ============================================================================
 RMAP2="$TMP/repo-map-other"
 printf 'fixq | %s | queue | local/main | | |\n' "$REPO" > "$RMAP2"
-out="$(SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP2" \
+tl_config SPIRA_REPO_MAP="$RMAP2"
+out="$(SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
     SPIRA_HOME="$SH" queue land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "3: exit non-zero for a non-queue.local mode" || bad "3: exit non-zero for a non-queue.local mode" "got rc=$rc"
 want "3: names the actual mode" "mode=queue" "$out"
+# Restore: sections 4+ reuse run()/run_lockheld(), which rely on SPIRA_REPO_MAP="$RMAP".
+tl_config SPIRA_REPO_MAP="$RMAP"
 
 # ============================================================================
 echo
@@ -250,7 +244,7 @@ printf '#!/usr/bin/env bash\nprintf "gate %%s\\n" "$1" >> "%s"\nexit 0\n' "$TMP/
 chmod +x "$STUB6/gate.sh"
 
 out="$(PATH="$STUB6:$PATH" SPIRA_TESTENV_HARNESS="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP" \
+    SPIRA_REPO="$REPO" \
     testenv suites quarantine test-q.sh sp-defect6 "flaky under load" --change-bead sp-ssland1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "6: the quarantine transition succeeds" || bad "6: the quarantine transition succeeds" "rc=$rc out=$out"
 is "6: the edit's branch is the change bead's own" "spira/sp-ssland1" "$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"

@@ -18,6 +18,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 export SPIRA_NO_LOOP_LABEL="no-loop"
+tl_config SPIRA_NO_LOOP_LABEL="no-loop"
 
 echo "test-bead-lint.sh"
 
@@ -34,10 +35,25 @@ testdb_up bead_lint || { printf 'test-bead-lint: could not build fixture databas
 # status (sp-mve9i): this world's machine mirrors the store (open READY, closed LANDED).
 lc_mirror_bd "$TMP/lc"
 run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from ONE call
-    LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    # SPIRA_DB/SPIRA_BD/SPIRA_NO_LOOP_LABEL/SPIRA_ASK_LABEL are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+    # which no process reads them from any more.
+    # round 3 fix: the complete fixture declares scope_label="spira" as its base value,
+    # so the partition check would require a bare "spira" label none of this suite's
+    # fixture beads carry (they use "repo:spira", a different label). Declare the empty
+    # scope this suite has always meant.
+    # round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME even when
+    # SPIRA_HOME is the real repo — without it, bead lint's partition check cannot read
+    # chamber/*.fayth at all, so it never recognises a valid partition label.
+    # The incident-edge check (bead/src/main.rs::cfg_label) reads SPIRA_INCIDENT_LABEL, not
+    # SPIRA_ALARM_LABEL — that name was never a real key, even before the migration; pin it
+    # to a non-default so this proves the check reads the configured key, not a literal
+    # "incident".
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" SPIRA_SCOPE_LABEL="" \
+        SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test"
+    LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" \
-        SPIRA_ALARM_LABEL="incident-test" \
         bead.sh lint "$@" 2>&1)"
     LINT_RC=$?
 }
@@ -110,9 +126,9 @@ echo "T4: a work bead blocks-dependent on an incident/alarm bead (sp-3bc6t, sp-i
 # ===========================================================================================
 # THE POSITIVE CONTROL IS FIRST: a plain work bead wired to block on an incident-labelled
 # bead — exactly the sp-pyowh/sp-kogm shape — must be caught before checking the shapes
-# that must pass it through. SPIRA_ALARM_LABEL is pinned to a non-default
+# that must pass it through. SPIRA_INCIDENT_LABEL is pinned to a non-default
 # ("incident-test") by run_lint so this proves the check reads the configured key rather
-# than a literal "alarm".
+# than a literal "incident".
 testdb_seed <<'JSONL'
 {"id":"sp-lint-inc-alarm","title":"recurring alarm","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-09-25T00:00:00Z"}
 {"id":"sp-lint-inc-work","title":"work bead wrongly blocked on the alarm","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-work","depends_on_id":"sp-lint-inc-alarm","type":"blocks"}]}

@@ -92,6 +92,13 @@ mkdir -p "$SPIRA_RUN/queue" "$SPIRA_DB"
 # on has actually applied. desired_state_write below populates it on demand.
 DESIRED_DIR="$T/desired"
 export SPIRA_DESIRED_DIR="$DESIRED_DIR"
+# SPIRA_QUEUE_DIR is a registered key the reconciler binary reads directly (cfg(...)?, no
+# env fallback); its conf.d DEFAULT derives it from SPIRA_RUN, but that derivation runs
+# against the base fixture's SPIRA_RUN, not this suite's override, so the queue invariants
+# (15/17 below) were reading an unrelated queue dir with no "testrepo" in it. Declare it
+# explicitly (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_DESIRED_DIR="$SPIRA_DESIRED_DIR" \
+    SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
 
 # desired_state_write <resource-toml-fragment>... — hand-writes a single-version composite
 # document directly in the store's own on-disk shape (meta + [[resource]]), rather than
@@ -248,6 +255,7 @@ chmod +x "$STUB_INC"
 export SPIRA_INCIDENT_SH="$STUB_INC" INC_LOG
 
 export SPIRA_REPO_MAP="$T/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'testrepo | %s | queue | origin/main | | \n' "$T/repo" > "$SPIRA_REPO_MAP"
 mkdir -p "$T/repo"
 # queue_repo_names walks $SPIRA_RUN/queue/*/ — the Queue checks only ever look at a repo
@@ -290,6 +298,7 @@ exec 9>&-
 want "concurrent pass logs 'already running'" "already running" "$_out"
 
 export SPIRA_RECONCILER_GRACE_SECS=0
+tl_config SPIRA_RECONCILER_GRACE_SECS=0
 
 # ==========================================================================================
 printf '\n%s\n' "3. Units, POSITIVE CONTROL: everything enabled+active"
@@ -444,6 +453,7 @@ printf '\n%s\n' "17. Queue: a lock held past the pre-flight wall -> gap, escalat
 # ==========================================================================================
 reset_state
 export SPIRA_PREFLIGHT_WALL_SECS=0
+tl_config SPIRA_PREFLIGHT_WALL_SECS=0
 mkdir -p "$SPIRA_RUN/queue/testrepo"
 _lockfile="$SPIRA_RUN/queue/testrepo/lock"
 : > "$_lockfile"
@@ -460,11 +470,15 @@ want "a held, stale lock escalates" "cause=queue-lock-age:testrepo" "$(cat "$INC
 wait "$_holder" 2>/dev/null || true
 rm -f "$_lockfile"
 unset SPIRA_PREFLIGHT_WALL_SECS
+# Restore to the complete fixture's own declared default (240) — "nothing has a default"
+# any more (per Ryan 2026-10-05), so unset alone no longer puts this back the way it was.
+tl_config SPIRA_PREFLIGHT_WALL_SECS=240
 
 # ==========================================================================================
 printf '\n%s\n' "18. Grace period: a fresh gap inside grace raises nothing"
 # ==========================================================================================
 export SPIRA_RECONCILER_GRACE_SECS=300
+tl_config SPIRA_RECONCILER_GRACE_SECS=300
 reset_state
 printf 'a.timer\n' > "$UNITS_LIST"
 printf 'a.timer disabled inactive\n' > "$SYSTEMCTL_STATE"
@@ -473,6 +487,7 @@ lack "no remedy run inside the grace period" "enable --now" "$(cat "$SYSTEMCTL_C
 [ ! -s "$INC_LOG" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(cat "$INC_LOG")"
 want "the gap is still recorded in the time series" '"key":"units-timer:a.timer","status":"gap"' "$(status_jsonl)"
 export SPIRA_RECONCILER_GRACE_SECS=0
+tl_config SPIRA_RECONCILER_GRACE_SECS=0
 
 # ==========================================================================================
 printf '\n%s\n' "19. Unobservable: systemctl unreadable -> unobservable, never satisfied"

@@ -107,29 +107,23 @@ seed() {
 }
 
 run_q() {
+    tl_config SPIRA_HOME_REPO=fixq SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" \
+        SPIRA_REPO_MAP="$RMAP" SPIRA_RELEASES="$RELEASES" SPIRA_INSTANCE=prod
     SPIRA_CONF=/nonexistent \
     XDG_CONFIG_HOME="$TMP/xdg" \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO=fixq \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_QUEUE_DIR="$QDIR" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RELEASES="$RELEASES" \
     SPIRA_UNIT_DIR="$UNITS" \
-    SPIRA_INSTANCE=prod \
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
         PATH="$SH:$PATH" queue "$@" 2>&1
 }
 run_skew() {
+    tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" SPIRA_RELEASES="$RELEASES"
     MAIL_BODY_FILE="$MAIL_BODY_FILE" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RELEASES="$RELEASES" \
         PATH="$SH:$PATH" skew "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }

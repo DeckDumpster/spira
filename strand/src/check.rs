@@ -626,33 +626,15 @@ mod tests {
 
     #[test]
     fn from_tsv_attributes_the_partition() {
-        use crate::config::{Config, Source};
-        struct S;
-        impl Source for S {
-            fn env(&self, k: &str) -> Option<String> {
-                (k == "SPIRA_LABELS").then(|| "-".into())
-            }
-            fn toml(&self, _: &str) -> Option<String> {
-                None
-            }
-        }
-        let c = from_tsv(&Config::resolve(&S), "ghost\tsp-a\tact\td\ta\n\nbad line\n");
+        use crate::config::Config;
+        let cfg = Config { labels: Some("-".into()), ..Config::test_fixture() };
+        let c = from_tsv(&cfg, "ghost\tsp-a\tact\td\ta\n\nbad line\n");
         assert_eq!(c.rows.len(), 1);
         assert_eq!(c.rows[0].part, "-");
         assert_eq!(c.rows[0].row.kind, "ghost");
     }
 
     // ---- the lifecycle switch (DESIGN.md §9) -------------------------------------------
-
-    struct Env(Vec<(&'static str, String)>);
-    impl crate::config::Source for Env {
-        fn env(&self, k: &str) -> Option<String> {
-            self.0.iter().find(|(key, _)| *key == k).map(|(_, v)| v.clone())
-        }
-        fn toml(&self, _: &str) -> Option<String> {
-            None
-        }
-    }
 
     fn scratch(tag: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("strand-lc-{tag}"))
@@ -666,11 +648,7 @@ mod tests {
     }
 
     fn cfg(bd: &str, claim: &str) -> Config {
-        Config::resolve(&Env(vec![
-            ("SPIRA_BD", bd.into()),
-            ("SPIRA_DB", "/fake/db".into()),
-        ]))
-        .with_claim(claim)
+        Config { bd: bd.into(), db: Some("/fake/db".into()), ..Config::test_fixture() }.with_claim(claim)
     }
 
     #[test]
@@ -682,7 +660,7 @@ mod tests {
         let mk = |lines: &str| {
             let p = d.join("systemctl");
             testkit::write_exe(&p, &format!("#!/bin/sh\n{lines}\n"));
-            Config::resolve(&Env(vec![("SPIRA_SYSTEMCTL", p.to_string_lossy().into_owned())]))
+            Config { systemctl: p.to_string_lossy().into_owned(), ..Config::test_fixture() }
         };
         let live = mk("echo 'spira-aeon-maechen-1.service loaded active running x'");
         assert_eq!(lane_live_now(&live, spec()), Some(1));

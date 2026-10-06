@@ -63,12 +63,18 @@ FAYTH_SUMMON=operator
 EOF
 
 roster() { # roster <function>
+    # SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its
+    # own now, no longer derived from SPIRA_HOME when unset.
+    tl_config SPIRA_FAYTHS="worker laner human humanlane" SPIRA_CHAMBER="$TMP/chamber"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_HOME="$TMP" SPIRA_FAYTHS="worker laner human humanlane" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$TMP" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
 # The fixture chamber must sit under SPIRA_HOME, which is where fayth_get and fayth_names look.
 ln -sfn "$CH" "$TMP/chamber"
+# SPIRA_HOME="$TMP" in roster() IS the home now (locate_home no longer searches); every
+# binary (lib.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
+ln -sfn "$HERE/conf.d" "$TMP/conf.d"
 
 is "the task pool is the ordinary fayth alone"        "worker"          "$(roster spira_task_fayths)"
 is "the lane list is the ordinary lane fayth alone"   "laner"           "$(roster spira_lane_fayths)"
@@ -86,8 +92,9 @@ echo
 echo "the shipped concierge — real persona, summoned by nobody"
 
 ship() { # ship <function>   — the REAL chamber, with the concierge listed in the roster
+    tl_config SPIRA_FAYTHS="builder ops concierge" SPIRA_CHAMBER="$HERE/chamber"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_HOME="$HERE" SPIRA_FAYTHS="builder ops concierge" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
 # LISTED IN $SPIRA_FAYTHS ON PURPOSE. No host lists it today, so the roster alone would keep
@@ -106,7 +113,8 @@ FAKE_BRAIN="$TMP/fakebrain"; mkdir -p "$FAKE_BRAIN"
 SID_FILE="$TMP/concierge-session"
 
 resume_id() {
-    SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    tl_config SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN"
+    SPIRA_CONF="$TMP/no.conf" \
         bash "$HARNESS/concierge.sh" _resume-id
 }
 
@@ -136,23 +144,19 @@ is "id returned again after cwd is restored" "session-abc-123" "$(resume_id 2>/d
 echo
 echo "session hook records the concierge session id on context reset"
 
-# The hook sources conf.sh, whose SPIRA_CONF (a spira.conf) is auto-converted through
-# spira-config (sp-zs04v.2) — found by name on the PATH env -i keeps (sp-gypjk).
+# The hook sources conf.sh, which reads SPIRA_TOML and nothing else — no legacy spira.conf,
+# no conversion (per Ryan 2026-10-05) — so the fixture config goes through tl_config, into
+# this suite's own override layer, and the hook gets it by inheriting SPIRA_TOML.
 
 # The hook fires with source=clear (or startup/compact) and a new session_id;
 # SPIRA_CONCIERGE=1 gates recording.
 SID_HOOK_DIR="$TMP/hookrun"; mkdir -p "$SID_HOOK_DIR"
 HOOK="$HERE/hooks/session.sh"
 
-# Build a minimal conf the hook can source. SPIRA_PROD must match SPIRA_HOME so the
-# in-force guard passes; everything else is moved to non-defaults.
-HOOK_CONF="$SID_HOOK_DIR/spira.conf"
-cat > "$HOOK_CONF" <<EOF
-SPIRA_ID_PREFIX = sp
-SPIRA_PROD = $HERE
-SPIRA_RUN = $SID_HOOK_DIR/run
-SPIRA_WATCHERS = $SID_HOOK_DIR/no-watchers
-EOF
+# SPIRA_PROD must match SPIRA_HOME so the in-force guard passes; everything else is moved
+# to non-defaults.
+tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$HERE" SPIRA_RUN="$SID_HOOK_DIR/run" \
+    SPIRA_WATCHERS="$SID_HOOK_DIR/no-watchers"
 mkdir -p "$SID_HOOK_DIR/run"
 : > "$SID_HOOK_DIR/no-watchers"
 
@@ -160,7 +164,7 @@ run_hook() {  # run_hook <session_id> <source> [extra-env...]
     local sid="$1" src="$2"; shift 2
     printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
         "$sid" "$src" "$SID_HOOK_DIR" \
-      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF" "$@" \
+      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" "$@" \
         bash "$HOOK" >/dev/null 2>&1
 }
 
@@ -211,43 +215,29 @@ echo "session hook: SPIRA_PROD resolves through a symlink"
 # recording nothing and leaving the concierge unable to resume after any session reset.
 SID_LINK_DIR="$TMP/hookrun_link"; mkdir -p "$SID_LINK_DIR/run"
 ln -sfn "$HERE" "$SID_LINK_DIR/spira-link"
-HOOK_CONF_LINK="$SID_LINK_DIR/spira.conf"
-cat > "$HOOK_CONF_LINK" <<EOF
-SPIRA_ID_PREFIX = sp
-SPIRA_PROD = $SID_LINK_DIR/spira-link
-SPIRA_RUN = $SID_LINK_DIR/run
-SPIRA_WATCHERS = $SID_LINK_DIR/no-watchers
-EOF
+tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$SID_LINK_DIR/spira-link" SPIRA_RUN="$SID_LINK_DIR/run" \
+    SPIRA_WATCHERS="$SID_LINK_DIR/no-watchers"
 : > "$SID_LINK_DIR/no-watchers"
 run_hook_link() {
     local sid="$1" src="$2"; shift 2
     printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
         "$sid" "$src" "$SID_LINK_DIR" \
-      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF_LINK" "$@" \
+      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" "$@" \
         bash "$HOOK" >/dev/null 2>&1
 }
 # NEGATIVE CONTROL: a symlink SPIRA_PROD pointing somewhere else must still refuse.
-# ITS OWN DIRECTORY, not $SID_LINK_DIR: conf.sh's auto-convert derives its spira.toml
-# target from the conf file's own directory, and two different confs sharing one
-# directory would derive the SAME target — the second conversion would then either reuse
-# the first's now-stale-relative-to-itself toml or overwrite it, corrupting whichever
-# scenario ran second regardless of which SPIRA_PROD it actually named.
 SID_OTHER_DIR="$TMP/hookrun_other"; mkdir -p "$SID_OTHER_DIR"
 ln -sfn "$TMP" "$SID_OTHER_DIR/spira-other"
-HOOK_CONF_OTHER="$SID_OTHER_DIR/spira-other.conf"
-cat > "$HOOK_CONF_OTHER" <<EOF
-SPIRA_PROD = $SID_OTHER_DIR/spira-other
-SPIRA_RUN = $SID_LINK_DIR/run
-SPIRA_WATCHERS = $SID_LINK_DIR/no-watchers
-EOF
 rm -f "$SID_LINK_DIR/run/concierge-session"
+tl_config SPIRA_PROD="$SID_OTHER_DIR/spira-other"
 printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
     "hook-sid-refused" "startup" "$SID_LINK_DIR" \
-  | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF_OTHER" SPIRA_CONCIERGE=1 \
+  | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONCIERGE=1 \
     bash "$HOOK" >/dev/null 2>&1
 is "symlink SPIRA_PROD to a different dir is still refused" \
    "" "$(cat "$SID_LINK_DIR/run/concierge-session" 2>/dev/null)"
 # THE PROPERTY: a symlink SPIRA_PROD to the same dir as SPIRA_HOME must record.
+tl_config SPIRA_PROD="$SID_LINK_DIR/spira-link"
 rm -f "$SID_LINK_DIR/run/concierge-session"
 run_hook_link "hook-sid-symlink" "startup" SPIRA_CONCIERGE=1
 is "symlink SPIRA_PROD resolving to SPIRA_HOME records the session id" \

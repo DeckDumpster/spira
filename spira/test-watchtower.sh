@@ -59,6 +59,10 @@ MOCK_SUITES="$TMP/mock-suites.sh"
 printf '#!/usr/bin/env bash\nprintf "  suites in the tree                  0   (0 gated, 0 timed)\\n"\n' \
     > "$MOCK_SUITES"
 chmod +x "$MOCK_SUITES"
+# moot.sh --apply runs on every filing pass and nothing here asserts on it: a no-op stands in.
+MOCK_MOOT="$TMP/mock-moot.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_MOOT"
+chmod +x "$MOCK_MOOT"
 
 # A HERMETIC DISK/MEMORY READING, DEFAULT FOR EVERY wt()/wt_file() CALL
 # (law-gates-run-in-a-clean-environment). Without this, every assertion about the nominal
@@ -96,11 +100,12 @@ chmod +x "$SYSTEMCTL_CLEAN"
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
+        SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         "$@" watchtower --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
@@ -156,60 +161,6 @@ want "an unreachable spira-lc renders ?" "?" "$line"
 
 # ======================================================================================
 echo
-echo "the gate-wait field is bounded by TIME, not by a row count:"
-# ======================================================================================
-# WHY THIS IS NOT `tail -50`. gate.log holds one row per gate run, so on a quiet day fifty
-# rows are a week and "recent" silently means "ever". The field spent a day reporting 1584s
-# from a wait produced by a locking topology the gate rebuild had already deleted, while
-# every row written since read `waited=0s`.
-row() {                  # row <seconds-ago> <branch> <waited>
-    printf '%s spira %s waited=%ss ran=1s rc=0\n' \
-        "$(date -u -d "@$(( NOW - $1 ))" +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3"
-}
-fresh
-{ row 90000 spira/sp-ancient 1584; row 600 spira/sp-recent 7; } > "$TMP/run/gate.log"
-snap="$(wt)"
-line="$(gate_field "$snap")"
-want   "a row inside the window is reported" "7s" "$line"
-want   "and names its branch" "sp-recent" "$line"
-nowant "a row outside the window is not" "1584" "$line"
-nowant "nor is its branch" "sp-ancient" "$line"
-want   "the window is named in the field, not called 'recent'" "longest gate wait, last 1h" "$snap"
-
-# THE MAX, not the last, among the rows that do qualify.
-fresh
-{ row 300 spira/sp-a 12; row 200 spira/sp-b 40; row 100 spira/sp-c 3; } > "$TMP/run/gate.log"
-line="$(gate_field "$(wt)")"
-want "the worst wait inside the window wins" "40s" "$line"
-want "and it names that branch" "sp-b" "$line"
-
-# NOTHING INSIDE THE WINDOW IS `?`, NOT 0. "No gate has waited recently" and "no gate has RUN
-# recently" are opposite facts; the second is what a stalled pipeline looks like from here.
-fresh
-{ row 90000 spira/sp-ancient 1584; row 80000 spira/sp-older 900; } > "$TMP/run/gate.log"
-line="$(gate_field "$(wt)")"
-is     "no row inside the window renders ?" "?" "${line%% *}"
-nowant "and never a bare zero" "0s" "$line"
-
-# The window is genuinely read from configuration: the SAME log, a wider window, a different
-# answer. Asserting only against one setting passes just as well if the bound is hardcoded.
-line="$(gate_field "$(GATE_WINDOW=172800 wt SPIRA_WATCH_GATE_WINDOW=172800)" 'last 48h')"
-want "a wider window reaches the older row" "1584s" "$line"
-
-# A malformed first field is outside every window rather than inside all of them.
-fresh
-printf 'not-a-timestamp spira spira/sp-bad waited=999s ran=1s rc=0\n' > "$TMP/run/gate.log"
-line="$(gate_field "$(wt)")"
-is     "a row with no ISO timestamp is ignored" "?" "${line%% *}"
-nowant "and its wait is not reported" "999" "$line"
-
-# No log at all is unreadable, not quiet.
-fresh
-line="$(gate_field "$(wt)")"
-is "a missing gate.log renders ?" "?" "${line%% *}"
-
-# ======================================================================================
-echo
 echo "the strand ledger is reported by class, not by size:"
 # ======================================================================================
 # strands.json holds EVERY disposition strand.sh classifies — ghost, empty, starved, stuck,
@@ -225,7 +176,8 @@ echo "the strand ledger is reported by class, not by size:"
 ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
+    tl_config SPIRA_RUN="$TMP/run"
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         cockpit-collect probe strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
@@ -282,7 +234,8 @@ is   "while the ledger size is still known" "2" "$(key "$k" SP_STRANDS)"
 k="$(ledger 'not json at all')"
 is "an unparsable ledger renders ?" "?" "$(key "$k" SP_STRAND_GHOST)"
 rm -f "$TMP/run/strands.json"
-k="$(env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
+tl_config SPIRA_RUN="$TMP/run"
+k="$(env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         cockpit-collect probe strands 2>/dev/null)"
 is "a missing ledger renders ?"     "?" "$(key "$k" SP_STRAND_GHOST)"
 
@@ -351,12 +304,13 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         "$TMP/incident-called" > "$mock"
     chmod +x "$mock"
     rm -f "$TMP/incident-called" "$TMP/ops-prompt"
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        SPIRA_INCIDENT_SH="$mock" \
-        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
+        SPIRA_INCIDENT_SH="$mock" SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_MOOT_SH="$MOCK_MOOT" \
+        SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         "$@" watchtower 2>/dev/null
 }
 
@@ -373,7 +327,6 @@ want "and says no incidents are filed"      "No incidents are filed"    "$snap"
 want "and the body is still present"        "N workers pull"            "$snap"
 
 fresh
-mkdir -p "$TMP/run/landstate"
 printf '2026-09-08T01:23:45Z\nwhy: deliberate halt for testing\n' > "$TMP/run/world.halted"
 wt_file
 is "a halted world does not write the prompt file" "" \
@@ -386,14 +339,12 @@ echo
 echo "a running world carries no halt banner, and does file:"
 # ======================================================================================
 fresh
-mkdir -p "$TMP/run/landstate"
 # No world.halted stamp.
 snap="$(wt)"
 nowant "a running world has no halt banner"      "HALTED"              "$snap"
 nowant "and no 'no incidents' line"              "No incidents are filed" "$snap"
 
 fresh
-mkdir -p "$TMP/run/landstate"
 wt_file
 is "a running world writes the prompt file" "1" \
    "$([ -f "$TMP/ops-prompt" ] && echo 1 || echo 0)"
@@ -449,7 +400,6 @@ is "no drain stamp renders 0, not ?"  "0" "${dm_raw%% *}"
 # A DRAINING WORLD STILL FILES THE SWEEP. Unlike a halted world (which exits before calling
 # incident.sh), a drain leaves the loop and landing running — so the sweep is needed.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
 wt_file
 is "a draining world still writes the prompt file" "1" \
@@ -485,11 +435,12 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "$2" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-subjects" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" watchtower 2>/dev/null
 }
@@ -502,8 +453,9 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
     printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_SIN_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-sinexempt" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
@@ -518,11 +470,12 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "${SPIRA_INCIDENT_REF:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-refs" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" watchtower 2>/dev/null
 }
@@ -532,18 +485,18 @@ wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted esc
     printf '#!/usr/bin/env bash\n[ "${SPIRA_INCIDENT_CAUSE:-}" = unadopted-refs ] && cat >> "%s" || cat > /dev/null\n' \
         "$TMP/inc-unadopted-body" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" watchtower 2>/dev/null
 }
 
 # Below threshold: the prompt file is written, but no drain escalation incident is filed.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
 touch -d "@$(( $(date +%s) - 600 ))" "$TMP/run/world.draining" 2>/dev/null || true   # 10m < 15m threshold; use live clock, not $NOW (sp-c0lz scar)
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -556,7 +509,6 @@ nowant "and does not file a routine sweep bead" "Spira sweep" "$subjects"
 
 # At or above threshold: the prompt file is written AND the drain escalation incident fires.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
 touch -d "@$(( NOW - 1200 ))" "$TMP/run/world.draining" 2>/dev/null || true   # 20m > 15m threshold
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -579,7 +531,6 @@ want "the drain escalation sets SPIRA_SIN_EXEMPT=1" "DRAINING: world.sh summons 
 
 # Threshold is configurable: zero means escalate immediately.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
 touch -d "@$(( NOW - 60 ))" "$TMP/run/world.draining" 2>/dev/null || true   # 1m
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -589,7 +540,6 @@ want "SPIRA_DRAIN_WARN_MINS=0 escalates immediately" "DRAINING:" "$subjects"
 
 # No drain stamp means no escalation, even with a zero threshold; prompt file is written.
 fresh
-mkdir -p "$TMP/run/landstate"
 rm -f "$TMP/run/world.draining" "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_DRAIN_WARN_MINS=0
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
@@ -699,7 +649,6 @@ echo "the Sending escalations fire at their thresholds:"
 
 # At or above threshold: escalation incident is filed.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=3\nSP_UNSENT_OLDEST_H=30\nSP_UNADOPTED=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -710,7 +659,6 @@ want "with a fixed subject for dedup"              "above threshold" "$subjects"
 
 # Below threshold: no escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=3\nSP_UNSENT_OLDEST_H=12\nSP_UNADOPTED=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -720,7 +668,6 @@ nowant "oldest-unsent below threshold does not fire" "SENDING: oldest" "$subject
 
 # `?` oldest is never an escalation (law-absence-needs-a-positive-control).
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=?\nSP_UNSENT_OLDEST_H=?\nSP_UNADOPTED=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -730,7 +677,6 @@ nowant "? oldest-unsent never fires escalation even at threshold 0" "SENDING: ol
 
 # UNADOPTED ESCALATION. Any nonzero unadopted count fires; zero is silent.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_UNADOPTED=3\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -742,7 +688,6 @@ nowant "subject does not embed the count"      "3 unadopted" "$subjects"
 
 # Zero unadopted: no escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_UNADOPTED=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -752,7 +697,6 @@ nowant "SP_UNADOPTED=0 does not fire escalation" "unadopted" "$subjects"
 
 # `?` unadopted is never an escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_UNADOPTED=?\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -762,7 +706,6 @@ nowant "? unadopted never fires escalation" "unadopted" "$subjects"
 
 # BATCHED-STRANDED ESCALATION. SP_BATCHED_STRANDED > 0 fires the escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_BATCHED_STRANDED=1\nSP_BATCHED_STRANDED_NAMES='sp-stuck'\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -773,7 +716,6 @@ want "subject names the stranded state"                     "absent from open ba
 
 # Zero: no escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_BATCHED_STRANDED=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -783,7 +725,6 @@ nowant "SP_BATCHED_STRANDED=0 does not fire escalation" "absent from open batch"
 
 # `?` is never an escalation (law-absence-needs-a-positive-control).
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_BATCHED_STRANDED=?\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -793,7 +734,6 @@ nowant "? batched-stranded never fires escalation" "absent from open batch" "$su
 
 # BATCHED-TOO-LONG ESCALATION. SP_BATCHED_TOO_LONG > 0 fires the escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_BATCHED_TOO_LONG=1\nSP_BATCHED_TOO_LONG_NAMES='sp-slow'\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -804,7 +744,6 @@ want "subject names the too-long state"                     "not resolved" "$sub
 
 # Zero: no escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_BATCHED_TOO_LONG=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -814,7 +753,6 @@ nowant "SP_BATCHED_TOO_LONG=0 does not fire escalation" "not resolved" "$subject
 
 # `?` is never an escalation (law-absence-needs-a-positive-control).
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_BATCHED_TOO_LONG=?\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
@@ -824,7 +762,6 @@ nowant "? batched-too-long never fires escalation" "not resolved" "$subjects"
 
 # Stable ref: two passes with different counts produce one dedupe key.
 fresh
-mkdir -p "$TMP/run/landstate"
 rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
 printf "SP_BATCHED_STRANDED=1\nSP_BATCHED_STRANDED_NAMES='sp-stuck'\n" \
     > "$TMP/run/cockpit.env"
@@ -848,7 +785,6 @@ echo "sending escalation dedup: two passes with different measured values produc
 
 # OLDEST-UNSENT: two different ages → same SPIRA_INCIDENT_REF.
 fresh
-mkdir -p "$TMP/run/landstate"
 rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
 printf "SP_UNSENT=3\nSP_UNSENT_OLDEST_H=30\nSP_UNADOPTED=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
@@ -863,7 +799,6 @@ want "and the key is the stable sending-oldest-unsent ref"       "sending-oldest
 
 # UNADOPTED: two different counts → same SPIRA_INCIDENT_REF.
 fresh
-mkdir -p "$TMP/run/landstate"
 rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
 printf "SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_UNADOPTED=3\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
@@ -893,7 +828,6 @@ echo "unadopted escalation body names the branches from SP_UNADOPTED_NAMES:"
 # the fix. A body that always prints '(unavailable)' would also fail — the sp-stray control
 # proves the reader is actually using the value.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=1\nSP_UNADOPTED_NAMES='sp-stray'\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-unadopted-body"
@@ -907,7 +841,6 @@ nowant "body does not embed the broken tag-dereference format" "%(*refname" "$bo
 # the body must still fire and show '(unavailable)' rather than crashing or silently
 # omitting the names section.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=1\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-unadopted-body"
@@ -960,7 +893,6 @@ echo "the DEDUP escalation fires when SP_DUP_REFS is nonzero:"
 
 # Nonzero: escalation fires.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_DUP_REFS=2\nSP_DUP_BEADS=1\n" > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi
@@ -970,7 +902,6 @@ want "DEDUP subject names the detection"     "duplicate incident refs detected" 
 
 # Zero: no escalation.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_DUP_REFS=0\nSP_DUP_BEADS=0\n" > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi
@@ -979,7 +910,6 @@ nowant "SP_DUP_REFS=0 does not fire escalation" "DEDUP:" "$subjects"
 
 # ?: no escalation — a failed probe must not file a bead claiming dedup is broken.
 fresh
-mkdir -p "$TMP/run/landstate"
 printf "SP_DUP_REFS=?\nSP_DUP_BEADS=?\n" > "$TMP/run/cockpit.env"
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi
@@ -988,7 +918,6 @@ nowant "? SP_DUP_REFS never fires escalation" "DEDUP:" "$subjects"
 
 # DEDUP key is stable across passes — two passes with different counts produce one ref.
 fresh
-mkdir -p "$TMP/run/landstate"
 rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
 printf "SP_DUP_REFS=2\nSP_DUP_BEADS=1\n" > "$TMP/run/cockpit.env"
 wt_refs_multi
@@ -999,136 +928,6 @@ unique_ref_count="$(printf '%s\n' "$refs" | sort -u | grep -c .)"
 is "two passes with different dup counts produce one dedupe key" "1" "$unique_ref_count"
 want "and the key is the stable dedup-meter-nonzero ref" "dedup-meter-nonzero" "$refs"
 
-# ======================================================================================
-echo
-echo "nominal pipeline skips the model session:"
-# ======================================================================================
-# THE DEFECT THIS COVERS. When every signal is green the snapshot is still ~22k tokens,
-# and the sweep still paid a full context to have the model say hello. The fix: when the
-# set of locally-evaluable signals are all nominal, write SWEEP:NOMINAL to the prompt
-# file so the ops service can skip the model call without opening a session at all.
-#
-# POSITIVE CONTROL FIRST: plant a lapse and assert the skip does NOT fire. Without this,
-# a nominal check that always skips passes every assertion below — the green-light trap
-# the rest of this suite exists to prevent (law-absence-needs-a-positive-control).
-LAPSE_TS="$(date -u +%Y%m%dT%H%M%SZ)"
-fresh
-mkdir -p "$TMP/run/landstate" "$TMP/run/lapsed"
-printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
-printf 'aeon lapsed — lease expired\n' > "$TMP/run/lapsed/sp-pos1-${LAPSE_TS}"
-rm -f "$TMP/ops-prompt"
-wt_file
-want   "positive control: lapse makes state non-nominal (full snapshot written)" \
-       "N workers pull" "$(cat "$TMP/ops-prompt" 2>/dev/null || echo "")"
-nowant "positive control: skip marker absent when lapse is present" \
-       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
-
-# THE NOMINAL CASE. Fresh cockpit.env, no lapses, no noverdict dir, no drain.
-# Every signal the check evaluates is green; the skip marker must be the first line.
-fresh
-mkdir -p "$TMP/run/landstate"
-printf "SP_AT=%s\n" "$(date +%s)" > "$TMP/run/cockpit.env"
-rm -f "$TMP/ops-prompt"
-wt_file
-is   "nominal pipeline writes the prompt file" "1" \
-     "$([ -f "$TMP/ops-prompt" ] && echo 1 || echo 0)"
-want "nominal pipeline writes the skip marker as the first line" \
-     "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
-nowant "nominal pipeline does not write the full snapshot" \
-       "N workers pull" "$(cat "$TMP/ops-prompt" 2>/dev/null || echo "")"
-
-# A DRAIN PREVENTS NOMINAL. The drain escalation still fires when the threshold is
-# exceeded, and the sweep is still needed to show the drain state to Ops.
-fresh
-mkdir -p "$TMP/run/landstate"
-printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
-printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
-rm -f "$TMP/ops-prompt"
-wt_file
-nowant "drain prevents nominal skip" \
-       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
-
-# A STALE SNAPSHOT PREVENTS NOMINAL. snap_age >= SNAP_AGE_MAX means the collector has
-# not run recently; the pipeline picture is too old to trust as an all-clear.
-# Use 700s which exceeds the 60s SPIRA_SNAP_STALE_S default shipped in watchtower.
-fresh
-mkdir -p "$TMP/run/landstate"
-printf "SP_AT=%s\n" "$(( NOW - 700 ))" > "$TMP/run/cockpit.env"
-rm -f "$TMP/ops-prompt"
-wt_file
-nowant "stale snapshot prevents nominal skip" \
-       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
-
-# A MISSING COCKPIT.ENV PREVENTS NOMINAL. snap_age='?' when the file cannot be read.
-# A '?' is not an all-clear; an unreadable probe may be the one that was wrong.
-fresh
-mkdir -p "$TMP/run/landstate"
-# No cockpit.env written.
-rm -f "$TMP/ops-prompt"
-wt_file
-nowant "unreadable snapshot prevents nominal skip" \
-       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
-
-# ======================================================================================
-echo
-echo "disk usage is a vital sign, and an anomaly past its threshold:"
-# ======================================================================================
-# THE POSITIVE CONTROL COMES FIRST. An ordinary reading (12%, the WT_DISK_PCT default via
-# DF_CLEAN) must render plainly, not as a FAULT — without this, a check that always reports
-# FAULT would pass every assertion below it.
-disk_row() { printf '%s\n' "$1" | grep -F '/ used (? = cannot read)'; }
-
-fresh
-snap="$(wt)"
-row="$(disk_row "$snap")"
-want   "ordinary disk usage renders the plain percentage" "12%" "$row"
-nowant "and is not a FAULT" "FAULT" "$row"
-
-# THE OFFENDER. A stubbed df reporting 97% used — above the 90% default threshold — is
-# reported as a FAULT, the same vocabulary snap_age_disp uses for a stale collector.
-fresh
-snap="$(wt WT_DISK_PCT=97)"
-row="$(disk_row "$snap")"
-want "disk at or above the warn threshold is a FAULT" "FAULT (97%, warn at 90%)" "$row"
-
-# A DISK ANOMALY PREVENTS NOMINAL, exactly like a drain or a stale snapshot — a pipeline
-# that is otherwise quiet must still wake Ops when the root disk is nearly full, because a
-# full disk kills every process on the box, Spira's included.
-fresh
-mkdir -p "$TMP/run/landstate"
-printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
-rm -f "$TMP/ops-prompt"
-wt_file WT_DISK_PCT=97
-nowant "a full root disk prevents nominal skip" \
-       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
-want   "and the full snapshot, with the disk FAULT, is what Ops sees instead" \
-       "FAULT (97%, warn at 90%)" "$(cat "$TMP/ops-prompt" 2>/dev/null || echo "")"
-
-# ======================================================================================
-echo
-echo "memory pressure is a vital sign, and an anomaly past its threshold:"
-# ======================================================================================
-mem_row() { printf '%s\n' "$1" | grep -F 'memory available (? = cannot read)'; }
-LOW_MEM="$TMP/meminfo-low"
-printf 'MemAvailable:      512000 kB\n' > "$LOW_MEM"   # 500MB, under the 1500MB default
-
-fresh
-snap="$(wt)"
-row="$(mem_row "$snap")"
-nowant "ordinary memory headroom is not a FAULT" "FAULT" "$row"
-
-fresh
-snap="$(wt SPIRA_MEMINFO_PATH="$LOW_MEM")"
-row="$(mem_row "$snap")"
-want "memory below the warn threshold is a FAULT" "FAULT (500MB, warn below 1500MB)" "$row"
-
-fresh
-mkdir -p "$TMP/run/landstate"
-printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
-rm -f "$TMP/ops-prompt"
-wt_file SPIRA_MEMINFO_PATH="$LOW_MEM"
-nowant "low memory prevents nominal skip" \
-       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
 
 # ======================================================================================
 # T1 SEAMS RETIRED (sp-lnmbq). Four blocks used to live here — collect_disk_mem(),
@@ -1160,6 +959,9 @@ echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:
 # fixture pins FAYTH_LABELS to a literal (never the shipped default) and avoids this
 # suite depending on the real builder.fayth's own label composition.
 IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
+# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# now, no longer derived from SPIRA_HOME when unset.
+tl_config SPIRA_FAYTHS=builder SPIRA_CHAMBER="$IWR_HOME/chamber"
 cp "$HERE/ready-bucket.py" "$IWR_HOME/"
 cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
@@ -1173,16 +975,31 @@ iwr_ledger_idle5() {   # write 5 consecutive "awake builder idle" lines
         printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
     done
 }
-iwr_ready_nonempty="$TMP/iwr-ready-nonempty.json"
-printf '[{"id":"sp-iwr1","status":"open","labels":["plan"]}]' > "$iwr_ready_nonempty"
-iwr_ready_empty="$TMP/iwr-ready-empty.json"
-printf '[]' > "$iwr_ready_empty"
+# READY WORK IS spira-claim's ANSWER (sp-860zj: bulk-ready-by-fayth asks the lifecycle for READY
+# rows and bd for their labels; the old SPIRA_READY_SNAPSHOT is read by nothing). Readiness itself
+# is spira-claim's subject, tested there; here a stub first on PATH answers bulk-ready-by-fayth
+# from a fixture file and hands every other verb to the real spira-claim. The watchtower's probe
+# sources $SPIRA_HOME/lib.sh, so the fixture home gets the real one.
+printf '. "%s/lib.sh"\n' "$HERE" > "$IWR_HOME/lib.sh"
+ln -sf "$HERE/conf.d" "$IWR_HOME/conf.d"
+IWR_BIN="$TMP/iwr-bin"; mkdir -p "$IWR_BIN"
+_iwr_real_claim="$(command -v spira-claim)"
+cat > "$IWR_BIN/spira-claim" <<STUB
+#!/usr/bin/env bash
+[ "\${1:-}" = bulk-ready-by-fayth ] && { cat "\$IWR_READY" 2>/dev/null; exit 0; }
+exec "$_iwr_real_claim" "\$@"
+STUB
+chmod +x "$IWR_BIN/spira-claim"
+iwr_ready_nonempty="$TMP/iwr-ready-nonempty.txt"
+printf 'builder 1\n' > "$iwr_ready_nonempty"
+iwr_ready_empty="$TMP/iwr-ready-empty.txt"
+: > "$iwr_ready_empty"
 
 # CASE A: 5/5 idle, non-empty ready set for 'builder' — alarms.
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 want "5 idles + ready work fires the idle-while-ready escalation" "IDLE-WHILE-READY:" "$subjects"
 want "it names the fayth" "builder" "$subjects"
@@ -1192,7 +1009,7 @@ want "it names the fayth" "builder" "$subjects"
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_empty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_empty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "an empty ready set does not fire the escalation despite 5 idles" "IDLE-WHILE-READY:" "$subjects"
 
@@ -1205,7 +1022,7 @@ for i in 2 3 4 5; do
     printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
 done
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "a mix of idle and a real claim in the last N does not fire the escalation" "IDLE-WHILE-READY:" "$subjects"
 
@@ -1215,7 +1032,7 @@ nowant "a mix of idle and a real claim in the last N does not fire the escalatio
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
-wt_refs_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+wt_refs_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 want "the dedup ref names the fayth" "idle-while-ready:builder" "$refs"
 

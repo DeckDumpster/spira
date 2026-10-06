@@ -85,33 +85,32 @@ BD_GOOD="$TMP/bin-good/bd"
 BD_BAD="$TMP/bin-bad/bd"
 
 # Source conf.sh in a subprocess; $SPIRA_DB has no .beads, so schema check is skipped.
-# Returns the value of SPIRA_BD; extra env vars can be appended.
+# Returns the value of SPIRA_BD; extra SPIRA_* key=val pairs can be appended — declared via
+# tl_config (the one source of config) rather than passed through env -i, which strips them.
 conf_val() {
     local spira_path="${1:-}"; shift || true
+    tl_config SPIRA_DB="$TMP/empty-db" SPIRA_PATH="$spira_path" SPIRA_WATCHERS="$HARNESS/spira/watchers"
+    [ $# -gt 0 ] && tl_config "$@"
     env -i PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-        SPIRA_DB="$TMP/empty-db" \
-        SPIRA_PATH="$spira_path" \
-        "$@" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null
 }
 
 # Source conf.sh with the fake database (schema check fires); returns exit code.
 conf_with_db() {
     local spira_path="${1:-}"; shift || true
+    tl_config SPIRA_DB="$FAKEDB" SPIRA_PATH="$spira_path" SPIRA_WATCHERS="$HARNESS/spira/watchers"
+    [ $# -gt 0 ] && tl_config "$@"
     env -i PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-        SPIRA_DB="$FAKEDB" \
-        SPIRA_PATH="$spira_path" \
-        "$@" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'" 2>/dev/null
 }
 
@@ -137,17 +136,9 @@ else
     bad "with matching SPIRA_BD set, conf.sh succeeds" "conf.sh exited non-zero unexpectedly"
 fi
 
-# ==========================================================================
-echo
-echo "PATH resolution — SPIRA_BD defaults to first bd on the harness PATH:"
-# ==========================================================================
-# bin-good is on SPIRA_PATH; no SPIRA_BD in env.
-got="$(conf_val "$TMP/bin-good")"
-is "SPIRA_BD resolves to first bd on SPIRA_PATH" "$BD_GOOD" "$got"
-
-# bin-bad is first, bin-good is second. Without SPIRA_BD set, resolves to bin-bad.
-got="$(conf_val "$TMP/bin-bad:$TMP/bin-good")"
-is "SPIRA_BD resolves to the PATH-first binary when unset" "$BD_BAD" "$got"
+# PATH-resolution-when-nothing-sets-SPIRA_BD is deleted: the complete fixture declares
+# every key (per Ryan 2026-10-05, "nothing has a default"), so SPIRA_BD is never unset —
+# there is no PATH-derived fallback left to assert.
 
 # ==========================================================================
 echo
@@ -157,49 +148,21 @@ echo "env wins — SPIRA_BD set in environment is preserved by conf.sh:"
 got="$(conf_val "$TMP/bin-bad" SPIRA_BD="$BD_GOOD")"
 is "env-set SPIRA_BD survives unchanged (env wins over PATH-first)" "$BD_GOOD" "$got"
 
-# ==========================================================================
-echo
-echo "config file — SPIRA_BD from spira.conf wins over PATH-derived default:"
-# ==========================================================================
-CONF_FILE="$TMP/spira.conf"
-printf 'SPIRA_ID_PREFIX = sp\nSPIRA_BD = %s\n' "$BD_GOOD" > "$CONF_FILE"
-# bin-bad is first on PATH; config pins bin-good.
-got="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
-    HOME="$TMP/home" \
-    SPIRA_HOME="$HARNESS/spira" \
-    SPIRA_REPO="$HARNESS" \
-    SPIRA_CONF="$CONF_FILE" \
-    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-    SPIRA_DB="$TMP/empty-db" \
-    SPIRA_PATH="$TMP/bin-bad" \
-    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null)"
-is "config-file SPIRA_BD wins over PATH-derived default" "$BD_GOOD" "$got"
-
-# env still overrides the config file.
-got="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
-    HOME="$TMP/home" \
-    SPIRA_HOME="$HARNESS/spira" \
-    SPIRA_REPO="$HARNESS" \
-    SPIRA_CONF="$CONF_FILE" \
-    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-    SPIRA_DB="$TMP/empty-db" \
-    SPIRA_PATH="$TMP/bin-bad" \
-    SPIRA_BD="$BD_BAD" \
-    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null)"
-is "env wins over config file for SPIRA_BD" "$BD_BAD" "$got"
+# The legacy spira.conf-file precedence tests are deleted: the one source of config is the
+# spira.toml layers $SPIRA_TOML names (per Ryan 2026-10-05) — a standalone spira.conf file
+# read independently of that layering is not a config source any more.
 
 # ==========================================================================
 echo
 echo "SPIRA_BD is exported — child processes inherit it:"
 # ==========================================================================
+tl_config SPIRA_DB="$TMP/empty-db" SPIRA_PATH="$TMP/bin-good" SPIRA_WATCHERS="$HARNESS/spira/watchers"
 exported="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-    SPIRA_DB="$TMP/empty-db" \
-    SPIRA_PATH="$TMP/bin-good" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash -c ". '$HARNESS/spira/conf.sh'; env | grep '^SPIRA_BD='" 2>/dev/null)"
 want "SPIRA_BD appears in the exported environment" "SPIRA_BD=" "$exported"
 

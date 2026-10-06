@@ -28,10 +28,10 @@ testdb_require test-hold
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
 testdb_up hold || { echo "test-hold: could not build a fixture database"; exit 1; }
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_REPO_MAP="$TMP/repo-map"
 printf '# fixture — empty\n' > "$TMP/repo-map"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$TMP/repo-map"
 export SPIRA_HOLD_HEARTBEAT=3600
 export BD_TIMEOUT=10
 

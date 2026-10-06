@@ -27,13 +27,16 @@
 # covers: spira/lib.sh sentinel/src/* aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+# testlib.sh sourced first (ahead of its usual spot below) so tl_config exists before the
+# registered-key declarations that follow need it.
+. "$HERE/testlib.sh"
 
 # Non-default ask label (law-gates-run-in-a-clean-environment): a hardcoded "needs-operator"
 # in the detector would pass against the shipped default and fail here.
 export SPIRA_HOME="$HERE"
-export SPIRA_ASK_LABEL="needs-decision-bc"
+SPIRA_ASK_LABEL="needs-decision-bc"; tl_config SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 export SPIRA_CONF=/tmp/.spira-test-noconf-$$
-export SPIRA_HOME_REPO=spira
+tl_config SPIRA_HOME_REPO=spira
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -48,8 +51,8 @@ git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm seed
 git -C "$REPO" push -q origin main 2>/dev/null
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 testdb_up branchcollide || { echo "test-branch-collision-park: could not build fixture database"; exit 1; }
@@ -60,7 +63,6 @@ progress() { progressed=$((progressed+1)); act "$@"; }
 log()      { : ; }
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-. "$HERE/testlib.sh"
 # sp-mve9i: the collision detector's candidates are the beads the lifecycle machine says wait
 # for a builder (READY/REWORK), never bd's open; the fixture's open beads are told to it in
 # lifecycle terms by a stand-in lifecycle service (testlib.sh lc_socket_mirror).
@@ -121,7 +123,9 @@ STUBEOF
 chmod +x "$BD_STUB"
 : > "$STATE_LOG"
 
-out1b="$(SPIRA_BD="$BD_STUB" detect_branch_collisions 2>/dev/null)"
+tl_config SPIRA_BD="$BD_STUB"
+out1b="$(detect_branch_collisions 2>/dev/null)"
+tl_config SPIRA_BD="$SPIRA_BD"   # restore: later calls need the real bd, not the stub
 is   "case 1b: no bd state call while detecting a real collision" "0" "$(wc -l < "$STATE_LOG" | tr -d ' ')"
 want "case 1b: output is identical to the unstubbed pass" "COLLISION sp-root fixture spira/sp-root sp-hold" "$out1b"
 

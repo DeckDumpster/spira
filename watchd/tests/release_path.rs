@@ -55,8 +55,12 @@ fn build_bin(package: &str, bin: &str) -> PathBuf {
     panic!("{bin}'s binary artifact did not appear in cargo's own build output");
 }
 
-/// `(release_root, legacy_conf_path)`.
-fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf) {
+/// `(release_root, legacy_conf_path, spira_toml_path)`. `watchd::context::load` now reads
+/// `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_WATCHERS`/`SPIRA_ID_PREFIX` (and the rest of its
+/// `CONFIG_VARS`) through `spira_config::process::cfg` (per Ryan 2026-10-05: one source of
+/// config), not off this legacy `spira.conf` — so the fixture needs a real config file
+/// too, declaring every registered key `fixture_toml` knows about, with these four pinned.
+fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let workspace = workspace_root();
     let release_root = tmp.join("release");
     std::fs::create_dir_all(release_root.join("bin")).unwrap();
@@ -80,7 +84,16 @@ fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    (release_root, conf)
+    let toml = spira_config::process::fixture_toml(
+        tmp,
+        &[
+            ("SPIRA_ID_PREFIX", "sp"),
+            ("SPIRA_RUN", &run_dir.display().to_string()),
+            ("SPIRA_DB", &db_dir.display().to_string()),
+            ("SPIRA_WATCHERS", &watchers.display().to_string()),
+        ],
+    );
+    (release_root, conf, toml)
 }
 
 #[test]
@@ -88,14 +101,19 @@ fn gets_past_conf_sh_under_a_bare_shell_with_no_launcher_path() {
     let tmp = testkit::TempDir::new("watchd-release-path");
     let home = tmp.join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let (release_root, conf) = build_fixture_release(&tmp);
+    let (release_root, conf, toml) = build_fixture_release(&tmp);
     let exe = release_root.join("bin/watchd");
 
+    // SPIRA_HOME must be explicit now — `spira_config::resolve::locate_home` no longer
+    // walks up from the executable looking for a `spira/` sibling (per the Concierge:
+    // locate_home is SPIRA_HOME, else $SPIRA_RELEASE/spira, else refuse).
     let out = Command::new("env")
         .arg("-i")
         .arg(format!("HOME={}", home.display()))
         .arg("PATH=/usr/bin:/bin")
+        .arg(format!("SPIRA_HOME={}", release_root.join("spira").display()))
         .arg(format!("SPIRA_CONF={}", conf.display()))
+        .arg(format!("SPIRA_TOML={}", toml.display()))
         .arg(&exe)
         .arg("manifest")
         .stdin(Stdio::null())

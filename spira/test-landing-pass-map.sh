@@ -45,14 +45,26 @@ LPHOME="$TMP/lphome"; mkdir -p "$LPHOME"
 for f in conf.sh lib.sh suite-covers.sh; do
     ln -s "$HERE/$f" "$LPHOME/$f"
 done
+# locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads
+# <home>/conf.d for the registry.
+ln -s "$HERE/conf.d" "$LPHOME/conf.d"
 printf '# fixture watchers\n' > "$LPHOME/watchers"
 
 LPRUN="$TMP/lprun"; mkdir -p "$LPRUN"
+# SPIRA_REPO_MAP defaults to empty here — the exact "nothing anywhere the candidate search
+# would find" shape (law-absence-needs-a-positive-control's POSITIVE CONTROL below): per
+# landing-pass/src/seam.rs, repo_map_ok is `[ -r "${SPIRA_REPO_MAP:-}" ]`, which an empty
+# string fails identically to a genuinely absent key. Later calls override it via tl_config.
+tl_config SPIRA_RUN="$LPRUN" SPIRA_DB="$TMP/db" SPIRA_ID_PREFIX=sp \
+    SPIRA_WATCHERS="$LPHOME/watchers" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= SPIRA_REPO_MAP=
 lp() {  # lp [KEY=val ...] — runs the real binary in an otherwise-empty environment
-    env -i PATH="$PATH" HOME="$TMP/xhome" SPIRA_HOME="$LPHOME" SPIRA_RUN="$LPRUN" \
-        SPIRA_DB="$TMP/db" SPIRA_ID_PREFIX=sp SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$LPHOME/watchers" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-        "$@" "$LP_BIN" --pass
+    # Extra SPIRA_* overrides (SPIRA_REPO_MAP below) are registered keys — declared via
+    # tl_config rather than forwarded through env -i, which strips them.
+    [ $# -gt 0 ] && tl_config "$@"
+    env -i PATH="$PATH" HOME="$TMP/xhome" SPIRA_HOME="$LPHOME" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
+        "$LP_BIN" --pass
 }
 
 # POSITIVE CONTROL: the map variable unset, nothing anywhere the candidate search would

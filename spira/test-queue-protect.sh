@@ -59,14 +59,13 @@ chmod +x "$BIN/forge-fixture.sh"
 # Write the queue-mode repo-map for protect.
 printf '%s | %s | queue | main | | |\n' "$QNAME" "$QREPO" > "$RMAP"
 
+tl_config SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$TMP/run" SPIRA_FORGE="$BIN/forge-fixture.sh"
 protect_out="$(
     env -i \
         PATH="$BIN:$PATH" \
         HOME="$FAKE_HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_FORGE="$BIN/forge-fixture.sh" \
         SPIRA_HOME="$HERE" queue protect "$QNAME" 2>&1 || true
 )"
 
@@ -98,14 +97,13 @@ FAILSCRIPT
 chmod +x "$BIN/forge-fixture-fail.sh"
 rm -f "$TMP/run/queue-protected-$QNAME"
 
+tl_config SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$TMP/run" SPIRA_FORGE="$BIN/forge-fixture-fail.sh"
 fail_out="$(
     env -i \
         PATH="$BIN:$PATH" \
         HOME="$FAKE_HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_FORGE="$BIN/forge-fixture-fail.sh" \
         SPIRA_HOME="$HERE" queue protect "$QNAME" 2>&1
 )"; fail_rc=$?
 

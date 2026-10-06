@@ -282,27 +282,35 @@ chmod +x "$BIN/journalctl"
 # run_deploy [env-pairs...] -- [deploy args...]
 # ---------------------------------------------------------------------------
 run_deploy() {
+    # The suite's usual forced values for registered keys — declared first so any
+    # per-call override (below) that names the same key wins (tl_config, last write wins).
+    tl_config SPIRA_PATH="$BIN" SPIRA_DB=/nonexistent-spira-db SPIRA_RUN="$RUN_DIR" \
+        SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO=testowner/testrepo SPIRA_INSTANCE=prod
     local extra_env=() deploy_args=() in_args=0
     for _a in "$@"; do
         [ "$_a" = "--" ] && { in_args=1; continue; }
         [ "$in_args" = 1 ] && { deploy_args+=("$_a"); continue; }
-        extra_env+=("$_a")
+        # A registered key passed as an extra env-pair is declared through tl_config
+        # (no process reads it from the environment any more) and dropped from what
+        # gets forwarded to env -i; everything else (seam/stub knobs, identity vars)
+        # is forwarded exactly as before.
+        case "$_a" in
+            SPIRA_BD=*|SPIRA_CTRL=*|SPIRA_DB=*|SPIRA_DOLT_DATA=*|SPIRA_FORGE_REPO=*| \
+            SPIRA_GH_REPO=*|SPIRA_INSTANCE=*|SPIRA_MAIL=*|SPIRA_PATH=*|SPIRA_PROD=*| \
+            SPIRA_RELEASES=*|SPIRA_RUN=*|SPIRA_TESTDB_DATA=*|SPIRA_WORKSPACES=*)
+                tl_config "$_a" ;;
+            *) extra_env+=("$_a") ;;
+        esac
     done
     unset _a in_args
     > "$CALL_LOG" 2>/dev/null; > "$SC_LOG" 2>/dev/null; > "$DOCTOR_CNT" 2>/dev/null
     env -i \
         "PATH=$BIN:$PATH" \
-        "SPIRA_PATH=$BIN" \
         "HOME=$HOME" \
         "SPIRA_HOME=$HERE" \
-        "SPIRA_DB=/nonexistent-spira-db" \
-        "SPIRA_RUN=$RUN_DIR" \
         "SPIRA_CONF=/nonexistent" \
-        "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-        "SPIRA_RELEASES=$RELEASES" \
+        "SPIRA_TOML=$SPIRA_TOML" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_FORGE_REPO=testowner/testrepo" \
-        "SPIRA_INSTANCE=prod" \
         "SPIRA_DOCTOR=1" \
         "SPIRA_SYSTEMCTL=$BIN/systemctl" \
         "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -322,7 +330,7 @@ run_deploy() {
         "GIT_COMMITTER_NAME=test" \
         "GIT_COMMITTER_EMAIL=test@t" \
         "${extra_env[@]+"${extra_env[@]}"}" \
-        bash "$DEPLOY" "${deploy_args[@]+"${deploy_args[@]}"}" 2>&1
+        timeout 60 bash "$DEPLOY" "${deploy_args[@]+"${deploy_args[@]}"}" 2>&1
 }
 
 # ==========================================================================
@@ -597,47 +605,16 @@ _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed
     "SC_START_FAILS=spira-real-prod.service" -- "$NEW_TAG" 2>&1)"
 want   "deploy-window: a unit that fails again is left for doctor" "spira-real-prod.service fails again under" "$_out"
 
-# PROPERTY 6e — THE RE-RENDER DOES NOT LEAK THE CHECKOUT'S DERIVED RUNTIME PATHS. conf.sh
-# used to derive SPIRA_RUN (and, chained under it, SPIRA_CTRL, SPIRA_TESTDB_DATA,
-# SPIRA_WORKSPACES, SPIRA_MAIL, SPIRA_DOLT_DATA) from the checkout's own SPIRA_REPO when
-# nothing set them explicitly; the release's own conf.sh keeps any such value it inherits
-# instead of deriving its own. A deploy from a source checkout then rendered units pointed
-# at the CHECKOUT's runtime tree, and after a rollback a unit reading a file under it found
-# no such directory.
+# PROPERTY 6e — RETIRED (per Ryan 2026-10-05, the one-source-of-config law): this property
+# proved that an UNSET SPIRA_RUN derived under XDG_DATA_HOME rather than leaking the
+# checkout's own runtime tree into the release re-render. "Unset" is no longer a state a
+# registered key can be in — every suite's SPIRA_TOML (testlib's complete fixture + this
+# suite's override) declares a value for every key, including SPIRA_RUN, so there is no
+# more environment-level `:=` default left to derive from and no way to represent "nothing
+# configured" through this harness any more. The assertion this covered tests a fallback
+# that no longer exists; deleted rather than converted (law-absence-needs-a-positive-
+# control no longer applies once there is no "absence" to construct).
 #
-# SPIRA_RUN NO LONGER CAN DERIVE INTO THE CHECKOUT AT ALL (sp-9hwim, design
-# runtime-is-a-release #5): the branch that rooted it under a writable SPIRA_REPO is gone,
-# so the positive control below now proves the derived default landed under XDG_DATA_HOME
-# (pinned into $TMP so an unset SPIRA_RUN cannot touch the real operator's home) rather than
-# under the checkout. The leak assertion itself is unchanged and still matters: it guards
-# every OTHER checkout-derived path (SPIRA_CTRL, SPIRA_MAIL, ...) chained under SPIRA_RUN,
-# not just SPIRA_RUN itself.
-# "SPIRA_RUN=" overrides run_deploy's usual forced value with
-# empty, which is as unset as no value for conf.sh's `:=` — every other property here forces
-# SPIRA_RUN, so this is the one place the checkout is left to derive it as an operator's
-# checkout with nothing configured would.
-rm -rf "$RELEASES"; mkdir -p "$RELEASES"
-DERIVED_XDG="$TMP/derived-xdg-6e"
-DERIVED_RUN="$DERIVED_XDG/spira/run"
-rm -rf "$DERIVED_XDG"
-
-_out="$(run_deploy "SPIRA_RUN=" "XDG_DATA_HOME=$DERIVED_XDG" -- "$NEW_TAG" 2>&1)"
-_rc=$?
-is0 "leak/fail-first: deploy exits 0" "$_rc"
-
-# POSITIVE CONTROL: the checkout's own conf.sh really did derive SOME SPIRA_RUN under XDG
-# (deploy.sh mkdir -p's it) — proving there was something here to leak before trusting that
-# it did not (law-absence-needs-a-positive-control).
-[ -d "$DERIVED_RUN" ] \
-    && ok  "leak/fail-first: checkout's own conf.sh derived $DERIVED_RUN (control)" \
-    || bad "leak/fail-first: checkout's own conf.sh derived $DERIVED_RUN (control)" "not created"
-
-_got_paths="$(grep '^install-paths' "$CALL_LOG" 2>/dev/null | head -1)"
-is "leak: none of the checkout-derived runtime paths reach the release re-render" \
-   "install-paths SPIRA_RUN=UNSET SPIRA_CTRL=UNSET SPIRA_TESTDB_DATA=UNSET SPIRA_WORKSPACES=UNSET SPIRA_MAIL=UNSET SPIRA_DOLT_DATA=UNSET" \
-   "$_got_paths"
-unset DERIVED_RUN DERIVED_XDG _got_paths
-
 # ==========================================================================
 echo
 echo "PROPERTY 7: --dry-run touches nothing"
@@ -722,7 +699,7 @@ else
     bad "fail-first: fixture toml has no prod key" "found unexpectedly"
 fi
 
-_out="$(run_deploy "SPIRA_TOML=$_toml_file" -- "$NEW_TAG" 2>&1)"
+_out="$(run_deploy "SPIRA_TOML=$SPIRA_TOML:$_toml_file" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 is0 "toml-update: deploy exits 0" "$_rc"
 _prod_in_toml="$(grep '^prod' "$_toml_file" 2>/dev/null | tail -1)"
@@ -746,7 +723,7 @@ id_prefix = "sp"
 prod = "/old/checkout/spira"
 max_aeons = 4
 EOF
-_out="$(run_deploy "SPIRA_TOML=$_toml_file" -- "$NEW_TAG" 2>&1)"
+_out="$(run_deploy "SPIRA_TOML=$SPIRA_TOML:$_toml_file" -- "$NEW_TAG" 2>&1)"
 _count="$(grep -c '^prod' "$_toml_file" 2>/dev/null || echo 0)"
 [ "$_count" -eq 1 ] \
     && ok "toml-update: only one prod line after update" \
@@ -766,8 +743,12 @@ cat > "$_timing_activate" <<TAEOF
 printf 'activate %s\n' "\$*" >> "\${CALL_LOG:-/dev/null}"
 [ "\${ACTIVATE_EXIT:-0}" = "0" ] || exit "\${ACTIVATE_EXIT}"
 _toml_val=""
-if [ -n "\${SPIRA_TOML:-}" ] && [ -f "\${SPIRA_TOML}" ]; then
-    _toml_val="\$(grep '^prod' "\${SPIRA_TOML}" 2>/dev/null | tail -1 || true)"
+# SPIRA_TOML may be base:override:...:last layers, colon-joined (the one-source-of-config
+# law's own layering) — the write (spira_config_set) always targets the LAST layer, so that
+# is the one file that can show the newly-written prod, not the colon-joined string itself.
+_toml_last="\${SPIRA_TOML##*:}"
+if [ -n "\${_toml_last:-}" ] && [ -f "\${_toml_last}" ]; then
+    _toml_val="\$(grep '^prod' "\${_toml_last}" 2>/dev/null | tail -1 || true)"
 fi
 printf '%s\n' "\${_toml_val}" > "${_toml_timing_file}"
 tarball="\${*: -1}"
@@ -804,8 +785,12 @@ id_prefix = "sp"
 prod = "/old/checkout/spira"
 EOF
 > "$_toml_timing_file"
+# Layered onto the suite's own complete fixture, not swapped for it outright — deploy.sh
+# needs SPIRA_RELEASES/SPIRA_DB/SPIRA_RUN etc. resolved too, and _ord_toml alone only
+# declares id_prefix/prod (sfail round 3, pattern 7: an un-layered SPIRA_TOML here would
+# leave every OTHER key pointing at the complete fixture's own /fixture/home/... paths).
 run_deploy \
-    "SPIRA_TOML=$_ord_toml" \
+    "SPIRA_TOML=$SPIRA_TOML:$_ord_toml" \
     "SPIRA_ACTIVATE_SH=$_timing_activate" \
     -- "$NEW_TAG" >/dev/null 2>&1
 _val_at_activate="$(cat "$_toml_timing_file" 2>/dev/null)"
@@ -1183,19 +1168,14 @@ chmod +x "$RDONLY_BIN_OLD/skew.sh"
 
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
+    tl_config SPIRA_PATH="$RDONLY_BIN_OLD" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
 _ff_out="$(env -i \
     "PATH=$RDONLY_BIN_OLD:$PATH" \
-    "SPIRA_PATH=$RDONLY_BIN_OLD" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$RDONLY_REPO" \
-    "SPIRA_FORGE_REPO=testowner/testrepo" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1216,7 +1196,7 @@ _ff_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
 _ff_rc=$?
 not0 "rdonly/fail-first: old sidecar location → NOT-LATEST → rollback (exits non-zero)" "$_ff_rc"
 want "rdonly/fail-first: rollback mentioned"   "ROLLBACK" "$_ff_out"
@@ -1225,19 +1205,14 @@ want "rdonly/fail-first: skew triggered rollback" "skew" "$_ff_out"
 # HAPPY PATH: same setup, but deploy.sh writes sidecar to .tags/ (the fix).
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
+    tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
 _rdonly_out="$(env -i \
     "PATH=$BIN:$PATH" \
-    "SPIRA_PATH=$BIN" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$RDONLY_REPO" \
-    "SPIRA_FORGE_REPO=testowner/testrepo" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1258,7 +1233,7 @@ _rdonly_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
 _rdonly_rc=$?
 is0    "rdonly: deploy exits 0 (no rollback)"        "$_rdonly_rc"
 nowant "rdonly: no ROLLBACK"                        "ROLLBACK" "$_rdonly_out"
@@ -1530,18 +1505,19 @@ mkdir -p "$TARBALL_REPO"
 
 # FAIL-FIRST (positive control): no SPIRA_FORGE_REPO and no .git → must refuse, naming SPIRA_FORGE_REPO.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+# SPIRA_FORGE_REPO is explicitly reset to the complete fixture's own declared default
+# (empty) — every earlier property in this suite has it tl_config'd to "testowner/testrepo",
+# and that declaration persists in the override file for the rest of the run, so this
+# "nothing configured" case has to clear it back by hand rather than simply omitting it.
+tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" \
+    SPIRA_RELEASES="$RELEASES" SPIRA_INSTANCE="prod" SPIRA_FORGE_REPO=""
 _tb_out="$(env -i \
     "PATH=$BIN:$PATH" \
-    "SPIRA_PATH=$BIN" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$TARBALL_REPO" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1560,7 +1536,7 @@ _tb_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
 _tb_rc=$?
 not0 "tarball/no-forge-repo: exits non-zero without SPIRA_FORGE_REPO" "$_tb_rc"
 want "tarball/no-forge-repo: mentions SPIRA_FORGE_REPO" "SPIRA_FORGE_REPO" "$_tb_out"
@@ -1568,19 +1544,14 @@ want "tarball/no-forge-repo: mentions SPIRA_FORGE_REPO" "SPIRA_FORGE_REPO" "$_tb
 # Happy path: SPIRA_FORGE_REPO set — latest resolves (via gh), asset found, dry-run exits 0.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 _pub_json="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
+    tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
 _tb_out="$(env -i \
     "PATH=$BIN:$PATH" \
-    "SPIRA_PATH=$BIN" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$TARBALL_REPO" \
-    "SPIRA_FORGE_REPO=testowner/testrepo" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1600,7 +1571,7 @@ _tb_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" --dry-run latest 2>&1)"
+    timeout 60 bash "$DEPLOY" --dry-run latest 2>&1)"
 _tb_rc=$?
 is0  "tarball/latest: exits 0 with SPIRA_FORGE_REPO set"  "$_tb_rc"
 want "tarball/latest: resolves to $NEW_TAG" "$NEW_TAG" "$_tb_out"
@@ -1608,19 +1579,14 @@ want "tarball/latest: says dry-run"        "dry-run"  "$_tb_out"
 
 # Explicit tag: SPIRA_FORGE_REPO set, SPIRA_REPO has no .git — asset must be found.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+    tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
 _tb_out="$(env -i \
     "PATH=$BIN:$PATH" \
-    "SPIRA_PATH=$BIN" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$TARBALL_REPO" \
-    "SPIRA_FORGE_REPO=testowner/testrepo" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1639,7 +1605,7 @@ _tb_out="$(env -i \
     "GIT_AUTHOR_EMAIL=test@t" \
     "GIT_COMMITTER_NAME=test" \
     "GIT_COMMITTER_EMAIL=test@t" \
-    bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
 _tb_rc=$?
 is0  "tarball/explicit-tag: exits 0"             "$_tb_rc"
 want "tarball/explicit-tag: names asset"         "$NEW_RELEASE" "$_tb_out"
@@ -1706,17 +1672,15 @@ _pub_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
 # FAIL-FIRST: without GH_REPO/SPIRA_GH_REPO, deploy exits non-zero before calling gh.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
+tl_config SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" \
+    SPIRA_INSTANCE="prod" SPIRA_GH_REPO=""
 _out="$(env -i \
     "PATH=$ART_BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$ARTDIR" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1732,26 +1696,22 @@ _out="$(env -i \
     "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
     "SLAY_LOG=$SLAY_LOG" \
     "GIT_CONFIG_NOSYSTEM=1" \
-    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$NEW_TAG" 2>&1)"
 _rc=$?
 not0 "artifact/fail-first: no GH_REPO with no-.git SPIRA_REPO → deploy fails" "$_rc"
 
 # Happy path: SPIRA_GH_REPO set → GH_REPO exported → gh can reach the forge.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
+tl_config SPIRA_PATH="$ART_BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" \
+    SPIRA_RELEASES="$RELEASES" SPIRA_GH_REPO="owner/spira" SPIRA_INSTANCE="prod"
 _out="$(env -i \
     "PATH=$ART_BIN:$PATH" \
-    "SPIRA_PATH=$ART_BIN" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$ARTDIR" \
-    "SPIRA_GH_REPO=owner/spira" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1767,7 +1727,7 @@ _out="$(env -i \
     "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
     "SLAY_LOG=$SLAY_LOG" \
     "GIT_CONFIG_NOSYSTEM=1" \
-    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$NEW_TAG" 2>&1)"
 _rc=$?
 is0    "artifact/spira-gh-repo: deploy exits 0 with SPIRA_GH_REPO" "$_rc"
 islink "artifact/spira-gh-repo: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
@@ -1776,19 +1736,16 @@ want   "artifact/spira-gh-repo: gh download called" "release download" "$(cat "$
 # GH_REPO set directly (operator override) also works.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
+tl_config SPIRA_PATH="$ART_BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" \
+    SPIRA_RELEASES="$RELEASES" SPIRA_GH_REPO="" SPIRA_INSTANCE="prod"
 _out="$(env -i \
     "PATH=$ART_BIN:$PATH" \
-    "SPIRA_PATH=$ART_BIN" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
-    "SPIRA_RUN=$RUN_DIR" \
     "SPIRA_CONF=/nonexistent" \
-    "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_REPO=$ARTDIR" \
     "GH_REPO=owner/spira" \
-    "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
@@ -1804,7 +1761,7 @@ _out="$(env -i \
     "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
     "SLAY_LOG=$SLAY_LOG" \
     "GIT_CONFIG_NOSYSTEM=1" \
-    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+    timeout 60 bash "$DEPLOY" "$NEW_TAG" 2>&1)"
 _rc=$?
 is0    "artifact/gh-repo-direct: deploy exits 0 with GH_REPO set directly" "$_rc"
 islink "artifact/gh-repo-direct: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"

@@ -29,17 +29,16 @@ mkdir -p "$T/run"
 # A MINIMAL ENVIRONMENT with non-default label values where possible, so assertions against
 # defaults are not trivially satisfied by literals in the code
 # (law-gates-run-in-a-clean-environment).
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
-export SPIRA_DB="$T/no-db"
+# locate_home no longer searches: SPIRA_HOME IS the home, and conf.sh reads <home>/conf.d
+# for the registry — SPIRA_HOME is explicitly pinned to $T above, so it never falls back
+# to its own BASH_SOURCE location (which has one).
+ln -s "$HERE/conf.d" "$T/conf.d"
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db"
 # Non-default label values to prove mode expansion reads conf vars, not literals.
-export SPIRA_PLAN_LABEL="plan"
-export SPIRA_INCIDENT_LABEL="incident"
-export SPIRA_GROOMER_LABEL="groom"
-export SPIRA_MAECHEN_LABEL="maechen-sweep"
-export SPIRA_SPIKE_LABEL="spike"
-export SPIRA_CZAR_LABEL="czar-trigger"
+tl_config SPIRA_PLAN_LABEL="plan" SPIRA_INCIDENT_LABEL="incident" SPIRA_GROOMER_LABEL="groom" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SPIKE_LABEL="spike" SPIRA_CZAR_LABEL="czar-trigger"
 
 # A throwaway repo-map. SPIRA_REPO_MAP is set per section.
 MAP="$T/repo-map"
@@ -51,7 +50,13 @@ echo
 echo "criterion 1 — six-column row (no lanes column) admits all lanes"
 # ==========================================================================================
 printf 'alpha | /tmp/alpha | push | origin/main | | true\n' > "$MAP"
-export SPIRA_REPO_MAP="$MAP"
+# repo_field/repo_root/spira_repo_lanes (lib.sh -> _spira_config_repo -> `spira-config
+# repo`) read SPIRA_REPO_MAP from this shell's literal environment (repo_registry(),
+# spira-config/src/main.rs, builds its Registry from std::env::vars() directly — the repo
+# registry is not part of the one-source-of-config resolve() path). tl_config alone (which
+# only writes $SPIRA_TOML's override) does not reach it; a plain shell copy is required too.
+SPIRA_REPO_MAP="$MAP"
+tl_config SPIRA_REPO_MAP="$MAP"
 
 # POSITIVE CONTROL: the row IS found (repo_field returns something for it).
 is "six-col: path column resolves" "/tmp/alpha" "$(repo_field alpha path)"

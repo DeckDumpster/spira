@@ -50,13 +50,19 @@ lc_mirror_bd "$LC"
 # same value as the bead fixture labels below.
 run_core() {
     local bd_path="$1"
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS/SPIRA_SCOPE_LABEL/SPIRA_ASK_LABEL/
+    # SPIRA_CI_LABEL/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+    # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    # round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without
+    # it, cockpit-collect cannot find chamber/builder.fayth or chamber/ops.fayth to learn
+    # either persona's FAYTH_LABELS, so it can never say who would claim anything.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+        SPIRA_FAYTHS="builder ops" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
+        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_BD="$bd_path" \
+        SPIRA_CHAMBER="$HERE/chamber"
     env -i PATH="$LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" "SPIRA_FAYTHS=builder ops" \
-        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
-        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_BD="$bd_path" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe core 2>/dev/null
 }
 
@@ -145,6 +151,10 @@ nowant "mixed: sp-uc4b's own line does NOT show builder"      "builder"      "$l
 UC16_PARTS="builder|${SPIRA_SCOPE_LABEL},plan|
 ops|${SPIRA_SCOPE_LABEL},incident|
 "
+# round 3 fix: unclaimable.py is explicitly a "direct invocation without conf.sh" tool
+# (its own header comment) — it reads SPIRA_SCOPE_LABEL/SPIRA_CI_LABEL/SPIRA_ASK_LABEL
+# from os.environ directly, by design, never through spira-config/SPIRA_TOML. tl_config
+# here would be silently ignored by this one reader; keep the plain env prefix.
 uc16_out="$(PARTS="$UC16_PARTS" ALL_PARTS="$UC16_PARTS" \
     SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_CI_LABEL=awaiting-ci SPIRA_ASK_LABEL=needs-ryan \
     unclaimable.py <<< "$CASE4_JSON")"

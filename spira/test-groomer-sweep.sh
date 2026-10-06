@@ -18,14 +18,13 @@
 # covers: groomer/src/* spira/lib.sh spira/conf.sh UC-ops-detection-remediation-31
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require test-groomer-sweep
 TMP="$(mktemp -d)"
 testdb_up sweep || { echo "test-groomer-sweep: could not build fixture database"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
-
-. "$HERE/testlib.sh"
 
 # sp-jgjvh: the sweep's incident-needs-builder scan reads each incident bead's state from its
 # lifecycle row (incident beads are work beads), and a machine that does not answer fails the
@@ -43,19 +42,24 @@ printf 'prerepo  | /opt/prerepo  | pr   | origin/main | | \n' >> "$MAP"
 SCOPE=spira
 
 run_sweep() {
+    # SPIRA_CHAMBER no longer derives from SPIRA_HOME (one source of config, per Ryan
+    # 2026-10-05): the unclaimable detector shells out to `sentinel --detect-unclaimable`,
+    # which sources lib.sh's fayth_names/fayth_get shims onto spira-config's chamber
+    # registry — point it at the real chamber beside this suite, or PARTS/ALL_PARTS come
+    # back empty and every bead reads as claimed by nobody being checked at all.
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
+        SPIRA_REPO_MAP="$MAP" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_BD="${SPIRA_BD:-bd}" \
+        SPIRA_CHAMBER="$HERE/chamber"
+    # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
+    # the real one) is exec'd as groomer's own child and reads them as raw shell
+    # variables, never through spira-config — tl_config's declaration never reaches it.
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_PATH="${SPIRA_PATH:-}" \
-        SPIRA_BD="${SPIRA_BD:-bd}" \
-        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_REPO_MAP="$MAP" \
-        SPIRA_ASK_LABEL=needs-ryan \
-        SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="$SCOPE" \
         groomer sweep "$@" 2>&1
 }
 
@@ -160,13 +164,13 @@ want "groom.log has CLOSED action"   "groom: sweep: CLOSED"   "$groom_log"
 echo
 echo "AFTER REAL RUN — detector returns only unclaimable and described unmapped-repo"
 # ==========================================================================================
-after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO_MAP="$MAP" \
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$MAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_SPIKE_LABEL=spike \
-    SPIRA_SCOPE_LABEL="$SCOPE" \
+    SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE" \
+    SPIRA_CHAMBER="$HERE/chamber"
+after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     cockpit-collect probe livelock 2>/dev/null)"
 
 want  "after sweep: unclaimable bead still reported"       "sp-sw-unc"  "$after_ll"

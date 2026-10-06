@@ -75,17 +75,24 @@ ILOG="$RUN/incident.log"
 # rebuilds PATH from it; SPIRA_CONF names a non-existent file so a real spira.conf on this
 # box cannot override any key the suite sets explicitly.
 inc() {
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
+        SPIRA_MAIL="$TMP/mail"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_BD=*) tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
+    env -i HOME="$HOME" PATH="$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_DB="$SPIRA_DB" \
         SPIRA_SPOOL="$SPOOL" \
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
-        SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
-        SPIRA_MAIL="$TMP/mail" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        "$@" incident.sh file "the test sweep" -
+        "${extra[@]+"${extra[@]}"}" incident.sh file "the test sweep" -
 }
 
 # Count open beads carrying the given external ref on the fixture database.
@@ -343,9 +350,13 @@ for _a in "\$@"; do [ "\$_a" = create ] && sleep 0.3 && break; done
 exec "$BD_REAL" "\$@"
 WRAP
 chmod +x "$SLOW_BD"
-printf 'concurrent A\n' | inc SPIRA_BD="$SLOW_BD" >/dev/null &
+# Declared once, before either concurrent call, rather than inside inc()'s own per-call
+# tl_config: both filers want the SAME value, and two processes racing a write to the same
+# override.toml is exactly the kind of race this section exists to avoid, not reproduce.
+tl_config SPIRA_BD="$SLOW_BD"
+printf 'concurrent A\n' | inc >/dev/null &
 pid_a=$!
-printf 'concurrent B\n' | inc SPIRA_BD="$SLOW_BD" >/dev/null &
+printf 'concurrent B\n' | inc >/dev/null &
 pid_b=$!
 wait "$pid_a" || true
 wait "$pid_b" || true
@@ -374,16 +385,15 @@ echo "cross-repo dedup — same ref, different repo: labels resolve to ONE incid
 _cross_title="cross repo dedup test"
 _cross_ref="incident:cross-repo-dedup-test"
 _cross_env() {
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$REPO_MAP" \
+        SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail"
+    env -i HOME="$HOME" PATH="$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_SPOOL="$SPOOL" \
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
-        SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
-        SPIRA_MAIL="$TMP/mail" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         "$@" \
         incident.sh file "$_cross_title" - >/dev/null 2>&1

@@ -144,7 +144,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     // remote-tracking ref — no fetch on the round's critical path.
     if let Some((remote, branch)) = &c.r.publish {
         if let Some(fsha) = w.git.rev_parse(&path, &format!("refs/remotes/{remote}/{branch}")) {
-            let _ = w.lib.divergence(&c.s.queue_dir, &name, &path, &fsha, &base_sha);
+            let _ = w.lib.divergence(&c.s.mailbox, &c.s.queue_dir, &name, &path, &fsha, &base_sha);
         }
     }
 
@@ -252,6 +252,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     };
     let listed = ms.iter().map(Member::render).collect::<Vec<_>>().join(",");
     w.lib.notify(
+        &c.s.mailbox,
         &name,
         &format!("local landing (round {n})"),
         &format!(
@@ -380,6 +381,7 @@ pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
         }
     }
     w.lib.notify(
+        &c.s.mailbox,
         &c.r.name,
         &format!("local rollback (round {n} -> {})", n - 1),
         &format!("{base} reset to {prev} (release {prev} re-activated)."),

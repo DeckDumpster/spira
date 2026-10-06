@@ -559,7 +559,6 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/boundary` | this manifest — it describes the harness, so it travels with it |
 | `spira/boundary.sh` | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2 |
 | `spira/conf.sh` | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error |
-| `spira/repo-map.example` | example rows showing the six columns. The real rows are operator data |
 | `spira/exclude.sh` | keeps the beads database and its exports out of this repository — the check the gate runs, the pre-commit hook, and the installer that arms both. A beads database is never public |
 | `spira/hooks/` | the pre-commit hook itself, TRACKED and armed by core.hooksPath. .git/hooks is not cloned, so a hook that lived there would reach a colleague missing and unannounced |
 | `spira-lint/src/rules/inventory.rs` | the fence that keeps one operator's infrastructure out of a repository meant to be cloned — repository names, hosts, paths, people, dates. It scans comments, which is where all of it was. Ported from spira/inventory.sh (sp-ekkak) |

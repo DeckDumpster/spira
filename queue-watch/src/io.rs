@@ -475,10 +475,8 @@ echo ok"#,
     fn make_stub(body: &str) -> (testkit::TempDir, PathBuf) {
         let dir = scratch_path("stub");
         let path = dir.join("spira-lc");
-        fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
-        let mut perms = fs::metadata(&path).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-        fs::set_permissions(&path, perms).unwrap();
+        // testkit::write_exe: no write descriptor a concurrent fork could inherit (ETXTBSY).
+        testkit::write_exe(&path, &format!("#!/usr/bin/env bash\n{body}\n"));
         (dir, path)
     }
 

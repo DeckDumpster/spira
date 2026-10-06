@@ -10,7 +10,7 @@ set -uo pipefail
 
 command -v loom >/dev/null 2>&1 || { printf 'loom: not found on PATH (%s)\n' "$PATH" >&2; exit 2; }
 
-_conf_file="${SPIRA_CONF_FILE:-}"
+_conf_file="$(spira_toml_write_target)"   # the layer an operator edits, in the one source
 _conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
 _tick="${SPIRA_LOOM_TICK:-5}"
 

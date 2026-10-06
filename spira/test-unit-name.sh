@@ -71,11 +71,15 @@ SC
     chmod +x "$TMP/systemctl"
 }
 
-# Run spira_unit in an isolated subshell that sources our copied conf.sh.
+# Run spira_unit in an isolated subshell that sources our copied conf.sh. conf.sh resolves
+# every registered key straight from SPIRA_TOML (inherited here, not under env -i), so
+# SPIRA_RUN/SPIRA_INSTANCE are declared through tl_config rather than a plain prefix, or
+# conf.sh's own resolve would overwrite them the instant it is sourced below.
 run_spira_unit() {
     local inst="$1" base="$2" type="${3:-service}"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-    SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_INSTANCE="$inst"
+    SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no-such-conf" \
+    SPIRA_SYSTEMCTL="$TMP/systemctl" \
         bash -c '. "$1/conf.sh"; spira_unit "$2" "$3"' _ "$SH" "$base" "$type"
 }
 

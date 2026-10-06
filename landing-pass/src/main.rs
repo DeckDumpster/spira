@@ -162,7 +162,9 @@ fn land() -> i32 {
         Ok(x) => x,
         Err(e) => {
             boot.log(&format!("landing: {e} — no pass ran"));
-            if let Some(run) = std::env::var_os("SPIRA_RUN").map(PathBuf::from) {
+            // SPIRA_RUN via the one source of config (`run_dir`) — best-effort: if it too
+            // cannot resolve, the status file is simply not written, same as before.
+            if let Ok(run) = run_dir() {
                 Files::new(&run).write_status(&StatusFile { at: util::unix_now(), rc: 1, branches: 0, moved: 0 });
             }
             return 1;
@@ -244,13 +246,17 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
     };
     let quiet = Reporter::capture(None);
     let ctx = home().and_then(|h| load_context(&h, &quiet).ok());
-    let run = match (&ctx, std::env::var_os("SPIRA_RUN")) {
-        (Some((s, _)), _) => s.run.clone(),
-        (None, Some(r)) => PathBuf::from(r),
-        (None, None) => {
-            eprintln!("landing halt: cannot resolve SPIRA_RUN");
-            return 1;
-        }
+    // SPIRA_RUN via the one source of config (`run_dir`) when the context itself did not
+    // already resolve it.
+    let run = match &ctx {
+        Some((s, _)) => s.run.clone(),
+        None => match run_dir() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("landing halt: cannot resolve SPIRA_RUN: {e}");
+                return 1;
+            }
+        },
     };
     let grace = ctx.as_ref().map(|(s, _)| s.halt_grace).unwrap_or(30);
     let queue_dir = ctx.as_ref().map(|(s, _)| s.queue_dir.clone()).unwrap_or_else(|| run.join("queue"));
@@ -261,9 +267,20 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         repos: ctx.as_ref().map(|(_, r)| r.as_slice()),
         queue_dir,
     };
+    // SPIRA_PATH is a registered config key (spira/conf.d), declared empty by default — an
+    // empty resolved value is exactly the "no override" this call already treated an unset
+    // env var as, so it is still passed through as `None` rather than `Some("")`.
+    let spira_path = match spira_config::process::cfg("SPIRA_PATH") {
+        Ok(v) if !v.is_empty() => Some(v),
+        Ok(_) => None,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
     let path = halt::child_path(
         ctx.as_ref().and_then(|(s, _)| s.path.as_deref()),
-        std::env::var("SPIRA_PATH").ok().as_deref(),
+        spira_path.as_deref(),
         std::env::var("PATH").ok().as_deref(),
     );
     let (rc, out, err) = halt::halt(&hc, &HaltArgs { reason, dry_run }, &RealHalt { path }, &RealGit);
@@ -343,28 +360,14 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
 /// already-exported variable would reintroduce the per-call cost wave 4 existed to cut
 /// (wave4-decomposition.md's own cost note).
 ///
-/// `$SPIRA_RUN` when it is exported; otherwise resolved in-process the way conf.sh itself
-/// would, so a bare environment — a unit's own (`SPIRA_RELEASE` + `PATH` only), the shape
-/// that broke this in production three times — still gets a real answer rather than a
-/// refusal (law-a-binary-resolves-the-config-it-reads). The fallback still never shells to
-/// bash: `spira_config::resolve` is the same in-process resolver `queue`/`aeon` already
-/// call for this, not a lib.sh seam.
+/// SPIRA_RUN is a registered config key (spira/conf.d) — the one source of config
+/// (`$SPIRA_TOML`, per Ryan 2026-10-05), resolved once per process. No second,
+/// process-environment read behind it, and no crate-local derivation of `$SPIRA_HOME` to
+/// feed one: an unresolvable config is a refusal naming the key, never a guessed path.
 fn run_dir() -> Result<PathBuf, String> {
-    if let Some(r) = std::env::var_os("SPIRA_RUN").filter(|v| !v.is_empty()) {
-        return Ok(PathBuf::from(r));
-    }
-    let env: BTreeMap<String, String> = std::env::vars().collect();
-    let home = harness_home(&env).ok_or_else(|| {
-        "SPIRA_RUN is unset and SPIRA_HOME could not be resolved (no lib.sh found via \
-         $SPIRA_HOME, spira.prod, or beside this binary)"
-            .to_string()
-    })?;
-    let repo = spira_config::resolve::derive_repo_filesystem(&home, &env);
-    let resolved = spira_config::resolve::resolve_for_process(&home, &repo, &env)
-        .map_err(|e| format!("SPIRA_RUN is unset and resolving it failed: {e}"))?;
-    let run = resolved.get("SPIRA_RUN");
+    let run = spira_config::process::cfg("SPIRA_RUN")?;
     if run.is_empty() {
-        return Err("SPIRA_RUN is unset and resolve() produced no SPIRA_RUN".to_string());
+        return Err("SPIRA_RUN resolved empty".to_string());
     }
     Ok(PathBuf::from(run))
 }
@@ -405,28 +408,21 @@ fn resolve_home() -> Result<PathBuf, String> {
     harness_home(&env).ok_or_else(|| "SPIRA_HOME is unset and could not be resolved".to_string())
 }
 
-/// bd's own connection facts, resolved in-process against `home` — conf.sh resolves
-/// `SPIRA_DB`/`SPIRA_BD`/`BD_TIMEOUT`/`SPIRA_HOME_REPO`/`SPIRA_SUBMITTED_LABEL`/
-/// `SPIRA_BDJSON_FIXTURE` but exports none of them (the same defect `run_dir`/`Registry::from_env`
-/// already guard against), so this never reads them straight off `std::env`.
+/// bd's own connection facts: `SPIRA_DB`/`SPIRA_BD`/`SPIRA_HOME_REPO` are registered keys
+/// (`spira/conf.d`), read through `spira_config::process::cfg` — the one source of config
+/// (per Ryan 2026-10-05) — never a literal default standing in for an unresolved value.
+/// `BD_TIMEOUT`/`SPIRA_BDJSON_FIXTURE` carry no `spira/conf.d/<KEY>` entry — ad hoc
+/// overrides `cfg` never produces (aeon's own seam doc names the same split), so these two
+/// are still read straight off the raw environment.
 fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    let repo = spira_config::resolve::derive_repo_filesystem(home, &env);
-    let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env)?;
-    let get = |k: &str, d: &str| {
-        let v = resolved.get(k);
-        if v.is_empty() { d.to_string() } else { v.to_string() }
-    };
-    // BD_TIMEOUT and SPIRA_BDJSON_FIXTURE carry no `spira/conf.d/<KEY>` entry — ad hoc
-    // overrides `resolve_for_process` never produces (aeon's own seam doc names the same
-    // split), so these two are read straight off the raw environment, never `resolved`.
     let ad_hoc = |k: &str, d: &str| env.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
     Ok(RealBeads {
         home: home.to_path_buf(),
-        db: get("SPIRA_DB", ""),
-        bd: get("SPIRA_BD", "bd"),
+        db: spira_config::process::cfg("SPIRA_DB")?,
+        bd: spira_config::process::cfg("SPIRA_BD")?,
         timeout: ad_hoc("BD_TIMEOUT", "180").parse().unwrap_or(180),
-        home_repo: get("SPIRA_HOME_REPO", "spira"),
+        home_repo: spira_config::process::cfg("SPIRA_HOME_REPO")?,
         fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),
         // Content only (titles): nothing here decides on a bead's state.
         lc_bin: None,
@@ -475,11 +471,17 @@ fn other_beads_cmd(repo: &str, branch: &str, base: &str, files: &str) -> i32 {
 }
 
 /// `landing-pass is-work-type <type>`: lib.sh `bead_is_work_type` alone.
-/// `SPIRA_WORK_CLOSE_TYPES` is an ad hoc override with no `conf.d` entry (as it has always
-/// been for the bash function), so this reads it straight off the environment, same as
-/// every other such name this crate's seam used to snapshot.
+/// `SPIRA_WORK_CLOSE_TYPES` is a registered config key (spira/conf.d) — the one source of
+/// config; its own declared default is `"task bug feature"`, so this no longer repeats
+/// that literal here.
 fn is_work_type_cmd(ty: &str) -> i32 {
-    let close_types = std::env::var("SPIRA_WORK_CLOSE_TYPES").unwrap_or_else(|_| "task bug feature".to_string());
+    let close_types = match spira_config::process::cfg("SPIRA_WORK_CLOSE_TYPES") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
     if land_verify::is_work_type(ty, &close_types) {
         0
     } else {
@@ -498,32 +500,31 @@ mod tests {
     /// crate, and this test lives in the bin crate).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    // law-a-binary-resolves-the-config-it-reads: `run_dir` must get a real answer from the
+    // one source of config, not a crash, whenever $SPIRA_TOML names a real config file — the
+    // production defect this originally guarded against was a landing-pass call silently
+    // doing nothing when its process environment lacked $SPIRA_RUN. Per Ryan 2026-10-05
+    // ("one source of config"), a bare environment with no $SPIRA_TOML is now a refusal by
+    // design, not a derived guess, so this proves resolution through the fixture toml
+    // instead of through a raw $SPIRA_RUN env var.
+    //
+    // This is the ONLY test in this binary that resolves `spira_config::process::cfg` —
+    // that door caches its answer for the lifetime of the process (OnceLock), so a second
+    // such test in this same test binary would not get an independent answer.
     #[test]
-    fn run_dir_resolves_in_process_when_spira_run_is_unset() {
-        // law-a-binary-resolves-the-config-it-reads: a bare environment — a unit's own
-        // (SPIRA_RELEASE + PATH only) — must still get a real answer from `run_dir`, not a
-        // refusal. The production defect this guards: a landing-pass call silently did
-        // nothing when its process environment lacked $SPIRA_RUN.
+    fn run_dir_resolves_through_the_one_source_of_config() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = testkit::TempDir::new("landing-pass-run-dir");
         let home = dir.join("home");
-        fs::create_dir_all(&home).unwrap();
-        fs::write(home.join("lib.sh"), "# fixture\n").unwrap();
-        // sp-1cdgq-2: a missing conf.d is now a named registry error, so any fixture
-        // whose SPIRA_HOME runs real config resolution needs the directory to exist.
         fs::create_dir_all(home.join("conf.d")).unwrap();
-        let xdg_data = dir.join("xdg-data");
-        let xdg_config = dir.join("xdg-config"); // empty: no config file for discover() to pick up
-        fs::create_dir_all(&xdg_config).unwrap();
+        let run_path = dir.join("the-run-dir");
+        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_RUN", run_path.to_str().unwrap())]);
 
         let saved: Vec<(&str, Option<std::ffi::OsString>)> =
-            ["SPIRA_RUN", "SPIRA_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "SPIRA_TOML", "HOME"].iter().map(|k| (*k, std::env::var_os(k))).collect();
+            ["SPIRA_RUN", "SPIRA_HOME", "SPIRA_TOML"].iter().map(|k| (*k, std::env::var_os(k))).collect();
         std::env::remove_var("SPIRA_RUN");
         std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("XDG_DATA_HOME", &xdg_data);
-        std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
-        std::env::remove_var("SPIRA_TOML");
-        std::env::set_var("HOME", dir.join("userhome"));
+        std::env::set_var("SPIRA_TOML", &toml);
 
         let got = run_dir();
 
@@ -534,10 +535,6 @@ mod tests {
             }
         }
 
-        let run = got.expect("run_dir must resolve a real answer without $SPIRA_RUN");
-        // The exact directory spira_config::resolve derives from XDG_DATA_HOME with no toml
-        // override and the default ("prod") instance — asserted exactly, so this proves
-        // resolution ran, not a lucky guess at some other path.
-        assert_eq!(run, xdg_data.join("spira").join("run"));
+        assert_eq!(got.expect("run_dir must resolve through $SPIRA_TOML"), run_path);
     }
 }

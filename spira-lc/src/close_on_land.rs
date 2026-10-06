@@ -72,8 +72,11 @@ fn bdq_close(id: &str, reason: &str) -> bool {
 }
 
 fn show_row(id: &str) -> Option<Row> {
-    let db = spira_config::resolve::key_for_process("SPIRA_DB").ok().filter(|d| !d.is_empty())?;
-    let bd = spira_config::resolve::key_for_process("SPIRA_BD").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "bd".into());
+    // One source of config (per Ryan 2026-10-05): spira.db/spira.bd from $SPIRA_TOML, never
+    // this process's own environment. Empty (either key) means "nothing to show" here, the
+    // same best-effort bail this whole module already uses.
+    let db = spira_config::process::cfg("SPIRA_DB").ok().filter(|d| !d.is_empty())?;
+    let bd = spira_config::process::cfg("SPIRA_BD").ok().filter(|b| !b.is_empty())?;
     let out = Command::new("timeout").arg(CALL_SECS).arg(bd).args(["-C", &db, "show", id, "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| parse_row(&String::from_utf8_lossy(&out.stdout))).flatten()
 }

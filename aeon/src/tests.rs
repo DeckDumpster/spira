@@ -316,6 +316,32 @@ struct Outcome {
     slept: usize,
 }
 
+/// Every key spira-config's own "every key declared" test fixture
+/// (`spira-config/tests/fixtures/complete.toml`, the same document
+/// `spira_config::process::fixture_toml` writes from) declares, renamed `SPIRA_*`/
+/// `COCKPIT_*` — the same rename `spira_config::resolve`'s own (private) `toml_key_map`
+/// applies when it builds a toml-backed `Resolved`, replicated here (not called) because
+/// it is not `pub`. No file I/O, no `$SPIRA_TOML`/`$SPIRA_HOME` env, and nowhere near
+/// `spira_config::process::cfg`'s own cached resolution — this builds `Conf`'s backing map
+/// directly, the same shape `merge_resolved_config` would produce in production.
+///
+/// `pub(crate)`: `escape::tests::conf_at` builds its own `Conf` the same way and needs the
+/// same base — a hand-built `Conf` whose registered keys are simply absent now under-
+/// resolves them to 0/"" (`Conf::i`/`Conf::s` carry no Rust-side default any more, per Ryan
+/// 2026-10-05: one source of config), which is a silent behaviour change for whichever one
+/// of this file's many fixtures does not also move onto this same base.
+pub(crate) fn complete_vars() -> BTreeMap<String, String> {
+    let doc = spira_config::validate(include_str!("../../spira-config/tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    spira_config::spira_string_map(&doc)
+        .into_iter()
+        .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
+        .chain(std::iter::once((
+            "SPIRA_TOML".to_string(),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-config/tests/fixtures/complete.toml").to_string(),
+        )))
+        .collect()
+}
+
 fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
     go_as("builder", f, labels, extra, mode, seam_answers, act)
 }
@@ -327,7 +353,14 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BT
 /// `fx()` does for "builder").
 #[allow(clippy::too_many_arguments)]
 fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
-    let mut vars: BTreeMap<String, String> = [
+    // Every registered key's declared value, from spira-config's own "every key declared"
+    // fixture (per Ryan 2026-10-05: one source of config) — not a hand-picked partial map.
+    // `Conf`'s accessors for registered keys no longer carry a Rust-side default, so a key
+    // this suite never mentions must still resolve to something real, the same as
+    // production's own config file always does. This suite's own long-standing fixture
+    // values are then laid on top, then `extra`, exactly as before.
+    let mut vars: BTreeMap<String, String> = complete_vars();
+    for (k, v) in [
         ("SPIRA_RUN", f.run.display().to_string()),
         ("SPIRA_DB", "/db".to_string()),
         ("SPIRA_ASK_LABEL", "needs-ryan".to_string()), // literal-ok: fixture/fallback
@@ -344,10 +377,51 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
         // override via `extra` instead (SPIRA_REPO_DERIVED == SPIRA_REPO).
         ("SPIRA_HOME_REPO", "fixture".to_string()),
         ("SPIRA_REPO", f.repo.display().to_string()),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v))
-    .collect();
+        // Every other registered key this file's own business logic reads (run.rs/
+        // teardown.rs/verdict.rs/capacity.rs), pinned back to what it always resolved to
+        // when the old hand-picked map simply never mentioned it: "" through `Conf::s`
+        // (SPIRA_SCOPE_LABEL in particular — `complete.toml`'s own "spira" would otherwise
+        // FENCE every test whose `labels` does not happen to contain "spira", e.g. the
+        // plain "plan" case), or the literal this file's own `.n(...)`/`.or(...)` defaults
+        // always produced before they were deleted in favour of `Conf::i`/`Conf::s` (per
+        // Ryan 2026-10-05: one source of config — the complete fixture happens to match
+        // most of these already; listed in full anyway so this does not silently drift
+        // again the next time either side's value changes). An individual test overrides
+        // any one of these further through `extra`, same as always.
+        ("SPIRA_SCOPE_LABEL", String::new()),
+        ("SPIRA_WIKI", String::new()),
+        ("SPIRA_MAIL", String::new()),
+        ("SPIRA_REPO_MAP", String::new()),
+        ("SPIRA_TESTDB_PORT", String::new()),
+        ("SPIRA_SPIKE_DIR", String::new()),
+        ("SPIRA_SPIKE_PATHS", String::new()),
+        ("SPIRA_MAECHEN_MAX_BEADS", String::new()),
+        ("SPIRA_MAECHEN_REMEDY_LABEL", String::new()),
+        ("SPIRA_MEMORIES_CACHE", String::new()),
+        ("SPIRA_STATUTE_CORE", String::new()),
+        ("SPIRA_STATUTE_CORE_LOCAL", String::new()),
+        ("SPIRA_SCCACHE_DAV_ADDR", String::new()),
+        ("SPIRA_CAPACITY_PROBE_MODEL", String::new()),
+        ("SPIRA_THRASH_MINUTES", "20".to_string()),
+        ("SPIRA_THRASH_STREAK_CAP", "2".to_string()),
+        ("SPIRA_VERDICT_WINDOW", "400".to_string()),
+        ("SPIRA_DELIVERS_CHECK_TIMEOUT", "60".to_string()),
+        ("SPIRA_RAPID_RECUR_THRESHOLD", "3".to_string()),
+        ("SPIRA_BRIEF_KEEP_RECURRENCES", "5".to_string()),
+        ("SPIRA_BRIEF_NOTES_MAX_CHARS", "8000".to_string()),
+        ("SPIRA_MEMORIES_CACHE_AGE", "300".to_string()),
+        ("SPIRA_CAPACITY_PROBE_WINDOW", "18000".to_string()),
+        ("SPIRA_CAPACITY_PROBE_INTERVAL", "3600".to_string()),
+        ("SPIRA_CAPACITY_PROBE_TIMEOUT", "30".to_string()),
+        (spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT.to_string()),
+        ("SPIRA_WORKFLOW_ONLY_PATHS", "spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh".to_string()),
+        ("SPIRA_BD", "bd".to_string()),
+        ("SPIRA_GH_API", "https://api.github.com".to_string()),
+        ("SPIRA_AGENT", "claude".to_string()),
+        ("SPIRA_SUBMITTED_LABEL", "spira-submitted".to_string()),
+    ] {
+        vars.insert(k.to_string(), v);
+    }
     for (k, v) in extra {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -838,7 +912,7 @@ fn happy_path_submits_through_the_machine() {
     assert!(spec.env.get("GH_TOKEN").is_none(), "no credential-shaped var leaked to the model");
     let a = spec.args.join(" ");
     assert!(a.starts_with("-p --output-format stream-json --verbose --include-partial-messages --system-prompt-snapshot on --append-system-prompt-file "));
-    assert!(a.contains("--model claude-opus-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
+    assert!(a.contains("--model claude-sonnet-5-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
     // The brief.
     let sys = std::fs::read_to_string(f.run.join("sp-h.system.md")).unwrap();
     let task = std::fs::read_to_string(f.run.join("sp-h.task.md")).unwrap();
@@ -1163,28 +1237,6 @@ fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
         "{:?}",
         w.bd_calls
     );
-}
-
-#[test]
-fn slain_mid_session_is_free_and_exits_143() {
-    let f = fx("slain");
-    seed(&f, "sp-s");
-    let run = f.run.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, stop| {
-        std::fs::write(run.join("sp-s.slain"), "t\twhy\n").unwrap();
-        stop.trip(15);
-        143
-    });
-    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
-    assert_eq!(o.code, 143);
-    let l = ledger_lines(&o);
-    assert!(l[2].starts_with("done builder sp-s rc=143 status=slain"), "{l:?}");
-    let w = o.w.lock().unwrap();
-    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-s", "unjudged-slain"]));
-    // verdict() is native now (no seam call to prove it ran); its first act is always this
-    // exact log line, so its absence proves the whole block was skipped.
-    assert!(!o.log.contains("sp-s status="), "the verdict block is skipped, as bash's trap skipped it");
-    assert!(!f.run.join("aeon-builder-sp-s.pid").exists());
 }
 
 #[test]

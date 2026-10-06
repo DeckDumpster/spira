@@ -32,13 +32,19 @@ printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/bin/health"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/bin/fakemail"
 chmod +x "$ROOT/bin/health" "$TMP/bin/fakemail"
 
+RUN_D="$TMP/run"; mkdir -p "$RUN_D"
 layout() {   # layout <COCKPIT_MAIL> <action> [args]
     local mail="$1"; shift
+    # SPIRA_RUN undeclared resolves to the complete fixture's /fixture/home/.../run, which
+    # does not exist here — layout writes pane/layout state under it (sfail round 3,
+    # pattern 7).
+    tl_config SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_INSTANCE=fixture SPIRA_PROD="$TMP/noprod" \
+        SPIRA_RUN="$RUN_D" \
+        COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=31 COCKPIT_MAIL="$mail"
     env -i SPIRA_RELEASE="$ROOT" HOME="$TMP" PATH="$ROOT/bin:$TMP/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUX_TMPDIR" \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$ROOT/cockpit" \
-        SPIRA_INSTANCE=fixture SPIRA_PROD="$TMP/noprod" \
-        COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=31 COCKPIT_MAIL="$mail" \
-        "$ROOT/bin/layout" "$@" 2>&1
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" \
+        timeout 30 "$ROOT/bin/layout" "$@" 2>&1
 }
 panes() { tmux list-panes -t "$1" -F '#{@cockpit}|#{pane_id}|#{pane_left}|#{pane_top}|#{pane_height}|#{window_height}' 2>/dev/null; }
 field() { panes "$1" | awk -F'|' -v t="$2" -v f="$3" '$1==t {print $f; exit}'; }

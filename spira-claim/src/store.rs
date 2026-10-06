@@ -20,68 +20,74 @@ pub struct Store {
     pub timeout: Duration,
 }
 
-/// Values from spira.toml through the spira-config library (law-config-through-the-cli-only:
-/// never parsed here).
+/// Values from spira.toml through spira-config's ONE DOOR (per Ryan 2026-10-05, one source
+/// of config): `spira_config::process::cfg`/`cfg_parse`, `$SPIRA_TOML` resolved once per
+/// process — never parsed here, never an env override, never a caller-supplied default.
+/// Every field here is a registered key (`spira/conf.d/SPIRA_*`); [`load_config`] reads each
+/// one exactly once, at construction, and is the ONLY place in this crate that may.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
+    /// `spira.bd` (`SPIRA_BD`) — the `bd` binary to exec. Registered but documented as
+    /// carrying no default of its own (conf.d: "resolves empty unless set"); an empty
+    /// resolved value is passed through as-is — `Store::new` no longer substitutes the
+    /// literal `"bd"` for it (see the migration report: this is a behaviour change).
+    pub bd: String,
+    /// `spira.db` (`SPIRA_DB`) — `None` when the declared value is "" (conf.d: deliberately
+    /// `=` not `:=`, "an explicitly empty SPIRA_DB means 'no database for this run'"), same
+    /// as this field's own pre-cfg() emptiness check; never a substituted default.
     pub db: Option<String>,
-    pub stack_max_depth: Option<u32>,
-    pub submitted_label: Option<String>,
+    pub stack_max_depth: u32,
+    pub submitted_label: String,
     /// `spira.run` — the runtime directory (`unpoison`: ask history, audit log).
-    pub run: Option<String>,
+    pub run: String,
     /// `spira.ask_label` — the operator-ask label (`unpoison`: the ask it closes).
-    pub ask_label: Option<String>,
-    /// `spira.scope_label` (`ready_args`/`fayth_ready`; conf.sh's own default for this one
-    /// is procedural — `SPIRA_HOME_REPO` — so a caller with no toml value falls back to the
-    /// already-exported `$SPIRA_SCOPE_LABEL` rather than this field, never to a constant).
-    pub scope_label: Option<String>,
-    /// `spira.no_loop_label` (default `no-loop`, conf.d/SPIRA_NO_LOOP_LABEL).
-    pub no_loop_label: Option<String>,
-    /// `spira.queue_wait_label` (default `spira-queue-waiting`) — one of `fayth_exclude`'s
-    /// shared exclusions; UNEXPORTED by conf.sh, so this field (resolved in-process) is the
-    /// only correct source for a separate process (the exec-boundary trap).
-    pub queue_wait_label: Option<String>,
-    /// `spira.open_children_label` (default `spira-open-children`) — ditto, unexported.
-    pub open_children_label: Option<String>,
-    /// `spira.claim_retries` (default 3) — `SPIRA_CLAIM_RETRIES`, unexported.
-    pub claim_retries: Option<u32>,
-    /// `spira.claim_retry_delay_s` (default 1) — `SPIRA_CLAIM_RETRY_DELAY_S`, unexported.
-    pub claim_retry_delay_s: Option<u32>,
+    pub ask_label: String,
+    /// `spira.scope_label`.
+    pub scope_label: String,
+    /// `spira.no_loop_label` (conf.d/SPIRA_NO_LOOP_LABEL).
+    pub no_loop_label: String,
+    /// `spira.queue_wait_label` — one of `fayth_exclude`'s shared exclusions.
+    pub queue_wait_label: String,
+    /// `spira.open_children_label` — ditto.
+    pub open_children_label: String,
+    /// `spira.claim_retries` — `SPIRA_CLAIM_RETRIES`.
+    pub claim_retries: u32,
+    /// `spira.claim_retry_delay_s` — `SPIRA_CLAIM_RETRY_DELAY_S`.
+    pub claim_retry_delay_s: u32,
+    /// `spira.fayths` (`SPIRA_FAYTHS`, a list) — the roster override `fayth-exclude`/
+    /// `fayth-ready`/`bulk-ready-by-fayth` pass to `spira_config::chamber::spira_fayths`;
+    /// "" means no override (per Ryan 2026-10-05: no direct env read — `roster` used to
+    /// read `SPIRA_FAYTHS` itself).
+    pub fayths: String,
 }
 
-pub fn load_config() -> Config {
-    let Some(path) = spira_config::discover(None) else { return Config::default() };
-    match spira_config::load(&path) {
-        Ok(doc) => {
-            let s = doc.spira.unwrap_or_default();
-            Config {
-                db: s.db,
-                stack_max_depth: s.stack_max_depth,
-                submitted_label: s.submitted_label,
-                run: s.run,
-                ask_label: s.ask_label,
-                scope_label: s.scope_label,
-                no_loop_label: s.no_loop_label,
-                queue_wait_label: s.queue_wait_label,
-                open_children_label: s.open_children_label,
-                claim_retries: s.claim_retries.as_deref().and_then(|v| v.trim().parse().ok()),
-                claim_retry_delay_s: s.claim_retry_delay_s.as_deref().and_then(|v| v.trim().parse().ok()),
-            }
-        }
-        Err(e) => {
-            eprintln!("spira-claim: config {}: {e} — using defaults", path.display());
-            Config::default()
-        }
-    }
+/// Every field of [`Config`], each its own `cfg`/`cfg_parse` call — `Err` names the first
+/// key that would not resolve and refuses; the caller (`dispatch`) turns that into
+/// `Outcome::cannot_tell` rather than guessing a value for any of the rest.
+pub fn load_config() -> Result<Config, String> {
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    Ok(Config {
+        bd: spira_config::process::cfg("SPIRA_BD")?,
+        db: (!db.is_empty()).then_some(db),
+        stack_max_depth: spira_config::process::cfg_parse("SPIRA_STACK_MAX_DEPTH")?,
+        submitted_label: spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?,
+        run: spira_config::process::cfg("SPIRA_RUN")?,
+        ask_label: spira_config::process::cfg("SPIRA_ASK_LABEL")?,
+        scope_label: spira_config::process::cfg("SPIRA_SCOPE_LABEL")?,
+        no_loop_label: spira_config::process::cfg("SPIRA_NO_LOOP_LABEL")?,
+        queue_wait_label: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
+        open_children_label: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
+        claim_retries: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRIES")?,
+        claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
+        fayths: spira_config::process::cfg("SPIRA_FAYTHS")?,
+    })
 }
 
 impl Store {
     pub fn new(db_flag: Option<String>, timeout_s: u64, cfg: &Config) -> Store {
         Store {
-            bd: std::env::var("SPIRA_BD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "bd".into()),
-            db: db_flag
-                .or_else(|| std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()))
-                .or_else(|| cfg.db.clone()),
+            bd: cfg.bd.clone(),
+            db: db_flag.or_else(|| cfg.db.clone()),
             lc: "spira-lc".into(), // by name, on the launcher's PATH (sp-gypjk)
             timeout: Duration::from_secs(timeout_s.max(1)),
         }

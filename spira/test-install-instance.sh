@@ -83,15 +83,19 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 # The logger dir goes first on PATH (conf.sh keeps the caller's PATH first).
 inst() {
     > "$SCTL_LOG"
+    # SPIRA_MAIL undeclared resolves to the complete fixture's own
+    # /fixture/home/spira/run/mail — units-install now calls `mail ensure concierge` on every
+    # run (sp-xp0u2) and that mkdir fails "Permission denied" under the fixture's unwritable
+    # tree, so the whole install refuses before it ever gets to systemctl.
+    tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_MAIL="$TMP/mail" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" \
+        SPIRA_REPO_MAP=/nonexistent SPIRA_WATCHERS="${SPIRA_WATCHERS:-}"
     SCTL_LOG="$SCTL_LOG" \
-    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
+    PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     "$@" \
-    units-install test 2>&1
+    timeout 90 units-install test 2>&1
 }
 
 # ==========================================================================
@@ -103,11 +107,12 @@ WATCHERS="$TMP/watchers"
 printf '# empty\n' > "$WATCHERS"
 
 # Seed DEST via --render so unit files exist before the full install compares.
-rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
-    SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
-    units-install test --render 2>&1)"
+tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
+    SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_WATCHERS="$WATCHERS"
+rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
+    timeout 90 units-install test --render 2>&1)"
 render_rc=$?
 if [ "$render_rc" != 0 ]; then
     printf 'fixture: install.sh test --render failed (rc=%s)\n' "$render_rc"
@@ -163,11 +168,12 @@ echo "WATCHER INSTALL — manifest row installs spira-watch-testview-test.servic
 
 printf 'testview|daemon|/bin/true\n' > "$WATCHERS"
 
-wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
-    SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
-    units-install test --render 2>&1)"
+tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
+    SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_WATCHERS="$WATCHERS"
+wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
+    timeout 90 units-install test --render 2>&1)"
 current_unit=""
 while IFS= read -r line; do
     if [[ "$line" =~ ^=====\ (.+)\ =====$ ]]; then

@@ -195,7 +195,11 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up unclaimable || { echo "test-unclaimable: could not build fixture database"; exit 1; }
 
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+# The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+# SPIRA_HOME any more (sfail round 2, pattern 6) — detect_unclaimable_ready tests against
+# the real chamber (claimers()), which needs this to find it.
+tl_config SPIRA_CHAMBER="$HERE/chamber"
 export SPIRA_CONF="$TMP/no-such.conf"
 acted=0; progressed=0
 act()      { acted=$((acted+1)); }
@@ -281,6 +285,7 @@ chmod +x "$TMP/mock-incident13.sh"
 
 _save_home_repo="${SPIRA_HOME_REPO:-}"
 export SPIRA_HOME_REPO="fixture-home-repo"
+tl_config SPIRA_HOME_REPO="fixture-home-repo"
 SPIRA_INCIDENT_SH="$TMP/mock-incident13.sh" file_unclaimable_incidents \
     "UNCLAIMABLE sp-unc13a — spira with no matching partition"
 export SPIRA_HOME_REPO="$_save_home_repo"

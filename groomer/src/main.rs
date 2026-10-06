@@ -54,8 +54,8 @@ fn die(msg: &str) -> ! {
 }
 
 fn conf_env() -> (String, String) {
-    let bd = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into());
-    let db = spira_config::resolve::key_for_process("SPIRA_DB").unwrap_or_else(|e| die(&e));
+    let bd = spira_config::process::cfg("SPIRA_BD").unwrap_or_else(|e| die(&e));
+    let db = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| die(&e));
     (bd, db)
 }
 
@@ -85,7 +85,9 @@ fn main() {
                 die("cannot find lib.sh (set SPIRA_HOME)");
             };
             let seam = LibSeam::new(home.join("lib.sh"));
-            let run_log = std::env::var("SPIRA_RUN").ok();
+            // Optional: the groom.log side-write is skipped, not defaulted, when SPIRA_RUN
+            // does not resolve — sweep's own stdout output does not depend on it.
+            let run_log = spira_config::process::cfg("SPIRA_RUN").ok();
             match sweep::sweep(&bd, &seam, dry_run) {
                 Ok(out) => {
                     for line in &out.log {

@@ -162,14 +162,23 @@ fn release_root_for_session_hook(flags: &Flags, env: &config::Env) -> Result<(Pa
 /// PATH tail, so [`Config::resolve`] is called only on those two branches — never
 /// unconditionally, which would refuse an uninstall on a box whose releases directory
 /// cannot be found (exactly the state an uninstall may be reached from).
+///
+/// NOTE (per Ryan 2026-10-05, one source of config): every branch, `uninstall`/`prune`
+/// included, now resolves `SPIRA_CLIENT_SETTINGS` through `cfg` before it does anything
+/// else, which means `$SPIRA_TOML` must resolve even for an operation this function was
+/// built to keep independent of `Config::resolve`'s own (heavier) requirements. If that
+/// turns out to be the wrong trade for `uninstall`/`prune` specifically, the fix is to give
+/// `SPIRA_CLIENT_SETTINGS` its own narrower resolution path, not to revert this read to a
+/// raw environment lookup.
 fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), (u8, String)> {
     let (sub, srest) = rest.split_first().ok_or_else(|| usage_err("session-hook needs a subcommand: install, status, uninstall or prune <substring>".into()))?;
-    let settings = env
-        .get("SPIRA_CLIENT_SETTINGS")
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| env.get("HOME").filter(|s| !s.is_empty()).map(|h| PathBuf::from(h).join(".claude/settings.json")))
-        .ok_or_else(|| fail_err("no settings file: set SPIRA_CLIENT_SETTINGS or HOME".into()))?;
+    // SPIRA_CLIENT_SETTINGS is a registered key (spira/conf.d) — its own registered default
+    // is already `$HOME/.claude/settings.json`, so no local HOME-derived fallback is needed
+    // here any more (per Ryan 2026-10-05: one source of config). `HOME` itself is not
+    // registered and is read only inside `cfg`'s own resolution now, not here.
+    let settings = spira_config::process::cfg("SPIRA_CLIENT_SETTINGS")
+        .map_err(fail_err)
+        .and_then(|s| if s.is_empty() { Err(fail_err("SPIRA_CLIENT_SETTINGS resolved empty".into())) } else { Ok(PathBuf::from(s)) })?;
     let mut doc = session_hook::load(&settings).map_err(fail_err)?;
     match sub.as_str() {
         "uninstall" => {
@@ -228,13 +237,20 @@ fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), 
 /// unit directory — [`config::unit_dir_from_env`], never the full [`Config`], which would
 /// couple every intake call to the releases directory resolving even though intake has
 /// nothing to do with one.
+///
+/// NOTE (per Ryan 2026-10-05, one source of config): `SPIRA_ALERT_GLOB` below now resolves
+/// through `cfg`, so every subcommand still needs `$SPIRA_TOML` to resolve, even though it
+/// no longer needs the releases directory specifically to.
 fn intake_cmd(env: &config::Env, rest: &[String]) -> Result<(), (u8, String)> {
     let (sub, srest) = rest.split_first().ok_or_else(|| usage_err("intake needs a subcommand: install, status or uninstall".into()))?;
     if !srest.is_empty() {
         return Err(usage_err(format!("intake {sub} takes no arguments")));
     }
     let unit_dir = config::unit_dir_from_env(env).map_err(fail_err)?;
-    let pattern = env.get("SPIRA_ALERT_GLOB").filter(|s| !s.is_empty()).cloned();
+    // SPIRA_ALERT_GLOB is a registered key (spira/conf.d); its own registered default is
+    // empty, meaning "none" — intake::NO_GLOB already covers that case below.
+    let pattern = spira_config::process::cfg("SPIRA_ALERT_GLOB").map_err(fail_err).map(|s| if s.is_empty() { None } else { Some(s) })?;
+    // SPIRA_SYSTEMCTL_RELOAD is not a registered key (no spira/conf.d/ entry) — ambient env.
     let reload = env.get("SPIRA_SYSTEMCTL_RELOAD").map(|s| s != "0").unwrap_or(true);
     let sc = RealSystemctl::from_env();
     match sub.as_str() {
@@ -326,7 +342,9 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
                 Some(_) => StageOpts { root: None, harness_spira: PathBuf::new(), bd_embedded: PathBuf::new(), testdb_baseline: None, scope_label: String::new() },
                 None => resolve_stage_opts(&env, None).map_err(fail)?,
             };
-            let verdict_window = env.get("SPIRA_VERDICT_WINDOW").and_then(|s| s.parse().ok()).unwrap_or(400);
+            // SPIRA_VERDICT_WINDOW is a registered key (spira/conf.d); its own registered
+            // default (400) replaces the literal that used to live here.
+            let verdict_window = spira_config::process::cfg_parse::<usize>("SPIRA_VERDICT_WINDOW").map_err(fail)?;
             let o = CanaryOpts { external_stage, stage_opts, deadline: a.deadline, verdict_window };
             let r = canary::canary(&o).map_err(fail)?;
             println!("release: canary PASS — commit '{}' on origin/main in {}s (stage {})", r.commit, r.elapsed.as_secs(), r.stage_root.display());

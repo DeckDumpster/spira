@@ -181,8 +181,8 @@ impl World for Fake {
     fn now_stamp(&self) -> String {
         self.now.borrow().clone()
     }
-    fn env(&self, k: &str) -> Option<String> {
-        self.env.borrow().get(k).cloned()
+    fn env(&self, k: &str) -> Result<Option<String>, String> {
+        Ok(self.env.borrow().get(k).cloned())
     }
     fn is_symlink(&self, p: &Path) -> bool {
         self.symlinks.borrow().contains_key(p)

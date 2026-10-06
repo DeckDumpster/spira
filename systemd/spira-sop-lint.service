@@ -2,6 +2,7 @@
 Description=Spira sop lint against production shelf — files an incident on a finding
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_PROD@/sop-lint-watch.sh

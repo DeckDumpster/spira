@@ -685,8 +685,9 @@ impl<'a> Sentinel<'a> {
             pool = Some(p);
         }
         if !lane_fayths.is_empty() {
-            let declared = self.ctx.get("SPIRA_LANES").filter(|s| !s.is_empty()).unwrap_or("none");
-            self.log(&format!("CHECK7 lanes ({declared} declared): {}", lane_fayths.join(" ")));
+            // SPIRA_LANES always resolves now (spira/conf.d/SPIRA_LANES declares the
+            // default) — no more Context-side "none" fallback for an unset key.
+            self.log(&format!("CHECK7 lanes ({} declared): {}", self.cfg.lanes_declared, lane_fayths.join(" ")));
         }
         let last = std::fs::read_to_string(&self.cfg.lane_round_robin).unwrap_or_default();
         let rotated_lanes = lane_rotate(last.trim(), &lane_fayths);

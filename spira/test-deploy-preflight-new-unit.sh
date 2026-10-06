@@ -53,26 +53,34 @@ done
 for f in conf.sh lib.sh suite-covers.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
+# locate_home reads <home>/conf.d directly now (no search) — a fixture spira/ with none
+# refuses config resolution outright (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$FIXTURE/spira/conf.d"
 printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 
 DEST="$TMP/home/.config/systemd/user"
-mkdir -p "$DEST" "$TMP/home"
+# units-install refuses to render units that would log to / (sp-xp0u2): the fixture has a run dir.
+mkdir -p "$DEST" "$TMP/home" "$TMP/run"
 
 # conf.sh rebuilds PATH from SPIRA_PATH + $HOME/.local/bin + the system dirs (never inherits
 # the caller's PATH), so a fresh, empty $HOME loses whatever directory this session's dolt
 # lives in unless it is handed through explicitly.
 DOLT_DIR="$(dirname "$(command -v dolt 2>/dev/null || echo /nonexistent/dolt)")"
 
+# SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are declared empty on purpose, not "use the default":
+# empty means "dolt server is managed independently" (doctor/src/lib.rs) — the complete
+# fixture's own concrete paths point nowhere on disk here and would FAIL doctor's existence
+# check, which is exactly the false positive this suite must not produce.
+tl_config SPIRA_RUN="$TMP/run" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+
 inst() {
-    env -i PATH="$PATH" HOME="$TMP/home" \
+    tl_config SPIRA_PATH="$DOLT_DIR"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$DOLT_DIR" \
         SPIRA_HOME="$FIXTURE/spira" \
         SPIRA_REPO="$FIXTURE" \
-        SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
         units-install "$@" 2>&1
 }
 
@@ -115,13 +123,10 @@ is   "units-install --diff: MISSING is detected — not a silent pass" "1" "$rc"
 want "units-install --diff: names the withheld unit as MISSING" "MISSING" "$diff_out"
 want "units-install --diff: names the withheld unit itself" "$new_unit_name" "$diff_out"
 
-skew_out="$(env -i PATH="$PATH" HOME="$TMP/home" \
+tl_config SPIRA_PATH="$DOLT_DIR"
+skew_out="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_PATH="$DOLT_DIR" \
     SPIRA_HOME="$FIXTURE/spira" SPIRA_REPO="$FIXTURE" \
-    SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-    SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" \
     skew units)"; skew_rc=$?
 is   "skew units: also catches the withheld unit" "1" "$skew_rc"
 want "skew units: also names it MISSING" "MISSING" "$skew_out"
@@ -172,20 +177,19 @@ mkdir -p "$TMP/run" "$TMP/doctor-home"
 touch "$TMP/run/cockpit.env"
 
 run_doctor() {
+    # SPIRA_DB is registered too (doctor's RESOLVED_KEYS, confirmed in doctor/src/real.rs)
+    # — the plain env prefix below is ignored; the round-3 caveat's audit item.
+    tl_config SPIRA_PATH="$TMP" SPIRA_BD="$TMP/bd" SPIRA_INSTANCE=prod SPIRA_OPERATED=0 \
+        SPIRA_DB="$DB"
     env -i \
+        SPIRA_TOML="$SPIRA_TOML" \
         PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/doctor-home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$TMP" \
+        SPIRA_HOME="$FIXTURE/spira" \
         SPIRA_SYSTEMCTL="$TMP/systemctl" \
-        SPIRA_BD="$TMP/bd" \
         SPIRA_DOLT_BIN="$TMP/dolt" \
-        SPIRA_DB="$DB" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_INSTANCE=prod \
-        SPIRA_OPERATED=0 \
         SPIRA_DOCTOR=1 \
-        SPIRA_DOLT_DATA="" \
         doctor 2>&1
 }
 

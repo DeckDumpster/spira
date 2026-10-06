@@ -49,9 +49,9 @@ git -C "$TMP_REPO" add f.txt
 git -C "$TMP_REPO" commit -q -m "tt-own: branch work"
 
 # POSITIVE CONTROL: with SPIRA_ID_PREFIX=tt, tt-abc123 must be found.
+tl_config SPIRA_ID_PREFIX="$PREFIX" SPIRA_RUN="$TMP_DIR/run" SPIRA_DB="$TMP_DIR/db"
 result="$(
-    export SPIRA_ID_PREFIX="$PREFIX" SPIRA_HOME="$HERE" SPIRA_RUN="$TMP_DIR/run"
-    export SPIRA_DB="$TMP_DIR/db"
+    export SPIRA_HOME="$HERE"
     bash -c '. "$1/lib.sh"; other_beads_on_conflicts "$2" "spira/tt-own" "$3" "f.txt"' \
         -- "$HERE" "$TMP_REPO" "$BASE"
 )"
@@ -60,9 +60,9 @@ nowant "own bead excluded from conflict result"                     "tt-own"    
 
 # NEGATIVE CONTROL: a branch with sp- prefix must not match tt- ids on the base.
 # The prefix is derived from the branch's own id, not SPIRA_ID_PREFIX.
+tl_config SPIRA_RUN="$TMP_DIR/run" SPIRA_DB="$TMP_DIR/db"
 result_sp="$(
-    export SPIRA_HOME="$HERE" SPIRA_RUN="$TMP_DIR/run"
-    export SPIRA_DB="$TMP_DIR/db"
+    export SPIRA_HOME="$HERE"
     bash -c '. "$1/lib.sh"; other_beads_on_conflicts "$2" "spira/sp-own" "$3" "f.txt"' \
         -- "$HERE" "$TMP_REPO" "$BASE"
 )"

@@ -95,18 +95,20 @@ run_push() {
     # env -i IS A LAUNCHER, SO IT SETS PATH (sp-gypjk): the bd stub first, then the directory
     # the suite's own beads-store resolves from (the tree's build — beads-push.sh's pre-push
     # commit calls it by name, sp-sghmt), then the system dirs.
+    tl_config SPIRA_PATH="$BIN" SPIRA_BD="$BIN/bd" SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
+        SPIRA_DOLT_DATA="$DD" SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod
     env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent SPIRA_PATH="$BIN" \
-        SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" SPIRA_DOLT_DATA="$DD" \
-        SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash "$REPO/beads-push.sh" 2>&1
 }
 
 run_push_nodata() {
+    # SPIRA_DOLT_DATA="" explicitly: the empty string is its own meaningful value here
+    # (conf.d/SPIRA_DOLT_DATA: "no value for this run"), not an unset-falls-back-to-default.
+    tl_config SPIRA_PATH="$BIN" SPIRA_BD="$BIN/bd" SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
+        SPIRA_DOLT_DATA="" SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod
     env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent SPIRA_PATH="$BIN" \
-        SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash "$REPO/beads-push.sh" 2>&1
 }
 

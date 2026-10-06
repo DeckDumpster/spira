@@ -84,6 +84,12 @@ done
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
+# SPIRA_LC_PASSWORD_FILE/SPIRA_LC_SOCKET are registered keys; undeclared, they resolve to
+# the complete fixture's own dummy paths ("reading .../spira-lc.credential: No such file"),
+# not "unset" — this suite connects with direct TCP params below, so both must be declared
+# empty to mean exactly that, not left to the fixture's own (unreachable) defaults.
+tl_config SPIRA_LC_PASSWORD_FILE="" SPIRA_LC_SOCKET=""
+
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
 SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
 SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
@@ -174,12 +180,15 @@ mkdir -p "$RUN/queue/alpha"
 # Run cockpit-collect probe unsent — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 unsent() {    # unsent <fixture-file>
+    # SPIRA_QUEUE_BATCH_WAIT: the complete fixture's own default is 31536000s (a year), not
+    # the 1800s this suite's BATCHED-too-long section assumes — declare the real value.
+    tl_config SPIRA_HOME_REPO=alpha SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_QUEUE_DIR="$RUN/queue" \
+        SPIRA_QUEUE_BATCH_WAIT=1800
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-        SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-        SPIRA_QUEUE_DIR="$RUN/queue" \
+        SPIRA_REPO="$ALPHA" \
         SPIRA_BDJSON_FIXTURE="$1" \
         "${LC_ENV[@]}" \
         cockpit-collect probe unsent 2>/dev/null

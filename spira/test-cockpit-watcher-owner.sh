@@ -102,6 +102,9 @@ asks() { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
 # Fake SPIRA_HOME for unit-name discovery.
 # ---------------------------------------------------------------------------
 FAKE_HOME="$TMP/spira-home"; mkdir -p "$FAKE_HOME"
+# locate_home no longer searches: SPIRA_HOME IS the home, and watchd (a compiled binary,
+# never sourcing the fake conf.sh stub below) reads <home>/conf.d for the registry.
+ln -s "$HERE/conf.d" "$FAKE_HOME/conf.d"
 
 # conf.sh: provides watch_unit_name with a test-specific name.
 cat > "$FAKE_HOME/conf.sh" <<'CONFEOF'
@@ -195,23 +198,26 @@ UF="$WDIR/view.unhealthy"
 # Backdate so age > SPIRA_NOTIFY_AGE=0 immediately.
 printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$UF"
 
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$RUN" SPIRA_INSTANCE=test \
+    SPIRA_WATCHERS="$MAN" SPIRA_MAIL="$MAIL" SPIRA_NOTIFY_AGE=0 SPIRA_ACTIONABLE=WAKEME
 run_notify() {
     rm -rf "$MAIL"; mkdir -p "$MAIL"
     rm -f "$WDIR/notify-health.escalated"
     # The fake home's mail stub and the mock binaries go FIRST on PATH: watchd calls
     # mail and systemctl by name (sp-gypjk).
+    # SPIRA_MAIL is a registered key (declared via tl_config above, for watchd itself to
+    # resolve through SPIRA_TOML), but the FAKE_HOME mail stub above is a bash script that
+    # reads $SPIRA_MAIL raw from its own environment — watchd's "mail" subprocess inherits
+    # only what this env -i lists, and resolved config never gets forwarded to a child
+    # process as plain env, so the stub needs the plain copy too (one source of config,
+    # per Ryan 2026-10-05).
     env -i \
         HOME="$TMP/home" \
         PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \
-        SPIRA_PATH="$MOCK_BIN" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$RUN" \
-        SPIRA_INSTANCE=test \
-        SPIRA_WATCHERS="$MAN" \
-        SPIRA_MAIL="$MAIL" \
         SPIRA_HOME="$FAKE_HOME" \
-        SPIRA_NOTIFY_AGE=0 \
-        SPIRA_ACTIONABLE=WAKEME \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_MAIL="$MAIL" \
         "$WATCHD" notify 2>/dev/null || true
 }
 

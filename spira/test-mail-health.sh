@@ -17,14 +17,26 @@ is1()    { is "$1" 1 "$2"; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# SPIRA_MAIL/SPIRA_MAIL_KINDS are registered but mail/src/env.rs reads them with a plain
+# std::env::var, not spira_config::process::cfg — so the "mail" binary itself only ever
+# sees the plain export below. But mail-health.sh (unlike a direct `mail` invocation) is a
+# bash script that sources conf.sh itself, and conf.sh's resolve --sh-all RE-EXPORTS every
+# registered key from SPIRA_TOML into mail-health.sh's own process — overwriting this plain
+# export with the complete fixture's bogus SPIRA_MAIL default before mail-health.sh ever
+# spawns its own `mail unread-age`/`mail count` children, which then inherit the bogus
+# value (same shape as the SPIRA_DB pattern elsewhere, round 5 — this suite's own core
+# detect-and-alert path was silently looking at the wrong maildir the whole time).
 export SPIRA_MAIL="$TMP/mail"
-export SPIRA_RUN="$TMP/run"
-export SPIRA_HOME="$HERE"
 export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+export SPIRA_HOME="$HERE"
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export SPIRA_CONF="$TMP/no-such-spira.conf"
-export SPIRA_ID_PREFIX="sp"
-export SPIRA_MAIL_UNREAD_AGE=60
+# SPIRA_MAIL_MUTE is a raw env read too (mail/src/env.rs), but conf.sh resolves it from
+# SPIRA_TOML and EXPORTS it (resolve --sh-all) into every subprocess's own environment —
+# the complete fixture now declares mail_mute=true, which would silently mute every
+# delivery this suite counts on. Declared false here so conf.sh exports the override.
+tl_config SPIRA_RUN="$TMP/run" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_UNREAD_AGE=60 SPIRA_MAIL_MUTE=false \
+    SPIRA_MAIL="$TMP/mail"
 
 HEALTH=mail-health.sh   # invoked by name on the suite's PATH (sp-gypjk)
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
@@ -43,7 +55,7 @@ op_count() {
     "$MAIL" count operator 2>/dev/null
 }
 
-export SPIRA_MAIL_READERS="concierge=echo wake"
+tl_config SPIRA_MAIL_READERS="concierge=echo wake"
 
 # install.sh runs this before any timer can read the operator mailbox; a read verb now
 # refuses a mailbox that was never provisioned, so the fixture must match that order.
@@ -104,7 +116,7 @@ echo
 echo "=== silent below threshold ==="
 
 # Send fresh mail to a different mailbox — not old enough.
-export SPIRA_MAIL_READERS="freshbox=echo wake"
+tl_config SPIRA_MAIL_READERS="freshbox=echo wake"
 echo "fresh" | SPIRA_MAIL_LINT_CONSIDERED="test" \
     "$MAIL" send freshbox --from "T <t@t>" --subject "Fresh message" 2>/dev/null
 

@@ -18,7 +18,9 @@ pub struct Report {
     pub errors: Vec<String>,
 }
 
-pub fn run(ctx: &Ctx) -> Report {
+/// `broker_enable` is the declared `SPIRA_BROKER_ENABLE` — resolved by the caller from the one
+/// source of config, so this library function never reads config (or the environment) itself.
+pub fn run(ctx: &Ctx, broker_enable: bool) -> Report {
     let mut r = Report::default();
     let rendered = match render_all(ctx) {
         Ok(v) => v,
@@ -78,7 +80,7 @@ pub fn run(ctx: &Ctx) -> Report {
     // THE PRODUCER GUARD, every invocation: spira-broker.timer's enabled state tracks
     // `spira_broker_producer_present` regardless of whether its own rendered content
     // changed — the loop above only reaches newly installed units.
-    let producer_present = std::env::var("SPIRA_BROKER_ENABLE").map(|v| v == "1").unwrap_or(false);
+    let producer_present = broker_enable;
     let bare = "spira-broker.timer";
     let named = inst_name(bare, &ctx.host.instance);
     for name in [named.as_str(), bare] {
@@ -107,7 +109,7 @@ mod tests {
     use crate::values::HostValues;
 
     fn host() -> HostValues {
-        HostValues { home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
+        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
     }
 
     fn tiny_manifest() -> crate::manifest::Manifest {
@@ -136,21 +138,21 @@ mod tests {
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
 
-        let r = run(&ctx);
+        let r = run(&ctx, false);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert_eq!(r.installed.len(), 2);
         assert!(r.enabled_started.contains(&"spira-sentinel-prod.timer".to_string()));
         assert_eq!(sc.restarts.borrow().len(), 0);
 
         // A second run with the template unchanged: no-op.
-        let r2 = run(&ctx);
+        let r2 = run(&ctx, false);
         assert_eq!(r2.installed.len(), 0);
         assert_eq!(r2.updated.len(), 0);
         assert_eq!(r2.unchanged, 2);
 
         // A changed template installs but does NOT restart or re-enable (operator's call).
         std::fs::write(tmpl_dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/false\n").unwrap();
-        let r3 = run(&ctx);
+        let r3 = run(&ctx, false);
         assert_eq!(r3.updated, vec!["spira-sentinel-prod.service".to_string()]);
         assert_eq!(sc.restarts.borrow().len(), 0);
     }

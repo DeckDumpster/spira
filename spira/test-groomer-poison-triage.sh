@@ -52,12 +52,13 @@ STUB
 chmod +x "$STUB_BD"
 
 run_groomer() {
-    env -i HOME="$T" PATH="$PATH" \
+    tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUN"
+    # SPIRA_HOME EXPLICITLY: groomer no longer derives it from its own binary location —
+    # neither SPIRA_HOME nor SPIRA_RELEASE set means it refuses outright.
+    env -i HOME="$T" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
+        SPIRA_HOME="$HERE" \
         BD_LOG_PATH="$BD_LOG" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$RUN" \
         groomer "$@" 2>&1
 }
 

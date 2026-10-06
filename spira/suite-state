@@ -12,16 +12,3 @@
 # so testenv-batch.sh, CI and the hourly run each judge the tree they carry.
 # Transitions are written by: testenv suites quarantine [--until <UTC>] | unquarantine | disable | activate.
 # A quarantine ends at its `until=<UTC>` (appended to the bead column), else SPIRA_QUARANTINE_MAX_AGE after since.
-test-watch-refresh.sh | quarantined | 2026-10-03T16:54:49Z | sp-kph00 until=2026-10-10T00:00:00Z | flips green/red on the same commit (rounds aw, az; round 275 sweeps); quarantined until sp-kph00 fixes the flake
-test-install-dolt-refuse-stop.sh | quarantined | 2026-10-03T16:54:49Z | sp-vyeol until=2026-10-10T00:00:00Z | flips green/red on the same commit; quarantined until sp-vyeol fixes the flake
-test-reconciler-alert.sh | quarantined | 2026-10-03T21:37:26Z | sp-z6mz1 until=2026-10-10T00:00:00Z | red on local/main since round 284 (container-only cargo test failure); quarantined until sp-z6mz1 lands
-test-watchtower.sh | quarantined | 2026-10-03T21:37:26Z | sp-bqqt2 until=2026-10-10T00:00:00Z | ghost/empty-epic classification red on local/main and on publish PRs #481/#482; quarantined until sp-bqqt2 lands
-test-deploy-preflight-new-unit.sh | quarantined | 2026-10-03T22:06:32Z | sp-iqj2t until=2026-10-10T00:00:00Z | pre-deploy doctor FAILs on a fresh host (red on local/main and publish PRs #481-#483); quarantined so its fix can certify
-test-canary.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
-test-queue-ops.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
-test-sentinel-pass.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
-test-spike.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
-test-destroy-branch.sh | quarantined | 2026-10-05T03:21:11Z | sp-ao6dt until=2026-10-12T00:00:00Z | red only when run in parallel with other suites in one testenv container (gate re-entry, rounds r-cutover-10/-11); green alone and on the round VM; quarantined until sp-ao6dt isolates it
-test-holds.sh | quarantined | 2026-10-05T05:56:33Z | sp-mw6m2 until=2026-10-12T00:00:00Z | flips on identical members under host load (gate passed in round r-cutover-16, failed 'the shim agent captured a prompt' in r-cutover-17); quarantined until sp-mw6m2 waits on the event
-test-queue-watch.sh | quarantined | 2026-10-05T09:39:47Z | sp-jiwzg until=2026-10-12T00:00:00Z | stub exec 'Text file busy' under load (round r-deploy-1); green in r-cutover-21 on the same base
-test-schema-apply.sh | quarantined | 2026-10-05T09:39:47Z | sp-rcm18 until=2026-10-12T00:00:00Z | verify-after-apply flips under load (round r-deploy-1); green in r-cutover-21 on the same base

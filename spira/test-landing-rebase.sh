@@ -52,6 +52,15 @@ stub mail '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat 
 export EMITTED="$TMP/events"; : > "$EMITTED"
 stub gh 'exit 1'
 
+# The gate protocol's fixed exit-code constants (spira-config/src/resolve.rs: always 75/76,
+# never settable — EXPORT_KEYS, read by a bash conf.sh caller). Not registered (no conf.d
+# entry) so tl_config cannot declare them; landing-pass does not thread them into its own
+# gate.sh child explicitly (only SPIRA_GATE_LOCK_WAIT/SPIRA_GATE_BEAD are), so this stub
+# gate.sh only sees them if something upstream exported them — declared directly here
+# rather than depending on that chain (round 5: this stub's own `${SPIRA_GATE_NOVERDICT:?}`
+# was unbound).
+export SPIRA_GATE_NOVERDICT=75 SPIRA_GATE_BASEFAIL=76
+
 stub gate.sh '
 r="$SPIRA_RUN/reap-during-gate"
 if [ -s "$r" ]; then
@@ -81,8 +90,9 @@ echo "gate: VERDICT=PASS reason=${GATE_REASON:-stub} branch=$1 repo=${2:-?}" >&2
 
 cp "$SH/gate.sh" "$TMP/gate-full.sh"
 
+# The base column is no longer derived (sfail round 4, pattern 9) — it must be declared.
 cat > "$SH/repo-map" <<MAP
-$REPONAME | $REPO | push | |
+$REPONAME | $REPO | push | origin/main | |
 MAP
 
 B() { bd -C "$SPIRA_DB" "$@"; }
@@ -94,9 +104,19 @@ notes_of() { B show "$1" 2>/dev/null; }
 
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    # SPIRA_DB is registered too — landing-pass resolves it via cfg(), not the plain env
+    # prefix below (sfail round 3, pattern 3/7).
+    tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
+    # SPIRA_RUN also as a raw env var: landing-pass's own gate.sh child is a bash script
+    # that never sources conf.sh (it's this suite's stub, not the real one) — it reads
+    # $SPIRA_RUN directly from whatever it inherits, and landing-pass's own `command()`
+    # helper (no env_clear) only forwards what landing-pass itself got as raw env, not
+    # what it resolved via cfg(). Without this, withhold-gate/claim-during-gate/
+    # tip-at-gate read from "/withhold-gate" etc. (SPIRA_RUN empty) and silently never
+    # matched (round 6).
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
@@ -195,7 +215,9 @@ git -C "$REPO" add shared-recut.txt
 git -C "$REPO" commit -q -m "main writes shared-recut.txt"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 : > "$EMITTED"
-out="$(SPIRA_REBASE_DECOMPOSE_FILES=1 landing)"
+tl_config SPIRA_REBASE_DECOMPOSE_FILES=1
+out="$(landing)"
+spira-config unset spira.rebase_decompose_files "$_TL_CONF_OVERRIDE" >/dev/null
 want "the pass escalates the partial-conflict branch"   "escalated sp-recut2" "$out"
 is   "the merge-base moved to current main after recut" yes "$(on_base sp-recut2)"
 is   "the bead stays closed"                            closed "$(status_of sp-recut2)"
@@ -327,14 +349,15 @@ git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 # Pre-bump the lifetime requeue counter to AT-1 so the pass's own bump (below) brings it
 # to AT on the FIRST sighting of this conflict — land_state is not yet RED, so the
 # RED-recurring guard does not intercept it first.
-SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
+tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$SH/repo-map"
+SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     bash -c '. "$1/lib.sh" >/dev/null 2>&1
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1' \
     _ "$SH"
 : > "$EMITTED"
-SPIRA_REBASE_ESCALATE_AT=3 landing >/dev/null 2>&1 || true
+tl_config SPIRA_REBASE_ESCALATE_AT=3
+landing >/dev/null 2>&1 || true
 is   "escalate path reopens the bead"   open "$(status_of sp-escl)"
 want "and fires the escalation ask"     "rebase loop" "$(cat "$EMITTED")"
 drop_branch sp-escl

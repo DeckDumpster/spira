@@ -36,12 +36,12 @@ chmod +x "$PROBE_LC/spira-lc"
 
 run_probe() {   # run_probe <SPIRA_BD=path> -> stdout of probe()
     local bd_path="$1"
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+        SPIRA_FAYTHS=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_BD="$bd_path" SPIRA_CHAMBER="$HERE/chamber"
     env -i PATH="$PROBE_LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
-        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_BD="$bd_path" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect once 2>/dev/null
 }
 
@@ -75,12 +75,12 @@ chmod +x "$BD_EMPTY"
 # core_detail_keys emits SP_READY=? rather than a zero (law-failed-probe-renders-question).
 
 echo "partition map: an unresolvable persona is a REFUSAL, not an empty queue"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+    SPIRA_FAYTHS=no-such-persona SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+    SPIRA_BD="$BD_EMPTY" SPIRA_CHAMBER="$HERE/chamber"
 _unres_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=no-such-persona \
-    SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_BD="$BD_EMPTY" \
+    SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect once 2>/dev/null)"
 want   "SP_READY is ? when no persona resolves"   "SP_READY=?"  "$_unres_out"
 nowant "SP_READY is NOT 0 when no persona resolves" "SP_READY=0" "$_unres_out"
@@ -139,12 +139,12 @@ case " $* " in
 esac
 BD
 chmod +x "$BD_LC"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+    SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL=spira SPIRA_ASK_LABEL=needs-ryan \
+    SPIRA_CI_LABEL=awaiting-ci SPIRA_BD="$BD_LC" SPIRA_CHAMBER="$HERE/chamber"
 lc_out="$(env -i PATH="$LCBIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL=spira \
-    SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_BD="$BD_LC" \
+    SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect probe core 2>/dev/null)"
 is     "SP_READY counts the machine's one READY row"  "SP_READY=1" "$(printf '%s\n' "$lc_out" | grep '^SP_READY=')"
 want   "the machine's READY bead is in NEXT"          "sp-ck-take" "$lc_out"

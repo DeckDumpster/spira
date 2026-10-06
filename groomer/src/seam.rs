@@ -54,7 +54,10 @@ impl LibSeam {
     /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
     /// never from this struct's own `lib_sh` path, since the detectors no longer source it.
     fn strand_cfg(&self) -> &strand::config::Config {
-        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
+        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
+            eprintln!("groomer: {e}");
+            std::process::exit(1)
+        }))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave

@@ -89,6 +89,9 @@ cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$REPO_MAP"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$HOMEDIR/chamber"
 
 # A FAYTH NOT CALLED ops, so nothing here can key on the persona's name.
 for f in builder; do
@@ -138,11 +141,12 @@ aeon_fixture_agent "$BIN/claude"
 run_aeon() {             # run_aeon <fayth> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
-    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_PATH="${SPIRA_PATH:-}" TMP="$TMP" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_WIKI="" \
-        SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_WIKI="" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" \
-        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
+        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
+    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_TOML="$SPIRA_TOML" TMP="$TMP" \
+        SPIRA_CONF="$TMP/nonexistent.conf" \
+        SPIRA_HOME="$HOMEDIR" \
         BEADS_NO_AUTO_IMPORT=1 \
         timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
 }

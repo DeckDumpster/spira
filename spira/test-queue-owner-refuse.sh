@@ -63,13 +63,10 @@ batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 member_branch() { printf 'spira/sp-ownf1'; }
 
 queue() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${TESTDB_BD:-bd}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
-    SPIRA_MAIL="$MAIL" \
-        SPIRA_HOME="$SH" command queue "$@"
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_MAIL="$MAIL"
+    SPIRA_HOME="$SH" command queue "$@"
 }
 
 echo "test-queue-owner-refuse.sh"
