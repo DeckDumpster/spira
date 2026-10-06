@@ -145,8 +145,21 @@ export SPIRA_TOML="$_TL_CONF_BASE:$_TL_CONF_OVERRIDE"
 # COCKPIT_FOO -> spira.cockpit_foo). Refuses on a key the schema does not know.
 # A value is given in its shell form and written in the key's registered TYPE: a list as
 # space- or comma-separated words, a bool as 1/0/true/false/yes/no/on/off.
-tl_config() {
-    local kv k v d t w out
+tl_config() { _tl_declare "$_TL_CONF_OVERRIDE" "$@"; }
+
+# tl_layer KEY=value ... — config for ONE call: prints a SPIRA_TOML value (this suite's layers
+# plus a fresh layer holding just these keys), so nothing persists into the rest of the suite:
+#   SPIRA_TOML="$(tl_layer SPIRA_DB=/nonexistent)" some-binary ...
+tl_layer() {
+    local f
+    f="$(mktemp "$_TL_CONF_DIR/layer.XXXXXX")" || return 1
+    printf '[spira]\n' > "$f"
+    _tl_declare "$f" "$@" || return 1
+    printf '%s' "$SPIRA_TOML:$f"
+}
+
+_tl_declare() {
+    local file="$1" kv k v d t w out; shift
     for kv in "$@"; do
         k="${kv%%=*}"; v="${kv#*=}"
         d="spira.$(printf '%s' "${k#SPIRA_}" | tr '[:upper:]' '[:lower:]')"
@@ -163,7 +176,7 @@ tl_config() {
                     *) echo "tl_config: $k is a bool, not '$v'" >&2; return 1 ;;
                 esac ;;
         esac
-        spira-config set "$d" "$v" "$_TL_CONF_OVERRIDE" >/dev/null \
+        spira-config set "$d" "$v" "$file" >/dev/null \
             || { echo "tl_config: cannot declare $k" >&2; return 1; }
     done
 }
@@ -688,6 +701,11 @@ lc_socket_mirror() {
     local dir="${1:?lc_socket_mirror needs a directory}"
     mkdir -p "$dir"
     export SPIRA_LC_SOCKET="$dir/lc.sock"
+    # round 3 fix (pattern 3/7): SPIRA_LC_SOCKET is a registered key — the plain export
+    # above is for this function's own shell use; a real binary (sending, queue, ...)
+    # only finds this mock's socket through SPIRA_TOML now, or it falls to the complete
+    # fixture's placeholder /run/user/.../spira-lc/sock and reports "did not answer".
+    tl_config SPIRA_LC_SOCKET="$SPIRA_LC_SOCKET"
     rm -f "$SPIRA_LC_SOCKET"
     python3 - "$SPIRA_LC_SOCKET" "$$" <<'PY' >"$dir/server.log" 2>&1 &
 import json, os, socket, subprocess, sys, threading, time

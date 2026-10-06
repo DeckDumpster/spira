@@ -782,8 +782,8 @@ fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), Str
 pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
     let existing_repos = existing.repo.len();
     let new_repos = new.repo.len();
-    let existing_fayths = existing.spira.as_ref().map(|s| s.fayths.len()).unwrap_or(0);
-    let new_fayths = new.spira.as_ref().map(|s| s.fayths.len()).unwrap_or(0);
+    let existing_fayths = existing.spira.as_ref().and_then(|s| s.fayths.as_ref()).map_or(0, Vec::len);
+    let new_fayths = new.spira.as_ref().and_then(|s| s.fayths.as_ref()).map_or(0, Vec::len);
     if new_repos < existing_repos || new_fayths < existing_fayths {
         Some(format!(
             "existing has {existing_repos} [repo.*] table(s) and {existing_fayths} fayth(s); \

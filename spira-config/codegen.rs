@@ -27,7 +27,7 @@ fn rust_type(ty: &str) -> Option<&'static str> {
         "bool" => "Option<bool>",
         "onoff" => "Option<crate::OnOff>",
         "czar_stage" => "Option<crate::CzarStage>",
-        "list" => "Vec<String>",
+        "list" => "Option<Vec<String>>",
         _ => return None,
     })
 }
@@ -100,9 +100,6 @@ pub fn section_rs(keys: &[Key]) -> String {
         if let Some(d) = &k.schema_doc {
             o.push_str(&format!("    #[doc = {d:?}]\n"));
         }
-        if k.ty == "list" {
-            o.push_str("    #[serde(default)]\n");
-        }
         o.push_str(&format!("    pub {}: {},\n", k.field, rust_type(&k.ty).unwrap()));
     }
     o.push_str("}\n\npub const SPIRA_KEYS: &[SpiraKey] = &[\n");
@@ -133,7 +130,7 @@ pub fn convert_rs(keys: &[Key]) -> String {
             "u32" => format!("s.{f} = parse_u32(warnings, {f:?}, val)"),
             "u64" => format!("s.{f} = parse_u64(warnings, {f:?}, val)"),
             "bool" => format!("s.{f} = parse_bool01(warnings, {f:?}, val)"),
-            "list" => format!("s.{f} = val.split_whitespace().map(str::to_string).collect()"),
+            "list" => format!("s.{f} = Some(val.split_whitespace().map(str::to_string).collect())"),
             "onoff" => format!(
                 "s.{f} = match val.as_str() {{\n            \"on\" => Some(OnOff::On),\n            \"off\" => Some(OnOff::Off),\n            other => {{\n                warnings.push(format!(\"spira.{f}: not on/off: {{other:?}}\"));\n                None\n            }}\n        }}"
             ),
