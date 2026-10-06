@@ -314,6 +314,7 @@ QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
 [ "$QUEUE_AFTER" = "$QUEUE_NEW" ] \
     && ok  "a queue-mode repo's checkout is advanced to origin/main by the landing pass" \
     || bad "queue-mode refresh" "checkout at $(git -C "$QREPO" rev-parse --short HEAD), expected $(printf '%.7s' "$QUEUE_NEW")"
+printf '%s\n' "$q_out" > /tmp/skew-qout-debug-g5b.txt 2>/dev/null || true
 want "and the pass reports the refresh" "skew: refreshed to" "$q_out"
 
 # ===========================================================================
