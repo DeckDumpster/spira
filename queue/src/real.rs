@@ -952,7 +952,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         d
     }
 
-    /// Every fixture `spira.toml` that feeds a `lib.context(...)` call declares these
+    /// Every fixture config file that feeds a `lib.context(...)` call declares these
     /// five, with the SAME values, even when the test at hand only cares about a
     /// different key. Reason: `spira_config::process::cfg` (what `RealLib::context()`
     /// reads these five through) caches its resolution once per process in a `OnceLock`
@@ -974,7 +974,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     ];
 
     /// Declares `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given), plus
-    /// [`PROCESS_CFG_DECLARE`], through a fixture `spira.toml` for the duration of `f` —
+    /// [`PROCESS_CFG_DECLARE`], through a fixture config file for the duration of `f` —
     /// the real-registry counterpart of `stub_home`'s bash fakes, for the family-U/W
     /// fields only `spira_config::repos` resolves now. `registry_env` strips any
     /// inherited copy of these two REGISTERED keys and re-resolves them from `$SPIRA_TOML`

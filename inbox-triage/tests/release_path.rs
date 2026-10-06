@@ -65,7 +65,7 @@ fn build_bin(package: &str, bin: &str) -> PathBuf {
 /// `SPIRA_CONCIERGE_INBOX`/`SPIRA_CONCIERGE_INBOX_DEDUP` through
 /// `spira_config::process::cfg` (per Ryan 2026-10-05: one source of config) — a plain
 /// `$SPIRA_TOML` file parse, not the legacy `spira.conf`/`conf.sh` seam — so the fixture
-/// needs a real `spira.toml` declaring every registered key, with `SPIRA_CONCIERGE_INBOX`
+/// needs a real config file declaring every registered key, with `SPIRA_CONCIERGE_INBOX`
 /// pinned at the path this test watches for.
 fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let workspace = workspace_root();

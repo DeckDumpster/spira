@@ -35,7 +35,7 @@ fn main() {
     };
     let root = PathBuf::from(root);
     let home = home.unwrap_or_else(default_home);
-    // ONE SOURCE: spira.toml via spira_config::process::cfg_parse — no env fallback, no
+    // ONE SOURCE: the config file via spira_config::process::cfg_parse — no env fallback, no
     // literal default (per Ryan 2026-10-05: one source of config).
     let batch_tail_lines = match spira_config::process::cfg_parse::<usize>("SPIRA_BATCH_TAIL_LINES") {
         Ok(v) => v,

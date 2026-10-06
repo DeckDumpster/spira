@@ -49,7 +49,7 @@ git -C "$REPO" config user.name "test"
 # fallback to rely on) — the map row must name it explicitly, so this reads the checkout's
 # actual initial branch name rather than assuming "main"/"master".
 BR="$(git -C "$REPO" symbolic-ref --short HEAD)"
-SKEWMAP="$TMP/repo-map"
+SKEWMAP="$TMP/repomap"
 printf 'fixture | %s | push | %s | | true | self\n' "$REPO" "$BR" > "$SKEWMAP"
 mkdir -p "$REPO/spira"
 printf '# boundary\n'        > "$REPO/spira/boundary"

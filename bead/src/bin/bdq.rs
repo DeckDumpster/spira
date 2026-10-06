@@ -320,7 +320,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let t0 = trace_file.as_ref().map(|_| date_now_utc_nanos());
 
     // SPIRA_BD is registered but carries no conf.d default ("resolves empty unless set via
-    // environment or spira.toml") — the real spira.toml always sets it explicitly, so an
+    // environment or the config file") — the real config file always sets it explicitly, so an
     // empty resolution here is treated the same as a resolution failure, not a literal
     // "bd" fallback.
     let bd_bin = match spira_config::process::cfg("SPIRA_BD") {

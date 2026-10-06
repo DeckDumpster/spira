@@ -76,8 +76,8 @@ mkdir -p "$TMP/run"
 # below saw "base branch ... could not be resolved" regardless of which branch was actually
 # checked out. Naming this fixture's own row (base origin/main, which it really has) keeps it
 # out from under the production row's default.
-printf '%s | %s | push | origin/main | |\n' "fixture" "$REPO" > "$TMP/repo-map"
-tl_config SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO="fixture" SPIRA_DB="$TMP/none.db" SPIRA_RUN="$TMP/run"
+printf '%s | %s | push | origin/main | |\n' "fixture" "$REPO" > "$TMP/repomap"
+tl_config SPIRA_REPO_MAP="$TMP/repomap" SPIRA_HOME_REPO="fixture" SPIRA_DB="$TMP/none.db" SPIRA_RUN="$TMP/run"
 
 # run_guard <email> <repo> -> exit code of branch-guard.sh staged
 run_guard() {

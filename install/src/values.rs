@@ -152,7 +152,7 @@ mod tests {
             watchtower_start_timeout_s: "360".into(),
             path_tail: "".into(),
             lc_password_file: "/h/lc.credential".into(),
-            toml: "/h/spira.toml".into(),
+            toml: "/h/cfg.toml".into(),
             sccache_dav_addr: "".into(),
             repo_map: "".into(),
         }

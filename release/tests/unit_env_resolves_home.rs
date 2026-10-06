@@ -132,7 +132,7 @@ struct Fixture {
     root: PathBuf,
     home: PathBuf,
     systemd_run_log: PathBuf,
-    /// A complete `spira.toml` (`spira_config::process::fixture_toml`), for `run_unit` to
+    /// A complete config file (`spira_config::process::fixture_toml`), for `run_unit` to
     /// hand every exec'd binary via `SPIRA_TOML` — none of the rendered unit templates carry
     /// it themselves (it is not a registered key, per Ryan 2026-10-05: one source of
     /// config), and every binary this file execs now refuses outright without it.
@@ -186,7 +186,7 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     // `chamber`/`chamber_overlay` are NOT derived from `$SPIRA_HOME` by `spira_config`'s own
     // resolve() any more — SPIRA_CHAMBER has no procedural step there (unlike
     // SPIRA_RELEASES/SPIRA_RUN/SPIRA_INSTANCE), so it is resolved generically, straight from
-    // whatever `spira.toml` declares. The complete fixture `fixture_toml` writes declares a
+    // whatever the config file declares. The complete fixture `fixture_toml` writes declares a
     // fixed placeholder (`/fixture/home/spira/spira-releases/<sha>/spira/chamber`) that does
     // not exist on disk — without this override, spira-claim/sentinel read THAT path and see
     // "no fayth in the chamber" for every real fayth, never this fixture's own `root/spira/

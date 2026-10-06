@@ -67,9 +67,9 @@ impl Fx {
                 ("SPIRA_RUN", &p.join("run").display().to_string()),
                 ("SPIRA_DB", &p.join("db").display().to_string()),
                 ("SPIRA_BD", "bd"),
-                // An empty repo-map, DECLARED (the environment's copy is never read): no row
+                // An empty repository map, DECLARED (the environment's copy is never read): no row
                 // names this fixture repo, so landref falls to its own current branch.
-                ("SPIRA_REPO_MAP", &p.join("repo-map.txt").display().to_string()),
+                ("SPIRA_REPO_MAP", &p.join("map.txt").display().to_string()),
             ],
         );
         // `landing_ref`'s own `spira_config::repos::Registry::from_env` call ALSO reads
@@ -81,14 +81,14 @@ impl Fx {
         // `Registry::from_env`'s own "no map file -> read $SPIRA_TOML's [repo.*] tables"
         // fallback, that row would be the COMPLETE fixture's `[repo.spira]` (`base =
         // "local/main"`) — a row that means nothing for THIS fixture repo and names a ref
-        // it does not have. A real (if empty) repo-map FILE here short-circuits that
+        // it does not have. A real (if empty) repository map FILE here short-circuits that
         // fallback entirely: `Registry::from_env` reads a real `SPIRA_REPO_MAP` before
         // ever considering `$SPIRA_TOML`'s tables, and an empty map has no row for this
         // repo under any name, so `landref` correctly falls through to the repo's own
         // current branch (rung 4) — exactly what these "repo without local/main" tests
         // mean to exercise.
-        let repo_map = p.join("repo-map.txt");
-        std::fs::write(&repo_map, "").unwrap();
+        let map_file = p.join("map.txt");
+        std::fs::write(&map_file, "").unwrap();
         let o = Command::new(env!("CARGO_BIN_EXE_cert-sweep"))
             .args(args)
             .env_clear()

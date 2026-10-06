@@ -20,7 +20,7 @@
 //   SPIRA_SNAP_STALE_S    stale threshold in seconds (same key as watchtower/doctor; the
 //                         registry's own default is 60)
 //
-// Optional environment (not config — set by systemd itself, never by spira.toml):
+// Optional environment (not config — set by systemd itself, never by the config file):
 //   WATCHDOG_USEC         0     set by systemd when WatchdogSec= is configured
 //   NOTIFY_SOCKET               set by systemd for sd_notify delivery
 use std::env;
@@ -150,7 +150,7 @@ fn main() -> ExitCode {
     };
 
     // WATCHDOG_USEC is not config — systemd sets it directly on the unit's environment
-    // when WatchdogSec= is configured; it is never declared in spira.toml.
+    // when WatchdogSec= is configured; it is never declared in the config file.
     let watchdog_usec: u64 = env::var("WATCHDOG_USEC")
         .ok()
         .and_then(|s| s.parse().ok())

@@ -20,7 +20,7 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 # SPIRA_MAIL/SPIRA_ID_PREFIX/SPIRA_DB are all registered and mail/src/env.rs's Env::load()
 # resolves every one of them via cfg() (SPIRA_TOML), never the environment — corrected
 # round 6: mail/src/env.rs's OWN header comment says so explicitly ("every REGISTERED key
-# comes from spira.toml... never the environment"), contradicting earlier rounds' belief
+# comes from the config file... never the environment"), contradicting earlier rounds' belief
 # that mail read these raw. Without this, mail_root resolved to the complete fixture's
 # bogus "/fixture/home/spira/run/mail" default, and every done/read/sendmail call below
 # operated on a directory this suite never touched (silent "no such mailbox"/permission

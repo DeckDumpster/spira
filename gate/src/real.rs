@@ -1001,7 +1001,7 @@ mod tests {
     /// `spira_config::process::cfg`, so this is the one test in this binary allowed to drive
     /// it live (rule: only a test that truly exercises the top-level read may set `SPIRA_TOML`
     /// — `cfg`'s resolution is cached once per *process*, in a `OnceLock`, so a second test
-    /// pinning a DIFFERENT `spira.toml` in the same test binary would just see this one's
+    /// pinning a DIFFERENT config file in the same test binary would just see this one's
     /// answer, not its own; the old "missing registry" sibling test that used to live here
     /// is gone for exactly that reason, not because the refusal it checked stopped existing —
     /// that refusal is `spira_config`'s own, and `spira_config`'s own tests are where it

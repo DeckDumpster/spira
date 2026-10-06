@@ -357,7 +357,7 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
     // fixture (per Ryan 2026-10-05: one source of config) — not a hand-picked partial map.
     // `Conf`'s accessors for registered keys no longer carry a Rust-side default, so a key
     // this suite never mentions must still resolve to something real, the same as
-    // production's own spira.toml always does. This suite's own long-standing fixture
+    // production's own config file always does. This suite's own long-standing fixture
     // values are then laid on top, then `extra`, exactly as before.
     let mut vars: BTreeMap<String, String> = complete_vars();
     for (k, v) in [

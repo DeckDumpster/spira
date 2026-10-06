@@ -673,7 +673,7 @@ fn cmd_fence(rest: &[String]) -> (i32, String) {
         return usage("fence", "want <class>");
     };
     let var = format!("SPIRA_CZAR_STAGE_{}", class.to_ascii_uppercase().replace('-', "_"));
-    // One source of config (per Ryan 2026-10-05): the declared spira.toml value, never this
+    // One source of config (per Ryan 2026-10-05): the declared config-file value, never this
     // process's own environment.
     let stage = spira_config::process::cfg(&var).ok();
     fence_answer(class, stage.as_deref())

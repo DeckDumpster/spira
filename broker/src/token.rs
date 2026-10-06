@@ -2,9 +2,9 @@
 //
 // Credentials are read from the registered keys SPIRA_GH_APP_ID,
 // SPIRA_GH_APP_INSTALLATION_ID, SPIRA_GH_APP_KEY (path to RSA private key PEM) —
-// spira.toml ONLY, no second source (per Ryan 2026-10-05, one source of config; the
+// the config file ONLY, no second source (per Ryan 2026-10-05, one source of config; the
 // Concierge decision retiring the ~/.config/spira/github-app.env fallback this file
-// used to carry). A value in spira.toml may itself be a path to a credential file
+// used to carry). A value in the config file may itself be a path to a credential file
 // (SPIRA_GH_APP_KEY, the PEM path) — that is a value pointing at a file, not a second
 // place this code looks for the value itself.
 //
@@ -34,7 +34,7 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-// Concierge decision: App credentials come ONLY from spira.toml now — no second,
+// Concierge decision: App credentials come ONLY from the config file now — no second,
 // file-based source. (This used to fall through to a hand-parsed
 // ~/.config/spira/github-app.env, named by the now-unused SPIRA_GH_APP_CONFIG, when
 // the triplet was unset; that fallback is retired, not merely unreached.)
@@ -206,7 +206,7 @@ fn mint_fresh(creds: &AppCreds) -> Result<(String, u64), String> {
 /// Returns Err when App credentials are not configured.
 pub fn mint() -> Result<String, String> {
     let creds = load_creds()?
-        .ok_or_else(|| "no App credentials (declare SPIRA_GH_APP_ID/INSTALLATION_ID/KEY in spira.toml)".to_string())?;
+        .ok_or_else(|| "no App credentials (declare SPIRA_GH_APP_ID/INSTALLATION_ID/KEY in the config file)".to_string())?;
 
     if let Some(cached) = read_cache() {
         return Ok(cached);

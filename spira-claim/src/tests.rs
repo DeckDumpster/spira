@@ -55,7 +55,7 @@ fn tmp_exe(content: &str) -> Tmp {
 /// spira dir") — a custom chamber fixture ([`chamber_home`]) gets one by symlink.
 const REAL_SPIRA_HOME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira");
 
-/// A complete, throwaway `spira.toml` (every registered key declared;
+/// A complete, throwaway config file (every registered key declared;
 /// `spira_config::process::fixture_toml`) with `declare`'s overrides — kept alive as long
 /// as the caller holds the returned `Tmp`.
 fn toml_fixture(declare: &[(&str, &str)]) -> Tmp {
@@ -67,14 +67,14 @@ fn toml_fixture(declare: &[(&str, &str)]) -> Tmp {
 /// `dispatch` now reads every registered key through `spira_config::process::cfg`, which
 /// caches per PROCESS (per Ryan 2026-10-05: one source of config) — so a unit test cannot
 /// vary it in-process. This execs the real `spira-claim` binary instead: a fresh process
-/// per call, with a fresh throwaway `spira.toml` (`toml_fixture`, no overrides) and
+/// per call, with a fresh throwaway config file (`toml_fixture`, no overrides) and
 /// `SPIRA_HOME` pointed at this crate's own tree.
 fn run(args: &[&str], stdin: &str) -> Outcome {
     run_cfg(args, stdin, &[], &[])
 }
 
 /// [`run`], plus `toml_declare` (registered-key overrides for the subprocess's own
-/// throwaway `spira.toml` — `SPIRA_BD`, labels, `SPIRA_CLAIM_RETRIES`, … everything
+/// throwaway config file — `SPIRA_BD`, labels, `SPIRA_CLAIM_RETRIES`, … everything
 /// `spira/conf.d` registers; raw env no longer reaches any of these) and `extra_env`
 /// (anything else the subprocess should see: `SPIRA_HOME` for a fayth chamber, `PATH`, the
 /// few still-unregistered knobs). `SPIRA_HOME` defaults to [`REAL_SPIRA_HOME`] unless
@@ -760,7 +760,7 @@ fn fayth_exclude_cli_refuses_rather_than_default_when_config_does_not_resolve() 
     // conf.sh's derivation did, and a suite that sourced lib.sh alone (most of them) never
     // ran conf.sh at all, so "nothing configured" had to mean "no exclusions", never a
     // silent, uninvited one. Per Ryan 2026-10-05 (one source of config), "nothing
-    // configured" is no longer expressible as a quiet empty default — `spira.toml` not
+    // configured" is no longer expressible as a quiet empty default — the config file not
     // resolving at all is now a refusal that names the problem, not a default of any kind.
     // Concierge decision (2026-10-05, sp-hh599): a config-load failure is an ERROR (rc 1,
     // `Outcome::error`), never `CANNOT_TELL` (2) — callers read that 2 as "no fayth /
@@ -854,7 +854,7 @@ fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens
     let bd = sh("echo 'bd must not be called — a widened query must never reach the store' >&2; exit 1");
     // The references under test resolve EMPTY — not undeclared: declared empty, which
     // `fayth_label_overlay`'s own `resolve_for_process` accepts (per Ryan 2026-10-05, a
-    // key's declared "" is itself an answer), so this `spira.toml` still resolves overall
+    // key's declared "" is itself an answer), so this config file still resolves overall
     // (`store::load_config` needs ask_label/scope_label too) and the refusal comes from
     // `fayth_predicate`'s bare-reference check alone.
     let o = run_cfg(

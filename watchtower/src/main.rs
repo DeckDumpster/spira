@@ -480,7 +480,7 @@ mod tests {
 
     /// `getenv`/`getenv_i64` are for a key `spira/conf.d` does not register (a registered
     /// one reads through `reg`/`reg_i64` instead). `spira_config::resolve()` now refuses
-    /// any key `spira.toml` does not explicitly declare — including a fake conf.d entry's
+    /// any key the config file does not explicitly declare — including a fake conf.d entry's
     /// own `DEFAULT` block, which is documentation only; nothing evaluates it anymore (per
     /// Ryan 2026-10-05: no config is a refusal, never a computed default). So there is no
     /// registry fallback left for an unregistered key at all: `resolved_config()` yields

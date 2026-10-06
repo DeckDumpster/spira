@@ -576,7 +576,7 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_SLOTS_LIVE", live.clone());
 
     let pool: i64 = io::max_aeons().parse().ok().unwrap_or(0);
-    // SPIRA_MAX_LIVE_AEONS now carries a real, always-declared value (spira.toml); the
+    // SPIRA_MAX_LIVE_AEONS now carries a real, always-declared value (the config file); the
     // pool+lanes computation this ceiling used to fall back to when the key resolved empty
     // is gone with that default.
     let ceiling = cfg.max_live_aeons;

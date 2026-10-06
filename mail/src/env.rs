@@ -43,7 +43,7 @@ fn var_u64(k: &str, default: u64) -> u64 {
 
 impl Env {
     /// Declared config, the one source (per Ryan 2026-10-05): every REGISTERED key comes from
-    /// the spira.toml `$SPIRA_TOML` names, through spira_config — never the environment, never
+    /// the config file `$SPIRA_TOML` names, through spira_config — never the environment, never
     /// a built-in default. A key that does not resolve refuses, named. Only per-call facts
     /// (`--from`-style overrides, the bead in hand, `*_CONSIDERED` acknowledgements) and the two
     /// knobs not yet registered are read from the environment.
