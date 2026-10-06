@@ -275,9 +275,13 @@ make_bd_stub ok
 # SPIRA_PATH/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_RUN/SPIRA_PROD/
 # SPIRA_COCKPIT/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+# SPIRA_MAIL: the fixture's own default (/fixture/home/...) isn't writable here — install's
+# units phase ensures every reader mailbox (sp-xp0u2), and a non-writable mail root turns
+# that into "mail: ensure: Permission denied" instead of this suite's own readiness/retry
+# output (one source of config, per Ryan 2026-10-05).
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
     SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" \
-    SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd"
+    SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd" SPIRA_MAIL="$TMP/mail"
 _rendered="$(env -i \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
@@ -378,7 +382,6 @@ _out2="$(mktemp)"
 run_install "$_out2" "SPIRA_INSTALL_DOLT_READY_WAIT=10"
 _rc2=$?
 stop_listener
-[ "$_rc2" = 0 ] || cat "$_out2" >&2
 
 is0 "readiness-wait: install exits 0 despite a slow-to-ready server" "$_rc2"
 _calls2="$(cat "$TMP/dolt-ready-calls" 2>/dev/null || echo 0)"
