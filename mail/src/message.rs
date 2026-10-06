@@ -6,8 +6,12 @@
 
 /// Splits at the first blank line. `(headers, body)`; `body` is `""` if there is none.
 pub fn split_headers_body(text: &str) -> (&str, &str) {
-    match text.find("\n\n") {
-        Some(idx) => (&text[..idx], &text[idx + 2..]),
+    // RFC 5322 mail is CRLF-terminated (aerc sends it that way); the blank line ending the
+    // headers is then "\r\n\r\n". Whichever separator comes first wins.
+    let lf = text.find("\n\n").map(|i| (i, 2));
+    let crlf = text.find("\r\n\r\n").map(|i| (i, 4));
+    match [lf, crlf].into_iter().flatten().min_by_key(|(i, _)| *i) {
+        Some((idx, n)) => (&text[..idx], &text[idx + n..]),
         None => (text, ""),
     }
 }
@@ -44,6 +48,14 @@ pub fn header_ci_before_blank(text: &str, name_lower: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_headers_body_handles_crlf_mail() {
+        let raw = "From: A\r\nSubject: S\r\n\r\nAnswer line.\r\n";
+        let (h, b) = super::split_headers_body(raw);
+        assert_eq!(h, "From: A\r\nSubject: S");
+        assert_eq!(b.trim(), "Answer line.");
+    }
+
     use super::*;
 
     const MSG: &str = "From: A <a@a>\nSubject: Hello\nX-Spira-Bead: sp-a\n\nBody text here.\nSubject: not a header, just text\n";
