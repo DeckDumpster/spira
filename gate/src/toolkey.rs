@@ -148,10 +148,14 @@ pub fn rerun_paths(text: &str) -> Vec<String> {
 
 /// `abs` relative to `tree`, `..` and `.` resolved lexically; None when it lies outside the
 /// tree (a registry crate — `Cargo.lock` covers it), or under its `target/` (build output,
-/// derived from the inputs that are named).
+/// derived from the inputs that are named), or is not absolute (a build script's relative
+/// `rerun-if-changed` is relative to its own package: inside a closure package, or a
+/// registry crate's).
 pub fn relative(tree: &Path, abs: &str) -> Option<String> {
     let p = Path::new(abs);
-    let p = if p.is_absolute() { p.to_path_buf() } else { tree.join(p) };
+    if !p.is_absolute() {
+        return None;
+    }
     let mut parts: Vec<String> = Vec::new();
     for c in p.components() {
         match c {
