@@ -87,6 +87,11 @@ done
 # left $SH with no conf.d/ and no conf-gen.sh, so sourcing conf.sh refused with "conf-gen.sh
 # failed to regenerate conf.d.*.generated.sh" the moment review.sh tried to source it.
 ln -s "$HERE/conf.sh" "$SH/conf.sh"
+# SPIRA_HOME=$SH is handed to the binaries via env -i below; the repo registry's
+# config resolution reads conf.d straight off SPIRA_HOME (not through conf.sh's
+# readlink-to-the-real-file trick), so $SH needs its own registry symlink too
+# (pattern 1, per Ryan 2026-10-05).
+ln -s "$HERE/conf.d" "$SH/conf.d"
 chmod +x "$SH/review.sh" "$SH/release.sh"
 
 REPO_MAP="$TMP/repo-map"
