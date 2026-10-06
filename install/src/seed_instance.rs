@@ -60,7 +60,7 @@ fn fayth_paths(home: &Path) -> Result<Vec<PathBuf>, String> {
 /// stderr).
 pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path) -> Option<String> {
     // No map is discovered or read from the environment (per Ryan 2026-10-05): the repo map is
-    // declared in spira.toml itself (spira.repo_map), which this convert does not invent.
+    // declared in the config file itself (spira.repo_map), which this convert does not invent.
     let rm: Option<PathBuf> = None;
     let fy = match fayth_paths(home) {
         Ok(f) => f,

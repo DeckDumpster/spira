@@ -110,12 +110,12 @@ run_skew() {
     # literally — the compiled `skew` binary resolves fresh from SPIRA_TOML, never from this
     # process's environment — and dropped from what reaches env -i.
     # SPIRA_REPO_MAP/SPIRA_HOME_REPO undeclared resolve to the complete fixture's own
-    # home_repo="spira" + a nonexistent repo-map — skew looks "spira" up there to find a
+    # home_repo="spira" + a nonexistent repository map — skew looks "spira" up there to find a
     # git checkout, and finds nothing (sfail round 3, pattern 7).
-    printf 'spira | %s | push | origin/main | |\n' "$REPO" > "$TMP/repo-map-main"
+    printf 'spira | %s | push | origin/main | |\n' "$REPO" > "$TMP/repomap-main"
     tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" SPIRA_HOME_REPO=spira \
-        SPIRA_REPO_MAP="$TMP/repo-map-main"
+        SPIRA_REPO_MAP="$TMP/repomap-main"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in
@@ -302,11 +302,11 @@ run_skew_artifact() {
     # before calling this, so it must read $RELEASES — not a fresh copy of the bare template,
     # which has no `current` and made every artifact case exit 3 ("no release is activated").
     # sp-fghps made the same change to run_skew and missed this one.
-printf 'spira | %s | push | origin/main | |\n' "$ARTIFACT_REPO" > "$TMP/repo-map-artifact"
+printf 'spira | %s | push | origin/main | |\n' "$ARTIFACT_REPO" > "$TMP/repomap-artifact"
     tl_config SPIRA_GH="$MOCK_BIN/gh" SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" SPIRA_GH_INTAKE_REPO="" \
         SPIRA_RELEASE_REPO="" SPIRA_HOME_REPO=spira \
-        SPIRA_REPO_MAP="$TMP/repo-map-artifact"
+        SPIRA_REPO_MAP="$TMP/repomap-artifact"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in
@@ -453,7 +453,7 @@ nowant "artifact-clean: no NOT-LATEST"     "NOT-LATEST" "$art_clean_out"
 # ---------------------------------------------------------------------------
 ORIGIN_CK="$TMP/origin-ck"
 CLONE_CK="$TMP/clone-ck"
-# -b main: the repo-map row below declares base=origin/main literally (pattern 9 — nothing
+# -b main: the repository-map row below declares base=origin/main literally (pattern 9 — nothing
 # derives a repo's base any more, every landref caller needs a declared row); landref's
 # rung 1 (the declared base) verify_ref()-fails and returns None outright on a mismatch
 # rather than falling through to rung 2, so the host's init.defaultBranch must not be able
@@ -479,10 +479,10 @@ mkdir -p "$RELEASES_CK"   # no current symlink — checkout mode
 
 run_skew_checkout() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    printf 'spira | %s | push | origin/main | |\n' "$CLONE_CK" > "$TMP/repo-map-ck"
+    printf 'spira | %s | push | origin/main | |\n' "$CLONE_CK" > "$TMP/repomap-ck"
     tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES_CK" SPIRA_HOME_REPO=spira \
-        SPIRA_REPO_MAP="$TMP/repo-map-ck"
+        SPIRA_REPO_MAP="$TMP/repomap-ck"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in

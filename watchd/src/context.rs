@@ -288,10 +288,10 @@ mod tests {
         let d = testkit::TempDir::new("watchd-context");
         // The seam above still sources `conf.sh` — but only `SPIRA_HOME`/`SPIRA_REPO`/
         // `SPIRA_CONF_FILE` come from it now; `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_WATCHERS` are
-        // `CONFIG_VARS` (registered), so they come from `spira.toml` below instead. This is
+        // `CONFIG_VARS` (registered), so they come from the config file below instead. This is
         // the one test in this binary allowed to drive `spira_config::process::cfg` live
         // (its resolution is cached once per *process*, in a `OnceLock` — a second such test
-        // pinning a different `spira.toml` would just see this one's answer).
+        // pinning a different config file would just see this one's answer).
         std::fs::write(d.join("conf.sh"), "true\n").unwrap();
         // SPIRA_INSTANCE is also resolved through `cfg()` now (no `resolve_instance`
         // env-override rung survives — per Ryan 2026-10-05, no `resolve_*` helper reads a

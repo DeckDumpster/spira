@@ -70,7 +70,7 @@ impl Fixture {
         let tmp = testkit::TempDir::new(name);
         std::fs::create_dir_all(tmp.join("home")).unwrap();
         std::fs::create_dir_all(tmp.join("run")).unwrap();
-        // SPIRA_TOML, not the old XDG `$HOME/.config/spira/spira.toml` auto-discovery (per
+        // SPIRA_TOML, not the old XDG `$HOME/.config/spira/` default config file auto-discovery (per
         // Ryan 2026-10-05: one source of config — the launcher sets it explicitly, never
         // guessed). A complete fixture (every registered key declared), not a hand-rolled
         // partial one, with SPIRA_RUN pinned into this fixture's own tmp dir — SPIRA_INSTANCE

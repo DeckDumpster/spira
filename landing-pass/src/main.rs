@@ -501,7 +501,7 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     // law-a-binary-resolves-the-config-it-reads: `run_dir` must get a real answer from the
-    // one source of config, not a crash, whenever $SPIRA_TOML names a real spira.toml — the
+    // one source of config, not a crash, whenever $SPIRA_TOML names a real config file — the
     // production defect this originally guarded against was a landing-pass call silently
     // doing nothing when its process environment lacked $SPIRA_RUN. Per Ryan 2026-10-05
     // ("one source of config"), a bare environment with no $SPIRA_TOML is now a refusal by

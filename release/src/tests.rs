@@ -142,7 +142,7 @@ impl World {
         let sb = Sandbox::new();
         let mut env = Env::new();
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
-        env.insert("SPIRA_TOML".into(), "/host/spira.toml".into());
+        env.insert("SPIRA_TOML".into(), "/host/cfg.toml".into());
         let reg = Registered { instance: "prod".into(), ..reg };
         let flags = Flags { releases: Some(sb.p().join("rel")), run: Some(sb.p().join("run")), keep: Some(2) };
         let cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
@@ -773,7 +773,7 @@ fn every_shipped_service_renders_the_configured_path_tail_after_the_system_dirs(
 fn every_shipped_service_renders_against_real_host_values() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
-    env.insert("SPIRA_TOML".into(), "/host/spira.toml".into());
+    env.insert("SPIRA_TOML".into(), "/host/cfg.toml".into());
     env.insert("DOLT".into(), "/host/DOLT".into());
     let reg = Registered {
         releases: "/e".into(),
@@ -954,7 +954,7 @@ fn activate_is_unaffected_by_a_gated_template_that_was_never_installed() {
 
 /// THE SECOND HALF of sp-xtdqi-2, updated for the one-source-of-config rule (per Ryan
 /// 2026-10-05): `SPIRA_SCCACHE_DAV_ADDR` no longer has an environment-bootstrap path of its
-/// own — once `spira.toml` declares it, `host_values` carries it through exactly like every
+/// own — once the config file declares it, `host_values` carries it through exactly like every
 /// other registered key.
 #[test]
 fn activate_renders_the_address_once_the_gate_key_is_configured() {

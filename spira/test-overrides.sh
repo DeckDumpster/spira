@@ -46,7 +46,7 @@ EOF
 # SPIRA_REPO_MAP is registered and resolves ambiently to the complete fixture's own
 # nonexistent path otherwise (sfail round 3, pattern 7) — skew then cannot tell which
 # ref this plain push-mode repo lands on at all.
-RMAP="$TMP/repo-map"
+RMAP="$TMP/repomap"
 printf 'fixture | %s | push | origin/main | | |\n' "$REPO" > "$RMAP"
 
 run_skew_cmd() {

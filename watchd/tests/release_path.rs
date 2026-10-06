@@ -58,7 +58,7 @@ fn build_bin(package: &str, bin: &str) -> PathBuf {
 /// `(release_root, legacy_conf_path, spira_toml_path)`. `watchd::context::load` now reads
 /// `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_WATCHERS`/`SPIRA_ID_PREFIX` (and the rest of its
 /// `CONFIG_VARS`) through `spira_config::process::cfg` (per Ryan 2026-10-05: one source of
-/// config), not off this legacy `spira.conf` — so the fixture needs a real `spira.toml`
+/// config), not off this legacy `spira.conf` — so the fixture needs a real config file
 /// too, declaring every registered key `fixture_toml` knows about, with these four pinned.
 fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let workspace = workspace_root();

@@ -193,8 +193,8 @@ pub fn check_hotfix(w: &dyn World) -> Vec<Line> {
 const TOML_NAME: &str = concat!("spira", ".", "toml");
 
 /// Doctor's job here, post-cutover (per Ryan 2026-10-05: one source of config), is no
-/// longer to audit `conf.sh`'s own captured environment for a legacy `spira.conf` vs.
-/// `spira.toml` split — that split is retired, and `SPIRA_CONF_FILE`/`SPIRA_TOML_FILE`
+/// longer to audit `conf.sh`'s own captured environment for a legacy two-file config
+/// split — that split is retired, and `SPIRA_CONF_FILE`/`SPIRA_TOML_FILE`
 /// (the old discovery flags this check used to read via `World::env`) name neither of the
 /// two things that can actually be wrong now. The ONE config is `$SPIRA_TOML`; this checks
 /// exactly what can go wrong with it, in order, stopping at the first failure since each

@@ -4,7 +4,7 @@
 //! holds `world.halted`.
 //!
 //! `SPIRA_TOML` IS pinned explicitly now: the "ambient tier" this module originally
-//! exercised (`$HOME/.config/spira/spira.toml`, no `SPIRA_TOML` set at all) is itself
+//! exercised (`$HOME/.config/spira/` default config file, no `SPIRA_TOML` set at all) is itself
 //! retired (per Ryan 2026-10-05: one source of config — `spira_config::resolve::
 //! resolve_process` requires `$SPIRA_TOML` unconditionally now, with no ambient fallback;
 //! `spira-config locate`'s own XDG search is a different, narrower door this binary does
@@ -82,7 +82,7 @@ fn world_status_refuses_named_when_the_only_config_is_malformed() {
     let tmp = testkit::TempDir::new("ivfu3-world-status-bad-toml");
     let home = tmp.join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let toml = tmp.join("spira.toml");
+    let toml = tmp.join("bad-config.toml");
     std::fs::write(&toml, "this is not [valid toml").unwrap();
 
     let out = run_world_status(&home, &toml);

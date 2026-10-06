@@ -31,7 +31,7 @@ fn build_intent(args: &Args, fayth: &str, aeon: &str, now: u64, id: &str) -> ser
 }
 
 pub fn run(args: Args) -> Result<(), String> {
-    // SPIRA_RUN is a registered key (spira/conf.d) — the one source is spira.toml.
+    // SPIRA_RUN is a registered key (spira/conf.d) — the one source is the config file.
     let run_dir = spira_config::process::cfg("SPIRA_RUN")
         .map_err(|e| format!("broker submit: {e}"))?;
     // FAYTH_NAME and SPIRA_AEON are not registered config keys (spira/conf.d has no

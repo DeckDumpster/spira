@@ -30,8 +30,8 @@ fn main() {
         argv.remove(0);
     }
     let home = home.unwrap_or_else(default_home);
-    // ONE SOURCE: spira.toml via spira_config::process::cfg — no env fallback, no literal
-    // default (per Ryan 2026-10-05: one source of config). A key spira.toml cannot resolve
+    // ONE SOURCE: the config file via spira_config::process::cfg — no env fallback, no literal
+    // default (per Ryan 2026-10-05: one source of config). A key the config file cannot resolve
     // is a refusal naming it, not a guessed value.
     let db = match spira_config::process::cfg("SPIRA_DB") {
         Ok(v) => Some(v).filter(|v| !v.is_empty()),

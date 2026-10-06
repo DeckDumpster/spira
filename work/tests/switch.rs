@@ -31,7 +31,7 @@ fn machine(sock: &PathBuf) -> Arc<AtomicBool> {
 fn work(sock: &Path, home: &Path, verb: &str) -> std::process::Output {
     // SPIRA_LC_SOCKET is a registered config key (spira/conf.d), resolved only through
     // $SPIRA_TOML now — this is the one test that exercises that top-level read, so it
-    // writes a complete fixture spira.toml rather than setting the key directly. An empty
+    // writes a complete fixture config file rather than setting the key directly. An empty
     // conf.d is enough: resolving SPIRA_LC_SOCKET itself needs no registry file, only a
     // conf.d directory that exists (spira-config's own `fixture_home_repo` test helper).
     std::fs::create_dir_all(home.join("conf.d")).unwrap();

@@ -165,8 +165,8 @@ mod tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // One-source-of-config (per Ryan 2026-10-05): there is no more "registry default"
-    // to assert — a key's value comes only from spira.toml. This proves a value this
-    // process's own spira.toml DECLARES reaches the real environment via
+    // to assert — a key's value comes only from the config file. This proves a value this
+    // process's own config file DECLARES reaches the real environment via
     // merge_resolved_env(), and that a NEVER_EXPORTED key still never does.
     #[test]
     fn merge_resolved_env_reaches_a_declared_value_and_never_exports_the_forbidden_set() {
@@ -209,8 +209,8 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
 
-        result.expect("merge_resolved_env resolves given a complete spira.toml and a real registry");
-        assert_eq!(got_bd, Some("bd-fixture".to_string()), "a declared spira.toml value must reach the real environment");
+        result.expect("merge_resolved_env resolves given a complete config file and a real registry");
+        assert_eq!(got_bd, Some("bd-fixture".to_string()), "a declared config value must reach the real environment");
         assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
     }
 }

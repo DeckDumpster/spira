@@ -173,7 +173,7 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
 fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
     let dir = spira_config::process::cfg("SPIRA_RUN")?;
     if dir.is_empty() {
-        return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
+        return Err("spira.run is empty in the config file — refusing to guess a run directory".to_string());
     }
     let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
     let workspaces = spira_config::process::cfg("SPIRA_WORKSPACES")?;

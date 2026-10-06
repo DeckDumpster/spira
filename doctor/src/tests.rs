@@ -334,7 +334,7 @@ fn config_files_fails_when_a_named_layer_is_missing() {
 #[test]
 fn config_files_fails_when_the_document_does_not_validate() {
     let d = testkit::TempDir::new("doctor-config-files-malformed");
-    let bad = d.join("spira.toml");
+    let bad = d.join("bad-config.toml");
     std::fs::write(&bad, "this is not [valid toml").unwrap();
     let _env = testkit::env(&[("SPIRA_TOML", bad.to_str())]);
     let f = Fake::default();

@@ -241,7 +241,7 @@ fn schema_name(home: &str, key: &str) -> String {
 /// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
 /// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
 /// chamber/registry PATHS (`chamber_home`/`chamber_dir`/`fayth_names`), never which
-/// `spira.toml` is in force.
+/// config file is in force.
 fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection> {
     let path = cfg_label("SPIRA_REPO_MAP");
     if path.is_empty() {

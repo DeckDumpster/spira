@@ -34,7 +34,7 @@ pub struct Flags {
 /// resolved to a `String` — what [`Config::resolve_with`] (the pure half of resolution) takes
 /// instead of touching `spira_config` itself. Tests build this directly (per Ryan 2026-10-05:
 /// one source of config; pure logic takes config as arguments, never the per-process cache).
-/// An empty field is exactly what `cfg` returns for a key `spira.toml` declares empty on
+/// An empty field is exactly what `cfg` returns for a key the config file declares empty on
 /// purpose (`SPIRA_DB`, `SPIRA_ALERT_GLOB`'s own siblings) — not a missing value.
 #[derive(Debug, Clone, Default)]
 pub struct Registered {
@@ -148,7 +148,7 @@ impl Config {
             .releases
             .clone()
             .or_else(|| nonempty(&reg.releases).map(PathBuf::from))
-            .ok_or("no releases directory: pass --releases, or set spira.releases (SPIRA_RELEASES) in spira.toml")?;
+            .ok_or("no releases directory: pass --releases, or set spira.releases (SPIRA_RELEASES) in the config file")?;
         let run = flags.run.clone().or_else(|| nonempty(&reg.run).map(PathBuf::from));
         let keep = match flags.keep {
             Some(k) => k,
@@ -189,7 +189,7 @@ impl Config {
         self.run
             .as_ref()
             .map(|r| r.join("release"))
-            .ok_or_else(|| "no run directory: pass --run, or set spira.run (SPIRA_RUN) in spira.toml".to_string())
+            .ok_or_else(|| "no run directory: pass --run, or set spira.run (SPIRA_RUN) in the config file".to_string())
     }
 
     /// A non-registered ambient key (`DOLT`, `PATH` via [`Config::which`], or

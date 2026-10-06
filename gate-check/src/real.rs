@@ -13,7 +13,7 @@ pub struct Real {
     pub db: Option<String>,
     /// `SPIRA_BD`, resolved once at the process's top level (`spira_config::process::cfg`)
     /// and handed down — no literal `"bd"` fallback here; an unset/empty value is
-    /// `spira.toml`'s own answer (see `spira/conf.d/SPIRA_BD`), not this crate's to invent.
+    /// the config file's own answer (see `spira/conf.d/SPIRA_BD`), not this crate's to invent.
     bd: String,
     /// `SPIRA_FLAKY_GH_REPO`, resolved the same way — empty means "no scan" per
     /// `spira/conf.d/SPIRA_FLAKY_GH_REPO`.

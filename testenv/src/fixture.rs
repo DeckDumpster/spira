@@ -93,7 +93,7 @@ fn tail(s: &str, n: usize) -> String {
 pub const IMAGE_PATH: &str =
     "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
-/// Writes the container's spira.toml ([`Fixture::config_toml`]): the complete fixture with
+/// Writes the container's config file ([`Fixture::config_toml`]): the complete fixture with
 /// the installed release (`…/spira-releases/current`) rewritten to the staged one and
 /// `/fixture/home` to this user's `$HOME`, then the batch's own keys set over it. The
 /// container is its own (confined) instance whose workspaces root is the batch run directory,

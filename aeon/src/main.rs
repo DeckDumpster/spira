@@ -187,7 +187,7 @@ fn main() {
         std::process::exit(rc);
     }
     // SPIRA_BD is registered but carries no conf.d default ("resolves empty unless set via
-    // environment or spira.toml") — the real spira.toml always sets it explicitly (per Ryan
+    // environment or the config file") — the real config file always sets it explicitly (per Ryan
     // 2026-10-05: one source of config), so an empty resolution here refuses by name rather
     // than guessing "bd". BD_TIMEOUT/SPIRA_BDQ_CONN_RETRIES/SPIRA_BDJSON_FIXTURE are not
     // registered config keys (spira/conf.d has no entry for any of them).

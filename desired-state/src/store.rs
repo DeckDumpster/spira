@@ -57,9 +57,9 @@ struct FoundDocument {
 /// `spira compose`/`spira apply` and every reader of the materialised composite agree on it.
 ///
 /// `SPIRA_DESIRED_DIR` is a registered key (`spira/conf.d/SPIRA_DESIRED_DIR`) with no
-/// registry default of its own ("resolves empty unless set ... via spira.toml") — read
+/// registry default of its own ("resolves empty unless set ... via the config file") — read
 /// through `spira_config::process::cfg`, never the raw environment (per Ryan 2026-10-05).
-/// A `spira.toml` that cannot be resolved at all is treated the same as the key resolving
+/// A config file that cannot be resolved at all is treated the same as the key resolving
 /// empty: this tool's own XDG fallback, not a second config source.
 pub fn default_dir() -> PathBuf {
     let config_home = std::env::var("XDG_CONFIG_HOME")
