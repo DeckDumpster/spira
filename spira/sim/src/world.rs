@@ -26,6 +26,7 @@ pub trait Steps {
     fn release(&self, repo: &Path, tree: &str, cache: &Path) -> Result<PathBuf, String>;
     fn db_up(&self, world: &Path) -> Result<String, String>;
     fn db_down(&self, fixture: &str) -> Result<(), String>;
+    fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String>;
     fn config_set(&self, release: &Path, file: &Path, key: &str, value: &str) -> Result<(), String>;
 }
 
@@ -125,6 +126,33 @@ impl Steps for ProcessSteps {
         run(Command::new(release.join("bin/spira-config")).args(["set", key, value]).arg(file), CALL_DEADLINE).map(|_| ())
     }
 
+    fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String> {
+        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).map_err(|e| format!("fixture has no server.port: {e}"))?;
+        let toml = config.join("lc.toml");
+        let credential = config.join("lc-credential");
+        std::fs::write(&credential, "").map_err(|e| e.to_string())?;
+        self.config_set(release, &toml, "SPIRA_LC_PASSWORD_FILE", &credential.display().to_string())?;
+        self.config_set(release, &toml, "SPIRA_LC_SOCKET", "")?;
+        let lc = |verb: &str, arg: PathBuf| {
+            run(
+                Command::new(release.join("bin/spira-lc"))
+                    .arg(verb)
+                    .arg(arg)
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                    .env("SPIRA_TOML", &toml)
+                    .env("SPIRA_LC_HOST", "127.0.0.1")
+                    .env("SPIRA_LC_PORT", port.trim())
+                    .env("SPIRA_LC_USER", "root")
+                    .env("SPIRA_LC_ADMIN_USER", "root"),
+                CALL_DEADLINE,
+            )
+            .map(|_| ())
+        };
+        lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
+        lc("admin-migrate", lifecycle.join("migrations"))
+    }
+
     fn db_down(&self, fixture: &str) -> Result<(), String> {
         run(Command::new("testenv").args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
     }
@@ -180,6 +208,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, steps: &dyn Steps) -> Result<(), S
     let config = dir.join("config");
     std::fs::create_dir_all(&run_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config).map_err(|e| e.to_string())?;
+    steps.lifecycle(&release, &fixture, &work.join("lifecycle"), &config)?;
     let runner = config.join("suite-runner");
     std::fs::write(&runner, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
     set_exec(&runner)?;

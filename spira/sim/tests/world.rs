@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Fake {
     ups: AtomicUsize,
     downs: AtomicUsize,
+    lifecycles: AtomicUsize,
 }
 
 impl Steps for Fake {
@@ -19,6 +20,11 @@ impl Steps for Fake {
         let f = world.join("db/fx");
         std::fs::create_dir_all(&f).map_err(|e| e.to_string())?;
         Ok(f.display().to_string())
+    }
+    fn lifecycle(&self, _: &Path, fixture: &str, lifecycle: &Path, _: &Path) -> Result<(), String> {
+        assert!(Path::new(fixture).is_dir() && lifecycle.ends_with("work/lifecycle"));
+        self.lifecycles.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
     fn db_down(&self, _: &str) -> Result<(), String> {
         self.downs.fetch_add(1, Ordering::SeqCst);
@@ -57,6 +63,7 @@ fn up_then_down_leaves_nothing_behind() {
     down(&dir, &fake).unwrap();
     assert!(!dir.exists());
     assert_eq!(fake.downs.load(Ordering::SeqCst), 1);
+    assert_eq!(fake.lifecycles.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -83,6 +90,9 @@ fn a_failed_up_cleans_up_after_itself() {
             Err("no dolt".into())
         }
         fn db_down(&self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn lifecycle(&self, _: &Path, _: &str, _: &Path, _: &Path) -> Result<(), String> {
             Ok(())
         }
         fn config_set(&self, _: &Path, _: &Path, _: &str, _: &str) -> Result<(), String> {
