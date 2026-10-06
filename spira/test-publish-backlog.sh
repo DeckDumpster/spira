@@ -243,8 +243,15 @@ spira-config validate "$GOOD" >/dev/null 2>&1; rc=$?
 is "9: the properly escaped gate value parses" "0" "$rc"
 spira-config validate "$BAD" >/dev/null 2>&1; rc=$?
 is "9: the broken fixture really fails to parse (positive control)" "1" "$rc"
-out="$(SPIRA_TOML="$BAD" pb --show)"
-want "9: a toml that does not parse alarms BLIND" "BLIND _config" "$out"
+# DELETED (one source of config, per Ryan 2026-10-05): this asserted publish-backlog.sh's
+# own _pb_blind guard caught a SPIRA_TOML that fails to parse. That guard runs AFTER
+# lib.sh/conf.sh source cleanly; a SPIRA_TOML that fails spira-config resolve outright
+# never gets that far — conf.sh's own resolve call fails first, and lib.sh's unconditional
+# spira_containment_check (run at source time) then hard `exit 1`s on the empty
+# SPIRA_INSTANCE that leaves, before publish-backlog.sh's own code — including this
+# guard — ever runs. Before this migration SPIRA_INSTANCE kept a derived fallback that
+# let sourcing survive far enough to reach the guard; now a totally corrupt operator
+# spira.toml refuses at the harness's own boundary, earlier and harder, not softer.
 SPIRA_TOML="$BAD" pb watch --ticks 1 >/dev/null
 pb health >/dev/null; rc=$?
 is   "9: the health probe fails while blind (the mailer reads the same broken toml)" "1" "$rc"
