@@ -313,6 +313,14 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
         return 1;
     }
+    // Stamp before stopping anything: an aeon exiting under the slay summons its successor
+    // from ExecStopPost, and only a stamp already in place gates that.
+    let run = run_or_die();
+    let _ = std::fs::create_dir_all(&run);
+    for plane in &planes {
+        let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
+    }
+
     for t in &timers {
         let TimerSlot::Resolved(t) = t else { continue };
         if !planes.contains(&sysctl::plane_of(t)) {
@@ -423,12 +431,6 @@ fn cmd_stop(args: &[String]) -> i32 {
         if n == 0 && stray == 0 {
             println!("  no live aeons");
         }
-    }
-
-    let run = run_or_die();
-    let _ = std::fs::create_dir_all(&run);
-    for plane in &planes {
-        let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
     }
 
     if svc_failed {
