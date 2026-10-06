@@ -129,6 +129,25 @@ pub fn ipv4_on(data: &Value, iface: &str) -> Option<String> {
         .filter(|a| !a.is_empty())
 }
 
+/// The MAC a VMID always gets: the VMID is the pool slot, so a re-clone of a slot reuses
+/// its DHCP lease instead of minting a new one. `02` marks it locally administered.
+pub fn slot_mac(vmid: &str) -> Result<String, String> {
+    let n: u32 = vmid.parse().map_err(|_| format!("VMID {vmid:?} is not a number"))?;
+    if n >= 1 << 24 {
+        return Err(format!("VMID {vmid} does not fit a 24-bit MAC suffix"));
+    }
+    Ok(format!("02:52:56:{:02x}:{:02x}:{:02x}", n >> 16, (n >> 8) & 0xff, n & 0xff))
+}
+
+/// `net0` with its `model=MAC` field's MAC replaced; None if it has no such field.
+pub fn with_mac(net0: &str, mac: &str) -> Option<String> {
+    let mut fields: Vec<String> = net0.split(',').map(str::to_string).collect();
+    let first = fields.first_mut()?;
+    let (model, _) = first.split_once('=')?;
+    *first = format!("{model}={}", mac.to_uppercase());
+    Some(fields.join(","))
+}
+
 fn as_id(v: &Value) -> Option<String> {
     match v {
         Value::String(s) if !s.is_empty() => Some(s.clone()),
@@ -196,7 +215,13 @@ impl<T: Transport> Provider for Pve<T> {
         if let Some(pool) = &self.env.pool {
             params.push(("pool", pool.clone()));
         }
-        self.task(Method::Post, &format!("{}/clone", self.qemu(&self.env.template_vmid)), &params)
+        self.task(Method::Post, &format!("{}/clone", self.qemu(&self.env.template_vmid)), &params)?;
+        let mac = slot_mac(vmid)?;
+        let cfg_path = format!("{}/config", self.qemu(vmid));
+        let cfg = self.t.call(Method::Get, &cfg_path, &[])?;
+        let Some(net0) = cfg.get("net0").and_then(Value::as_str) else { return Ok(()) };
+        let pinned = with_mac(net0, &mac).ok_or_else(|| format!("net0 {net0:?} has no model=MAC field"))?;
+        self.task(Method::Post, &cfg_path, &[("net0", pinned)])
     }
 
     fn start(&self, vmid: &str) -> Result<(), String> {
@@ -303,6 +328,7 @@ mod tests {
                 (Method::Post, p) if p.ends_with("/agent/exec") => json!({"pid": 42}),
                 (Method::Post, p) if p.ends_with("/agent/file-write") => Value::Null,
                 (Method::Get, p) if p.ends_with("/status/current") => json!({"status": "running"}),
+                (Method::Get, "/nodes/pve/qemu/124/config") => json!({"net0": "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1"}),
                 (Method::Get, "/nodes/pve/qemu/123/config") => json!({"template": 1, "name": "t"}),
                 (Method::Get, p) if p.ends_with("/config") => json!({"name": "vm"}),
                 (Method::Get, p) if p.ends_with("/agent/network-get-interfaces") => json!({"result": [
@@ -373,6 +399,32 @@ mod tests {
         assert!(log[0].2.contains(&("name".into(), "round-123".into())));
         assert!(log[0].2.contains(&("pool".into(), "ci".into())));
         assert_eq!(log[1].1, "/nodes/pve/tasks/UPID%3Apve%3A0001%3Atask%3A/status");
+    }
+
+    #[test]
+    fn a_slot_always_gets_the_same_mac_and_slots_differ() {
+        assert_eq!(slot_mac("124").unwrap(), slot_mac("124").unwrap());
+        assert_ne!(slot_mac("124").unwrap(), slot_mac("125").unwrap());
+        assert_eq!(slot_mac("124").unwrap(), "02:52:56:00:00:7c");
+        assert!(slot_mac("x").is_err());
+    }
+
+    #[test]
+    fn clone_pins_the_slot_mac_on_net0_keeping_the_rest() {
+        let p = pve();
+        p.clone_to("124", "round-124").unwrap();
+        let (m, path, params) = last(&p, "/qemu/124/config");
+        assert_eq!((m, path.as_str()), (Method::Post, "/nodes/pve/qemu/124/config"));
+        assert_eq!(params, vec![("net0".into(), "virtio=02:52:56:00:00:7C,bridge=vmbr0,firewall=1".into())]);
+        let first = pve();
+        first.clone_to("124", "round-124").unwrap();
+        assert_eq!(last(&first, "/qemu/124/config").2, params);
+    }
+
+    #[test]
+    fn with_mac_refuses_a_net0_without_a_model_field() {
+        assert_eq!(with_mac("e1000=AA:BB,bridge=b", "02:00:00:00:00:01").as_deref(), Some("e1000=02:00:00:00:00:01,bridge=b"));
+        assert_eq!(with_mac("bridge", "02:00:00:00:00:01"), None);
     }
 
     #[test]
