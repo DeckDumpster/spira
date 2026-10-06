@@ -2,6 +2,7 @@
 
 use crate::compose::Changed;
 use crate::engine::{Args, Trial, BASEFAIL, BASE_RERUN_MARK, FAIL, NOVERDICT, PASS};
+use crate::fencecache;
 use crate::key;
 use crate::ports::{Ctx, Merge, World};
 use spira_config::GateMode;
@@ -2011,7 +2012,7 @@ fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
         .insert(MERGE_SHA.into(), (1, "tsd: test x ... FAILED".into()));
     let _ = f.run();
     let cmds = f.cmds.borrow().clone();
-    assert!(cmds.len() > 3, "a base trial ran: {cmds:?}");
+    assert_eq!(cmds.len(), 2, "branch fences, then the base's fences only: {cmds:?}");
     assert!(cmds.iter().all(|c| !c.contains("build-fence")), "{cmds:?}");
 
     for paths in [&["gate/src/x.rs", "spira/lib.sh"][..], &["docs/a.md"]] {
@@ -2167,7 +2168,7 @@ fn a_named_suite_red_again_on_a_green_base_fails_the_branch() {
     assert!(f.verdict_line().contains("reason=branch-red"));
     assert!(f.verdict_line().contains("suite=test-b.sh"));
     assert!(meter(&f).contains(
-        "phases=fences:7,build:7,test:7,reentry:7,base-fences:7,base-build:7,base-test:7,base-reentry:7"
+        "phases=fences:7,build:7,test:7,reentry:7,base-fences:7,base-reentry:7"
     ));
     assert!(f
         .written
@@ -2375,57 +2376,44 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     let cmds = f.cmds.borrow().clone();
     assert_eq!(
         cmds.len(),
-        6,
-        "branch fences/build/test, base fences/build/test: {cmds:?}"
+        4,
+        "branch fences/build/test, base fences only: {cmds:?}"
     );
+    assert!(!meter(&f).contains("base-build") && !meter(&f).contains("base-test"));
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7,base-build:7,base-test:7"
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7\n"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
 }
 
 #[test]
-fn a_red_the_base_shares_in_unit_tests_is_the_bases_and_names_the_test() {
+fn a_unit_base_trial_runs_fences_only_never_the_base_build_or_tests() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    for at in [MERGE_SHA, BASE] {
-        f.unit_runs.borrow_mut().insert(
-            (at.into(), "test"),
-            (101, "test tests::x ... FAILED\ntest tests::y ... ok".into()),
-        );
-    }
-    assert_eq!(f.run(), BASEFAIL);
-    assert!(f.verdict_line().contains("reason=base-red"));
-    assert!(f.verdict_line().contains("suite=tests::x"), "{}", f.verdict_line());
+    f.unit_runs
+        .borrow_mut()
+        .insert((MERGE_SHA.into(), "test"), (101, "test tests::x ... FAILED".into()));
+    assert_eq!(f.run(), FAIL);
+    let m = meter(&f);
+    assert!(m.contains("base-fences:7"), "{m}");
+    assert!(!m.contains("base-build") && !m.contains("base-test"), "{m}");
 }
 
 #[test]
-fn an_unnamed_unit_base_red_is_a_gate_defect_not_the_bases_fault() {
+fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    for at in [MERGE_SHA, BASE] {
-        f.unit_runs
-            .borrow_mut()
-            .insert((at.into(), "test"), (101, "killed by signal".into()));
-    }
-    assert_eq!(f.run(), NOVERDICT);
-    assert!(f.verdict_line().contains("reason=gate-defect"), "{}", f.verdict_line());
-}
-
-#[test]
-fn a_base_whose_build_fails_before_any_test_is_untestable_never_red() {
-    let f = unit_fake(&["gate/src/x.rs"]);
-    for at in [MERGE_SHA, BASE] {
-        f.unit_runs
-            .borrow_mut()
-            .insert((at.into(), "build"), (101, "error[E0425]".into()));
-    }
-    assert_eq!(f.run(), NOVERDICT);
-    assert!(f.verdict_line().contains("reason=base-untestable"), "{}", f.verdict_line());
-    assert_eq!(
-        f.cmds.borrow().len(),
-        4,
-        "a failed build stops before the tests"
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, "literal-lint: RED".into()));
+    *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+    f.files.borrow_mut().insert(
+        PathBuf::from(format!("/run/verdicts/fences/spira/{BASE_TREE_HEX}")),
+        fencecache::render("harness", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
     );
+    assert_eq!(f.run(), FAIL);
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds, ["bash spira/fence.sh && run-suites"], "only the branch's own trial ran: {cmds:?}");
+    assert!(!meter(&f).contains("base-fences"), "{}", meter(&f));
 }
 
 #[test]
