@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-conf-watch.sh — loom.sh notices, once, when SPIRA_CONF's file changes under it
+# test-conf-watch.sh — loom.sh notices, once, when its config's write target changes under it
 # (law-long-lived-processes-pin-their-config), logs "config changed" and exits 0 for systemd
-# (Restart=always) to restart it. The tick is injected through SPIRA_LOOM_TICK.
+# (Restart=always) to restart it. The tick is injected through SPIRA_LOOM_TICK. Since the one
+# source of config (per Ryan 2026-10-05), loom.sh watches spira_toml_write_target() — the LAST
+# layer of SPIRA_TOML, i.e. this suite's own override file — rather than a standalone SPIRA_CONF
+# env var, so the change case touches that file directly.
 #
 # The change is never timed: the fake Loom binary touches an "armed" marker, which loom.sh
 # spawns strictly after capturing its conf-mtime baseline, and the config is touched only once
@@ -44,16 +47,16 @@ wait_for_marker() {
     [ -e "$marker" ]
 }
 
-run_loom() {      # run_loom <conf> <window> <marker>
+run_loom() {      # run_loom <window> <marker>
     # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
     # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
-    # through env -i, which clears it. SPIRA_CONF stays a direct env var — it is this
-    # suite's own subject (loom.sh noticing SPIRA_CONF's file change), not a registered key.
+    # through env -i, which clears it. There is no separate SPIRA_CONF env var any more;
+    # loom.sh's watched path is $_TL_CONF_OVERRIDE (SPIRA_TOML's last layer).
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
-    timeout "$2" env -i PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$1" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    timeout "$1" env -i PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_GOAL=sp-test \
-        ARMED_MARKER="${3:-}" \
+        ARMED_MARKER="${2:-}" \
         SPIRA_LOOM_TICK="$TICK" \
         SPIRA_TOML="$SPIRA_TOML" \
         bash "$HERE/loom.sh"
@@ -65,28 +68,21 @@ for name in loom; do
     RUN="$TMP/$name-run"; mkdir -p "$RUN/cockpit.d"
 
     # ── NEGATIVE CASE: no config change — the loop stays running ──────────────────────
-    CONF_STAY="$TMP/$name-stay.conf"
-    printf '# test\n' > "$CONF_STAY"
     ec_stay=0
-    "run_$name" "$CONF_STAY" "$WIN_STAY" >/dev/null 2>/dev/null || ec_stay=$?
+    "run_$name" "$WIN_STAY" >/dev/null 2>/dev/null || ec_stay=$?
     is "$label: no config change — stays running" "124" "$ec_stay"
 
-    # ── CHANGE CASE: touch the config only once the loop has armed ────────────────────
-    CONF_CHG="$TMP/$name-chg.conf"
-    printf '# test\n' > "$CONF_CHG"
-    # Pre-date so the touch below produces a genuine mtime change even at 1s
-    # resolution, without needing to wait out a real second of wall clock.
-    touch -d "3 seconds ago" "$CONF_CHG"
+    # ── CHANGE CASE: touch the override file only once the loop has armed ─────────────
     marker="$RUN/armed"
     err_log="$TMP/$name-err.log"
-    "run_$name" "$CONF_CHG" "$WIN_CHANGE" "$marker" >/dev/null 2>"$err_log" &
+    "run_$name" "$WIN_CHANGE" "$marker" >/dev/null 2>"$err_log" &
     run_pid=$!
     if wait_for_marker "$marker"; then
         ok "$label: config change — armed before the touch"
     else
         bad "$label: config change — armed before the touch" "marker never appeared within 10s"
     fi
-    touch "$CONF_CHG"
+    touch "$_TL_CONF_OVERRIDE"
     ec_chg=0
     wait "$run_pid" || ec_chg=$?
     is "$label: config change — exits 0" "0" "$ec_chg"
