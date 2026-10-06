@@ -232,6 +232,10 @@ row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead 
 want "done: state is DONE" "\"state\":\"DONE\"" "$row"
 want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
+echo "DEBUG spira-config get run: [$(spira-config get run 2>&1)]" >&2
+echo "DEBUG spira-config get mail: [$(spira-config get mail 2>&1)]" >&2
+echo "DEBUG SPIRA_TOML: [$SPIRA_TOML]" >&2
+echo "DEBUG SPIRA_HOME: [${SPIRA_HOME:-unset}]" >&2
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
 BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo)"
 seed_bead "$BLID"
