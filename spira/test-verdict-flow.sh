@@ -130,7 +130,7 @@ xbead_of() {   # xbead_of <mailbox> -> X-Spira-Bead of the newest message
 send_question() {
     local mailbox="$1" work_bead="${2:-}"
     local args=(send "$mailbox" --from "Builder <builder@spira>" --subject "Should I proceed with option A?" \
-        --kind question --default "proceed with option A")
+        --kind question --class policy --default "proceed with option A")
     [ -n "$work_bead" ] && args+=(--bead "$work_bead")
     if [ "${3:-}" = "allow-blocking" ]; then
         SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_ALLOW_BLOCKING=1 \
@@ -142,6 +142,10 @@ Should I proceed with option A or wait?
 ## Default
 
 proceed with option A
+
+## Class basis
+
+needs a policy ruling
 BODY
     else
         SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" run "${args[@]}" \
@@ -153,6 +157,10 @@ Should I proceed with option A or wait?
 ## Default
 
 proceed with option A
+
+## Class basis
+
+needs a policy ruling
 BODY
     fi
 }
@@ -297,7 +305,7 @@ BEAD_ACC="sp-vf-accept"
 seed_bead "$BEAD_ACC"
 SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
     run send operator --from "Gate <gate@spira>" --subject "Accept test" \
-    --kind decision --default "take the accept-test default" --bead "$BEAD_ACC" <<< "body" >/dev/null 2>&1
+    --kind decision --class policy --default "take the accept-test default" --bead "$BEAD_ACC" <<< "$(printf 'body\n\n## Class basis\nneeds a policy ruling\n')" >/dev/null 2>&1
 accept_msg_name="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
 accept_msg="${accept_msg_name:+$SPIRA_MAIL/operator/new/$accept_msg_name}"
 [ -n "$accept_msg" ] && [ -f "$accept_msg" ] || { echo "test-verdict-flow: could not send accept test message"; exit 1; }

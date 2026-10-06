@@ -239,19 +239,19 @@ echo "repeat guard — normalisation (T1: same subject through mail's own hasher
 
 tl_config SPIRA_RUN="$TMP/run" SPIRA_MAIL_REPEAT_WINDOW=3600
 
-qbody() { printf '## Question\n%s\n\n## Default\n%s\n\nDetailed context goes here.\n' "$1" "$2"; }
+qbody() { printf '## Question\n%s\n\n## Default\n%s\n\n## Class basis\nneeds a policy ruling\n\nDetailed context goes here.\n' "$1" "$2"; }
 
 SUBJ_A="Spira bead sp-abc — requeued 5 times, never landed — harness cannot land it"
 SUBJ_A2="Spira bead sp-abc — requeued 6 times, never landed — harness cannot land it"
 SUBJ_B="Spira bead sp-xyz — poisoned after 3 attempts — change the approach or drop it?"
 
 qbody "$SUBJ_A" "close or fix" | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "$SUBJ_A" --kind question --default "close or fix" >/dev/null 2>&1
+    --subject "$SUBJ_A" --kind question --class policy --default "close or fix" >/dev/null 2>&1
 rc_first=$?
 is "first send to operator exits 0" 0 "$rc_first"
 
 out="$(qbody "$SUBJ_A2" "close or fix" | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "$SUBJ_A2" --kind question --default "close or fix" 2>&1)"
+    --subject "$SUBJ_A2" --kind question --class policy --default "close or fix" 2>&1)"
 rc_second=$?
 [ "$rc_second" != 0 ] && ok "second send with same normalised subject is refused" \
     || bad "second send with same normalised subject is refused" "exit 0"
@@ -269,7 +269,7 @@ echo
 echo "repeat guard — negative control: different subject gets through"
 
 out="$(qbody "$SUBJ_B" "close or relabel" | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "$SUBJ_B" --kind question --default "close or relabel" 2>&1)"
+    --subject "$SUBJ_B" --kind question --class policy --default "close or relabel" 2>&1)"
 is "different subject (different bead, different verb) gets through" 0 "$?"
 nowant "different subject carries no repeat-refused message" "repeat refused" "$out"
 
@@ -279,7 +279,7 @@ echo "repeat guard — override bypasses the guard, recorded on the message"
 out="$(qbody "$SUBJ_A2" "close or fix" \
     | SPIRA_MAIL_REPEAT_CONSIDERED="testing override" mail send operator \
         --from "Sentinel <sentinel@spira>" --subject "$SUBJ_A2" \
-        --kind question --default "close or fix" 2>&1)"
+        --kind question --class policy --default "close or fix" 2>&1)"
 is "SPIRA_MAIL_REPEAT_CONSIDERED lets the repeat through" 0 "$?"
 msg_file="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
 msg_content="$(cat "$SPIRA_MAIL/operator/new/$msg_file" 2>/dev/null)"
@@ -290,15 +290,15 @@ echo
 echo "repeat guard — a lint-refused send writes no stamp; the corrected resend delivers"
 
 SUBJ_LINT="Lint failure test subject for repeat guard"
-out_lint1="$(printf '## Question\n\n## Default\n%s\n' "close" \
+out_lint1="$(printf '## Question\n\n## Class basis\nx\n\n## Default\n%s\n' "close" \
     | run send operator --from "Sentinel <sentinel@spira>" \
-        --subject "$SUBJ_LINT" --kind question --default "close" 2>&1)"
+        --subject "$SUBJ_LINT" --kind question --class policy --default "close" 2>&1)"
 [ "$?" != 0 ] && ok "lint-refused send exits non-zero" || bad "lint-refused send exits non-zero" "exit 0"
 want "refusal message mentions lint" "lint" "$out_lint1"
 
 out_lint2="$(qbody "$SUBJ_LINT" "close" \
     | run send operator --from "Sentinel <sentinel@spira>" \
-        --subject "$SUBJ_LINT" --kind question --default "close" 2>&1)"
+        --subject "$SUBJ_LINT" --kind question --class policy --default "close" 2>&1)"
 is "corrected resend after lint failure is delivered" 0 "$?"
 nowant "corrected resend is not refused as repeat" "repeat refused" "$out_lint2"
 
@@ -346,11 +346,11 @@ qbody "$CONC_SUBJ" "pick one" > "$TMP/race-body"
 race_a_rc_file="$TMP/race-a-rc"
 race_b_rc_file="$TMP/race-b-rc"
 ( run send operator --from "Sentinel <sentinel@spira>" --subject "$CONC_SUBJ" \
-    --kind question --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
+    --kind question --class policy --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
   echo $? > "$race_a_rc_file" ) &
 pid_a=$!
 ( run send operator --from "Sentinel <sentinel@spira>" --subject "$CONC_SUBJ" \
-    --kind question --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
+    --kind question --class policy --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
   echo $? > "$race_b_rc_file" ) &
 pid_b=$!
 
@@ -504,6 +504,20 @@ out="$(cls_send "Grant the aeon a deploy credential" --class permissions)"; rc=$
 is "permissions ask exits 0" 0 "$rc"
 is "permissions ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
 is "permissions ask is not routed to the concierge" "$((conc_before + 3))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+
+echo
+echo "escalation class binds a sender holding no bead (watchers, sentinel, mail ask path)"
+op_before="$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
+conc_before="$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+nb_send() { printf '%s\n' "$CLS_STDIN" | ( unset BEAD_ID; run send operator --from "Sentinel <sentinel@spira>" \
+    --subject "$1" --kind question --default "the crate" "${@:2}" 2>&1 ); }
+CLS_STDIN="$CLS_BODY"
+out="$(nb_send "Which verb layout should the watcher take" --class architecture)"
+want "no-bead sender, out-of-class ask: told it was routed to the concierge" "routed to the concierge" "$out"
+is "no-bead sender, out-of-class ask: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
+is "no-bead sender, out-of-class ask: concierge got it" "$((conc_before + 1))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+out="$(nb_send "Grant the watcher a deploy credential" --class permissions)"
+is "no-bead sender, in-class ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
 
 echo
 tl_summary
