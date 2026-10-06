@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 pub const STATE_ENV: &str = "SIM_GH_DIR";
 const STATE_FILE: &str = "state.json";
-const CALL_DEADLINE: Duration = Duration::from_secs(30); // fast-call: jq filter or a local git rev-parse
+const CALL_DEADLINE: Duration = Duration::from_secs(5);
 const EPOCH: &str = "2000-01-01T00:00:00Z";
 const OWNER_REPO: &str = "sim/sim";
 
