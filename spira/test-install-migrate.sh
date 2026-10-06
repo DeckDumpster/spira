@@ -139,10 +139,25 @@ inst() {
     tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_WATCHERS="$WATCHERS" \
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
         SPIRA_INSTANCE="$_INST" SPIRA_WORKSPACES="$TMP" SPIRA_MAIL="$TMP/mail"
+    # round 6 fix: tl_config alone is not enough for SPIRA_RUN specifically —
+    # install/src/bootstrap.rs's `world_halted()` reads it with a bare `nonempty_env()`,
+    # never through the registry (confirmed by reading bootstrap.rs directly: every other
+    # `nonempty_env("SPIRA_*")` call there — SPIRA_WATCHERS, SPIRA_DOLT_DATA,
+    # SPIRA_TESTDB_DATA, SPIRA_INSTANCE, SPIRA_HOME, SPIRA_REPO — is the same, but only
+    # SPIRA_RUN's absence changes this suite's outcome, since it alone gates the end-state
+    # active-check this suite relies on skipping). Its own doc comment says why: it expects
+    # a CALLER that already sourced conf.sh and exported the resolved values, exactly as
+    # systemd/install.sh did before this binary existed. Without SPIRA_RUN also threaded as
+    # plain env, world_halted() never saw the world.halted sentinel this suite touches at
+    # the top, so the end-state "every enabled unit is active" check ran anyway (burning its
+    # ~45s wait) and faulted on fixture units that never really start — every "exits 0"
+    # case failing, with every content/ordering assertion (which reads the log, not the
+    # exit code) passing right alongside it.
     SCTL_LOG="$SCTL_LOG" \
     PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_RUN="$SPIRA_RUN_DIR" \
     units-install "$_INST" "$@" 2>&1
 }
 
