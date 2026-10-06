@@ -152,3 +152,18 @@ fn set_repo_land_alias_round_trips_through_the_binary() {
     assert_eq!(String::from_utf8_lossy(&via_mode.stdout).trim(), "queue.local");
 
 }
+
+#[test]
+fn set_refuses_a_checked_in_fixture_and_leaves_no_backup() {
+    let dir = scratch_dir("fixture-refused");
+    let fixtures = dir.join("tests/fixtures");
+    fs::create_dir_all(&fixtures).unwrap();
+    let toml = write_tmp(&fixtures, "complete.toml", "[repo.home]\npath = \"/srv/home\"\nmode = \"push\"\n");
+    let before = fs::read(&toml).unwrap();
+
+    let result = spira_config(&["set", "repo.home.base", "main", toml.to_str().unwrap()]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("checked-in test fixture"));
+    assert_eq!(fs::read(&toml).unwrap(), before);
+    assert!(backups_in(&fixtures).is_empty());
+}

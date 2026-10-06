@@ -829,11 +829,22 @@ fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
     }
 }
 
+/// A `tests/fixtures/` file is an input: a writer pointed at one rewrites tracked content and
+/// leaves its `.bak.*` backup in the tree for every later scan to find.
+fn is_checked_in_fixture(path: &Path) -> bool {
+    let parts: Vec<_> = path.components().collect();
+    parts.windows(2).any(|w| w[0].as_os_str() == "tests" && w[1].as_os_str() == "fixtures")
+}
+
 /// Writes `doc` to `file` for `set`/`unset`: temp file, validate the temp file's own
 /// contents, back up whatever `file` currently holds, then rename — in that order, so a
 /// crash at any point before the rename leaves `file` exactly as it was, and a doc that
 /// fails to round-trip through validation is never renamed into place at all.
 fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
+    if is_checked_in_fixture(Path::new(file)) {
+        eprintln!("spira-config {verb}: {file}: refusing to write a checked-in test fixture — layer an override file over it instead");
+        return ExitCode::FAILURE;
+    }
     let out = match toml::to_string_pretty(doc) {
         Ok(s) => s,
         Err(e) => {
