@@ -494,6 +494,9 @@ impl<'a> Sentinel<'a> {
             format!("--setenv=SPIRA_RELEASE={release}"),
             format!("--setenv=PATH={release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin"),
             format!("--setenv=HOME={}", self.cfg.raw("HOME")),
+            // The one source of config the aeon resolves from: the spec this sentinel runs
+            // under (an aeon without it refuses at its first seam — r-cutover-28's restart).
+            format!("--setenv=SPIRA_TOML={}", self.cfg.raw("SPIRA_TOML")),
         ]
     }
 
