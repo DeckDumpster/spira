@@ -53,6 +53,15 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 . "$HERE/testlib/lc-fixture.sh"
+# testdb.sh sources conf.sh for its own bookkeeping, which (one source of config, per Ryan
+# 2026-10-05) evals spira_config::resolve()'s FULL output into THIS shell — every registered
+# key, including ones with no default, as a plain shell variable. Before that eval existed, a
+# key the suite never declared stayed truly unset; now cut_repo's own
+# `${SPIRA_BATCH_MAXPAR:-16}` sees the complete fixture's base value (8) instead, because
+# sourcing conf.sh already set it. Unset it here, once, right after the only sourcing that
+# pollutes it, so "unset" in cut_repo means what it always meant: no caller override, use the
+# Concierge's own proven 16 (K1's own positive control for this).
+unset SPIRA_BATCH_MAXPAR
 testdb_require test-batcher-cut
 TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }

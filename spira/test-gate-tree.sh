@@ -155,6 +155,14 @@ is "neither gate observed the other's branch" "" "$crossed"
 # --------------------------------------------------------------------------------------
 : > "$EVENTS"  # fresh: case 1's spira/sp-t1 window must not be mistaken for one of this pair
 GATELOG1B="$TMP/gate1b.log"
+# The complete fixture declares gate_lock_wait="0" (spira-config/tests/fixtures/complete.toml),
+# where conf.sh's old unset-env read resolved empty and fell back to 4x the gate timeout
+# (engine.rs's lock_wait default). A registered 0 now wins outright, so the waiter refuses
+# with lock-timeout after 0s instead of actually waiting out gate1's ~GATE_SECS hold — declare
+# a real wait window for this suite's own genuine contention (one source of config, per Ryan
+# 2026-10-05). Set once, sequentially, before the two concurrent calls below (never from
+# inside a parallel rungate: tl_config writes the one shared override file).
+tl_config SPIRA_GATE_LOCK_WAIT=10
 ( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b1.out" 2>&1; echo $? > "$TMP/g1b1.rc" ) &
 ( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b2.out" 2>&1; echo $? > "$TMP/g1b2.rc" ) &
 wait

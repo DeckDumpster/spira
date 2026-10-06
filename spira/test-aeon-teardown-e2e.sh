@@ -412,6 +412,13 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
 SFAYTH
 printf 'sweep {{BEAD_ID}}\n{{PARK}}\n' > "$FA_HOME/chamber/sweeper.md"
+# persona.sweeper.model: aeon::conf::persona_model refuses outright when a fayth's model
+# is undeclared (no built-in fallback, per Ryan 2026-10-05) — the complete fixture declares
+# every REAL persona's model but has never heard of this suite's own "sweeper" fayth.
+# tl_config only knows the SPIRA_FOO -> spira.foo mapping, not [persona.*] tables, so this
+# sets the dotted path directly.
+spira-config set persona.sweeper.model claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
+    || bail "could not declare persona.sweeper.model"
 
 cat > "$FA_BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
@@ -423,6 +430,7 @@ SHIM
 chmod +x "$FA_BIN/claude"
 printf 1 > "$FA_TMP/shim-rc"
 sweep_rc="$(aeon --home "$SPIRA_HOME" sweeper --sweep --prompt "check pipeline" > "$FA_TMP/sweep-out" 2>&1; echo $?)"
+[ "$sweep_rc" = 0 ] || sed 's/^/# /' "$FA_TMP/sweep-out" 2>/dev/null
 is "sweep with claude rc=1 but ran exits 0 (ops/qa sweep fix)" "0" "$sweep_rc"
 # The positive control for this UC (a refused sweep — no tool calls — exits non-zero so a
 # real ops failure stays visible) is test-aeon-sweep.sh's instead, which already builds the
@@ -527,7 +535,7 @@ printf '## Question\nMay the fixture rotate its deploy key?\n\n## Default\nno\n\
     > "$FA_TMP/ask2.out" 2>&1
 is   "a classed work ask is applied" "0" "$?"
 is   "the row is held again" "READY ask" "$(ow_row sp-ow2)"
-ow_mail2="$(grep -l '^Subject: rotate the fixture deploy key' "$SPIRA_MAIL"/operator/new/* 2>/dev/null | head -1)"
+ow_mail2="$(grep -l '^Subject: rotate the fixture deploy key' "$SPIRA_MAIL"/operator/new/* "$SPIRA_MAIL"/operator/cur/* 2>/dev/null | head -1)"
 is   "the classed question reached the operator" "yes" "$([ -n "$ow_mail2" ] && echo yes || echo no)"
 ow_ask="$([ -n "$ow_mail2" ] && hdr_of "$ow_mail2" X-Spira-Bead)"
 want "its ask bead carries the work bead's label" "work-bead:sp-ow2" "$(fa_labels "$ow_ask")"
