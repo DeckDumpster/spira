@@ -20,6 +20,19 @@ echo "test-spira-config-only-door.sh"
 # spira/deps.toml is read only through `spira_config::deps`; no other crate parses it.
 EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/lockfile_lint.rs"
 
+# install/src/bootstrap.rs reads $SPIRA_TOML's VALUE (an opaque path string) only to relay
+# it unchanged into the environment of the units it renders — "the units run under the same
+# one source this installer runs under" (its own doc comment on host_from_env). It never
+# opens, reads or parses the file the path names; every registered key bootstrap.rs itself
+# needs goes through spira_config::process::cfg, same as everywhere else. That is a
+# different act from "resolving spira.toml's path" (finding/opening the file to read it as
+# config), which is what this suite's door law is about — so this is the env::var() analogue
+# of EXEMPT_TOML_FROM_STR above, not a second parser (one source of config, per Ryan
+# 2026-10-05). Only the bare env::var(_os)?("SPIRA_TOML") pattern is exempted here; a literal
+# path-construction call (.join/Path::new/read_to_string/File::open("spira.toml")) in this
+# file would still be flagged.
+EXEMPT_TOML_ENV_VAR="install/src/bootstrap.rs"
+
 # The lines of $1 before its first `#[cfg(test)]` module, with comment-only lines dropped —
 # production code only, so a doc comment describing the file (or a test fixture that must
 # literally write one named spira.toml to exercise discovery/loading) does not itself count
@@ -86,7 +99,7 @@ build_test_module_skip_set() {
 }
 
 find_offenders() {
-    local root="$1" f rel exempt region
+    local root="$1" f rel exempt env_exempt region
     declare -A TEST_MODULE_SKIP=()
     build_test_module_skip_set "$root"
     while IFS= read -r -d '' f; do
@@ -107,11 +120,19 @@ find_offenders() {
         if [ "$exempt" -eq 0 ] && grep -aq 'toml::from_str' <<<"$region"; then
             echo "$f: calls toml::from_str outside spira-config"
         fi
-        # Flags path-construction of the literal filename (or its env var) — not every
-        # mention of the string "spira.toml", which also appears as a plain descriptive
-        # label (spira-lc's RepoConfig.source) once discovery itself goes through
-        # spira-config.
-        if grep -aqE '\.join\("spira\.toml"\)|Path::new\("spira\.toml"\)|read_to_string\("spira\.toml"\)|File::open\("spira\.toml"\)|env::var(_os)?\("SPIRA_TOML"\)' <<<"$region"; then
+        # Flags path-construction of the literal filename — not every mention of the string
+        # "spira.toml", which also appears as a plain descriptive label (spira-lc's
+        # RepoConfig.source) once discovery itself goes through spira-config.
+        if grep -aqE '\.join\("spira\.toml"\)|Path::new\("spira\.toml"\)|read_to_string\("spira\.toml"\)|File::open\("spira\.toml"\)' <<<"$region"; then
+            echo "$f: resolves spira.toml's path outside spira-config"
+        fi
+        # env::var(_os)?("SPIRA_TOML") separately, honoring EXEMPT_TOML_ENV_VAR: reading the
+        # var's value to relay it onward is not resolving or parsing the file it names.
+        env_exempt=0
+        for e in $EXEMPT_TOML_ENV_VAR; do
+            [ "$rel" = "$e" ] && env_exempt=1
+        done
+        if [ "$env_exempt" -eq 0 ] && grep -aqE 'env::var(_os)?\("SPIRA_TOML"\)' <<<"$region"; then
             echo "$f: resolves spira.toml's path outside spira-config"
         fi
     done < <(find "$root" -type f -name '*.rs' -path '*/src/*' -not -path '*/target/*' -print0)
