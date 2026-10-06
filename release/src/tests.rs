@@ -5,6 +5,7 @@
 use crate::activate::{self, Ctx};
 use crate::build::{self, BuildOpts, Cargo};
 use crate::config::{Config, Env, Flags, Registered};
+use crate::config_delta;
 use crate::fsutil;
 use crate::git::Git;
 use crate::install::{self, InstallOpts, Unpack};
@@ -63,6 +64,10 @@ const WATCH: &str = "[Service]\nType=simple\nExecStart=@SPIRA_PROD@/watchd.sh ex
 #[derive(Default)]
 struct FakeGit {
     extra: Vec<(String, String, bool)>,
+    /// Add a `spira-config` binary crate to the workspace, for a release that validates config.
+    validator: bool,
+    /// A config delta that only the release built from this sha carries.
+    delta_for: Option<(String, String)>,
     ancestors: RefCell<BTreeSet<(String, String)>>,
 }
 
@@ -81,7 +86,12 @@ impl Git for FakeGit {
         }
     }
     fn archive(&self, _repo: &Path, sha: &str, into: &Path) -> Result<(), String> {
-        file(&into.join("Cargo.toml"), "[workspace]\nmembers = [\"tool\"]\n");
+        let members = if self.validator { "[\"tool\", \"spira-config\"]" } else { "[\"tool\"]" };
+        file(&into.join("Cargo.toml"), &format!("[workspace]\nmembers = {members}\n"));
+        if self.validator {
+            file(&into.join("spira-config/Cargo.toml"), "[package]\nname = \"spira-config\"\nversion = \"0.0.0\"\n");
+            file(&into.join("spira-config/src/main.rs"), "fn main() {}\n");
+        }
         file(&into.join("tool/Cargo.toml"), "[package]\nname = \"tool\"\nversion = \"0.0.0\"\n");
         file(&into.join("tool/src/main.rs"), "fn main() {}\n");
         file(&into.join("systemd/spira-tool.service"), SVC);
@@ -94,6 +104,11 @@ impl Git for FakeGit {
         exe(&into.join("shared.sh"), "#!/bin/sh\n");
         std::os::unix::fs::symlink("CLAUDE.md", into.join("AGENTS.md")).unwrap();
         file(&into.join("CLAUDE.md"), "hi\n");
+        if let Some((only, body)) = &self.delta_for {
+            if only == sha {
+                file(&into.join("spira/config-delta.toml"), body);
+            }
+        }
         for (p, body, x) in &self.extra {
             if *x {
                 exe(&into.join(p), body)
@@ -111,11 +126,14 @@ impl Git for FakeGit {
 /// A cargo that "builds" every name in `bins` into `<target>/release`.
 struct FakeCargo {
     bins: Vec<&'static str>,
+    /// A binary's own body, in place of the default.
+    bodies: Vec<(&'static str, String)>,
 }
 impl Cargo for FakeCargo {
     fn build(&self, tree: &Path, target: &Path) -> Result<(), String> {
         for b in &self.bins {
-            exe(&target.join("release").join(b), &format!("#!/bin/sh\n# built from {}\n", tree.display()));
+            let body = self.bodies.iter().find(|(n, _)| n == b).map(|(_, body)| body.clone()).unwrap_or_else(|| format!("#!/bin/sh\n# built from {}\n", tree.display()));
+            exe(&target.join("release").join(b), &body);
         }
         Ok(())
     }
@@ -142,7 +160,7 @@ impl World {
         let sb = Sandbox::new();
         let mut env = Env::new();
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
-        env.insert("SPIRA_TOML".into(), "/host/cfg.toml".into());
+        env.insert("SPIRA_TOML".into(), sb.p().join("cfg.toml").display().to_string());
         let reg = Registered { instance: "prod".into(), ..reg };
         let flags = Flags { releases: Some(sb.p().join("rel")), run: Some(sb.p().join("run")), keep: Some(2) };
         let cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
@@ -150,7 +168,7 @@ impl World {
         World { sb, cfg, git }
     }
     fn build(&self, sha: &str) -> Result<build::Built, String> {
-        self.build_with(sha, &FakeCargo { bins: vec!["tool"] }, vec![])
+        self.build_with(sha, &FakeCargo { bins: vec!["tool"], bodies: vec![] }, vec![])
     }
     fn build_with(&self, sha: &str, cargo: &FakeCargo, system_dirs: Vec<PathBuf>) -> Result<build::Built, String> {
         let o = BuildOpts { repo: self.sb.p(), commit: sha, target_dir: Some(self.sb.p().join("target")), system_dirs, bin_dir: None };
@@ -203,6 +221,9 @@ struct FakeSystemctl {
     disabled: RefCell<Vec<String>>,
     /// When set, `disable_now` fails for this unit name.
     disable_fails: BTreeSet<String>,
+    /// Run at every daemon-reload — after `current` flips, before dropped keys are removed.
+    probe: Option<Box<dyn Fn() -> String>>,
+    probes: RefCell<Vec<String>>,
 }
 
 impl FakeSystemctl {
@@ -223,6 +244,8 @@ impl FakeSystemctl {
             restart_fails: BTreeSet::new(),
             disabled: RefCell::new(vec![]),
             disable_fails: BTreeSet::new(),
+            probe: None,
+            probes: RefCell::new(vec![]),
         }
     }
 }
@@ -230,6 +253,9 @@ impl FakeSystemctl {
 impl Systemctl for FakeSystemctl {
     fn daemon_reload(&self) -> Result<(), String> {
         *self.reloads.borrow_mut() += 1;
+        if let Some(p) = &self.probe {
+            self.probes.borrow_mut().push(p());
+        }
         Ok(())
     }
     fn state(&self, unit: &str) -> Result<UnitState, String> {
@@ -372,7 +398,7 @@ fn build_refuses_when_conf_gen_fails_and_leaves_no_release() {
 fn build_of_an_existing_release_does_not_rebuild_it() {
     let w = World::new();
     w.build(A).unwrap();
-    let again = w.build_with(A, &FakeCargo { bins: vec![] }, vec![]).unwrap();
+    let again = w.build_with(A, &FakeCargo { bins: vec![], bodies: vec![] }, vec![]).unwrap();
     assert!(!again.fresh);
 }
 
@@ -454,7 +480,7 @@ fn build_with_a_bin_dir_also_carries_every_declared_compat_name() {
 #[test]
 fn build_refuses_a_partial_binary_set_and_leaves_nothing_behind() {
     let w = World::new();
-    let e = w.build_with(A, &FakeCargo { bins: vec![] }, vec![]).unwrap_err();
+    let e = w.build_with(A, &FakeCargo { bins: vec![], bodies: vec![] }, vec![]).unwrap_err();
     assert!(e.contains("declares tool but the build"), "{e}");
     assert_eq!(fs::read_dir(&w.cfg.releases).unwrap().count(), 0);
 }
@@ -465,13 +491,13 @@ fn build_refuses_a_release_that_shadows_a_system_command() {
     let sys = w.sb.p().join("usr-bin");
     exe(&sys.join("git"), "");
     exe(&sys.join("tool"), "");
-    let e = w.build_with(A, &FakeCargo { bins: vec!["tool"] }, vec![sys.clone()]).unwrap_err();
+    let e = w.build_with(A, &FakeCargo { bins: vec!["tool"], bodies: vec![] }, vec![sys.clone()]).unwrap_err();
     assert!(e.contains("bin/tool shadows"), "{e}");
     assert!(e.contains("spira/git shadows"), "{e}");
     assert!(!w.rel(A).exists());
     // A non-executable file of the same name is not invokable, so not a clash.
     let w2 = World::with_git(FakeGit { extra: vec![("spira/git".into(), "data\n".into(), false)], ..Default::default() });
-    w2.build_with(A, &FakeCargo { bins: vec!["tool"] }, vec![w2.sb.p().join("none")]).unwrap();
+    w2.build_with(A, &FakeCargo { bins: vec!["tool"], bodies: vec![] }, vec![w2.sb.p().join("none")]).unwrap();
 }
 
 #[test]
@@ -500,7 +526,7 @@ fn git_with_work() -> FakeGit {
 fn build_links_model_bin_holding_only_work() {
     let mb = spira_config::release_env::MODEL_BIN_DIR;
     let w = World::with_git(git_with_work());
-    w.build_with(A, &FakeCargo { bins: vec!["tool", "work"] }, vec![]).unwrap();
+    w.build_with(A, &FakeCargo { bins: vec!["tool", "work"], bodies: vec![] }, vec![]).unwrap();
     let link = w.rel(A).join(mb).join("work");
     assert_eq!(fs::read_link(&link).unwrap(), Path::new("../bin/work"));
     assert!(fsutil::is_executable(&link));
@@ -1600,4 +1626,125 @@ fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
     fs::create_dir_all(&not_a_stage).unwrap();
     let err2 = crate::stage::down(&not_a_stage).unwrap_err();
     assert!(err2.contains("does not look like a stage"), "{err2}");
+}
+
+// ---------------------------------------------------------------- config delta
+
+/// A `spira-config` standing in for one release's schema: `validate` loads iff every key in
+/// `needs` is in the layers `$SPIRA_TOML` names and none of `refuses` is.
+fn schema(needs: &[&str], refuses: &[&str]) -> String {
+    let mut s = String::from("#!/bin/sh\n[ \"$1\" = validate ] || exit 2\ncfg=$(cat $(echo \"$SPIRA_TOML\" | tr : ' '))\n");
+    for k in needs {
+        s.push_str(&format!("echo \"$cfg\" | grep -q '{k}' || {{ echo \"config has no {k}\" >&2; exit 1; }}\n"));
+    }
+    for k in refuses {
+        s.push_str(&format!("echo \"$cfg\" | grep -q '{k}' && {{ echo \"spira.{k}: unknown field\" >&2; exit 1; }}\n"));
+    }
+    s.push_str("exit 0\n");
+    s
+}
+
+fn delta_git(delta: &str) -> FakeGit {
+    FakeGit { validator: true, delta_for: Some((B.to_string(), delta.to_string())), ..Default::default() }
+}
+
+fn build_with_schema(w: &World, sha: &str, needs: &[&str], refuses: &[&str]) {
+    let cargo = FakeCargo { bins: vec!["tool", "spira-config"], bodies: vec![("spira-config", schema(needs, refuses))] };
+    w.build_with(sha, &cargo, vec![]).unwrap();
+}
+
+fn loads(w: &World, sha: &str) -> bool {
+    std::process::Command::new(w.rel(sha).join("bin/spira-config")).arg("validate").env("SPIRA_TOML", w.cfg.toml_spec().unwrap()).status().unwrap().success()
+}
+
+fn cfg_text(w: &World) -> String {
+    fs::read_to_string(w.cfg.toml_spec().unwrap()).unwrap()
+}
+
+const DELTA_BOTH: &str = "removed = [\"spira.old_key\"]\n[added]\n\"spira.new_key\" = 300\n";
+
+#[test]
+fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edit() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
+    build_with_schema(&w, A, &["old_key"], &["new_key"]);
+    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    let mut sc = FakeSystemctl::new(w.units());
+    let (a, b) = (w.rel(A).join("bin/spira-config"), w.rel(B).join("bin/spira-config"));
+    let spec = w.cfg.toml_spec().unwrap();
+    sc.probe = Some(Box::new(move || {
+        let ok = |p: &Path| std::process::Command::new(p).arg("validate").env("SPIRA_TOML", &spec).status().map(|s| s.success()).unwrap_or(false);
+        format!("a={} b={}", ok(&a), ok(&b))
+    }));
+    let c = ctx(&w, &sc);
+
+    activate::activate(&c, A, None).unwrap();
+    assert!(loads(&w, A) && !loads(&w, B), "A on its own config");
+    sc.probes.borrow_mut().clear();
+
+    activate::activate(&c, B, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(B));
+    assert!(cfg_text(&w).contains("new_key = 300") && !cfg_text(&w).contains("old_key"), "{}", cfg_text(&w));
+    assert!(loads(&w, B), "the new release loads the config after the flip");
+    assert_eq!(*sc.probes.borrow(), vec!["a=false b=false".to_string()], "at the flip the added key is present and the dropped one not yet removed");
+
+    assert_eq!(activate::rollback(&c).unwrap(), A);
+    assert!(cfg_text(&w).contains("old_key = 1") && !cfg_text(&w).contains("new_key"), "{}", cfg_text(&w));
+    assert!(loads(&w, A), "the old release loads the config again after rollback");
+}
+
+#[test]
+fn config_delta_that_leaves_a_required_key_unset_refuses_naming_it_and_changes_nothing() {
+    let w = World::with_git(delta_git("[added]\n\"spira.other\" = 1\n"));
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, A, &["old_key"], &[]);
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    let e = activate::activate(&c, B, None).unwrap_err();
+    assert!(e.contains("config has no new_key") && e.contains("nothing changed"), "{e}");
+    assert_eq!(w.current().as_deref(), Some(A));
+    assert_eq!(cfg_text(&w), before);
+}
+
+#[test]
+fn a_failed_switch_puts_the_config_back() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, A, &["old_key"], &["new_key"]);
+    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    let mut sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    sc.poison = Some(format!("{B}/bin/tool"));
+    activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert_eq!(w.current().as_deref(), Some(A));
+    assert_eq!(cfg_text(&w), before);
+}
+
+#[test]
+fn an_added_key_the_operator_already_set_keeps_the_operators_value() {
+    let w = World::with_git(delta_git("[added]\n\"spira.new_key\" = 300\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nnew_key = 9\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 9"), "{}", cfg_text(&w));
+    assert!(!w.cfg.state_dir().unwrap().join("config-undo").join(B).exists(), "nothing changed, so nothing to undo");
+}
+
+#[test]
+fn a_malformed_config_delta_refuses_the_activation() {
+    for bad in ["[added]\n\"spira.x\" = 1\n[extra]\nk = 1\n", "removed = [\"spira.x\"]\n[added]\n\"spira.x\" = 1\n", "removed = [1]\n", "[added]\n\"spira..x\" = 1\n"] {
+        assert!(config_delta::Delta::parse(bad).is_err(), "{bad}");
+    }
+    let w = World::with_git(delta_git("surprise = 1\n"));
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains("config-delta.toml") && e.contains("surprise"), "{e}");
+    assert_eq!(w.current(), None);
 }
