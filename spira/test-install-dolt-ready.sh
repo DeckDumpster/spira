@@ -378,6 +378,7 @@ _out2="$(mktemp)"
 run_install "$_out2" "SPIRA_INSTALL_DOLT_READY_WAIT=10"
 _rc2=$?
 stop_listener
+[ "$_rc2" = 0 ] || cat "$_out2" >&2
 
 is0 "readiness-wait: install exits 0 despite a slow-to-ready server" "$_rc2"
 _calls2="$(cat "$TMP/dolt-ready-calls" 2>/dev/null || echo 0)"
