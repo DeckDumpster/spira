@@ -1,0 +1,19 @@
+[package]
+name = "spira-sim"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "spira-sim — the deterministic simulator's hermetic scratch world (sim world up/down); the simulator and sim gh live in this crate."
+
+[lib]
+name = "spira_sim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sim"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]
+testkit = { path = "../../testkit" }
