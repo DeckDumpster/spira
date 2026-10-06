@@ -68,6 +68,7 @@ members = [
     "rule",
     "bead",
     "sim",
+    "spira/sim",
 ]
 resolver = "2"
 

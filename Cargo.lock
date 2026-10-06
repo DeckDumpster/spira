@@ -1457,6 +1457,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "spira-sim"
+version = "0.1.0"
+dependencies = [
+ "testkit",
+]
+
+[[package]]
 name = "spira-supervise"
 version = "1.0.0"
 dependencies = [
