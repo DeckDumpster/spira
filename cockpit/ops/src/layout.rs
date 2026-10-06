@@ -131,11 +131,11 @@ impl Conf {
             }
         }
 
-        let run = cfg("SPIRA_RUN")
-            .ok()
+        let run = cfg("SPIRA_RUN")?;
+        let run = Some(run)
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp/spira-run"));
+            .ok_or_else(|| "cockpit: SPIRA_RUN is unset or empty — refusing to guess a runtime directory".to_string())?;
         fs::create_dir_all(&run)
             .map_err(|_| format!("cockpit: runtime directory {} is not writable", run.display()))?;
 

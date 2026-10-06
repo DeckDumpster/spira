@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cockpit_ops::health::frame::{render, FrameInputs};
 use cockpit_ops::health::model::Snapshot;
-use cockpit_ops::health::sections::{DrainState, HaltState};
+use cockpit_ops::health::sections::{refusal_lines, sentinel_timer_active, DrainState, HaltState};
 
 const HELP: &str = "usage: health [once [rows [cols]]|render-many <dir> [rows [cols]]|loop]";
 
@@ -59,30 +59,19 @@ fn read_snapshot(path: &Path) -> (String, bool) {
     }
 }
 
-/// `spira_unit sentinel timer` then `systemctl --user is-active <unit>`, best-effort: tries
-/// the per-instance unit name first (`sentinel-<instance>.timer`), falling back to the plain
-/// name — `conf.sh`'s own `spira_unit` helper is out of this bead's scope (group 4, last),
-/// so this is a deliberately narrower reimplementation of just the one call site needs. See
-/// `../DESIGN.md` Decisions.
 fn sentinel_active() -> Option<bool> {
-    let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty());
-    let mut candidates = Vec::new();
-    if let Some(i) = &instance {
-        if i != "prod" {
-            candidates.push(format!("spira-sentinel-{i}.timer"));
-        }
-    }
-    candidates.push("spira-sentinel.timer".to_string());
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE").unwrap_or_default();
     let systemctl = env_nonempty("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
-    for unit in candidates {
-        if let Ok(out) = Command::new(&systemctl).args(["--user", "is-active", &unit]).output() {
-            let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !state.is_empty() {
-                return Some(state == "active");
-            }
-        }
-    }
-    None
+    let run = |verb: &str, unit: &str| {
+        Command::new(&systemctl).args(["--user", verb, unit]).output().ok()
+    };
+    sentinel_timer_active(&instance, |unit| {
+        let enabled = run("is-enabled", unit).is_some_and(|o| o.status.success());
+        let text = run("is-active", unit)
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        (enabled, text)
+    })
 }
 
 fn gather_halt(run: &str) -> HaltState {
@@ -213,12 +202,21 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     (inputs, content)
 }
 
-fn run_dir() -> String {
-    spira_config::process::cfg("SPIRA_RUN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp/spira-run".to_string())
+fn run_dir() -> Result<String, String> {
+    spira_config::process::cfg("SPIRA_RUN").and_then(|s| {
+        if s.is_empty() {
+            Err("SPIRA_RUN is empty".to_string())
+        } else {
+            Ok(s)
+        }
+    })
 }
 
 fn do_render(rows: i64, cols: i64) -> Vec<String> {
-    let run = run_dir();
+    let run = match run_dir() {
+        Ok(r) => r,
+        Err(e) => return refusal_lines(&e),
+    };
     let (mut inputs, _content) = build_inputs(&run);
     inputs.cols = cols;
     render(rows, cols, &inputs)
@@ -290,7 +288,15 @@ fn main() {
                 }
                 let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 println!("=== {stem} ===");
-                let run = run_dir();
+                let run = match run_dir() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        for line in refusal_lines(&e) {
+                            println!("{line}");
+                        }
+                        continue;
+                    }
+                };
                 let (mut inputs, _c) = build_inputs(&run);
                 let (content, exists) = read_snapshot(&path);
                 let frag_snap = Snapshot::parse(&content);
@@ -320,6 +326,7 @@ fn main() {
             install_sigwinch_handler();
             loop {
                 paint(&mut last_frame);
+                let config_failed = run_dir().is_err();
                 // Sleep in short slices rather than one flat `sleep(tick)`, so a resize
                 // (SIGWINCH) repaints within a fraction of a second instead of waiting out
                 // whatever is left of the current tick — belt-and-suspenders on top of the
@@ -334,8 +341,8 @@ fn main() {
                     std::thread::sleep(slice.min(target - waited));
                     waited += slice;
                 }
-                if !conf_file.is_empty() && conf_mtime(&conf_file) != conf_mtime_0 {
-                    eprintln!("health: config changed — restarting");
+                if config_failed || (!conf_file.is_empty() && conf_mtime(&conf_file) != conf_mtime_0) {
+                    eprintln!("health: config changed or unresolved — restarting");
                     let exe = std::env::current_exe().unwrap_or_else(|_| "health".into());
                     let _ = Command::new(exe).arg("loop").exec_replace();
                 }

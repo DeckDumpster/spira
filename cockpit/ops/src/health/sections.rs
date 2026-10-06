@@ -36,6 +36,31 @@ pub struct DrainState {
     pub stamp_mtime: Option<i64>,
 }
 
+/// The one line a pane shows when its config cannot be resolved: never a path it made up.
+pub fn refusal_lines(err: &str) -> Vec<String> {
+    vec![format!("{B}{BAD} \u{25a0} health: config unresolved {RST}{DIM}{err}{RST}")]
+}
+
+/// Resolves the sentinel timer the way `spira_unit` does: the instance-qualified unit (the
+/// instance is always part of the name, `prod` included), else the plain one. `probe` returns
+/// `(is-enabled succeeded, is-active text)`; a unit neither enabled nor active is unknown to
+/// systemd, and its "inactive" says nothing, so nothing resolving yields `None`.
+pub fn sentinel_timer_active(instance: &str, probe: impl Fn(&str) -> (bool, String)) -> Option<bool> {
+    let plain = "spira-sentinel.timer".to_string();
+    let mut candidates = Vec::new();
+    if !instance.is_empty() {
+        candidates.push(format!("spira-sentinel-{instance}.timer"));
+    }
+    candidates.push(plain);
+    for unit in candidates {
+        let (enabled, text) = probe(&unit);
+        if enabled || text == "active" {
+            return Some(text == "active");
+        }
+    }
+    None
+}
+
 fn halt_banner(h: &HaltState) -> Vec<String> {
     if !h.stamp_exists && h.sentinel_active == Some(true) {
         return Vec::new();
@@ -1094,6 +1119,29 @@ fn now_placeholder() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn production_instance_timer_is_resolved_not_reported_inactive() {
+        let probe = |u: &str| {
+            if u == "spira-sentinel-prod.timer" { (true, "active".to_string()) } else { (false, "inactive".to_string()) }
+        };
+        let active = sentinel_timer_active("prod", probe);
+        assert_eq!(active, Some(true));
+        let h = HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: active };
+        assert!(halt_banner(&h).is_empty());
+    }
+
+    #[test]
+    fn unresolvable_timer_is_unknown_never_inactive() {
+        assert_eq!(sentinel_timer_active("prod", |_| (false, "inactive".to_string())), None);
+    }
+
+    #[test]
+    fn config_failure_renders_a_refusal_not_a_path() {
+        let out = refusal_lines("SPIRA_TOML is not set").join("\n");
+        assert!(out.contains("SPIRA_TOML is not set"));
+        assert!(!out.contains("/tmp"));
+    }
+
     use super::*;
 
     fn snap(pairs: &[(&str, &str)]) -> Snapshot {
