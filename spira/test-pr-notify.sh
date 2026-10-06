@@ -60,7 +60,10 @@ RUN="$TMP/run"
 # would otherwise read whatever the fixture's own base layer declares.
 REPO_MAP="$TMP/repo-map"
 : > "$REPO_MAP"
-tl_config SPIRA_ID_PREFIX=sp SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$REPO_MAP"
+# SPIRA_MAIL TOO: the complete fixture's own default is a fixed, unwritable
+# "/fixture/home/..." path now (one source of config, never derived from SPIRA_RUN at
+# runtime), and the tick3 assertions below read mail straight out of "$RUN/mail/concierge/".
+tl_config SPIRA_ID_PREFIX=sp SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_MAIL="$RUN/mail"
 export SPIRA_CONF="$CONF" HOME="$TMP/home"
 # An operator-muted host files mail into cur/, where the unread-count checks never look.
 # SPIRA_CONCIERGE_INBOX EXPLICITLY: mail's default reader for the concierge mailbox
