@@ -25,6 +25,7 @@
 //!                                       SPIRA_BD, SPIRA_DB, SPIRA_RUN, SPIRA_DOCTOR,
 //!                                       SPIRA_CONF_FILE; exit 1 means the caller must
 //!                                       `exit 1` outright, never just `return`
+//!   spira-config convert-legacy DIR   DIR/spira.conf + repo-map -> DIR/spira.toml, only if absent
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
@@ -1089,6 +1090,62 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `convert-legacy <dir> [--home DIR] [--fayth F]...` — prints the `spira.toml` now in force in
+/// `<dir>` (converting a pre-cutover `spira.conf` + `repo-map` first if that is all it holds),
+/// or nothing when the directory holds neither.
+fn cmd_convert_legacy(args: &[String]) -> ExitCode {
+    let mut dir = None;
+    let mut fayths = Vec::new();
+    let mut home = env::var("HOME").unwrap_or_default();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--home" => {
+                if let Some(h) = args.get(i + 1) {
+                    home = h.clone();
+                }
+                i += 2;
+            }
+            "--fayth" => {
+                if let Some(p) = args.get(i + 1) {
+                    fayths.push(PathBuf::from(p));
+                }
+                i += 2;
+            }
+            other if dir.is_none() && !other.starts_with("--") => {
+                dir = Some(PathBuf::from(other));
+                i += 1;
+            }
+            other => {
+                eprintln!("spira-config convert-legacy: unknown argument {other:?}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let Some(dir) = dir else {
+        eprintln!("usage: spira-config convert-legacy <config-dir> [--home DIR] [--fayth F]...");
+        return ExitCode::FAILURE;
+    };
+    match convert::convert_legacy_dir(&dir, &home, &fayths) {
+        Ok(convert::LegacyOutcome::Present(p)) => {
+            println!("{}", p.display());
+            ExitCode::SUCCESS
+        }
+        Ok(convert::LegacyOutcome::Nothing) => ExitCode::SUCCESS,
+        Ok(convert::LegacyOutcome::Converted(p, warnings)) => {
+            for w in &warnings.0 {
+                eprintln!("spira-config convert-legacy: {w}");
+            }
+            println!("{}", p.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("spira-config convert-legacy: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `$SPIRA_HOME`, or the refusal every `fayth` subcommand prints and fails on — the chamber
 /// lives at `<home>/chamber`, and every lib.sh caller this binary now backs already has
 /// `SPIRA_HOME` set by the time it calls one of these (conf.sh resolves it before lib.sh is
@@ -1292,6 +1349,7 @@ fn main() -> ExitCode {
         Some("fayth") => cmd_fayth(&args[1..]),
         Some("unit") => cmd_unit(&args[1..]),
         Some("deps") => cmd_deps(&args[1..]),
+        Some("convert-legacy") => cmd_convert_legacy(&args[1..]),
         Some("migrate") => match args.get(1) {
             Some(file) => cmd_migrate(file),
             None => {
@@ -1303,7 +1361,7 @@ fn main() -> ExitCode {
             eprintln!(
                 "usage: spira-config <validate|get|export|locate|resolve|env-bootstrap|check-bd|\n\
                  \x20       convert|set|unset|writeback|schema|path-tail|fayth|unit|deps|\n\
-                 \x20       migrate|repo> ...\n\
+                 \x20       convert-legacy|migrate|repo> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
@@ -1314,6 +1372,7 @@ fn main() -> ExitCode {
                  \x20 check-bd\n\
                  \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
+                 \x20 convert-legacy <config-dir> [--home DIR] [--fayth F]...\n\
                  \x20 set <dotted.path> <value> <file>\n\
                  \x20 unset <dotted.path> <file>\n\
                  \x20 writeback <candidate>\n\

@@ -585,3 +585,26 @@ fn retired_quarantine_clean_runs_converts_with_a_warning() {
     let sh = spira_config::export_sh(&doc);
     assert!(!sh.contains("CLEAN_RUNS"), "a retired key leaked into export --sh: {sh}");
 }
+
+#[test]
+fn converts_a_pre_cutover_config_dir_once_and_never_overwrites() {
+    use spira_config::convert::{convert_legacy_dir, LegacyOutcome};
+    let tmp = testkit::TempDir::new("spira-config-convert-legacy");
+    let dir = tmp.path().to_path_buf();
+
+    assert_eq!(convert_legacy_dir(&dir, "/opt/fixture-home", &[]).unwrap(), LegacyOutcome::Nothing);
+
+    fs::write(dir.join("spira.conf"), fixture("spira.conf")).unwrap();
+    fs::write(dir.join("repo-map"), fixture("repo-map")).unwrap();
+    let LegacyOutcome::Converted(path, _) = convert_legacy_dir(&dir, "/opt/fixture-home", &[]).unwrap() else {
+        panic!("a spira.conf with no spira.toml must convert");
+    };
+    let text = fs::read_to_string(&path).unwrap();
+    let doc = spira_config::validate(&text).expect("the converted file validates");
+    assert!(!doc.repo.is_empty(), "the repo-map rows became [repo.*] tables");
+    assert_eq!(doc.spira.unwrap().home_repo, Some("home".to_string()));
+
+    fs::write(&path, "[spira]\nhome_repo = \"edited\"\n").unwrap();
+    assert_eq!(convert_legacy_dir(&dir, "/opt/fixture-home", &[]).unwrap(), LegacyOutcome::Present(path.clone()));
+    assert!(fs::read_to_string(&path).unwrap().contains("edited"));
+}
