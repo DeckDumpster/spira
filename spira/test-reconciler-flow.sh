@@ -570,6 +570,7 @@ advance 3
 run_pass
 is "confirmed past its gap grace, but still report-only" True "$(status_of flow:rework is_gap)"
 is "still no alert — report-only until 24h of history exist" "0" "$(mail_count_for flow:rework)"
+echo "# DEBUG pass-out:"; sed "s/^/# /" "$T/pass-out.log" | tail -12; echo "# DEBUG mail:"; sed "s/^/# /" "$MAIL_LOG" | head -20; echo "# DEBUG rework rows:"; grep "flow:rework" "$SPIRA_RUN"/tsd/reconciler-status.jsonl 2>/dev/null | tail -3 | sed "s/^/# /"
 spira-config unset spira.flow_rework_window_hours "$_TL_CONF_OVERRIDE" >/dev/null
 
 # ============================================================================
