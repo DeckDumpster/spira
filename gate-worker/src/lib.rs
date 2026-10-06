@@ -154,6 +154,12 @@ impl Worker<'_> {
             run.outcome.word(),
             finished_ms.saturating_sub(started_ms)
         ));
+        if run.outcome != GateOutcome::Pass {
+            match self.queue.retain_output(job, &run.out) {
+                Ok(p) => (self.log)(&format!("gate-worker: {} — the gate's whole output is kept at {}", job.branch, p.display())),
+                Err(e) => (self.log)(&format!("gate-worker: {} — the gate's output could not be kept: {e}", job.branch)),
+            }
+        }
         if run.outcome == GateOutcome::NoVerdict {
             (self.log)(&format!("gate-worker: {} — not the branch's fault ({})", job.branch, run.reason_or("unspecified")));
         }

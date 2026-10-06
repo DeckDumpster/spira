@@ -46,6 +46,8 @@ pub enum Where {
     Done,
 }
 
+const RETAINED_OUTPUTS: usize = 300;
+
 pub struct GateQueue {
     root: PathBuf,
 }
@@ -215,6 +217,25 @@ impl GateQueue {
     /// Drop a job this slot claimed that will not be gated.
     pub fn discard(&self, slot: usize, job: &Job) {
         let _ = fs::remove_file(self.claimed_slot(slot).join(job.file()));
+    }
+
+    /// Keeps the gate's whole output for a verdict that is not a pass, so a fault can be read
+    /// after the verdict has been taken. Returns where it went.
+    pub fn retain_output(&self, job: &Job, out: &str) -> std::io::Result<PathBuf> {
+        let dir = self.root.join("output");
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(job.file().replace(".json", ".out"));
+        atomic_write(&path, out)?;
+        let mut kept: Vec<_> = fs::read_dir(&dir)?
+            .flatten()
+            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+            .collect();
+        kept.sort();
+        let excess = kept.len().saturating_sub(RETAINED_OUTPUTS);
+        for (_, old) in kept.into_iter().take(excess) {
+            let _ = fs::remove_file(old);
+        }
+        Ok(path)
     }
 
     pub fn complete(&self, slot: usize, d: &Done) -> std::io::Result<()> {
