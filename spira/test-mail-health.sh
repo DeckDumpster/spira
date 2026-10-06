@@ -130,4 +130,35 @@ isz "exits 0 when age below threshold" "$rc"
 count4="$(op_count)"
 is "no message for fresh mail" "2" "$count4"
 
+echo
+echo "=== outbound: aerc's outgoing command ==="
+
+tl_config SPIRA_MAIL_READERS=""
+mkdir -p "$HOME/.config/aerc"
+CONF="$HOME/.config/aerc/accounts.conf"
+op_before="$(op_count)"
+
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
+isz "no accounts.conf: silent" "$rc"
+
+printf '[spira]\noutgoing = %s/gone/mail.sh sendmail\n' "$TMP" > "$CONF"
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
+is1 "SEEN RED: outgoing at a deleted path mails the operator" "$rc"
+is "one message for the dead outgoing path" "$((op_before + 1))" "$(op_count)"
+
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
+isz "same fault is not mailed twice" "$rc"
+is "no second message" "$((op_before + 1))" "$(op_count)"
+
+mkdir -p "$TMP/wr"
+printf '#!/bin/sh\n[ "$1" = --check ] && exit 1\nexit 0\n' > "$TMP/wr/spira-sendmail"; chmod +x "$TMP/wr/spira-sendmail"
+printf '[spira]\noutgoing = %s/wr/spira-sendmail\n' "$TMP" > "$CONF"
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
+is1 "an executable spira-sendmail whose --check fails is a fault" "$rc"
+
+printf '#!/bin/sh\nexit 0\n' > "$TMP/wr/spira-sendmail"
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
+isz "a working spira-sendmail is silent" "$rc"
+[ -e "$TMP/run/mail-health/outbound" ] && bad "state cleared when the fault clears" "still present" || ok "state cleared when the fault clears"
+
 tl_summary

@@ -195,6 +195,78 @@ fn dependencies(dry: bool) -> Result<(), String> {
     fetch_sccache(dry, &bin)?;
     fetch_inotifywait(dry, &bin)?;
     install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
+    install_sendmail(dry, &home, &bin)?;
+    Ok(())
+}
+
+fn render_sendmail_wrapper(releases: &str, toml: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         # spira-sendmail — aerc's outgoing command; written by spira-install, rewritten on every install.\n\
+         R=$(readlink -f '{releases}/current') || exit 1\n\
+         [ -x \"$R/bin/mail\" ] || {{ echo \"spira-sendmail: $R/bin/mail is not executable\" >&2; exit 1; }}\n\
+         [ \"${{1:-}}\" = --check ] && exit 0\n\
+         exec env SPIRA_RELEASE=\"$R\" SPIRA_TOML='{toml}' PATH=\"$R/bin:$R/spira:/usr/local/bin:/usr/bin:/bin\" \"$R/bin/mail\" sendmail \"$@\"\n"
+    )
+}
+
+/// Returns `conf` with every `outgoing =` line pointing at `wrapper`, or `None` when there was
+/// nothing to change.
+fn rewrite_aerc_outgoing(conf: &str, wrapper: &str) -> Option<String> {
+    let want = format!("outgoing = {wrapper}");
+    let mut changed = false;
+    let out: Vec<String> = conf
+        .lines()
+        .map(|l| {
+            let is_outgoing = l.trim_start().strip_prefix("outgoing").is_some_and(|r| r.trim_start().starts_with('='));
+            if is_outgoing && l.trim() != want {
+                changed = true;
+                want.clone()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    changed.then(|| out.join("\n") + "\n")
+}
+
+/// Installs `spira-sendmail` into `bin` and points an existing aerc account at it, so a release
+/// cut cannot leave the operator's reply path at a binary that no longer exists. An absent
+/// accounts.conf is left alone: no aerc account, nothing to repoint.
+fn install_sendmail(dry: bool, home: &str, bin: &Path) -> Result<(), String> {
+    let (Some(releases), Some(toml)) = (nonempty_env("SPIRA_RELEASES"), nonempty_env("SPIRA_TOML")) else {
+        info("spira-sendmail NOT installed — SPIRA_RELEASES or SPIRA_TOML is unset");
+        return Ok(());
+    };
+    let wrapper = bin.join("spira-sendmail");
+    let body = render_sendmail_wrapper(releases.trim_end_matches('/'), &toml);
+    if dry {
+        would(&format!("write {}", wrapper.display()));
+    } else if std::fs::read_to_string(&wrapper).ok().as_deref() == Some(body.as_str()) {
+        skip(&format!("{} is current", wrapper.display()));
+    } else {
+        std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
+        let tmp = bin.join(".spira-sendmail.new");
+        std::fs::write(&tmp, &body).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod spira-sendmail: {e}"))?;
+        std::fs::rename(&tmp, &wrapper).map_err(|e| format!("install {}: {e}", wrapper.display()))?;
+        info(&format!("installed {}", wrapper.display()));
+    }
+
+    let conf_dir = nonempty_env("XDG_CONFIG_HOME").unwrap_or_else(|| format!("{home}/.config"));
+    let conf = Path::new(&conf_dir).join("aerc/accounts.conf");
+    let Ok(text) = std::fs::read_to_string(&conf) else {
+        skip(&format!("no {} — nothing to repoint", conf.display()));
+        return Ok(());
+    };
+    match rewrite_aerc_outgoing(&text, &wrapper.display().to_string()) {
+        None => skip(&format!("aerc outgoing already {}", wrapper.display())),
+        Some(_) if dry => would(&format!("repoint aerc outgoing in {} at {}", conf.display(), wrapper.display())),
+        Some(new) => {
+            std::fs::write(&conf, new).map_err(|e| format!("write {}: {e}", conf.display()))?;
+            info(&format!("repointed aerc outgoing in {} at {}", conf.display(), wrapper.display()));
+        }
+    }
     Ok(())
 }
 
@@ -1546,6 +1618,20 @@ mod dependency_fetch_tests {
     #[test]
     fn sccache_help_has_webdav_missing_line_fails() {
         assert!(!sccache_help_has_webdav("sccache: error: no such option --help\n"));
+    }
+
+    #[test]
+    fn aerc_outgoing_at_a_deleted_checkout_path_is_rewritten() {
+        let conf = "[spira]\nsource = maildir:///m\noutgoing = /co/spira/mail.sh\nfrom = O <o@s>\n";
+        let new = rewrite_aerc_outgoing(conf, "/h/.local/bin/spira-sendmail").unwrap();
+        assert_eq!(new, "[spira]\nsource = maildir:///m\noutgoing = /h/.local/bin/spira-sendmail\nfrom = O <o@s>\n");
+        assert!(rewrite_aerc_outgoing(&new, "/h/.local/bin/spira-sendmail").is_none());
+    }
+
+    #[test]
+    fn sendmail_wrapper_names_release_and_toml_and_supports_check() {
+        let w = render_sendmail_wrapper("/r", "/t.toml");
+        assert!(w.contains("readlink -f '/r/current'") && w.contains("SPIRA_TOML='/t.toml'") && w.contains("--check"));
     }
 
     #[test]
