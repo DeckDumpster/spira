@@ -157,10 +157,16 @@ esac
 GHEOF
 chmod +x "$GH_BIN/gh"
 
+# SPIRA_HOME EXPLICITLY, on every env -i call below: pr-notify.sh's own conf.sh sourcing
+# finds it as a plain, never-exported shell variable (its own $HERE), which is enough for
+# pr-notify.sh itself but not for `mail send concierge`, a separate process that needs
+# SPIRA_HOME or SPIRA_RELEASE in ITS OWN environment (spira_config::resolve::locate_home) —
+# without it, "mail send" fails outright ("neither SPIRA_HOME nor SPIRA_RELEASE is set") and
+# every tick3 mail assertion below reads an empty mailbox.
 run() {  # run [args...] -> pr-notify.sh in a clean env; stdout in $TMP/out
     tl_config SPIRA_REPO_MAP="$REPO_MAP" SPIRA_MAIL_MUTE=0
     env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
 }
@@ -202,8 +208,6 @@ for r in queue-repo pr-repo push-repo hold-repo; do
 done
 run --show
 out3="$(cat "$TMP/out")"
-printf 'DIAG err: %s\n' "$(cat "$TMP/err" 2>/dev/null)" >&2
-printf 'DIAG mail root listing: %s\n' "$(find "$RUN/mail" 2>&1)" >&2
 for r in queue-repo pr-repo push-repo hold-repo; do
     has "tick3: $r's now-red PR is reported, naming the failing check" \
         "$out3" "FAIL RED #1 Round batch [$r]: suites"
@@ -318,7 +322,7 @@ chmod +x "$GH_BIN/gh"
 runb() {  # runb <args...> -> pr-notify.sh against BRANCH_MAP
     tl_config SPIRA_REPO_MAP="$BRANCH_MAP"
     env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         GH_BRANCH_HAS_PR="${GH_BRANCH_HAS_PR:-0}" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
@@ -389,7 +393,7 @@ rm -f "$TMP/repos/queue-repo/.gh-pr-state"
 run_gone() {
     tl_config SPIRA_REPO_MAP="$GONE_MAP"
     env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh --show > "$TMP/out" 2>"$TMP/err"
 }
