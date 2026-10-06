@@ -137,6 +137,20 @@ LASTPASS_FILE="$RUNDIR/maechen.lastpass"
 
 now_ts="$(date +%s)"
 
+# SPIRA_HOME_REPO EMPTY, GLOBALLY, FOR THE WHOLE SUITE (pattern 10 — tl_config persists for
+# the rest of the suite): the complete fixture's own default is "spira", never empty, where
+# the old per-call env prefix left it genuinely unset. An unresolved, non-empty home_repo
+# name is NOT the same as "no home repo" to either consumer that reads it here —
+# lane_admitted() treats a name with no lanes row as admitting every lane (the "no lanes
+# column" default, meant for a real repo missing just that column, not a name absent from
+# the map entirely), and main.rs's landing-count loop only skips a map row that matches
+# home_repo BY NAME — so a fixture's own single-row map, under a name that is never
+# "spira", gets scanned once as "the home repo" (falling back to SPIRA_REPO) and a second
+# time as that row, double-counting every landing and defeating every lane-guard test
+# whose map admits nothing. Only the db-wpjm regression below wants the home repo counted
+# by name; it pins its own value and restores this empty one when it is done.
+tl_config SPIRA_HOME_REPO=
+
 # Base environment shared by all runs. Individual tests override variables as needed.
 run_trigger() {
     : > "$BD_LOG"
@@ -768,11 +782,13 @@ is     "threshold=3 exits 0 — home repo not double-counted" 0 "$rc_wpjm2"
 nowant "no create at threshold=3 — exactly 2 landings, not 4" \
     "create" "$(cat "$BD_LOG")"
 
-# SPIRA_HOME_REPO RESTORED (pattern 10): tl_config persists for the rest of the suite, unlike
-# the per-call env prefix this replaced — "home-wpjm" pinned above for the db-wpjm regression
-# must not leak into the lane-guard tests below, which assert against SELFMAP/NOLANEMAP (named
-# "testrepo"/"dev-repo") and need the fixture's own default home repo, not this regression's.
-tl_config SPIRA_HOME_REPO=spira
+# SPIRA_HOME_REPO RESTORED TO EMPTY (pattern 10): "home-wpjm" pinned above for the db-wpjm
+# regression must not leak into the lane-guard tests below, which assert against
+# SELFMAP/NOLANEMAP (named "testrepo"/"dev-repo") — restoring to the fixture's own default
+# ("spira", a name absent from every other map here) would still double-count/admit-every-
+# lane exactly as the file-wide comment above explains; empty is the one value that means
+# "no home repo" to both consumers.
+tl_config SPIRA_HOME_REPO=
 
 # ==========================================================================================
 echo
