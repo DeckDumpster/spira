@@ -623,6 +623,9 @@ impl<'w, W: World> Trial<'w, W> {
                 // system dirs, then cargo for the tree builds. Never the inherited PATH.
                 e("PATH", &self.s.path),
                 e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
+                // The one source of config: testenv and every tool a step runs refuse without
+                // it (2026-10-06: every suites composition was a harness fault, settings-refused).
+                e("SPIRA_TOML", ctx.var("SPIRA_TOML")),
                 // Everything the trial runs is on the gate's admission (sp-f4ig1): its testenv and
                 // cargo take no compile or test slot of their own (no hold-and-wait, no deadlock).
                 e(spira_config::admission::INHERIT_ENV, "gate"),

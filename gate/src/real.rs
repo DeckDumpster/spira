@@ -94,6 +94,10 @@ const VARS: &[&str] = &[
     // sp-s8v5r: the shared floor testenv's warm-slot shedding also reads — same tmpfs.
     "SPIRA_TMPFS_SHED_FREE_MIB",
     "SPIRA_RELEASE",
+    // The one source of config (per Ryan 2026-10-05): every Spira tool a step runs — testenv
+    // above all — refuses without it, so a suites composition was a harness fault on every
+    // branch (2026-10-06: "batch: SPIRA_TOML is not set … refusing", reason=settings-refused).
+    "SPIRA_TOML",
     "HOME",
 ];
 
