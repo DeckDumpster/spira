@@ -93,7 +93,12 @@ brief_fx() { # brief_fx [persona] -> compose the brief for a fixture persona
     # SPIRA_MEMORIES_CACHE is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads it from any more.
     # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME either.
-    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber"
+    # SPIRA_RUN is the same story (pattern 2): it no longer derives from SPIRA_HOME=$FX —
+    # it is a flat declared value in the complete fixture (/fixture/home/spira/run), a path
+    # this suite's own fixture tree neither owns nor can write to. concierge.sh writes the
+    # rendered brief at $SPIRA_RUN/concierge-brief.md with no fallback, so give it this
+    # suite's own run dir.
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_RUN="$FX/run"
     SPIRA_HOME="$FX" CONCIERGE_FAYTH="${1:-fx}" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" brief
 }
@@ -285,7 +290,7 @@ echo "start — the launcher's --model comes from persona.<fayth>.model, not FAY
 if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
     printf '  skip  (no systemd user session — launcher model test requires it)\n'
 else
-    MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber" "$MT_TMP/chamber-empty"
+    MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber"
     ln -s "$HERE/conf.d" "$MT_TMP/conf.d"
     cp "$HARNESS/spira/chamber/concierge.md" "$MT_TMP/chamber/modeltest.md"
     sed -e 's|^FAYTH_NAME=.*|FAYTH_NAME=modeltest|' \
@@ -294,10 +299,25 @@ else
         "$HARNESS/spira/chamber/concierge.fayth" > "$MT_TMP/chamber/modeltest.fayth"
 
     MT_TOML="$MT_TMP/spira.toml"
-    # SPIRA_RUN/SPIRA_WIKI/SPIRA_REPO_MAP/SPIRA_CHAMBER/SPIRA_MEMORIES_CACHE are registered
-    # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG). This case's own subject IS config
-    # loading (persona.model out of spira.toml), so per that rule it keeps its own file —
-    # written here, not via tl_config — layered under the complete fixture below.
+    # SPIRA_RUN/SPIRA_WIKI/SPIRA_REPO_MAP/SPIRA_CHAMBER/SPIRA_MEMORIES_CACHE/
+    # SPIRA_CLIENT_SETTINGS are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG).
+    # This case's own subject IS config loading (persona.model out of spira.toml), so per
+    # that rule it keeps its own file — written here, not via tl_config — layered under the
+    # complete fixture below. client_settings must be declared here too: dropping the
+    # suite's own override layer (this toml is base:$MT_TOML, not base:$_TL_CONF_OVERRIDE)
+    # also drops the top-of-suite SPIRA_CLIENT_SETTINGS override, so without this `start`'s
+    # session-hook install falls through to the complete fixture's own literal
+    # /fixture/home/.claude/settings.json and refuses (permission denied) instead of
+    # writing under this case's own $MT_TMP.
+    # chamber = "$MT_TMP/chamber", not chamber-empty: spira-config's chamber_dir() (the
+    # fayth_get/persona_model path) now prefers the cfg()-resolved SPIRA_CHAMBER over
+    # <home>/chamber unconditionally (one source of config) — pointing it at the empty dir
+    # made fayth_get read nothing and silently return "" for FAYTH_STATUTE_CORE (every core
+    # slug demoted, "no statute rendered in full"). The old worry this dodged —
+    # spira_toml_resolve's auto-convert-from-fayth re-seeding this toml from modeltest.fayth's
+    # FAYTH_MODEL — is retired along with every other derivation (conf.sh: "the write
+    # spira_toml_resolve's auto-convert USED TO EXIST to survive"); nothing reads a fayth to
+    # produce a spira.toml any more, so there is nothing left to defeat.
     cat > "$MT_TOML" <<EOF
 [persona.modeltest]
 model = "concierge-toml-model"
@@ -306,8 +326,9 @@ model = "concierge-toml-model"
 run = "$MT_TMP/run"
 wiki = "$MT_TMP"
 repo_map = "/nonexistent"
-chamber = "$MT_TMP/chamber-empty"
+chamber = "$MT_TMP/chamber"
 memories_cache = ""
+client_settings = "$MT_TMP/settings.json"
 EOF
 
     SOCK_MT="test-concierge-model-$$"

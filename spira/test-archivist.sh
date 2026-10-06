@@ -497,13 +497,16 @@ elist="$(alist)"
 hasnt "an exhausted timeout is excluded from the next pass" "$elist" "archive"
 
 adigest() {  # adigest <archivist.sh args...>
-    # SPIRA_MAIL/SPIRA_MAIL_KINDS are registered but mail/src/env.rs reads them with a plain
-    # std::env::var, not spira_config::process::cfg — a direct-env exception like SPIRA_HOME,
-    # confirmed by reading that source; tl_config would silently never reach them. SPIRA_TZ
-    # IS read through cfg() (archivist/src/config.rs), so it alone goes through tl_config.
-    tl_config SPIRA_TZ=UTC
+    # SPIRA_MAIL/SPIRA_MAIL_KINDS ARE cfg()-resolved (mail/src/env.rs's `path()` helper
+    # calls spira_config::process::cfg, not a plain std::env::var — the file's own header
+    # comment is stale on this point): a raw env -i assignment no longer reaches `mail`,
+    # the archivist's own child, at all. Declare them via tl_config instead, same as
+    # SPIRA_TZ. SPIRA_MAIL_MUTE too: the complete fixture declares mail_mute=true as its
+    # base value (pattern 2) — muted mail delivers straight to cur/ already marked Seen,
+    # which read as "no mail" to this suite's new/-count checks.
+    tl_config SPIRA_TZ=UTC SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
+        SPIRA_MAIL_MUTE=0
     env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-        SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
         "$ARC" "$@" 2>&1
 }
 
