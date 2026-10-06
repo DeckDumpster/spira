@@ -1488,9 +1488,9 @@ fn same_user_credential_path() -> String {
 }
 
 /// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
-/// admin (`SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD`, default root with an empty
-/// password — what a fresh dolt-beads.service has, and what cutover-deploy.sh defaults to),
-/// against the SQL this release ships beside its unit templates.
+/// admin: `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD` when set, else root with the
+/// password this phase provisions on first run (a fresh Dolt's root has none, and is never
+/// left that way), against the SQL this release ships beside its unit templates.
 fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     use install::lifecycle_store::{self, Admin};
     let host = nonempty_env("SPIRA_LC_HOST");
@@ -1501,13 +1501,7 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     let cred = same_user_credential_path();
     let rw = lifecycle_store::read_credential(Path::new(&cred))?;
     let ro = lifecycle_store::read_credential(Path::new(&format!("{cred}-ro")))?;
-    let admin = Admin {
-        user: nonempty_env("SPIRA_LC_ADMIN_USER").unwrap_or_else(|| "root".into()),
-        password: std::env::var("SPIRA_LC_ADMIN_PASSWORD").unwrap_or_default(),
-        host,
-        port,
-    };
-    lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, |args, env| {
+    let run = |args: &[String], env: &[(String, String)]| {
         // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
         let mut c = Command::new("timeout");
         c.arg("120").arg("spira-lc").args(args).stdin(Stdio::null());
@@ -1518,7 +1512,19 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
             Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
             Err(e) => (127, format!("cannot run spira-lc: {e}")),
         }
-    })
+    };
+    let mut lines = Vec::new();
+    let admin = if let Some(user) = nonempty_env("SPIRA_LC_ADMIN_USER") {
+        Admin { user, password: std::env::var("SPIRA_LC_ADMIN_PASSWORD").unwrap_or_default(), host, port }
+    } else {
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let admin_cred = nonempty_env("SPIRA_LC_ADMIN_PASSWORD_FILE").unwrap_or_else(|| spira_config::resolve::lc_admin_credential_default(&env_map));
+        let (admin, msg) = lifecycle_store::ensure_admin(Path::new(&admin_cred), &std::env::temp_dir(), host, port, run)?;
+        lines.push(msg);
+        admin
+    };
+    lines.extend(lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, run)?);
+    Ok(lines)
 }
 
 fn create_same_user_credential(path: &str) -> Result<(), String> {

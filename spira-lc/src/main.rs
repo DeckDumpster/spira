@@ -247,7 +247,11 @@ fn cmd_admin_apply_ddl(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(s) => s,
         Err(e) => return (CANNOT_TELL, format!("admin-apply-ddl: reading {path}: {e}")),
     };
-    match conn.apply_ddl(&sql_text) {
+    let admin = match migrate::admin_conn(conn) {
+        Ok(a) => a,
+        Err(e) => return (CANNOT_TELL, format!("admin-apply-ddl: the admin password file (SPIRA_LC_ADMIN_PASSWORD_FILE): {e}")),
+    };
+    match admin.as_ref().unwrap_or(conn).apply_ddl(&sql_text) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }

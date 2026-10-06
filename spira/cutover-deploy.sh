@@ -18,9 +18,9 @@
 # and re-granted underneath it.
 #
 # Steps, in order (each is the one place its own resource is written outside a test):
-#   1. apply lifecycle/schema.sql, as the database ADMIN (SPIRA_LC_ADMIN_USER/PASSWORD;
-#      default root/empty, this harness's own throwaway-server convention) — spira_lc's own
-#      grant does not yet exist to do this with
+#   1. apply lifecycle/schema.sql, as the database ADMIN (SPIRA_LC_ADMIN_USER/PASSWORD, else
+#      root with the password spira-install provisioned) — spira_lc's own grant does not
+#      yet exist to do this with
 #   2. apply lifecycle/grants.sql, same admin connection, with @SPIRA_LC_PASSWORD@/
 #      @SPIRA_LC_RO_PASSWORD@ substituted from the credentials spira-install
 #      generated (the spira_lc_password_file config key, and its -ro sibling)
@@ -68,8 +68,12 @@ command -v spira-config >/dev/null 2>&1 || { printf 'cutover-deploy: spira-confi
 say() { printf 'cutover-deploy: %s\n' "$1"; }
 
 : "${SPIRA_LC_ADMIN_USER:=root}"
+if [ -z "${SPIRA_LC_ADMIN_PASSWORD:-}" ]; then
+    _admin_file="${SPIRA_LC_ADMIN_PASSWORD_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira-lc-admin.credential}"
+    [ -r "$_admin_file" ] && SPIRA_LC_ADMIN_PASSWORD="$(cat "$_admin_file")"
+fi
 : "${SPIRA_LC_ADMIN_PASSWORD:=}"
-admin_lc() { env -u SPIRA_LC_PASSWORD_FILE SPIRA_LC_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" spira-lc "$@"; }
+admin_lc() { SPIRA_LC_ADMIN_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_ADMIN_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" spira-lc "$@"; }
 
 say "applying schema.sql (as $SPIRA_LC_ADMIN_USER)"
 if [ "$DRY_RUN" != 1 ]; then
