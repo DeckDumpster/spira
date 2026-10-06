@@ -195,6 +195,8 @@ mod tests {
         }
     }
 
+    const MODEL_BIN_OVERRIDE: &str = "SPIRA_MODEL_BIN_CONSIDERED";
+
     fn exe_at(paths: &'static [&'static str]) -> impl Fn(&Path) -> bool {
         move |p: &Path| paths.iter().any(|q| p == Path::new(q))
     }
@@ -248,6 +250,33 @@ mod tests {
         let c = base(&[("HOME", "/h"), ("CARGO_HOME", "/opt/cargo")]);
         assert_eq!(restricted_env("sp-x", &c, "/rel/bin").get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/opt/cargo/bin");
         assert!(!e.get("PATH").unwrap().contains(".local/bin"), "bd lives in ~/.local/bin; it must stay out");
+    }
+
+    #[test]
+    fn no_directory_on_the_models_path_holds_bd() {
+        let tmp = testkit::TempDir::new("restrict-nobd");
+        let root = tmp.path().to_path_buf();
+        let put = |rel: &str| testkit::write_exe(&root.join(rel), "#!/bin/sh\n");
+        put("rel/bin/work");
+        put("rel/bin/bd");
+        put("rel/model-bin/work");
+        put("home/.local/bin/bd");
+        put("home/.cargo/bin/cargo");
+        let r = |p: &str| root.join(p).display().to_string();
+        let mut b = base(&[("HOME", &r("home")), ("PATH", &format!("{}:{}", r("home/.local/bin"), r("rel/bin"))), ("SPIRA_RELEASE", &r("rel"))]);
+        for k in DB_LOCATORS.iter().filter(|k| **k != MODEL_BIN_OVERRIDE) {
+            b.insert(k.to_string(), r("db"));
+        }
+        let dir = model_bin_dir(&b, b.get("PATH").unwrap(), |p| p.is_file()).unwrap();
+        let e = restricted_env("sp-x", &b, &dir);
+        let path = e.get("PATH").unwrap();
+        assert!(path.split(':').any(|d| Path::new(d).join("work").is_file()), "work must stay reachable: {path}");
+        for d in path.split(':') {
+            assert!(!Path::new(d).join("bd").exists(), "bd is executable from {d} on the model's PATH {path}");
+        }
+        for k in DB_LOCATORS {
+            assert!(!e.contains_key(*k), "{k} reaches the model");
+        }
     }
 
     #[test]

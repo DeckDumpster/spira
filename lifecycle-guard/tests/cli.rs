@@ -424,3 +424,18 @@ fn gate_mode_refuses_a_rust_bd_status_read() {
     assert!(!out.contains("fence: lifecycle-guard"), "a refused run proves nothing: {out}");
     assert!(err.contains("REFUSED"), "{err}");
 }
+
+#[test]
+fn the_shipped_chamber_names_bd_nowhere() {
+    let chamber = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+    let out = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
+        .arg("--json")
+        .arg(&chamber)
+        .output()
+        .expect("run lifecycle-guard");
+    let findings: Vec<Value> = serde_json::from_slice(&out.stdout).expect("valid JSON findings");
+    let bd: Vec<&Value> = findings.iter().filter(|f| f["class"] == "brief-bd").collect();
+    assert!(bd.is_empty(), "a persona names bd: {bd:#?}");
+    let personas = std::fs::read_dir(&chamber).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "fayth")).count();
+    assert!(personas >= 8, "the chamber scan saw only {personas} fayth files");
+}

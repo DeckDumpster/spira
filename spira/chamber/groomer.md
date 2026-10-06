@@ -150,7 +150,7 @@ The sweep closes litter unmapped-repo beads, adds the overseer label to needs-ry
 
 The sweep no longer closes, drops or reopens beads by landing state: since the lifecycle
 cutover a bead's state — landed, handed on, still being worked — is its `spira-lc` row
-alone, and bd's open/closed says nothing about it, so there is no "landed but open" or
+alone, and the bead's open/closed says nothing about it, so there is no "landed but open" or
 "closed but never landed" drift left to report. Read `$SPIRA_RUN/groom.log` for what the
 sweep acted on before you start your own reading — poison triage and split/merge/premise
 judgement are yours.
