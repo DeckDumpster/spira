@@ -90,10 +90,21 @@ pub fn is_legacy_exempt(cause: &str) -> bool {
     cause == "thrash" || cause.starts_with("unjudged")
 }
 
+/// The cause the landing pass records for a gate run that reached no verdict.
+pub const NO_VERDICT_CAUSE: &str = "gate-no-verdict";
+
+pub fn is_no_verdict(cause: &str) -> bool {
+    let c = cause.trim();
+    c == NO_VERDICT_CAUSE || c.starts_with("gate-no-verdict:")
+}
+
 /// Classify a cause string. Order matters: explicit table first, then patterns, then the
 /// default (Judged — an unknown cause is more likely a new failure than a new exemption).
 pub fn classify(cause: &str) -> ReturnClass {
     let c = cause.trim();
+    if is_no_verdict(c) {
+        return ReturnClass::HarnessReturn;
+    }
     match c {
         "work-close-converted" | "recurrence" | "closed-while-live" | "alert-recur" => {
             return ReturnClass::NotAReturn
@@ -219,9 +230,13 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
     let mut attempt_log: Vec<Attempt> = Vec::new();
     let mut open: Option<String> = None;
     let mut credits: u32 = 0;
+    // A no-verdict run exempts the open attempt; the close that later ends the same
+    // session must not then forgive an earlier, real failure.
+    let mut spent_by_no_verdict = false;
     for (t, k) in evs.iter().filter(|(t, _)| floor.as_ref().map_or(true, |f| t > f)) {
         match k {
             EventKind::Claim => {
+                spent_by_no_verdict = false;
                 if let Some(at) = open.take() {
                     attempt_log.push(Attempt {
                         claimed_at: at,
@@ -232,6 +247,7 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
             }
             EventKind::Close => match open.take() {
                 Some(at) => attempt_log.push(Attempt { claimed_at: at, outcome: AttemptOutcome::Succeeded }),
+                None if spent_by_no_verdict => spent_by_no_verdict = false,
                 None => credits += 1,
             },
             EventKind::Requeued(c) if is_legacy_exempt(c) => match open.take() {
@@ -243,6 +259,7 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
             {
                 if let Some(at) = open.take() {
                     attempt_log.push(Attempt { claimed_at: at, outcome: AttemptOutcome::Exempt(c.clone()) });
+                    spent_by_no_verdict = is_no_verdict(c);
                 }
             }
             _ => {}
@@ -469,6 +486,55 @@ mod tests {
             ("reopen", "rebase-conflict"),
         ]);
         assert_eq!(fold(B, &r).attempts, 2);
+    }
+
+    #[test]
+    fn three_no_verdict_runs_charge_nothing() {
+        let nv = NO_VERDICT_CAUSE;
+        let r = rows(&[
+            ("claimed", ""),
+            ("requeued", nv),
+            ("claimed", ""),
+            ("requeued", nv),
+            ("claimed", ""),
+            ("requeued", nv),
+        ]);
+        let l = fold(B, &r);
+        assert_eq!(l.attempts, 0, "{l:#?}");
+        assert_eq!(l.requeues, 0);
+        let one_session = rows(&[("claimed", ""), ("requeued", nv), ("requeued", nv), ("requeued", nv)]);
+        assert_eq!(fold(B, &one_session).attempts, 0);
+    }
+
+    #[test]
+    fn three_branch_red_runs_still_charge() {
+        let r = rows(&[
+            ("claimed", ""),
+            ("reopen", "cert-gate-red"),
+            ("claimed", ""),
+            ("reopen", "cert-gate-red"),
+            ("claimed", ""),
+            ("reopen", "cert-gate-red"),
+        ]);
+        assert_eq!(fold(B, &r).attempts, 3);
+    }
+
+    #[test]
+    fn a_no_verdict_run_then_its_close_forgives_nothing_earlier() {
+        let r = rows(&[
+            ("claimed", ""),
+            ("claimed", ""),
+            ("requeued", NO_VERDICT_CAUSE),
+            ("closed", ""),
+        ]);
+        assert_eq!(fold(B, &r).attempts, 1);
+    }
+
+    #[test]
+    fn no_verdict_causes_are_harness_returns() {
+        assert_eq!(classify("gate-no-verdict"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("gate-no-verdict:died"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("gate-red"), ReturnClass::Judged);
     }
 
     #[test]

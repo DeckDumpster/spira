@@ -298,6 +298,7 @@ impl<'a> Lib for RealLib<'a> {
     /// class window resets after `noverdict_class_window` so a fault that went away and
     /// came back later escalates again rather than being silenced forever.
     fn noverdict(&self, id: &str, branch: &str, repo: &str, reason: &str, outcome: &str, out: &str) {
+        self.bump_requeue(id, &format!("gate-no-verdict:{reason}"));
         let dir = self.s.run.join("noverdict");
         let _ = std::fs::create_dir_all(&dir);
         let max = self.s.noverdict_max as u64;
