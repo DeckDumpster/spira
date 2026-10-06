@@ -9,6 +9,7 @@ pub mod claim;
 pub mod conf;
 pub mod decide;
 pub mod escape;
+pub mod fast_tier;
 pub mod fayth_keys;
 pub mod ledger;
 pub mod naming;
