@@ -74,6 +74,7 @@ jobs:
 
       - name: Publish the image if this closure has not been published
         env:
+          SPIRA_HOME: ${{ github.workspace }}/spira
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: |
           set -uo pipefail

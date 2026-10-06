@@ -152,6 +152,8 @@ jobs:
         run: cargo build --release -p suite-select
       - name: Select suites
         id: sel
+        env:
+          SPIRA_HOME: ${{ github.workspace }}/spira
         run: |
           set -uo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
