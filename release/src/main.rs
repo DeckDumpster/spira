@@ -202,7 +202,8 @@ fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), 
     }
 
     let (current, tail) = release_root_for_session_hook(&a.flags, env)?;
-    let paths = session_hook::resolve(&current, &tail, settings).map_err(fail_err)?;
+    let toml = spira_config::process::spec().map_err(fail_err)?;
+    let paths = session_hook::resolve(&current, &tail, &toml, settings).map_err(fail_err)?;
     match sub.as_str() {
         "install" => {
             if !srest.is_empty() {

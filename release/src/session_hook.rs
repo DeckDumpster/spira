@@ -65,25 +65,31 @@ pub struct Paths {
     pub release: String,
     /// [`spira_config::release_path_with_tail`] of `release`.
     pub path: String,
+    /// The one source of config the commands name (`SPIRA_TOML`): the client's environment
+    /// carries none, and every Spira tool refuses without it.
+    pub toml: String,
     pub hook: PathBuf,
     pub meter: PathBuf,
 }
 
 impl Paths {
     pub fn hook_command(&self) -> String {
-        format!("env SPIRA_RELEASE={} PATH={} {}", self.release, self.path, self.hook.display())
+        format!("env SPIRA_RELEASE={} SPIRA_TOML={} PATH={} {}", self.release, self.toml, self.path, self.hook.display())
     }
     pub fn meter_command(&self) -> String {
-        format!("env SPIRA_RELEASE={} PATH={} {}", self.release, self.path, self.meter.display())
+        format!("env SPIRA_RELEASE={} SPIRA_TOML={} PATH={} {}", self.release, self.toml, self.path, self.meter.display())
     }
 }
 
 /// Resolve [`Paths`] against release root `current` (typically `<releases>/current` — never a
 /// sha directory, requirement 1) and PATH tail `tail`.
-pub fn resolve(current: &Path, tail: &str, settings: PathBuf) -> Result<Paths, String> {
+pub fn resolve(current: &Path, tail: &str, toml: &str, settings: PathBuf) -> Result<Paths, String> {
+    if toml.is_empty() {
+        return Err("session-hook: SPIRA_TOML is not set — the hook and meter commands must name the one source of config".into());
+    }
     let release = current.display().to_string();
     let path = spira_config::release_path_with_tail(&release, tail)?;
-    Ok(Paths { settings, release, path, hook: current.join("spira/hooks/session.sh"), meter: current.join("spira/ctx-meter.sh") })
+    Ok(Paths { settings, release, path, toml: toml.to_string(), hook: current.join("spira/hooks/session.sh"), meter: current.join("spira/ctx-meter.sh") })
 }
 
 /// Read the settings document: `{}` if the file does not exist, an error naming the file if
@@ -362,13 +368,13 @@ mod tests {
     use super::*;
 
     fn p(current: &str) -> Paths {
-        Paths { settings: PathBuf::from("/x/settings.json"), release: current.into(), path: "/bin:/usr/bin".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/spira/ctx-meter.sh")) }
+        Paths { settings: PathBuf::from("/x/settings.json"), release: current.into(), path: "/bin:/usr/bin".into(), toml: "/c/spira.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/spira/ctx-meter.sh")) }
     }
 
     #[test]
     fn hook_command_embeds_release_and_path() {
         let p = p("/r/spira-releases/current");
-        assert_eq!(p.hook_command(), "env SPIRA_RELEASE=/r/spira-releases/current PATH=/bin:/usr/bin /r/spira-releases/current/spira/hooks/session.sh");
+        assert_eq!(p.hook_command(), "env SPIRA_RELEASE=/r/spira-releases/current SPIRA_TOML=/c/spira.toml PATH=/bin:/usr/bin /r/spira-releases/current/spira/hooks/session.sh");
     }
 
     #[test]
@@ -559,7 +565,7 @@ mod tests {
     fn install_refuses_when_the_hook_is_missing() {
         let tmp = testkit::TempDir::new("session-hook-missing");
         let mut doc = json!({});
-        let paths = Paths { settings: tmp.path().join("settings.json"), release: "/r/spira-releases/current".into(), path: "/bin".into(), hook: tmp.path().join("no-such-hook.sh"), meter: tmp.path().join("no-such-meter.sh") };
+        let paths = Paths { settings: tmp.path().join("settings.json"), release: "/r/spira-releases/current".into(), path: "/bin".into(), toml: "/c/spira.toml".into(), hook: tmp.path().join("no-such-hook.sh"), meter: tmp.path().join("no-such-meter.sh") };
         let e = install(&mut doc, &paths).unwrap_err();
         assert!(e.contains("not executable"), "{e}");
         assert_eq!(doc, json!({}), "a refusal must change nothing");
@@ -573,7 +579,7 @@ mod tests {
         testkit::write_exe(&hook, "#!/bin/sh\nexit 0\n");
         testkit::write_exe(&meter, "#!/bin/sh\nexit 0\n");
         let mut doc = json!({});
-        let paths = Paths { settings: tmp.path().join("settings.json"), release: "/r/spira-releases/current".into(), path: "/bin".into(), hook, meter };
+        let paths = Paths { settings: tmp.path().join("settings.json"), release: "/r/spira-releases/current".into(), path: "/bin".into(), toml: "/c/spira.toml".into(), hook, meter };
         let changed = install(&mut doc, &paths).unwrap();
         assert!(changed.contains(&"SessionStart".to_string()));
         assert!(changed.contains(&"statusLine".to_string()));
