@@ -1665,11 +1665,16 @@ _spira_config_repo() {
 # SPIRA_WORKSPACES ARE already exported by conf.sh, but SPIRA_REPO_MAP is not, so this still
 # goes through the same threading helper as every other repo-registry shim.
 spira_containment_check() {
-    # prod (or unset) is always allowed; the map is unconstrained — kept as a bash-only
+    # prod is always allowed; the map is unconstrained — kept as a bash-only
     # fast path (never shells to spira-config) so every lib.sh source, in production and in
     # every test fixture that never sets SPIRA_INSTANCE, costs exactly what it always did:
     # nothing. Only a genuinely confined instance pays for the real check.
-    case "${SPIRA_INSTANCE:-prod}" in prod) return 0 ;; esac
+    # An unset instance means config never resolved (conf.sh refused — a containment
+    # violation among the reasons) — never "prod", which would turn that refusal into a pass.
+    case "${SPIRA_INSTANCE-}" in
+        "") echo "spira: config did not resolve (no spira.instance) — refusing" >&2; exit 1 ;;
+        prod) return 0 ;;
+    esac
     _spira_config_repo containment-check && return 0
     exit 1     # the bash original halted the whole sourcing process on a violation, not just this call
 }

@@ -369,18 +369,10 @@ is "(c): tasker not refused by the lane cap check" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
 set_live laner 0
 
-echo
-echo "no lane cap — SPIRA_LANES_MAX_LIVE unset: no preference, the task fayth fills freely"
-tl_config SPIRA_LANES_MAX_LIVE=""
-set_live tasker 3
-set_ready laner 1
-set_ready tasker 1
-rm -f "$SUMMONED"
-summon_fayth tasker >/dev/null 2>&1 || true
-is "no lane cap: tasker fills last slot when SPIRA_LANES_MAX_LIVE unset" \
-   "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
+# CASE DELETED (per Ryan 2026-10-06, rule 5): "no lane cap — SPIRA_LANES_MAX_LIVE unset:
+# no preference, the task fayth fills freely" pinned empty-means-no-preference, a default.
+# Every registered key now has a declared value; "unset" is gone as a state to test.
 
-tl_config SPIRA_MAX_LIVE_AEONS="" SPIRA_LANES_MAX_LIVE=""
 clear_live
 
 # ======================================================================================
@@ -642,7 +634,6 @@ out="$(summon_fayth anchor 2>&1 || true)"
 is "G6: fleet at ceiling — nothing summoned" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 want "G6: log names the live/ceiling count" "3/3 aeon(s) live across the whole fleet" "$out"
 want "G6: log says 'not summoning'" "not summoning" "$out"
-tl_config SPIRA_MAX_LIVE_AEONS=""
 clear_live
 
 # ======================================================================================
