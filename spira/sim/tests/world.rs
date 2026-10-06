@@ -41,7 +41,7 @@ fn up_then_down_leaves_nothing_behind() {
     let fake = Fake::default();
     up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap();
     let work = dir.join("work");
-    for p in ["release", "origin.git", "work", "run", "config/sim.toml"] {
+    for p in ["release", "origin.git", "work", "run", "config/sim.toml", "bin/gh", "gh"] {
         assert!(dir.join(p).exists(), "{p}");
     }
     let rev = |r: &str| {
@@ -52,6 +52,8 @@ fn up_then_down_leaves_nothing_behind() {
     assert_eq!(rev("local/main"), rev("main"));
     let cfg = std::fs::read_to_string(dir.join("config/sim.toml")).unwrap();
     assert!(cfg.contains("repo.sim.mode=queue.local") && cfg.contains("spira.lifecycle_enforce=true"));
+    assert!(cfg.contains(&format!("spira.gh={}", dir.join("bin/gh").display())));
+    assert!(std::fs::read_to_string(dir.join("config/sim.env")).unwrap().contains("SIM_GH_DIR="));
     down(&dir, &fake).unwrap();
     assert!(!dir.exists());
     assert_eq!(fake.downs.load(Ordering::SeqCst), 1);
