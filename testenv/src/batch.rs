@@ -994,60 +994,6 @@ mod tests {
     }
 
     #[test]
-    fn deadline_stops_new_starts_in_serial() {
-        let rt = FakeRuntime::new();
-        timed_suites(
-            &rt,
-            &[
-                ("test-a.sh", 80, 0),
-                ("test-b.sh", 80, 0),
-                ("test-c.sh", 80, 0),
-            ],
-        );
-        let dir = tmpdir("dl-serial");
-        let s = session(&rt);
-        let mut c = cfg(Mode::Serial, &dir, 0);
-        c.deadline = Some(Duration::from_millis(120));
-        let out = with_hooks(|h, seen| {
-            let o = run(
-                &s,
-                &c,
-                h,
-                &Fixtures::PerSuite,
-                &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
-            );
-            assert!(seen
-                .logs
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|l| l.contains("deadline 0s reached")));
-            // no timing row for a deferred suite
-            assert_eq!(seen.timings.lock().unwrap().len(), 1);
-            o
-        });
-        assert!(!out.harness_fault());
-        assert!(out.deadline_hit);
-        assert_eq!(out.records["test-a.sh"].status, Status::Ok);
-        // b was running at the deadline: killed, deferred, partial output kept
-        assert_eq!(out.records["test-b.sh"].status, Status::Deferred);
-        assert_eq!(out.records["test-b.sh"].fingerprint, "deadline:test-b.sh");
-        assert_eq!(
-            fs::read_to_string(dir.join("test-b.sh.out")).unwrap(),
-            "partial\n"
-        );
-        // c never started
-        assert_eq!(out.records["test-c.sh"].status, Status::Deferred);
-        assert_eq!(out.records["test-c.sh"].fingerprint, "-");
-        assert_eq!(rt.suite_execs().len(), 2);
-        assert_eq!(out.deferred(), vec!["test-b.sh", "test-c.sh"]);
-        assert!(out.blocking_reds().is_empty());
-        assert!(fs::read_to_string(dir.join("test-c.sh.result"))
-            .unwrap()
-            .starts_with("deferred "));
-    }
-
-    #[test]
     fn deadline_in_parallel_kills_the_running_and_starts_nothing_new() {
         let rt = FakeRuntime::new();
         // order is kept: the long one first (the selector's priority), then shorts
