@@ -184,9 +184,6 @@ ord_out="$(inst)"
 ord_rc=$?
 ord_log="$(cat "$SCTL_LOG")"
 
-bad "DIAGNOSTIC ord_out dump" "rc=$ord_rc out=[$ord_out]"
-tl_summary; exit
-
 iszero "ordering: install.sh exits 0 with legacy units present"  "$ord_rc"
 want   "ordering: sentinel legacy unit appears in disable call"  \
        "spira-sentinel.service" "$ord_log"
