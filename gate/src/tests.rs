@@ -3434,7 +3434,7 @@ fn shared_fake() -> Fake {
         format!("{GATE_TREE}/spira-lint/src/main.rs"),
         format!("{GATE_TREE}/spira-config/src/lib.rs"),
         format!("{GATE_TREE}/spira-config/../spira/conf.d"),
-        "/home/u/.cargo/registry/src/regex-1/src/lib.rs".into(),
+        "/cargo-home/registry/src/regex-1/src/lib.rs".into(),
         format!("{GATE_TREE}/target/aeon/build/spira-config-1/out/spira_section.rs"),
         "src/parser.c".into(),
     ]);
@@ -3583,7 +3583,7 @@ fn toolkey_reads_dep_info_build_outputs_and_paths() {
     let t = Path::new("/t");
     assert_eq!(relative(t, "/t/x/../spira/conf.d").as_deref(), Some("spira/conf.d"));
     assert_eq!(relative(t, "/t/target/aeon/out.rs"), None);
-    assert_eq!(relative(t, "/home/u/.cargo/registry/a.rs"), None);
+    assert_eq!(relative(t, "/cargo-home/registry/a.rs"), None);
     assert_eq!(relative(t, "/tx/a.rs"), None);
     assert_eq!(relative(t, "build.rs"), None, "package-relative: its own package's");
     let dirs = vec!["spira-lint".to_string()];
