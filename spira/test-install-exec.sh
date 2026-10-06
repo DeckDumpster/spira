@@ -50,8 +50,12 @@ done
 # inst [args] — units-install in a minimal environment; TEST_PROD overrides SPIRA_PROD.
 inst() {
     > "$MOCK_LOG"
+    # SPIRA_MAIL TOO: the complete fixture's own default is a fixed /fixture/... path (never
+    # writable here — HOME is $TMP/home, not the fixture tree), and units-install's bootstrap
+    # ensures the concierge mailbox exists as one of its steps; under one source of config
+    # that default is never derived from SPIRA_RUN at runtime, so it must be declared.
     tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" "SPIRA_MAIL=$SPIRA_RUN_DIR/mail" \
         "SPIRA_PROD=${TEST_PROD-$PROD}" "SPIRA_COCKPIT=$REAL_COCKPIT"
     env -i \
         "PATH=$MOCK_BIN:$PATH" \
