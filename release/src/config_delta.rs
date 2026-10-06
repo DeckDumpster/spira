@@ -160,6 +160,16 @@ pub struct Txn {
 /// Resolve `delta` against the layers `$SPIRA_TOML` names, and have `rel`'s own `spira-config`
 /// validate the result. Nothing on disk changes. An added key already present in any layer
 /// is the operator's and is left as it is.
+pub fn scratch_dir() -> Result<PathBuf, String> {
+    let d = std::env::temp_dir().join(format!(
+        "release-config-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    fs::create_dir_all(&d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
+    Ok(d)
+}
+
 pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta) -> Result<Txn, String> {
     let spec = cfg.toml_spec().ok_or("this release declares config changes but SPIRA_TOML names no file to apply them to")?;
     let files: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
@@ -208,28 +218,29 @@ impl Txn {
         if !fsutil::is_executable(&bin) {
             return Err(format!("{} is missing; cannot check the config this release needs", bin.display()));
         }
-        let scratch = std::env::temp_dir().join(format!(
-            "release-config-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-        ));
-        fs::create_dir_all(&scratch).map_err(|e| format!("cannot create {}: {e}", scratch.display()))?;
+        let scratch = scratch_dir()?;
         let result = self.validate_in(cfg, rel, &bin, &scratch);
         let _ = fs::remove_dir_all(&scratch);
         result
     }
 
-    fn validate_in(&self, cfg: &Config, rel: &Path, bin: &Path, scratch: &Path) -> Result<(), String> {
+    /// Write the layers with the delta fully applied into `dir`; returns the `SPIRA_TOML` value naming them.
+    pub fn stage(&self, dir: &Path) -> Result<String, String> {
         let mut staged = Vec::new();
         for (i, t) in self.post.iter().enumerate() {
-            let p = scratch.join(format!("layer{i}.toml"));
+            let p = dir.join(format!("layer{i}.toml"));
             let text = toml::to_string_pretty(&Value::Table(t.clone())).map_err(|e| e.to_string())?;
             fs::write(&p, text).map_err(|e| format!("cannot write {}: {e}", p.display()))?;
             staged.push(p.display().to_string());
         }
+        Ok(staged.join(":"))
+    }
+
+    fn validate_in(&self, cfg: &Config, rel: &Path, bin: &Path, scratch: &Path) -> Result<(), String> {
+        let spec = self.stage(scratch)?;
         // batch-job: the new binary's config load, bounded at 60 s by timeout(1).
         let mut cmd = Command::new("timeout");
-        cmd.arg("60").arg(bin).arg("validate").env("SPIRA_TOML", staged.join(":"));
+        cmd.arg("60").arg(bin).arg("validate").env("SPIRA_TOML", spec);
         for (k, v) in crate::verify::pre_activate_env(cfg, rel)? {
             cmd.env(k, v);
         }
