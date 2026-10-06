@@ -69,7 +69,7 @@ COUNT_FILE="$TMP/count"
 echo 0 > "$COUNT_FILE"
 
 # mail stub: records "send" invocations.
-mkdir -p "$TMP/strand-home"
+mkdir -p "$TMP/strand-home"; ln -s "$HERE/conf.d" "$TMP/strand-home/conf.d"   # a SPIRA_HOME carries the registry
 cat > "$TMP/strand-home/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -116,7 +116,7 @@ echo 0 > "$COUNT_FILE"
 LOCKED_FIFO="$TMP/locked.fifo"; PROCEED_FIFO="$TMP/proceed.fifo"
 mkfifo "$LOCKED_FIFO" "$PROCEED_FIFO"
 
-BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME"
+BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"
 cat > "$BARRIER_HOME/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -131,8 +131,12 @@ env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIE
     strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
 
-# Blocks until runner 1's mail signals it is inside the critical section.
-read -r _ < "$LOCKED_FIFO"
+# Blocks until runner 1's mail signals it is inside the critical section — bounded, so a
+# runner 1 that never gets there fails the suite in seconds instead of hanging it.
+if ! timeout 30 bash -c 'read -r _ < "$1"' _ "$LOCKED_FIFO"; then
+    bad "runner 1 reached its critical section" "it never did: $(tail -3 "$TMP/runner1.log" 2>/dev/null)"
+    kill "$P1" 2>/dev/null; tl_summary; exit 1
+fi
 
 # Runner 2 now races for the same lock runner 1 still holds. Deterministically declines.
 LOG2="$TMP/runner2.log"
@@ -207,7 +211,7 @@ printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon; 0 of 3 aeon slot
     > "$TMP/fixture-partition.tsv"
 
 ARGS_A="$TMP/mail-args-a"
-mkdir -p "$TMP/home-a"
+mkdir -p "$TMP/home-a"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"
 cat > "$TMP/home-a/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0

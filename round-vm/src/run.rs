@@ -174,6 +174,7 @@ cat > "$HOME/round-config.toml" <<ROUNDCFG
 run = "$HOME/round-run"
 releases = "$HOME/round-releases"
 home_repo = "$HOME/round-work"
+batch_maxpar = $maxpar
 ROUNDCFG
 export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
 rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
@@ -202,7 +203,6 @@ else
     exit 3
 fi
 setup_secs=$(( $(date +%s) - t_start ))
-export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 set +e
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
