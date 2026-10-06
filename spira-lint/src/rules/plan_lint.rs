@@ -12,7 +12,7 @@
 //! `testlib-migrated`/`tmp-leak` pattern) so the rule can gate every *new* suite without
 //! failing every branch on debt it did not add.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::BTreeSet;
 
 use test_plan::load_catalogues;

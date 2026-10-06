@@ -6,7 +6,7 @@
 //! `bd create ... -d - <<'EOF'`. The correct forms are `bd note <id> --stdin <<EOF` and
 //! `bd create <title> --body-file - <<EOF`.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::sync::OnceLock;
 
 use regex::Regex;

@@ -9,7 +9,7 @@
 //! non-zero exit. A rule that cannot find anything to check refuses to report clean
 //! (law-absence-needs-a-positive-control) — that is an error, not a pass.
 
-use std::cell::OnceCell;
+use std::sync::OnceLock;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,12 +25,12 @@ pub struct Entry {
     pub path: String,
     /// Tracked (in the index) rather than untracked-but-not-ignored.
     pub tracked: bool,
-    content: OnceCell<Option<Vec<u8>>>,
+    content: OnceLock<Option<Vec<u8>>>,
 }
 
 impl Entry {
     pub fn new(path: impl Into<String>, tracked: bool) -> Entry {
-        Entry { path: path.into(), tracked, content: OnceCell::new() }
+        Entry { path: path.into(), tracked, content: OnceLock::new() }
     }
 }
 
@@ -222,8 +222,27 @@ impl fmt::Display for LintError {
     }
 }
 
-/// A fence. See DESIGN.md for each rule's intent, contract and allow-list schema.
-pub trait Rule {
+/// A rule's positive-control slot: set during [`Rule::check`], read after. A `Cell` that is
+/// `Sync`, so [`run`] can check rules on worker threads (each rule is checked by exactly one
+/// thread; the lock is never contended).
+#[derive(Debug, Default)]
+pub struct SyncCell<T: Copy>(std::sync::Mutex<T>);
+
+impl<T: Copy> SyncCell<T> {
+    pub fn new(v: T) -> Self {
+        SyncCell(std::sync::Mutex::new(v))
+    }
+    pub fn get(&self) -> T {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub fn set(&self, v: T) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+}
+
+/// A fence. See DESIGN.md for each rule's intent, contract and allow-list schema. `Send +
+/// Sync`: [`run`] checks independent rules concurrently over the one shared walk.
+pub trait Rule: Send + Sync {
     /// The rule's name: `--only <name>`, and the first field of every finding.
     fn name(&self) -> &'static str;
 
@@ -355,19 +374,54 @@ pub struct RuleResult {
     pub checked: Option<(usize, String)>,
 }
 
-/// Run `rules` over `tree`.
+/// Run `rules` over `tree`, results in `rules`' order. The rules are independent reads of
+/// one walk, and each is a CPU-bound scan of the tree, so they are checked on up to
+/// [`MAX_WORKERS`] threads: run serially, the gate's spira-lint step was the bulk of every
+/// gate's fences phase. Output order (and so every finding and positive-control line) is
+/// unchanged: it is decided here, by index, never by which thread finished first.
 pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
-    rules
-        .iter()
-        .map(|r| {
-            let outcome = r.check(tree).map(|mut v| {
-                v.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
-                v
-            });
-            RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked() }
-        })
-        .collect()
+    let one = |r: &dyn Rule| {
+        let outcome = r.check(tree).map(|mut v| {
+            v.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
+            v
+        });
+        RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked() }
+    };
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(MAX_WORKERS)
+        .min(rules.len());
+    if workers <= 1 {
+        return rules.iter().map(|r| one(r.as_ref())).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut slots: Vec<Option<RuleResult>> = (0..rules.len()).map(|_| None).collect();
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(r) = rules.get(i) else { break };
+                        done.push((i, one(r.as_ref())));
+                    }
+                    done
+                })
+            })
+            .collect();
+        for h in handles {
+            for (i, r) in h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)) {
+                slots[i] = Some(r);
+            }
+        }
+    });
+    slots.into_iter().map(|r| r.expect("every rule index is claimed by exactly one worker")).collect()
 }
+
+/// The most threads [`run`] checks rules on.
+pub const MAX_WORKERS: usize = 8;
 
 #[cfg(test)]
 pub(crate) mod testutil {
@@ -424,6 +478,61 @@ pub(crate) mod testutil {
 mod tests {
     use super::testutil::TempDir;
     use super::*;
+
+    /// A rule that sleeps, then reports one finding (or refuses) and a positive control.
+    struct Slow {
+        name: &'static str,
+        ms: u64,
+        refuse: bool,
+        checked: SyncCell<Option<usize>>,
+    }
+    impl Rule for Slow {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn applies_to(&self, _: &Entry) -> bool {
+            true
+        }
+        fn check(&self, _: &Tree) -> Result<Vec<Finding>, LintError> {
+            std::thread::sleep(std::time::Duration::from_millis(self.ms));
+            self.checked.set(Some(self.ms as usize));
+            if self.refuse {
+                return Err(LintError::EmptyScope);
+            }
+            Ok(vec![Finding { rule: self.name, path: "p".into(), line: None, message: "m".into() }])
+        }
+        fn checked(&self) -> Option<(usize, String)> {
+            self.checked.get().map(|n| (n, "ms".into()))
+        }
+    }
+
+    /// The rules run concurrently, but the results — every finding, refusal and positive
+    /// control the gate reads — come back in the rules' order, each with its own rule's
+    /// control, however the threads finish.
+    #[test]
+    fn run_checks_rules_concurrently_and_reports_in_rule_order() {
+        let names = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"];
+        let rules: Vec<Box<dyn Rule>> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                // The first rules are the slowest, so they finish last.
+                Box::new(Slow { name: n, ms: 20 * (names.len() - i) as u64, refuse: i == 3, checked: SyncCell::new(None) }) as Box<dyn Rule>
+            })
+            .collect();
+        let tree = Tree::from_paths(Path::new("/nowhere"), ["a"], Vec::<String>::new());
+        let t0 = std::time::Instant::now();
+        let got = run(&tree, &rules);
+        let serial: u64 = (1..=names.len() as u64).map(|k| 20 * k).sum();
+        assert_eq!(got.iter().map(|r| r.rule).collect::<Vec<_>>(), names);
+        for (i, r) in got.iter().enumerate() {
+            assert_eq!(r.checked, Some((20 * (names.len() - i), "ms".into())), "{}", r.rule);
+            assert_eq!(r.outcome.is_err(), i == 3, "{}", r.rule);
+        }
+        if std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) > 1 {
+            assert!(t0.elapsed() < std::time::Duration::from_millis(serial), "ran serially: {:?}", t0.elapsed());
+        }
+    }
 
     #[test]
     fn pathspec_star_crosses_slashes() {
