@@ -428,7 +428,10 @@ rm -f "$RUN/watchd/concierge-inbox.log"
 aeon_out="$(hook SessionStart startup SPIRA_AEON=mindy SPIRA_CONCIERGE=1)"
 is "an aeon session gets nothing, even with SPIRA_CONCIERGE set" "" "$aeon_out"
 
-is "DEBUG early out dump" "__DEBUG_MARKER__" "$out"
+_wd_out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
+    SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
+    watchd status 2>&1)"; _wd_rc=$?
+is "DEBUG watchd status dump" "__DEBUG_MARKER__ rc=$_wd_rc" "$_wd_out"
 
 echo
 tl_summary
