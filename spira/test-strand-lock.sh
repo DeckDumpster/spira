@@ -149,6 +149,8 @@ P1=$!
 # Blocks until runner 1's mail signals it is inside the critical section — bounded, so a
 # runner 1 that never gets there fails the suite in seconds instead of hanging it.
 if ! timeout 30 bash -c 'read -r _ < "$1"' _ "$LOCKED_FIFO"; then
+    p1_alive=0; kill -0 "$P1" 2>/dev/null && p1_alive=1
+    printf 'DIAG p1_alive=%s runner1.log:\n%s\nDIAG_END\n' "$p1_alive" "$(cat "$TMP/runner1.log" 2>/dev/null)" >&2
     bad "runner 1 reached its critical section" "it never did: $(tail -3 "$TMP/runner1.log" 2>/dev/null)"
     kill "$P1" 2>/dev/null; tl_summary; exit 1
 fi
