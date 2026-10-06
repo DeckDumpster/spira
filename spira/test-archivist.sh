@@ -566,6 +566,8 @@ is "three record calls queue three lines" "3" \
     "$(wc -l < "$T/run/archivist/digest.pending" 2>/dev/null | tr -d ' ')"
 
 out="$(adigest digest-send)"; rc=$?
+echo "DEBUG out=[$out] T=$T" >&2
+ls -la "$T/mail" >&2 2>&1
 is "digest-send exits 0" 0 "$rc"
 op_count="$(ls "$T/mail/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "digest-send delivers exactly one mail" "1" "$op_count"
