@@ -126,8 +126,13 @@ inst() {
     # SPIRA_PATH/SPIRA_RUN/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_PROD/
     # SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads any more.
+    # round 4 fix (pattern 7): SPIRA_INSTANCE/SPIRA_WORKSPACES are registered keys too;
+    # undeclared, SPIRA_INSTANCE resolves to the complete fixture's "prod" (containment
+    # exempt), but units-install is given "$_INST" ("mig") on argv — a mismatch. Declare
+    # the instance this suite actually drives, and a workspaces root wide enough for it.
     tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_WATCHERS="$WATCHERS" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+        SPIRA_INSTANCE="$_INST" SPIRA_WORKSPACES="$TMP"
     SCTL_LOG="$SCTL_LOG" \
     PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \

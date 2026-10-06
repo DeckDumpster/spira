@@ -34,6 +34,7 @@ mkdir -p "$TMP/watchd"
 # the write fails outright with no such directory (sfail round 3, pattern 7).
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
     SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_MUTE=0 \
+    SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" \
     SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""       # prevent reading a real spira.conf
 

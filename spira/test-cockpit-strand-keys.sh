@@ -24,10 +24,10 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
 run_strands() {
-    tl_config SPIRA_RUN="$RUN"
+    # SPIRA_DB declared too (round-3 caveat audit): cockpit-collect resolves it via cfg().
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb"
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_DB="$TMP/nodb" \
         cockpit-collect probe strands 2>/dev/null
 }
 

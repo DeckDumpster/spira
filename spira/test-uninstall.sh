@@ -43,6 +43,12 @@ nofile()  { [ ! -e "$2" ] && ok "$1" || bad "$1" "expected absent: $2"; }
 echo "test-uninstall.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# round 4 fix (pattern 7): SPIRA_WORKSPACES is a registered key; undeclared, a non-prod
+# SPIRA_INSTANCE (this suite uses "test") gets confined to the complete fixture's
+# placeholder /fixture/home/spira, and every path under $TMP (SPIRA_RUN included) is
+# outside it — units-install refuses with a containment violation. Declare this suite's
+# own workspaces root wide enough to cover everything under $TMP.
+tl_config SPIRA_WORKSPACES="$TMP"
 
 # A2's installed-release model runs install.sh from releases/current, not a git
 # checkout — SPIRA_REPO is not a git repo here, and SPIRA_INSTALL_FORCE=1 skips

@@ -84,7 +84,15 @@ for _ in $(seq 1 50); do
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+# cutover-deploy.sh refuses outright on an EMPTY SPIRA_LC_PASSWORD/_RO_PASSWORD (its own
+# "no spira_lc[_ro] credential" check) — so root's actual server password must be a real,
+# non-empty string too, set here while it is still the server's fresh empty default, and
+# used by every root_sql call from this point on.
+ROOT_PW="adminpw-not-real"
+"$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls \
+    sql -q "ALTER USER 'root'@'%' IDENTIFIED BY '$ROOT_PW'" >/dev/null 2>&1 \
+    || bail "could not set the throwaway server's root password"
+root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "$ROOT_PW" --no-tls "$@"; }
 
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 CFG_BIN="$(command -v spira-config 2>/dev/null)"; [ -n "$CFG_BIN" ] || { echo "spira-config is not on PATH (the tree's build provides it)" >&2; exit 1; }
@@ -108,15 +116,13 @@ printf 'demo|%s|queue|main|\n' "$GITREPO" > "$CFGHOME/repo-map"
 CONF="$CFGHOME/spira.conf"
 TOML="$CFGHOME/spira.toml"   # deliberately does not exist yet — this run must create it
 
-# EMPTY, matching the throwaway dolt server's actual root password (root_sql connects with
-# -p ""): SPIRA_LC_PASSWORD_FILE is a registered key now, resolved from SPIRA_TOML alone, so
-# admin_lc's own per-call SPIRA_LC_PASSWORD="" override no longer has anything to win against
-# — cutover-deploy.sh's own fallback (`[ -z "$SPIRA_LC_PASSWORD" ] && cat "$SPIRA_LC_CRED_FILE"`)
-# always reads this file, for every connection, admin and spira_lc alike. A non-empty
-# credential here would hand root a password the server never got, and "Access denied"
-# before schema.sql ever runs.
-CRED="$TMP/credential"; : > "$CRED"
-RO_CRED="$CRED-ro"; : > "$RO_CRED"
+# NON-EMPTY, matching root's actual server password (set above) and spira_lc's granted
+# password (filled from this same value into grants.sql's @SPIRA_LC_PASSWORD@): cutover-
+# deploy.sh refuses outright on an empty SPIRA_LC_PASSWORD, and SPIRA_LC_PASSWORD_FILE is a
+# registered key now, resolved from SPIRA_TOML alone, for every connection — admin and
+# spira_lc alike — so one shared, non-empty credential must be correct for both.
+CRED="$TMP/credential"; printf '%s' "$ROOT_PW" > "$CRED"
+RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
 
 run_deploy() {
     tl_config SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
@@ -171,7 +177,7 @@ want "for lack of privilege, not a missing table" "denied" "$op_out"
 
 # POSITIVE CONTROL: the same statement succeeds as spira_lc, proving the refusal above is the
 # grant, not a broken schema or a wrong database name.
-lc_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "" --no-tls --use-db spira_lifecycle "$@"; }
+lc_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$ROOT_PW" --no-tls --use-db spira_lifecycle "$@"; }
 lc_sql sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('sp-manual', 'READY', JSON_OBJECT(), 0, 0)" >/dev/null 2>&1
 wantrc "positive control: spira_lc's own INSERT succeeds" 0 $?
 

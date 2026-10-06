@@ -22,6 +22,10 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
+# round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
+# bead.sh file --for builder cannot find chamber/builder.fayth ("no such persona: builder").
+tl_config SPIRA_CHAMBER="$HERE/chamber"
+
 . "$HERE/conf.sh"
 export PATH="$(dirname "$DOLT_BIN"):$PATH"
 

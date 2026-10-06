@@ -45,10 +45,12 @@ git -C "$REPO" config user.name "test"
 # SPIRA_HOME_REPO/SPIRA_REPO_MAP EXPLICITLY: home_repo() defaults to the fixture's own
 # "spira" and repo_root("spira") then has no map to resolve it against, so skew/src's
 # landref fails with "cannot resolve the ref repo:spira lands on" before check() ever
-# reaches escalate(). No remote is configured on $REPO, so landref's own rung 4 (the
-# checkout's current branch) resolves the base ref — the map row needs no `base` column.
+# reaches escalate(). A repo's base is no longer derived (no remote-HEAD/current-branch
+# fallback to rely on) — the map row must name it explicitly, so this reads the checkout's
+# actual initial branch name rather than assuming "main"/"master".
+BR="$(git -C "$REPO" symbolic-ref --short HEAD)"
 SKEWMAP="$TMP/repo-map"
-printf 'fixture | %s | push | | | true | self\n' "$REPO" > "$SKEWMAP"
+printf 'fixture | %s | push | %s | | true | self\n' "$REPO" "$BR" > "$SKEWMAP"
 mkdir -p "$REPO/spira"
 printf '# boundary\n'        > "$REPO/spira/boundary"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/gate.sh"

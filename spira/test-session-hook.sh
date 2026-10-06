@@ -97,7 +97,7 @@ mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierg
 # reads/appends it directly, and that path does not exist here (sfail round 3, pattern 7).
 tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$CLONE/spira" SPIRA_RUN="$RUN" \
     SPIRA_WATCHERS="$MANIFEST" SPIRA_CLIENT_SETTINGS="$TMP/elsewhere/settings.json" \
-    SPIRA_MAIL="$MAIL_DIR" SPIRA_MAIL_SESSION_MAILBOX=concierge \
+    SPIRA_MAIL="$MAIL_DIR" SPIRA_MAIL_INDEX="$MAIL_DIR/index" SPIRA_MAIL_SESSION_MAILBOX=concierge \
     SPIRA_CONCIERGE_INBOX="$RUN/watchd/concierge-inbox.log"
 
 cat > "$MANIFEST" <<'EOF'

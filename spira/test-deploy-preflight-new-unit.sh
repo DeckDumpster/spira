@@ -177,7 +177,10 @@ mkdir -p "$TMP/run" "$TMP/doctor-home"
 touch "$TMP/run/cockpit.env"
 
 run_doctor() {
-    tl_config SPIRA_PATH="$TMP" SPIRA_BD="$TMP/bd" SPIRA_INSTANCE=prod SPIRA_OPERATED=0
+    # SPIRA_DB is registered too (doctor's RESOLVED_KEYS, confirmed in doctor/src/real.rs)
+    # — the plain env prefix below is ignored; the round-3 caveat's audit item.
+    tl_config SPIRA_PATH="$TMP" SPIRA_BD="$TMP/bd" SPIRA_INSTANCE=prod SPIRA_OPERATED=0 \
+        SPIRA_DB="$DB"
     env -i \
         SPIRA_TOML="$SPIRA_TOML" \
         PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
@@ -186,7 +189,6 @@ run_doctor() {
         SPIRA_HOME="$FIXTURE/spira" \
         SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_DOLT_BIN="$TMP/dolt" \
-        SPIRA_DB="$DB" \
         SPIRA_DOCTOR=1 \
         doctor 2>&1
 }

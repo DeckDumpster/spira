@@ -39,7 +39,11 @@ export SPIRA_CONF=""
 export SPIRA_HOME="$TMP/home"
 SPIRA_RUN="$TMP/run"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
-tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="sp" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL_MUTE=0
+# SPIRA_MAIL_READERS="" EXPLICITLY: the fixture default names a reader script
+# (concierge=inbox-append.sh) under the fixture's own unwritable release tree; without an
+# override, delivery into concierge/new fails trying to notify it.
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="sp" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL_MUTE=0 \
+    SPIRA_MAIL_READERS=""
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before

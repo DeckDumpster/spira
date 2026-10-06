@@ -743,8 +743,12 @@ cat > "$_timing_activate" <<TAEOF
 printf 'activate %s\n' "\$*" >> "\${CALL_LOG:-/dev/null}"
 [ "\${ACTIVATE_EXIT:-0}" = "0" ] || exit "\${ACTIVATE_EXIT}"
 _toml_val=""
-if [ -n "\${SPIRA_TOML:-}" ] && [ -f "\${SPIRA_TOML}" ]; then
-    _toml_val="\$(grep '^prod' "\${SPIRA_TOML}" 2>/dev/null | tail -1 || true)"
+# SPIRA_TOML may be base:override:...:last layers, colon-joined (the one-source-of-config
+# law's own layering) — the write (spira_config_set) always targets the LAST layer, so that
+# is the one file that can show the newly-written prod, not the colon-joined string itself.
+_toml_last="\${SPIRA_TOML##*:}"
+if [ -n "\${_toml_last:-}" ] && [ -f "\${_toml_last}" ]; then
+    _toml_val="\$(grep '^prod' "\${_toml_last}" 2>/dev/null | tail -1 || true)"
 fi
 printf '%s\n' "\${_toml_val}" > "${_toml_timing_file}"
 tarball="\${*: -1}"

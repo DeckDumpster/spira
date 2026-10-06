@@ -42,8 +42,12 @@ run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from
     # so the partition check would require a bare "spira" label none of this suite's
     # fixture beads carry (they use "repo:spira", a different label). Declare the empty
     # scope this suite has always meant.
+    # round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME even when
+    # SPIRA_HOME is the real repo — without it, bead lint's partition check cannot read
+    # chamber/*.fayth at all, so it never recognises a valid partition label.
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" SPIRA_SCOPE_LABEL=""
+        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" SPIRA_SCOPE_LABEL="" \
+        SPIRA_CHAMBER="$HERE/chamber"
     LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_ALARM_LABEL="incident-test" \

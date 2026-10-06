@@ -154,8 +154,11 @@ touch "$BUDGET"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-tl_config SPIRA_RUN="$TMP"
-pane_out="$(health once 2>/dev/null)"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): health refuses outright
+# without one (sfail round 3, pattern 1). SPIRA_DB declared too (round-3 caveat audit):
+# cockpit/ops's db.rs resolves it via cfg().
+tl_config SPIRA_RUN="$TMP" SPIRA_DB=""
+pane_out="$(SPIRA_HOME="$HERE" health once 2>/dev/null)"
 want "MAIL label in pane"  "MAIL"  "$pane_out"
 want "NEW state in pane"   "NEW"   "$pane_out"
 want "READ state in pane"  "READ"  "$pane_out"

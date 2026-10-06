@@ -43,6 +43,7 @@ mkdir -p "$TMP/watchd"
 # and the write fails outright with no such directory (sfail round 3, pattern 7).
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
     SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL" SPIRA_MAIL_TIDY_FRESH="$SPIRA_MAIL_TIDY_FRESH" \
+    SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" \
     SPIRA_DB="$SPIRA_DB" SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=/nonexistent
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
@@ -248,7 +249,7 @@ echo "=== Fresh install: a mailbox install created but no mail ever reached ==="
 # `mail ensure operator`; tidy's own refusal of a mailbox that does not exist stays (a
 # misconfigured SPIRA_MAIL must not tidy silently).
 FRESH="$TMP/fresh-mail"
-tl_config SPIRA_MAIL="$FRESH"
+tl_config SPIRA_MAIL="$FRESH" SPIRA_MAIL_INDEX="$FRESH/index"
 out="$(timeout 30 "$MAIL" tidy operator 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "positive control: tidy of a mailbox nothing created still refuses" \
                 || bad "positive control: tidy of a mailbox nothing created still refuses" "rc=0"

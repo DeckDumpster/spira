@@ -100,9 +100,12 @@ write_map
 
 landing() {
     rm -f "$RUN/landing.progress" "$GATE_COUNT" "$QUEUE_LOG"
+    # SPIRA_DB declared via tl_config too (round-3 caveat audit): landing-pass resolves it
+    # via cfg(), already correct here by coincidence (testdb_up's own tl_config), but
+    # explicit now rather than relying on that.
     tl_config SPIRA_GATE_WORKER=0 SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-        SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map"
-    SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_DB="$SPIRA_DB"
+    SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" PATH="$TMP/stubbin:$SH:$PATH" \
         landing-pass land 2>&1
 }

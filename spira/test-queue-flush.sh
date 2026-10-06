@@ -47,8 +47,11 @@ run() {
     # The complete fixture declares batcher_enable=0 (the operator cuts rounds); this
     # suite is specifically about the batcher doing its own cut, so it must say so
     # (sfail round 3, pattern 7).
+    # SPIRA_QUEUE_DIR is registered too: its step lock lives under it, and the complete
+    # fixture's own bogus default doesn't exist (sfail round 4, pattern 7).
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
-        SPIRA_FORGE="$TMP/spira/forge-fake.sh" SPIRA_BATCHER_ENABLE=1
+        SPIRA_FORGE="$TMP/spira/forge-fake.sh" SPIRA_BATCHER_ENABLE=1 \
+        SPIRA_QUEUE_DIR="$TMP/run/queue"
     env -i SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1

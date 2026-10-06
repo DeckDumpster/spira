@@ -139,9 +139,10 @@ EOF
 run_concierge_brief() {
     # The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
     # SPIRA_HOME any more (sfail round 2, pattern 6) — without this fx.fayth is never found.
-    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber"
-    SPIRA_DB="$DB" \
-        SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
+    # SPIRA_DB via tl_config too (same pattern 3/7 as rule.sh above): concierge.sh sources
+    # conf.sh, whose resolve --sh-all would otherwise overwrite the plain env value below.
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_DB="$DB"
+    SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
         bash "$CONCIERGE_SH" brief 2>&1
 }
 

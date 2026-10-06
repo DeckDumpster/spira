@@ -81,8 +81,9 @@ echo "gate: VERDICT=PASS reason=${GATE_REASON:-stub} branch=$1 repo=${2:-?}" >&2
 
 cp "$SH/gate.sh" "$TMP/gate-full.sh"
 
+# The base column is no longer derived (sfail round 4, pattern 9) — it must be declared.
 cat > "$SH/repo-map" <<MAP
-$REPONAME | $REPO | push | |
+$REPONAME | $REPO | push | origin/main | |
 MAP
 
 B() { bd -C "$SPIRA_DB" "$@"; }

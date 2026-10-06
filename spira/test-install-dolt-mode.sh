@@ -182,9 +182,12 @@ run_install() {
         install_args+=("$_a")
     done
     unset _a in_env
+    # SPIRA_DB is registered too (install's bootstrap.rs resolves it via cfg()) — the
+    # round-3 caveat's audit item.
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" \
-        SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd"
+        SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd" \
+        SPIRA_DB="$FAKE_DB"
     # A caller's extra_env assignment (SPIRA_DOLT_DATA=... at the call sites below) is a
     # registered key -> tl_config too, so it reaches spira-install through SPIRA_TOML,
     # overriding the fixed declaration above; anything else still rides the env -i prefix.
@@ -208,7 +211,6 @@ run_install() {
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
-        "SPIRA_DB=$FAKE_DB" \
         "${env_extra[@]+"${env_extra[@]}"}" \
         spira-install "${install_args[@]+"${install_args[@]}"}" 2>&1
 }

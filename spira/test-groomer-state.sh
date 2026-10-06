@@ -27,14 +27,13 @@
 # covers: groomer/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require test-groomer-state
 TMP="$(mktemp -d)"
 testdb_up state || { echo "test-groomer-state: could not build fixture database"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
-
-. "$HERE/testlib.sh"
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 

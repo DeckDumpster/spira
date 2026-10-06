@@ -50,6 +50,12 @@ echo
 echo "criterion 1 — six-column row (no lanes column) admits all lanes"
 # ==========================================================================================
 printf 'alpha | /tmp/alpha | push | origin/main | | true\n' > "$MAP"
+# repo_field/repo_root/spira_repo_lanes (lib.sh -> _spira_config_repo -> `spira-config
+# repo`) read SPIRA_REPO_MAP from this shell's literal environment (repo_registry(),
+# spira-config/src/main.rs, builds its Registry from std::env::vars() directly — the repo
+# registry is not part of the one-source-of-config resolve() path). tl_config alone (which
+# only writes $SPIRA_TOML's override) does not reach it; a plain shell copy is required too.
+SPIRA_REPO_MAP="$MAP"
 tl_config SPIRA_REPO_MAP="$MAP"
 
 # POSITIVE CONTROL: the row IS found (repo_field returns something for it).

@@ -98,7 +98,7 @@ run_push() {
     tl_config SPIRA_PATH="$BIN" SPIRA_BD="$BIN/bd" SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
         SPIRA_DOLT_DATA="$DD" SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod
     env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash "$REPO/beads-push.sh" 2>&1
 }
 
@@ -108,7 +108,7 @@ run_push_nodata() {
     tl_config SPIRA_PATH="$BIN" SPIRA_BD="$BIN/bd" SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
         SPIRA_DOLT_DATA="" SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod
     env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash "$REPO/beads-push.sh" 2>&1
 }
 

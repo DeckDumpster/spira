@@ -66,6 +66,10 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
+# A repo's base is no longer derived (no remote-HEAD auto-detection to fall back on) — the
+# map row must name it explicitly, or landing-pass can never say a commit "is/is not on
+# origin/main" (the "names the branch it lost"/"says the commit is on the base" assertions).
+printf '%s | %s | push | origin/main | |\n' "$REPONAME" "$REPO" > "$SH/repo-map"
 
 # conf.sh travels with lib.sh — lib.sh refuses to run without it, and a harness that copies
 # one and not the other fails at source time, which reads as landing being broken.

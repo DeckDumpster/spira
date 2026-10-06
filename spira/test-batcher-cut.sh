@@ -304,7 +304,10 @@ cut_repo() {
         SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     [ -n "${SPIRA_BATCHER_WALL_SECS:-}" ] && tl_config SPIRA_BATCHER_WALL_SECS="$SPIRA_BATCHER_WALL_SECS"
     [ -n "${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" ] && tl_config SPIRA_RELEASE_RUST_TOOLCHAIN="$SPIRA_RELEASE_RUST_TOOLCHAIN"
-    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" \
+    # SPIRA_RUN ALSO AS PLAIN ENV: spira-lc-stub.sh (below) is a fixture script exec'd by
+    # batcher as a child process, and it reads "${SPIRA_RUN:-/nonexistent}" as a raw shell
+    # variable, never through spira-config — tl_config's declaration never reaches it.
+    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
     STUB_FLAKE_SUITE="${STUB_FLAKE_SUITE:-}" \
     STUB_FLAKE_COUNTER_FILE="${STUB_FLAKE_COUNTER_FILE:-}" \
@@ -729,7 +732,7 @@ cut_other() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
         SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 SPIRA_FORGE="$SH/forge-fixture.sh" \
         SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
-    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" \
+    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
         batcher cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 

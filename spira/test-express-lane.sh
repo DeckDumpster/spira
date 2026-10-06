@@ -40,6 +40,9 @@ tl_config SPIRA_CHAMBER="$SH/chamber"
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
 RMAP
+# SPIRA_REPO_MAP is a registered key too — no process reads env for it, and it does not
+# derive from SPIRA_HOME any more either (same gap as SPIRA_CHAMBER above).
+tl_config SPIRA_REPO_MAP="$SH/repo-map"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'

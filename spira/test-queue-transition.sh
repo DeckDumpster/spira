@@ -103,6 +103,10 @@ tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" \
 # [repo.fixtrans] at all, reading as mode="" base="" ("already disagree"). Declare this
 # suite's own row, matching $RMAP's initial queue.local|local/main exactly; queue.sh's own
 # transitions keep it in sync afterward by writing the same (writable, last-layer) file.
+# `path` is a mandatory field of [repo.<name>] (spira-config/src/lib.rs RepoSection) —
+# without it, set_paths_in_file's re-validate-before-write silently rejects mode/base too
+# (all-or-nothing), which is why the earlier mode/base-only attempt never actually wrote.
+spira-config set repo.fixtrans.path "$REPO" "$_TL_CONF_OVERRIDE" >/dev/null
 spira-config set repo.fixtrans.mode queue.local "$_TL_CONF_OVERRIDE" >/dev/null
 spira-config set repo.fixtrans.base local/main "$_TL_CONF_OVERRIDE" >/dev/null
 

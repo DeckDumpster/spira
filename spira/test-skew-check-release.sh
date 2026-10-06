@@ -453,7 +453,12 @@ nowant "artifact-clean: no NOT-LATEST"     "NOT-LATEST" "$art_clean_out"
 # ---------------------------------------------------------------------------
 ORIGIN_CK="$TMP/origin-ck"
 CLONE_CK="$TMP/clone-ck"
-git init -q "$ORIGIN_CK"
+# -b main: the repo-map row below declares base=origin/main literally (pattern 9 — nothing
+# derives a repo's base any more, every landref caller needs a declared row); landref's
+# rung 1 (the declared base) verify_ref()-fails and returns None outright on a mismatch
+# rather than falling through to rung 2, so the host's init.defaultBranch must not be able
+# to pick "master" here.
+git init -q -b main "$ORIGIN_CK"
 git -C "$ORIGIN_CK" config user.email "test@test"
 git -C "$ORIGIN_CK" config user.name "test"
 mkdir -p "$ORIGIN_CK/spira"

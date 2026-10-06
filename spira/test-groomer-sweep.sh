@@ -18,14 +18,13 @@
 # covers: groomer/src/* spira/lib.sh spira/conf.sh UC-ops-detection-remediation-31
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require test-groomer-sweep
 TMP="$(mktemp -d)"
 testdb_up sweep || { echo "test-groomer-sweep: could not build fixture database"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
-
-. "$HERE/testlib.sh"
 
 # sp-jgjvh: the sweep's incident-needs-builder scan reads each incident bead's state from its
 # lifecycle row (incident beads are work beads), and a machine that does not answer fails the

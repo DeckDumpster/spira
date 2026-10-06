@@ -118,7 +118,10 @@ echo "test-unclaimable-worktree.sh"
 # Only SPIRA_DB is fixed here (tl_config, so sentinel queries the actual fixture database);
 # the worktree-divergence simulation this suite's "case 1/2/3" rest on is flagged in the
 # batch report rather than redesigned.
-tl_config SPIRA_DB="$SPIRA_DB"
+# SPIRA_FAYTHS/SPIRA_CHAMBER undeclared resolve to the complete fixture's own nonexistent
+# chamber path — sentinel then has no fayth partition to match beads' labels against, so
+# nothing is ever "unclaimable" (same cause as test-cockpit-reachable.sh's orphan case).
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_FAYTHS=builder SPIRA_CHAMBER="$HERE/chamber"
 run_from_worktree() {
     # SPIRA_HOME IS THE HOME now (locate_home no longer searches) — sentinel refuses/hangs
     # with none at all, so it is pointed at the worktree's own copy (which carries conf.d,

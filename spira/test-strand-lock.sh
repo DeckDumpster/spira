@@ -69,7 +69,12 @@ COUNT_FILE="$TMP/count"
 echo 0 > "$COUNT_FILE"
 
 # mail stub: records "send" invocations.
-mkdir -p "$TMP/strand-home"; ln -s "$HERE/conf.d" "$TMP/strand-home/conf.d"   # a SPIRA_HOME carries the registry
+mkdir -p "$TMP/strand-home/chamber"; ln -s "$HERE/conf.d" "$TMP/strand-home/conf.d"   # a SPIRA_HOME carries the registry
+# SPIRA_CHAMBER is registered too: the complete fixture declares a non-empty bogus value,
+# which chamber_dir_with() prefers over deriving <home>/chamber, breaking strand's own
+# fayth-partition roster probe (lib.sh's fayth_partitions -> cmd_fayth) for every SPIRA_HOME
+# below unless cleared to the home actually in use (sfail round 4, pattern 6/7).
+tl_config SPIRA_CHAMBER="$TMP/strand-home/chamber"
 cat > "$TMP/strand-home/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -116,7 +121,7 @@ echo 0 > "$COUNT_FILE"
 LOCKED_FIFO="$TMP/locked.fifo"; PROCEED_FIFO="$TMP/proceed.fifo"
 mkfifo "$LOCKED_FIFO" "$PROCEED_FIFO"
 
-BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"
+BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME/chamber"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"
 cat > "$BARRIER_HOME/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -127,7 +132,11 @@ cat >/dev/null
 STUB
 chmod +x "$BARRIER_HOME/mail"
 
+# tl_layer, not tl_config: runner 2 races this runner concurrently on the SAME suite
+# override file (CHECK_ENV's SPIRA_HOME is strand-home, not BARRIER_HOME) — a persisting
+# tl_config here would hand runner 2 this runner's chamber. One-call-only SPIRA_TOML.
 env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
+    SPIRA_TOML="$(tl_layer SPIRA_CHAMBER="$BARRIER_HOME/chamber")" \
     strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
 
@@ -211,7 +220,8 @@ printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon; 0 of 3 aeon slot
     > "$TMP/fixture-partition.tsv"
 
 ARGS_A="$TMP/mail-args-a"
-mkdir -p "$TMP/home-a"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"
+mkdir -p "$TMP/home-a/chamber"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"
+tl_config SPIRA_CHAMBER="$TMP/home-a/chamber"
 cat > "$TMP/home-a/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
