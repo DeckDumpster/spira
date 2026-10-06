@@ -168,10 +168,10 @@ fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
 # declared over it. Nothing here is searched for or defaulted.
-mkdir -p "$HOME/round-run"
+mkdir -p "$HOME/round-work/.runtime/spira"
 cat > "$HOME/round-config.toml" <<ROUNDCFG
 [spira]
-run = "$HOME/round-run"
+run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
 releases = "$HOME/round-releases"
 home_repo = "$HOME/round-work"
 batch_maxpar = $maxpar
