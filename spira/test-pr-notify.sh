@@ -60,10 +60,14 @@ RUN="$TMP/run"
 # would otherwise read whatever the fixture's own base layer declares.
 REPO_MAP="$TMP/repo-map"
 : > "$REPO_MAP"
-# SPIRA_MAIL TOO: the complete fixture's own default is a fixed, unwritable
-# "/fixture/home/..." path now (one source of config, never derived from SPIRA_RUN at
-# runtime), and the tick3 assertions below read mail straight out of "$RUN/mail/concierge/".
-tl_config SPIRA_ID_PREFIX=sp SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_MAIL="$RUN/mail"
+# SPIRA_MAIL AND SPIRA_MAIL_KINDS TOO: the complete fixture's own defaults are fixed,
+# unwritable "/fixture/home/..." paths now (one source of config, never derived from
+# SPIRA_RUN at runtime) — SPIRA_MAIL because the tick3 assertions below read mail straight
+# out of "$RUN/mail/concierge/", and SPIRA_MAIL_KINDS because "mail send --kind event"
+# lints the kind against a real file in that directory (this checkout's own mail/kinds/,
+# which does carry event.md, unlike the fixture's unreachable one).
+tl_config SPIRA_ID_PREFIX=sp SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$REPO_MAP" \
+    SPIRA_MAIL="$RUN/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 export SPIRA_CONF="$CONF" HOME="$TMP/home"
 # An operator-muted host files mail into cur/, where the unread-count checks never look.
 # SPIRA_CONCIERGE_INBOX EXPLICITLY: mail's default reader for the concierge mailbox
@@ -208,8 +212,6 @@ for r in queue-repo pr-repo push-repo hold-repo; do
 done
 run --show
 out3="$(cat "$TMP/out")"
-printf 'DIAG err: %s\n' "$(cat "$TMP/err" 2>/dev/null)" >&2
-printf 'DIAG mail root listing: %s\n' "$(find "$RUN/mail" 2>&1)" >&2
 for r in queue-repo pr-repo push-repo hold-repo; do
     has "tick3: $r's now-red PR is reported, naming the failing check" \
         "$out3" "FAIL RED #1 Round batch [$r]: suites"
