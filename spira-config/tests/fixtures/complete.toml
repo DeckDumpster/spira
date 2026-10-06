@@ -123,6 +123,7 @@ flow_window_hours = "0.5"
 forge = "forge"
 forge_repo = ""
 gate_budget = "300"
+gate_deadline = 300
 gate_lock_wait = "0"
 gate_select_cap = "0"
 gate_suites = "/fixture/userhome/spira/spira-releases/current/spira/gate-suites"
