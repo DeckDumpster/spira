@@ -73,6 +73,10 @@ esac
 STUBREL
 chmod +x "$STUBBIN/release"
 reset_repo
+# The fixture repo lands on origin/main because the config SAYS so (one source of config):
+# a repo-map row naming its base, and the repo it is. Nothing derives a base any more.
+printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO=fixture
 
 run_skew_cmd() {
     local run_dir="$1"; shift
