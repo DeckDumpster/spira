@@ -218,9 +218,9 @@ env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/b
 unit_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
-    testenv --mode parallel --profile release --artifacts "$HOME/round-work/target/release" --suites "$suites" round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
 else
-    testenv --mode parallel --profile release --artifacts "$HOME/round-work/target/release" round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
 wait "$unit_pid"; unit_rc=$?
