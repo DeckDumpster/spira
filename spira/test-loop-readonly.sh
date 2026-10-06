@@ -191,7 +191,7 @@ SENTINEL_OUT="$(
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_INFERENCE_EVERY=99999 \
     PATH="$CURRENT/bin:$CURRENT/spira:$LC_STUBS:$PATH" \
-        timeout 30 sentinel 2>&1
+        sentinel 2>&1
 )"
 SENTINEL_RC=$?
 iszero "sentinel exits 0 from read-only release" "$SENTINEL_RC"

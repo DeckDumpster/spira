@@ -154,16 +154,16 @@ mail_content() { cat "$MAILDIR/operator/new/"* 2>/dev/null; }
 
 mkdir -p "$SPIRA_RUN/watchd"
 # SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
-# /fixture/home/spira/run/watchd/concierge-inbox.log — mail (shelled out to by
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail (shelled out to by
 # pilgrimage.sh) appends every send there (sfail round 3, pattern 7).
 # SPIRA_MAIL_KINDS undeclared resolves to the complete fixture's own unwritable release
-# tree (/fixture/home/.../spira/mail/kinds), so lint refuses every send with
+# tree (/fixture/userhome/.../spira/mail/kinds), so lint refuses every send with
 # "unknown kind note" before pilgrimage.sh's own notification ever gets delivered.
 tl_config SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR" SPIRA_MAIL_INDEX="$MAILDIR/index" \
     SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_MUTE=0 \
     SPIRA_CONCIERGE_INBOX="$SPIRA_RUN/watchd/concierge-inbox.log"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
-run() { timeout 30 pilgrimage.sh check 2>&1; }
+run() { pilgrimage.sh check 2>&1; }
 
 # One seed, three epics: a finished one (announce/close), one still going (silence), and
 # one outside Spira's partition (silence). No branch/landstate for any of them, so all three

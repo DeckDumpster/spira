@@ -210,7 +210,7 @@ printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s
 # box's /workspace/bin/sentinel (not yet built in this pass) instead of PRODROOT/bin's stub.
 # SPIRA_MAIL no longer derives from SPIRA_RUN (one source of config, per Ryan 2026-10-05):
 # left to the fixture's own default, install's own "mail ensure concierge" step tries to
-# create the mailbox under the fictional /fixture/home/... tree and refuses with
+# create the mailbox under the fictional /fixture/userhome/... tree and refuses with
 # "Permission denied".
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" \
     SPIRA_PROD="$PRODROOT/spira" SPIRA_MAIL="$RUN/mail"

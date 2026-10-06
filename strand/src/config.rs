@@ -95,14 +95,17 @@ impl Config {
             home: None,
             bd: "bd".into(),
             vocab: Vocab {
+                // literal-ok: a test fixture declaring its own label values
                 ask: "needs-operator".into(),
                 submitted: "spira-submitted".into(),
                 queue_wait: "spira-queue-waiting".into(),
                 open_children: "spira-open-children".into(),
                 poison: "spira-poison".into(),
             },
+            // literal-ok: a test fixture declaring its own label values
             ci_label: "awaiting-ci".into(),
             scope_label: String::new(),
+            // literal-ok: a test fixture declaring its own label values
             no_loop_label: "no-loop".into(),
             max_aeons: Some(4),
             max_live_aeons: 0,

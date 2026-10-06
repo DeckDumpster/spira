@@ -30,7 +30,7 @@ mkdir -p "$TMP/watchd"
 # key needs SOME value), which would silently mute every "lands in new/" assertion in this
 # suite, not just the mail-mute section below that tests muting on purpose.
 # SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
-# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
 # the write fails outright with no such directory (sfail round 3, pattern 7).
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
     SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_MUTE=0 \

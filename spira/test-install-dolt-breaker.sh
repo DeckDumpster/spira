@@ -298,7 +298,7 @@ BDSTUB
 make_bd_stub 1
 # Constant across every env -i invocation below (the pre-render, and both run_install
 # calls further down, which re-declare only what differs: SPIRA_DB, SPIRA_DOLT_DATA).
-# SPIRA_MAIL: the fixture's own default (/fixture/home/...) isn't writable here —
+# SPIRA_MAIL: the fixture's own default (/fixture/userhome/...) isn't writable here —
 # install's units phase ensures every reader mailbox (sp-xp0u2), and a non-writable mail
 # root turns that into "mail: ensure: Permission denied" instead of this suite's own
 # circuit-breaker output (one source of config, per Ryan 2026-10-05).

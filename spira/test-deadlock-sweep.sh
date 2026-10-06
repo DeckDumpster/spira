@@ -86,7 +86,7 @@ export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 # round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
-# resolves to the complete fixture's placeholder /fixture/home/.../spira-lc.credential,
+# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
 # which does not exist. Declare this suite's own (empty-password) credential file.
 : > "$LC_TMP/credential"
 tl_config SPIRA_LC_PASSWORD_FILE="$LC_TMP/credential"
@@ -111,7 +111,7 @@ export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
-# fixture declares its own /fixture/home/.../chamber. Declare this suite's real one.
+# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
 tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # round 2 fix: the complete fixture declares scope_label="spira" as its base value, so

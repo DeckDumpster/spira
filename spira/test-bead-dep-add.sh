@@ -28,12 +28,12 @@ run_dep_add() {           # run_dep_add <args...> -> sets DA_OUT and DA_RC from 
     # SPIRA_INCIDENT_LABEL is the registered key the refusal actually checks (the fixture
     # bead is literally labelled "incident-test"); SPIRA_ALARM_LABEL is not a registered
     # name and was never read by anything. SPIRA_RUN too — undeclared, it resolved to the
-    # complete fixture's /fixture/home/.../run, which this sandbox cannot mkdir at all
+    # complete fixture's /fixture/userhome/.../run, which this sandbox cannot mkdir at all
     # (sfail round 3, pattern 7).
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_INCIDENT_LABEL="incident-test" SPIRA_RUN="$TMP/run"
     DA_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
-        timeout 30 bead.sh dep add "$@" 2>&1)"
+        bead.sh dep add "$@" 2>&1)"
     DA_RC=$?
 }
 

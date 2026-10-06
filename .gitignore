@@ -86,3 +86,6 @@ spira/conf.d.defaults.generated.sh
 *.sqlite
 *.sqlite3
 *.sqlite3-*
+
+# spira-config set leaves <file>.bak.<epoch>.<pid> beside the file it writes; never commit one.
+*.bak.[0-9]*

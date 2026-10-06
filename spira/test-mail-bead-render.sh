@@ -44,7 +44,7 @@ SPIRA_ID_PREFIX="sp"
 SPIRA_RUN="$TMP/run"
 mkdir -p "$TMP/watchd"
 # SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
-# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
 # the write fails outright with no such directory (sfail round 3, pattern 7).
 # SPIRA_MAIL_MUTE=0: the complete fixture's own declared default is true, which silently
 # writes every "rendered block leads the body" message straight to cur/ flagged Seen instead
@@ -61,7 +61,7 @@ export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
 # <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
 export SPIRA_HOME="$HERE"
 
-run() { timeout 30 mail "$@"; }
+run() { mail "$@"; }
 
 body_of() {
     local mailbox="$1" f

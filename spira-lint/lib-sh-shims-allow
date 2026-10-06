@@ -43,11 +43,8 @@ spira/lib.sh:_tsd_slots_sample
 # --- (sp-hconl); conf.sh keeps this copy because conf.sh's job is deciding whether and how
 # --- to invoke that binary in the first place.
 spira/conf.sh:_spira_conf_gen_ensure
-spira/conf.sh:spira_conf_file
 spira/conf.sh:spira_toml_file
-spira/conf.sh:_spira_repo_map_candidate
 spira/conf.sh:_spira_fayth_paths
-spira/conf.sh:_spira_toml_convert_from_conf
 spira/conf.sh:spira_toml_resolve
 spira/conf.sh:spira_toml_write_target
 

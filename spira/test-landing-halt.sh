@@ -37,7 +37,7 @@ run_halt() {
     # SPIRA_RUN/SPIRA_PROD/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE
     # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
     # SPIRA_QUEUE_DIR is ALSO registered, and the complete fixture declares it as a literal
-    # default (/fixture/home/spira/run/queue) rather than deriving it from SPIRA_RUN
+    # default (/fixture/userhome/spira/run/queue) rather than deriving it from SPIRA_RUN
     # (landing-pass/src/real.rs: `path_opt("queue_dir").unwrap_or_else(|| run.join("queue"))`
     # only falls back when the key is unset). Undeclared, halt read the open-batch record
     # from that /fixture path instead of $QUEUE_DIR below, found nothing, and treated every

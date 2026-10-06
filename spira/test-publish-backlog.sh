@@ -58,7 +58,7 @@ RMAP="$TMP/repo-map"
 
 pb() {
     # SPIRA_MAIL_MUTE/SPIRA_MAIL_INDEX: both now declared by the fixture (mail_mute=true,
-    # mail_index under /fixture/home/...) instead of deriving from SPIRA_MAIL — left alone,
+    # mail_index under /fixture/userhome/...) instead of deriving from SPIRA_MAIL — left alone,
     # mail delivers muted straight into cur/ as already-seen, so mail_count()'s ls of
     # new/ reads 0 forever. Declare this suite's own values (per Ryan 2026-10-05).
     tl_config SPIRA_HOME_REPO=fixlocal SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \

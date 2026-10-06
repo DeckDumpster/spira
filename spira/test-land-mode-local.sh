@@ -27,7 +27,7 @@
 #      the git-call log is not simply empty.
 #
 # tier: T1
-# covers: spira/lib.sh landing-pass/* spira/repo-map.example
+# covers: spira/lib.sh landing-pass/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

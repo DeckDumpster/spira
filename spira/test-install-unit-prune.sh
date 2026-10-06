@@ -70,7 +70,7 @@ printf '# empty\n' > "$WATCHERS"
 # Constant across every install.sh invocation below (the --render pre-seed and every
 # inst() call). SPIRA_MAIL_READERS="": this suite is about unit pruning, not mail — the
 # fixture's declared reader ("concierge=inbox-append.sh") points units-install's own
-# ensure_reader_mailboxes() at a shared "/fixture/home/.../mail" tree this suite's sandboxed
+# ensure_reader_mailboxes() at a shared "/fixture/userhome/.../mail" tree this suite's sandboxed
 # SPIRA_RUN never touches, which has intermittently refused mkdir with EACCES under
 # concurrent runs; declaring no readers here means install never calls `mail ensure` at all.
 tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \

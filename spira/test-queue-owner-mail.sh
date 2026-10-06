@@ -68,7 +68,7 @@ MAIL="$RUN/mail"
 tl_config SPIRA_MAIL_MUTE=0
 # round 4 fix (pattern 7): SPIRA_MAIL_KINDS is a registered key too; undeclared, it fell
 # through to the complete fixture's own default
-# (/fixture/home/spira/spira-releases/current/spira/mail/kinds), so mail's own lint
+# (/fixture/userhome/spira/spira-releases/current/spira/mail/kinds), so mail's own lint
 # refused queue_notify_concierge's send with "unknown kind ... — rule: kind must be a
 # file in ..." before anything landed in the concierge mailbox — the real cause behind
 # every assertion below (confirmed by replaying the same `mail send` call by hand against

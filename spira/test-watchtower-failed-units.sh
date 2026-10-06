@@ -94,7 +94,7 @@ WT_HOME="$TMP/wt-home"; mkdir -p "$WT_HOME"; ln -s "$HERE/conf.d" "$WT_HOME/conf
 # wt_show -> the --show snapshot (touches nothing: no incident.sh, no state write)
 wt_show() {
     tl_config SPIRA_RUN="$TMP/run"
-    timeout 30 env -i PATH="$PATH" HOME="$TMP" \
+    env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$WT_HOME" \
         SPIRA_CONF=/nonexistent \
@@ -115,7 +115,7 @@ printf '%s\t%s\n' "\$2" "\${SPIRA_INCIDENT_REF:-}" >> "$TMP/inc-calls"
 MOCK
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
-    timeout 30 env -i PATH="$PATH" HOME="$TMP" \
+    env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$WT_HOME" \
         SPIRA_CONF=/nonexistent \

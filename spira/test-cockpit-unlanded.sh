@@ -86,7 +86,7 @@ REPO="$(cd "$HERE/.." && pwd)"
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 # round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
-# resolves to the complete fixture's placeholder /fixture/home/.../spira-lc.credential,
+# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
 # which does not exist. Declare this suite's own (empty-password) credential file.
 : > "$TMP/lc-data/credential"
 tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-data/credential"

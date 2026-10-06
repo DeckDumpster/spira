@@ -187,7 +187,7 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     // resolve() any more — SPIRA_CHAMBER has no procedural step there (unlike
     // SPIRA_RELEASES/SPIRA_RUN/SPIRA_INSTANCE), so it is resolved generically, straight from
     // whatever the config file declares. The complete fixture `fixture_toml` writes declares a
-    // fixed placeholder (`/fixture/home/spira/spira-releases/<sha>/spira/chamber`) that does
+    // fixed placeholder (`/fixture/userhome/spira/spira-releases/<sha>/spira/chamber`) that does
     // not exist on disk — without this override, spira-claim/sentinel read THAT path and see
     // "no fayth in the chamber" for every real fayth, never this fixture's own `root/spira/
     // chamber` (the real chamber, symlinked in above, or `build_fixture_with_planted_fayth`'s
@@ -198,7 +198,7 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     let chamber_s = root.join("spira/chamber").display().to_string();
     let overlay_s = home.join("chamber-overlay-unset").display().to_string();
     // SPIRA_BD has no registry default (resolves empty unless set) — `complete.toml`'s own
-    // fixture placeholder (`/fixture/home/.local/bin/bd`) does not exist on this machine, so
+    // fixture placeholder (`/fixture/userhome/.local/bin/bd`) does not exist on this machine, so
     // spira-claim's `bd list` call failed with "No such file or directory" until this named
     // the fixture's own `bd` stub (written to `root/bin/bd` above) explicitly.
     let bd_s = root.join("bin/bd").display().to_string();

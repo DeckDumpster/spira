@@ -90,7 +90,7 @@ cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
-# The complete fixture declares a non-empty SPIRA_CHAMBER ("/fixture/home/.../chamber");
+# The complete fixture declares a non-empty SPIRA_CHAMBER ("/fixture/userhome/.../chamber");
 # nothing derives it from SPIRA_HOME any more (sfail round 2, pattern 6) — without this
 # the aeon never finds this fixture's builder.fayth at all.
 tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"

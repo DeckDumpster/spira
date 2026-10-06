@@ -44,7 +44,7 @@ mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
 # SPIRA_CONCIERGE_INBOX EXPLICITLY: mail_readers still names inbox-append.sh for the
 # concierge mailbox (SPIRA_MAIL_READERS="" does not appear to suppress it), and that script
 # resolves SPIRA_CONCIERGE_INBOX from config — the complete fixture's own value is a fixed,
-# unwritable "/fixture/home/..." path now, not derived from whatever SPIRA_RUN we declare.
+# unwritable "/fixture/userhome/..." path now, not derived from whatever SPIRA_RUN we declare.
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_INDEX="$SPIRA_MAIL_INDEX" SPIRA_ID_PREFIX="sp" \
     SPIRA_RUN="$SPIRA_RUN" SPIRA_OPERATOR_ACTOR="$SPIRA_OPERATOR_ACTOR" SPIRA_MAIL_MUTE=0 \
     SPIRA_MAIL_READERS="" SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"

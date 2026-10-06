@@ -64,6 +64,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     # the one source with no code-level default (per Ryan 2026-10-05), so it would otherwise
     # disagree with every literal here and open_ask_blocker would never match the shim's
     # decision bead. Declare the suite's own value so both sides agree.
+    # literal-ok: the fixture declares the ask label its shims and beads agree on
     SPIRA_ASK_LABEL="needs-operator"
     tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$FA_HOME/chamber" \
         SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"

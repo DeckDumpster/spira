@@ -36,7 +36,7 @@ get_enable() {
     local broker_enable="$1"
     # install/src/manifest.rs reads several registered keys to decide the unit set, not
     # just SPIRA_BROKER_ENABLE — undeclared ones resolve to the complete fixture's
-    # /fixture/home/... paths, which do not exist here, and --list-enable fails silently
+    # /fixture/userhome/... paths, which do not exist here, and --list-enable fails silently
     # under 2>/dev/null (sfail round 3, pattern 7).
     tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_SELF_TEST=0 SPIRA_BROKER_ENABLE="$broker_enable" \
@@ -47,7 +47,7 @@ get_enable() {
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
-        timeout 30 units-install --list-enable
+        units-install --list-enable
 }
 
 # ==========================================================================
