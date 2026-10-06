@@ -297,11 +297,15 @@ cat > "$QSH/repo-map" <<MAP
 qfixture | $QREPO | queue | |
 MAP
 
-# SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are
-# registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and
-# thread SPIRA_TOML through env -i, which clears it.
+# SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_RELEASES/SPIRA_DOLT_DATA/
+# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+# via tl_config and thread SPIRA_TOML through env -i, which clears it. SPIRA_RELEASES must be
+# cleared here too — the release-mode section above (run_skew_release) declared it via
+# tl_config, which persists for the rest of the suite; left set, skew refresh sees a live
+# releases/current symlink and runs release build/verify/activate instead of a plain
+# checkout refresh, which fails here since this fixture carries no real release workspace.
 tl_config SPIRA_RUN="$QRUN" SPIRA_DB="$TMP/qland-no-db" SPIRA_HOME_REPO=qfixture \
-    SPIRA_REPO_MAP="$QSH/repo-map" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    SPIRA_REPO_MAP="$QSH/repo-map" SPIRA_RELEASES="" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 q_out="$(env -i PATH="$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -314,7 +318,6 @@ QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
 [ "$QUEUE_AFTER" = "$QUEUE_NEW" ] \
     && ok  "a queue-mode repo's checkout is advanced to origin/main by the landing pass" \
     || bad "queue-mode refresh" "checkout at $(git -C "$QREPO" rev-parse --short HEAD), expected $(printf '%.7s' "$QUEUE_NEW")"
-printf '%s\n' "$q_out" > /tmp/skew-qout-debug-g5b.txt 2>/dev/null || true
 want "and the pass reports the refresh" "skew: refreshed to" "$q_out"
 
 # ===========================================================================
