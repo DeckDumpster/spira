@@ -670,6 +670,14 @@ pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &
     for k in ["SPIRA_REPO_MAP", "SPIRA_HOME_REPO"] {
         env.remove(k);
     }
+    // The config is the one $SPIRA_TOML names. A caller that hands over a map of its own
+    // resolved values (gate's) rather than its environment does not carry it; it is this
+    // same process's SPIRA_TOML either way — one file, not a second source.
+    if env.get("SPIRA_TOML").is_none_or(|v| v.is_empty()) {
+        if let Ok(t) = std::env::var("SPIRA_TOML") {
+            env.insert("SPIRA_TOML".to_string(), t);
+        }
+    }
     env.insert(
         "SPIRA_REPO_DERIVED".to_string(),
         crate::resolve::derive_repo_filesystem(home, &env).to_string_lossy().into_owned(),
@@ -689,7 +697,13 @@ pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| crate::resolve::derive_home_repo(home, &env));
-    if let Ok(r) = crate::resolve::resolve_for_process(home, &repo, &env) {
+    let resolved = crate::resolve::resolve_for_process(home, &repo, &env);
+    if let Err(e) = &resolved {
+        // Never silent: a registry that cannot resolve its declared keys says why, and every
+        // lookup below then refuses for want of a map.
+        eprintln!("spira-config repos: cannot resolve the repo registry's config: {e}");
+    }
+    if let Ok(r) = resolved {
         for k in KEYS {
             if env.get(k).is_none_or(|v| v.is_empty()) && !r.get(k).is_empty() {
                 env.insert(k.to_string(), r.get(k).to_string());
