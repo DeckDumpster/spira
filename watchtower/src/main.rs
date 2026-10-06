@@ -174,6 +174,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         snap_stale_s: reg_i64("SPIRA_SNAP_STALE_S"),
         gate_window_s: getenv_i64("SPIRA_WATCH_GATE_WINDOW", 21600),
         gate_silence_window_s: getenv_i64("SPIRA_WATCH_GATE_SILENCE_WINDOW", 3600),
+        gate_p90_limit_s: getenv_i64("SPIRA_WATCH_GATE_P90_LIMIT", 300),
         gate_log: getenv("SPIRA_GATE_LOG").map(PathBuf::from),
         yield_window_s: getenv_i64("SPIRA_YIELD_WINDOW", 86400),
         yield_sh: getenv("SPIRA_YIELD_SH"),

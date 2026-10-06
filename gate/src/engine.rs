@@ -735,6 +735,15 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
             }
         };
+        let Some(deadline) = key::digits(ctx.var("SPIRA_GATE_DEADLINE")) else {
+            return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_DEADLINE={:?} is not a number of seconds — refusing to run a gate with no wall-clock bound.", ctx.var("SPIRA_GATE_DEADLINE")));
+        };
+        let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
+        let t_start = self.s.start;
+        let eff = || {
+            let rem = deadline.saturating_sub(w.now().saturating_sub(t_start)).max(1);
+            key::digits(&timeout).map_or(rem, |t| t.min(rem)).to_string()
+        };
         let (rc, out, ph) = run_composed(
             w,
             &tree,
@@ -744,7 +753,7 @@ impl<'w, W: World> Trial<'w, W> {
                 tree_def.as_ref(),
                 tools.as_ref(),
             ),
-            &timeout,
+            &eff(),
             &cmd,
             tools.as_ref(),
             jobs,
@@ -839,6 +848,10 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s batch reported a harness fault — container died mid-batch ({d}).\ngate: command: {cmd}\n{out}"));
         }
+        if rc == 124 && by_deadline {
+            let phase = self.s.phases.last().map_or("-", |p| p.0.as_str()).to_string();
+            return deadline_verdict(deadline, &phase, w.now().saturating_sub(t_start), &cmd, &out);
+        }
         if rc == 124 {
             return v(NOVERDICT, "timeout", format!(
                 "gate: {name}'s own gate was killed at {timeout}s — it judged nothing.\ngate: command: {cmd}\ngate: this is the harness's budget, not a fault in the branch; raise SPIRA_GATE_TIMEOUT.\n{out}"));
@@ -927,7 +940,7 @@ impl<'w, W: World> Trial<'w, W> {
                     bdef.as_ref(),
                     base_tools.as_ref(),
                 ),
-                &timeout,
+                &eff(),
                 base_cmd,
                 base_tools.as_ref(),
                 jobs,
@@ -936,6 +949,10 @@ impl<'w, W: World> Trial<'w, W> {
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
+            if r == 124 && by_deadline {
+                let phase = self.s.phases.last().map_or("-", |p| p.0.as_str()).to_string();
+                return deadline_verdict(deadline, &phase, w.now().saturating_sub(t_start), base_cmd, &o);
+            }
             base_rc = r;
             base_out = o;
             base_ran = r != 124 && r != NOVERDICT && !before_tests;
@@ -1001,7 +1018,7 @@ impl<'w, W: World> Trial<'w, W> {
                                 base_bdef,
                                 base_tools_ref,
                             ),
-                            &timeout,
+                            &eff(),
                             "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag",
                         );
                         self.s
@@ -1045,12 +1062,15 @@ impl<'w, W: World> Trial<'w, W> {
                         base_bdef,
                         base_tools_ref,
                     ),
-                    &timeout,
+                    &eff(),
                     &rerun,
                 );
                 self.s
                     .phases
                     .push(("base-rerun".into(), w.now().saturating_sub(t)));
+                if r == 124 && by_deadline {
+                    return deadline_verdict(deadline, "base-rerun", w.now().saturating_sub(t_start), &rerun, &o);
+                }
                 if w.signalled() {
                     return v(
                         NOVERDICT,
@@ -1113,7 +1133,7 @@ impl<'w, W: World> Trial<'w, W> {
                 });
             if retryable {
                 let t = w.now();
-                let (_, o) = w.run_gate(
+                let (rr, o) = w.run_gate(
                     &tree,
                     &with_bins(
                         env(
@@ -1126,12 +1146,15 @@ impl<'w, W: World> Trial<'w, W> {
                         base_bdef,
                         base_tools_ref,
                     ),
-                    &timeout,
+                    &eff(),
                     &base_rerun_cmd(&reds),
                 );
                 self.s
                     .phases
                     .push(("base-retry".into(), w.now().saturating_sub(t)));
+                if rr == 124 && by_deadline {
+                    return deadline_verdict(deadline, "base-retry", w.now().saturating_sub(t_start), &base_rerun_cmd(&reds), &o);
+                }
                 if w.signalled() {
                     return v(
                         NOVERDICT,
@@ -1607,6 +1630,24 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
     Some(s)
 }
 
+/// The most a named phase may take, seconds (`base-` prefix ignored). They are the branch
+/// trial's fixed phases and sum under SPIRA_GATE_DEADLINE's 300 s, so the suites keep the rest;
+/// phases not listed take whatever of the deadline is left.
+pub fn phase_cap(name: &str) -> Option<u64> {
+    match name.strip_prefix("base-").unwrap_or(name) {
+        "tools" => Some(40),
+        "fences" => Some(90),
+        "gate" => Some(190),
+        _ => None,
+    }
+}
+
+/// NO_VERDICT: the gate ran out of wall clock — in `phase` — and judged nothing.
+pub fn deadline_verdict(deadline: u64, phase: &str, ran: u64, cmd: &str, out: &str) -> Verdict {
+    v(NOVERDICT, "deadline", format!(
+        "gate: deadline — phase `{phase}` was running when the gate hit its limit (ran {ran}s; whole-gate deadline {deadline}s, SPIRA_GATE_DEADLINE; phase caps in gate/DESIGN.md); it judged nothing.\ngate: command: {cmd}\n{out}"))
+}
+
 /// Run a composition's phases in order, each under what is left of `timeout`, stopping at
 /// the first non-zero status. Returns (status, the phases' output joined, the phase walls).
 /// The base re-run: the named suites through testenv, on the revision in
@@ -1766,12 +1807,15 @@ pub fn run_composed<W: World>(
 ) -> (i32, String, Vec<(String, u64)>) {
     let budget = key::digits(timeout);
     let start = w.now();
-    let left = || match budget {
-        Some(b) => b
-            .saturating_sub(w.now().saturating_sub(start))
-            .max(1)
-            .to_string(),
-        None => timeout.to_string(),
+    let left = |name: &str| {
+        let cap = phase_cap(name);
+        match budget {
+            Some(b) => {
+                let rem = b.saturating_sub(w.now().saturating_sub(start)).max(1);
+                cap.map_or(rem, |c| rem.min(c)).to_string()
+            }
+            None => cap.map_or(timeout.to_string(), |c| c.to_string()),
+        }
     };
     let mut phases = Vec::new();
     // THE TOOLS PHASE (sp-quu2w): the binaries the steps call, built from the tree under
@@ -1781,7 +1825,7 @@ pub fn run_composed<W: World>(
     if let Some(tl) = tools {
         if let Some(t) = &tl.build {
             let t0 = w.now();
-            let (rc, out) = w.run_gate(tree, env, &left(), t);
+            let (rc, out) = w.run_gate(tree, env, &left("tools"), t);
             phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
             if rc != 0 || w.signalled() {
                 return (rc, format!("{out}\ngate: phase 'tools' failed (exit {rc}): {t}"), phases);
@@ -1798,7 +1842,7 @@ pub fn run_composed<W: World>(
     // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
     let (cmd, _) = compose::gate_string(comp, cmd);
     let t = w.now();
-    let (rc, mut out) = w.run_gate(tree, env, &left(), &cmd);
+    let (rc, mut out) = w.run_gate(tree, env, &left(first), &cmd);
     phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
     if rc != 0 || w.signalled() {
         return (rc, out, phases);
@@ -1828,6 +1872,7 @@ pub fn run_composed<W: World>(
             out.push_str(&format!(
                 "\ngate: SPIRA_GATE_TIMEOUT ({timeout}s) spent before the {name} phase"
             ));
+            phases.push((format!("{prefix}{name}"), 0));
             return (124, out, phases);
         }
         let t = w.now();
@@ -1838,7 +1883,7 @@ pub fn run_composed<W: World>(
         } else {
             env
         };
-        let (r, o) = w.run_gate(tree, step_env, &left(), &c);
+        let (r, o) = w.run_gate(tree, step_env, &left(name), &c);
         phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
         if !o.is_empty() {
             if !out.is_empty() {
