@@ -757,6 +757,15 @@ fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
 }
 
 #[test]
+fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_resolve_config() {
+    let f = Fake::new();
+    f.ancestor.set(true);
+    f.set_var("SPIRA_TOML", "/box/spira.toml");
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.env_of(0, "SPIRA_TOML"), "/box/spira.toml");
+}
+
+#[test]
 fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs() {
     let f = Fake::new();
     f.ancestor.set(true);
