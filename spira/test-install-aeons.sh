@@ -136,9 +136,14 @@ chmod +x "$MOCK_BIN/spira-supervise"
 # ---------------------------------------------------------------------------
 inst() {
     > "$MOCK_LOG"
+    # SPIRA_MAIL: the fixture's own default (/fixture/home/...) isn't writable here —
+    # units-install's normal (non --render) path now ensures every reader mailbox before
+    # the aeon guard even runs (sp-xp0u2), so a non-writable mail root turned every
+    # scenario's output into a "mail: ensure: Permission denied" message instead of this
+    # suite's own aeon-guard/drain output (one source of config, per Ryan 2026-10-05).
     tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" \
-        "SPIRA_PROD=$PROD" "SPIRA_COCKPIT=$REAL_COCKPIT"
+        "SPIRA_PROD=$PROD" "SPIRA_COCKPIT=$REAL_COCKPIT" "SPIRA_MAIL=$TMP/mail"
     env -i \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
