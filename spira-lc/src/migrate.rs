@@ -557,7 +557,7 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
         let files = ordered_files(&[dir.to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
-        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql"]);
+        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql"]);
         let steps = plan(&texts).unwrap();
         let adds: Vec<(String, String)> = steps
             .iter()
@@ -568,7 +568,7 @@ mod tests {
             .collect();
         assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into())]);
         let plain = steps.iter().filter(|(_, s)| matches!(s, Stmt::Plain(_))).count();
-        assert_eq!(plain, 1, "0003's guarded UPDATE runs as written");
+        assert_eq!(plain, 2, "0003's guarded UPDATE and 0004's CREATE INDEX run as written");
     }
 
     #[test]
@@ -609,6 +609,7 @@ mod tests {
     #[derive(Default)]
     struct State {
         columns: std::collections::BTreeSet<(String, String)>,
+        indexes: std::collections::BTreeSet<String>,
         /// Terminal rows still carrying a holder (what 0003's guarded UPDATE corrects).
         stale_terminal_rows: bool,
         /// Every statement that changed something, as `<user>: <sql>`.
@@ -636,6 +637,10 @@ mod tests {
                 let table = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(st.columns.iter().filter(|(t, _)| t == table).map(|(_, c)| serde_json::json!({ "COLUMN_NAME": c })).collect());
             }
+            if sql.contains("information_schema.statistics") {
+                let index = sql.split("index_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.indexes.contains(index) { vec![serde_json::json!({ "INDEX_NAME": index })] } else { vec![] });
+            }
             if sql.starts_with("SELECT 1 FROM bead WHERE") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
             }
@@ -658,6 +663,9 @@ mod tests {
                         return Err("duplicate column".into());
                     }
                 }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE INDEX") => {
+                    st.indexes.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
+                }
                 _ => st.stale_terminal_rows = false,
             }
             st.writes.push(format!("{}: {sql}", self.user));
@@ -677,6 +685,7 @@ mod tests {
         for c in ["id", "state", "holder", "stack", "stack_depth", "since"] {
             st.columns.insert(("bead".into(), c.into()));
         }
+        st.indexes.insert("event_since_idx".into());
         Rc::new(RefCell::new(st))
     }
 
