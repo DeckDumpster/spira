@@ -197,11 +197,16 @@ rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --
     --testdb-port 3308 --snap-stale-s 60 --lc-password-file "$CRED")"
 unit_env="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\)$/\1/p')"
 is "the rendered unit carries the configured credential path" "SPIRA_LC_PASSWORD_FILE=$CRED" "$unit_env"
-# SPIRA_RELEASE=... TOO: a real deployed unit's Environment= block carries it alongside
-# SPIRA_LC_PASSWORD_FILE (systemd/spira-sentinel.service), and it is what lets a process
-# with no explicit SPIRA_TOML locate its config (spira_config::resolve's home search) — one
-# rendered credential line alone no longer resolves anything under one source of config.
-unit_env_all="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\|SPIRA_RELEASE=.*\)$/\1/p')"
+# SPIRA_RELEASE=... AND SPIRA_TOML=... TOO: a real deployed unit's Environment= block
+# carries both alongside SPIRA_LC_PASSWORD_FILE (systemd/spira-sentinel.service) — under one
+# source of config there is no home-search derivation any more, so the unit's own
+# SPIRA_TOML (rendered from the installer's own SPIRA_TOML, per install::bootstrap::
+# host_from_env) is what a caller resolves against. render-unit itself has no --toml flag
+# (it renders every OTHER HostValues field from an explicit flag, "no environment reads" by
+# design) so it cannot render this one; stand in the suite's own $SPIRA_TOML — the value a
+# real installer's SPIRA_TOML would have carried into the same render — rather than leaving
+# it empty. (one source of config, per Ryan 2026-10-05)
+unit_env_all="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\|SPIRA_RELEASE=.*\)$/\1/p') SPIRA_TOML=$SPIRA_TOML"
 lc_caller() {
     env -i HOME="$HOME" PATH="$PATH" "$@" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
         SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" "$LC_BIN" history sp-manual
