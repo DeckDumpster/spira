@@ -91,11 +91,16 @@ MOCK
     # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, always
     # starting from the complete fixture's own defaults so a call that omits one of the
     # throttle keys does not inherit an earlier call's override. SPIRA_TC_* stay plain env
-    # vars (not registered) and go through env -i as before.
+    # vars (not registered) and go through env -i as before. OVERRIDE's own conf.d default
+    # is EMPTY ("no override, decide normally") — "off" is the operator kill switch
+    # (watchtower/src/main.rs: override_off pins admission not-throttled unconditionally,
+    # before depth is even read). Baselining it to "off" here force-disabled every case in
+    # this suite that does not pass its own OVERRIDE=; only the two cases that test the
+    # kill switch itself ("override off — throttle pinned disabled") still set it.
     local arg env_overrides=()
     tl_config SPIRA_RUN="$TMP/run" SPIRA_QUEUE_THROTTLE_DEPTH_AT=1000 \
         SPIRA_QUEUE_THROTTLE_STALL_MINS=50 SPIRA_QUEUE_THROTTLE_RELEASE_AT=12 \
-        SPIRA_QUEUE_THROTTLE_OVERRIDE=off
+        SPIRA_QUEUE_THROTTLE_OVERRIDE=""
     for arg in "$@"; do
         case "$arg" in
             SPIRA_TC_*) env_overrides+=("$arg") ;;
