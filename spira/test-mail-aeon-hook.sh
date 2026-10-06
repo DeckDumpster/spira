@@ -20,7 +20,12 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+# SPIRA_MAIL is a registered key now: the bash hook below still reads the bare $SPIRA_MAIL
+# export directly (its own doc), but the compiled `mail` binary ("mail aeon: address
+# routing" below) resolves it through spira_config — a bare export alone no longer reaches
+# it, so declare it too (one source of config, per Ryan 2026-10-05).
 export SPIRA_MAIL="$TMP/mail"
+tl_config SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""   # prevent reading a real spira.conf
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
