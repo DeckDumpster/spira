@@ -1,0 +1,22 @@
+[Unit]
+Description=Spira reclaim — remove stale rebuildable build targets when the disk is short, cap the shared compilation cache
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/reclaim pass --require @SPIRA_RUN@/worktree --lease-dir @SPIRA_RUN@/aeon --glob @SPIRA_RUN@/worktree/.tgt-* --glob @SPIRA_RUN@/tgt-* --glob @SPIRA_RUN@/cargo-target-bins --glob @SPIRA_RUN@/worktree/*/target --cache-dir @SPIRA_RUN@/sccache-dav
+TimeoutStartSec=900
+CPUQuota=20%
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=append:@SPIRA_RUN@/reclaim.log
+StandardError=append:@SPIRA_RUN@/reclaim.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance
