@@ -93,6 +93,25 @@ fn tail(s: &str, n: usize) -> String {
 pub const IMAGE_PATH: &str =
     "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
+/// Writes the container's spira.toml ([`Fixture::config_toml`]): the complete fixture with
+/// `/fixture/home` rewritten to this user's `$HOME`, then the batch's own keys set over it.
+const CONFIGURE_SCRIPT: &str = r#"set -eu
+sed "s#/fixture/home#$HOME#g" "$CONFIGURE_FIXTURE" > "$CONFIGURE_OUT.tmp"
+set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OUT.tmp" >/dev/null; }
+set_key instance "$CONFIGURE_INSTANCE"
+set_key prod "$CONFIGURE_PROD"
+set_key chamber "$CONFIGURE_PROD/chamber"
+set_key ctrl "$CONFIGURE_CTRL"
+set_key bd "$(command -v bd)"
+set_key run "$CONFIGURE_RUN"
+set_key testdb_data "$CONFIGURE_TESTDB_DATA"
+set_key max_aeons "$CONFIGURE_MAX_AEONS"
+set_key max_live_aeons "$CONFIGURE_MAX_LIVE_AEONS"
+set_key loom_addr "$CONFIGURE_LOOM_ADDR"
+set_key dolt_data "$CONFIGURE_DOLT_DATA"
+mv "$CONFIGURE_OUT.tmp" "$CONFIGURE_OUT"
+"#;
+
 /// Stage the tree under test as a release layout (DESIGN.md §5, sp-isom7): `$1` is the
 /// release root (made afresh), `$2` the build's artifact directory, `$3` the tree; the rest are
 /// the binaries `bin/` must hold. Every top-level entry of the tree is linked in beside `bin/`
@@ -330,6 +349,7 @@ impl<'a> Session<'a> {
     pub fn release_env(&self) -> Vec<(String, String)> {
         vec![
             kv("SPIRA_RELEASE", &self.release),
+            kv("SPIRA_TOML", self.config_toml()),
             kv("PATH", self.release_path()),
         ]
     }
@@ -440,18 +460,31 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
+    /// The container's one source of config: the tree's complete fixture with every
+    /// `/fixture/home` path moved under the container user's own home, then this batch's own
+    /// values declared over it ([`CONFIGURE_SCRIPT`]). Every later step and suite names it
+    /// through `SPIRA_TOML` ([`Self::release_env`]); nothing is derived or defaulted.
+    pub fn config_toml(&self) -> String {
+        format!("/tmp/spira-batch-{}.toml", self.instance)
+    }
+
     pub fn configure_request(&self) -> ExecRequest {
         let mut env = self.user_env();
         env.extend([
+            kv("CONFIGURE_OUT", self.config_toml()),
+            kv("CONFIGURE_FIXTURE", format!("{WORKSPACE}/spira-config/tests/fixtures/complete.toml")),
+            kv("CONFIGURE_INSTANCE", &self.instance),
             kv("CONFIGURE_PROD", self.in_release("spira")),
+            kv("CONFIGURE_CTRL", self.in_release("bin/ctrl")),
+            kv("CONFIGURE_RUN", self.batch_run()),
+            kv("CONFIGURE_TESTDB_DATA", self.testdb_data()),
             kv("CONFIGURE_MAX_AEONS", "1"),
             kv("CONFIGURE_MAX_LIVE_AEONS", "1"),
             kv("CONFIGURE_LOOM_ADDR", "127.0.0.1:7300"),
             kv("CONFIGURE_DOLT_DATA", ""),
         ]);
         env.extend(self.release_env());
-        let configure = self.in_release("spira/configure.sh");
-        self.setup_as_user(&["bash", &configure], env)
+        self.setup_as_user(&["bash", "-c", CONFIGURE_SCRIPT], env)
     }
 
     pub fn suspend_request(&self, unit: &str, reason: &str) -> ExecRequest {
@@ -1225,7 +1258,7 @@ mod tests {
         assert_eq!(argv.len(), 7);
         assert_eq!(argv[6][1..3], ["testdb", "template"]);
         rt.execs.lock().unwrap().remove(0);
-        assert_eq!(argv[0], vec!["bash", "/tmp/spira-release-abc123/spira/configure.sh"]);
+        assert_eq!(argv[0], vec!["bash", "-c", CONFIGURE_SCRIPT]);
         assert_eq!(
             argv[1][..6],
             ["bash", "-c", "exec \"$0\" \"$@\"", "/tmp/spira-release-abc123/bin/ctrl", "suspend", "spira-loom"]
