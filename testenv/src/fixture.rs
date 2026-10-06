@@ -101,7 +101,7 @@ set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OU
 set_key instance "$CONFIGURE_INSTANCE"
 set_key prod "$CONFIGURE_PROD"
 set_key chamber "$CONFIGURE_PROD/chamber"
-set_key ctrl "$CONFIGURE_CTRL"
+set_key ctrl "$CONFIGURE_RUN/control"
 set_key bd "$(command -v bd)"
 set_key run "$CONFIGURE_RUN"
 set_key testdb_data "$CONFIGURE_TESTDB_DATA"
@@ -475,7 +475,6 @@ impl<'a> Session<'a> {
             kv("CONFIGURE_FIXTURE", format!("{WORKSPACE}/spira-config/tests/fixtures/complete.toml")),
             kv("CONFIGURE_INSTANCE", &self.instance),
             kv("CONFIGURE_PROD", self.in_release("spira")),
-            kv("CONFIGURE_CTRL", self.in_release("bin/ctrl")),
             kv("CONFIGURE_RUN", self.batch_run()),
             kv("CONFIGURE_TESTDB_DATA", self.testdb_data()),
             kv("CONFIGURE_MAX_AEONS", "1"),
