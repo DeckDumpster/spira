@@ -240,13 +240,13 @@ want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
 BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo)"
 seed_bead "$BLID"
-before_unread="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l)"
+before_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev/null | grep -c .)"
 out="$(work_as "$BLID" blocked "which persona owns this?" --default "builder" 2>&1)"; rc=$?
 [ "$rc" = 0 ] || echo "# $out" >&2
 is "blocked: exits 0" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT holds FROM bead WHERE bead_id='$BLID'" -r json 2>&1)"
 want "blocked: an ask hold is recorded" "ask" "$row"
-after_unread="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l)"
+after_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev/null | grep -c .)"
 [ "$after_unread" -gt "$before_unread" ] && ok "blocked: an ask landed in the operator's mailbox" \
     || bad "blocked: an ask landed in the operator's mailbox" "count did not increase ($before_unread -> $after_unread)"
 

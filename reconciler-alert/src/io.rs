@@ -36,12 +36,16 @@ pub fn mail_send(
     subject: &str,
     kind: &str,
     default: Option<&str>,
+    class: Option<&str>,
     body: &str,
 ) -> Result<(), String> {
     let mut cmd = Command::new(mail_sh);
     cmd.arg("send").arg(mailbox).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
     if let Some(d) = default {
         cmd.arg("--default").arg(d);
+    }
+    if let Some(c) = class {
+        cmd.arg("--class").arg(c);
     }
     let mut child = cmd
         .stdin(Stdio::piped())

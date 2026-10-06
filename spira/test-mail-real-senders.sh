@@ -76,7 +76,7 @@ export SPIRA_BD="$STUB_BD"
 export SPIRA_DB="$TMP/db"
 tl_config SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB"
 
-unread() { mail count operator 2>/dev/null; }
+unread() { echo $(( $(mail count operator 2>/dev/null) + $(mail count concierge 2>/dev/null) )); }
 
 echo
 echo "sentinel: land_escalate (question)"

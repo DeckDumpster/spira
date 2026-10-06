@@ -226,9 +226,9 @@ run_notify() {
     return "$_rc"
 }
 
-asks()     { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
+asks()     { find "$MAIL/operator/new" "$MAIL/concierge/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
 reset_run() {
-    rm -rf "$MAIL/operator"
+    rm -rf "$MAIL/operator" "$MAIL/concierge"
     rm -f "$WDIR/"*.unhealthy "$WDIR/notify-health.escalated" 2>/dev/null
 }
 # An old unread message in the concierge mailbox (mtime = 1 hour ago).
