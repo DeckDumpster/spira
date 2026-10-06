@@ -358,6 +358,7 @@ fn run_unit(fixture: &Fixture, template: &str, argv_override: &[&str], extra_env
     host.insert("SPIRA_RUN".to_string(), fixture.home.join(".local/share/spira/run").to_string_lossy().into_owned());
     host.insert("SPIRA_PATH_TAIL".to_string(), String::new());
     host.insert("SPIRA_DB".to_string(), fixture.home.join(".local/share/spira/db").to_string_lossy().into_owned());
+    host.insert("SPIRA_TOML".to_string(), fixture.toml.to_string_lossy().into_owned());
     let rendered = release::units::render(template, &text, &fixture.root, &host, None, "prod")
         .unwrap_or_else(|e| panic!("rendering {template}: {e}"));
     let env = unit_env(&rendered);
@@ -481,6 +482,7 @@ fn spira_landing_pass_service_already_carries_spira_home_explicitly_and_is_never
     host.insert("SPIRA_PATH_TAIL".to_string(), String::new());
     host.insert("SPIRA_REPO_MAP".to_string(), "/not/the/default/location".to_string());
     host.insert("SPIRA_DB".to_string(), fx.home.join(".local/share/spira/db").to_string_lossy().into_owned());
+    host.insert("SPIRA_TOML".to_string(), fx.toml.to_string_lossy().into_owned());
     let rendered = release::units::render("spira-landing-pass.service", &text, &fx.root, &host, None, "prod").expect("render landing-pass");
     let env = unit_env(&rendered);
     let home = env.get("SPIRA_HOME").cloned().unwrap_or_default();

@@ -142,6 +142,7 @@ impl World {
         let sb = Sandbox::new();
         let mut env = Env::new();
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
+        env.insert("SPIRA_TOML".into(), "/host/spira.toml".into());
         let reg = Registered { instance: "prod".into(), ..reg };
         let flags = Flags { releases: Some(sb.p().join("rel")), run: Some(sb.p().join("run")), keep: Some(2) };
         let cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
@@ -721,7 +722,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE", "SPIRA_TOML"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
@@ -772,6 +773,7 @@ fn every_shipped_service_renders_the_configured_path_tail_after_the_system_dirs(
 fn every_shipped_service_renders_against_real_host_values() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
+    env.insert("SPIRA_TOML".into(), "/host/spira.toml".into());
     env.insert("DOLT".into(), "/host/DOLT".into());
     let reg = Registered {
         releases: "/e".into(),
