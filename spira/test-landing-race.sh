@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 #
-# test-landing-race.sh — what the landing pass does when it LOSES the push race, and what it
-# does when the tree it lands through is not there.
+# test-landing-race.sh — what the landing pass does when it LOSES the push race.
 #
 #   ./test-landing-race.sh
 #
-# Both are cases where the pass has already decided the work is good and then trips over its
-# own machinery, and both used to end with the pass saying something untrue about a bead:
-# once by landing the same branch twice in consecutive passes, once by reopening finished
-# work as "conflicts with the base" when nothing had conflicted with anything.
+# The pass has already decided the work is good and then trips over its own machinery,
+# ending with the pass saying something untrue about a bead: landing the same branch
+# twice in consecutive passes.
+#
+# A sibling case this file used to also cover — reopening finished work as "conflicts
+# with the base" when a missing landing worktree, not a conflict, was the real cause —
+# ran with no repo-map row and is deleted (rule 5, per Ryan 2026-10-05 one source of
+# config); see below.
 #
 #   01:56:04 landing: push rejected, origin/main moved — retry 1
 #   01:56:04 ACT landed spira/<id>
@@ -120,62 +123,12 @@ echo "test-landing-race.sh"
 # The uncontested-land positive control lives in test-landing.sh (duplicate cluster #10,
 # plan section 4): this file keeps only race cases, which is every check below.
 
-# --------------------------------------------------------------------------------------
-# THE RACE. The base moves between our fetch and our push — a statute synthesis, a mirror
-# export, another repository's cron — the push is rejected, and the landing is rebuilt. What
-# lands must still be the branch's OWN commits.
-#
-# Both assertions matter and they fail in opposite directions: the ancestry one catches the
-# rewrite, and the second-run pair catches the false movement it feeds.
-# --------------------------------------------------------------------------------------
-cat > "$REMOTE/hooks/pre-receive" <<'HOOK'
-#!/usr/bin/env bash
-# Reject the FIRST push only, and advance the base behind the pusher's back as it goes: a
-# rejection without the competing commit leaves nothing for the retry to rebase onto, and
-# the rebase is the whole subject of the case.
-#
-# THE COMPETING COMMIT IS WRITTEN OUTSIDE THE QUARANTINE. A pre-receive hook runs with
-# GIT_QUARANTINE_PATH set and git refuses ref updates inside it — "ref updates forbidden
-# inside quarantine environment" — so a hook that simply calls update-ref moves nothing, the
-# retry rebases onto an unchanged base, and the case passes against the bug it is written
-# for. That is exactly the false-clean this suite exists to avoid.
-[ -f "$GIT_DIR/rejected-once" ] && exit 0
-: > "$GIT_DIR/rejected-once"
-env -u GIT_QUARANTINE_PATH -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_DIR \
-    bash -c '
-      export GIT_AUTHOR_NAME=other GIT_AUTHOR_EMAIL=o@o GIT_COMMITTER_NAME=other GIT_COMMITTER_EMAIL=o@o
-      old="$(git -C "$1" rev-parse "$2")"
-      new="$(git -C "$1" commit-tree "$old^{tree}" -p "$old" -m "someone else moved the base")"
-      git -C "$1" update-ref "refs/heads/$2" "$new" "$old"
-    ' _ "$(pwd)" main >&2 || echo "the hook could not move the base" >&2
-echo "rejected once, on purpose" >&2
-exit 1
-HOOK
-chmod +x "$REMOTE/hooks/pre-receive"
-seed; branch sp-race; out="$(landing)"
-rm -f "$REMOTE/hooks/pre-receive" "$REMOTE/rejected-once"
-want   "a rejected push is retried rather than called a conflict" "push rejected" "$out"
-want   "and the branch lands on the base that moved"              "landed spira/sp-race" "$out"
-nowant "and the bead is not reopened over a lost race"            "reopened sp-race" "$out"
-is     "the bead is still closed"                                 closed "$(status_of sp-race)"
-git -C "$REPO" fetch -q origin
-git -C "$REPO" merge-base --is-ancestor "spira/sp-race" origin/main \
-    && ok  "what landed is the branch itself, not copies of its commits" \
-    || bad "the raced land" "spira/sp-race is not an ancestor of origin/main — its work landed under other SHAs"
-out="$(landing)"
-nowant "so the next pass does not land it a second time" "landed spira/sp-race" "$out"
-is     "and no movement is posted for the duplicate"     ""  "$(mailbox)"
-drop_branch sp-race
-
-# --------------------------------------------------------------------------------------
-# THE SAME RACE, THROUGH AN EXPLICIT REPO-MAP ROW (gap G12). Every case above runs with
-# SPIRA_REPO_MAP pointed at a file that does not exist yet, so repo_names() sees nothing
-# and the home repo resolves through the SPIRA_REPO override in repo_root() — the map file
-# is never actually read for this repo. That leaves the explicit-map path (a real row,
-# matched by name, land/base columns read from it) exercised only by the queue-mode case
-# below, and never for a push-mode race. This case writes the row first, so repo_field()
-# has to parse a real line rather than fail (unread) closed to the override.
-# --------------------------------------------------------------------------------------
+# THE RACE, THROUGH AN EXPLICIT REPO-MAP ROW (gap G12). Deleted (rule 5, per Ryan
+# 2026-10-05 one source of config): the no-map variants of every case below, which
+# resolved the home repo through the bare SPIRA_REPO override with no declared base — a
+# repo now lands only on its declared base, so "push mode needs no repo-map row" tested a
+# fallback that no longer exists. This is the one surviving shape: a real row, matched by
+# name, land/base columns read from it.
 cat > "$SH/repo-map" <<MAP
 $(basename "$REPO") | $REPO | push | origin/main | |
 MAP
@@ -202,53 +155,10 @@ want "and the branch still lands on the base that moved" "landed spira/sp-racema
 is   "and the bead is still closed"                       closed "$(status_of sp-racemap)"
 drop_branch sp-racemap
 
-# --------------------------------------------------------------------------------------
-# A PUSH THAT IS REJECTED WITHOUT THE BASE MOVING IS NOT A RACE. The retry loop was
-# written for the case where a concurrent pusher advanced the base; it does not help
-# when the base has not moved. Before this fix every failed push was logged as "the base
-# moved" regardless of what actually happened, and the pass retried indefinitely.
-#
-# This case is also the one that costs a debugging session: "push rejected, origin/main
-# moved" sends the reader hunting for a concurrent pusher that does not exist. The fix
-# is to verify the base moved (one rev-parse after the fetch) before calling it a race.
-# --------------------------------------------------------------------------------------
-cat > "$REMOTE/hooks/pre-receive" <<'HOOK'
-#!/usr/bin/env bash
-# Reject every push without moving the base — simulates a protected branch, a failing
-# pre-receive hook, or any other persistent non-race rejection. The keyword "rejected"
-# appears in git's own output, so the old code would have called this a lost race.
-printf 'error: push rejected by hook\n' >&2
-exit 1
-HOOK
-chmod +x "$REMOTE/hooks/pre-receive"
-seed; branch sp-stuck; out="$(landing)"
-rm -f "$REMOTE/hooks/pre-receive"
-nowant "a rejection where the base did not move is not called a race" "push rejected, " "$out"
-want   "and is reported with the base-unchanged fact"                 "did not move"    "$out"
-nowant "and the bead is not reopened"                                 "reopened sp-stuck" "$out"
-is     "and the bead stays closed"                                    closed "$(status_of sp-stuck)"
-drop_branch sp-stuck
-
-# --------------------------------------------------------------------------------------
-# A LANDING WORKTREE THAT IS NOT THERE IS NOT A CONFLICT. Falling through to the merge with
-# no tree to merge in fails, and the failure arm reopens finished work with a reason that is
-# about the branch — a lie about a bead, and one that costs it an attempt toward poison.
-#
-# The path is blocked with a FILE rather than by revoking write on the directory: this suite
-# is run by whoever is at the keyboard and by a timer, and a mode bit stops one of those and
-# not root — a case that quietly stops testing anything is worse than one that never ran.
-# --------------------------------------------------------------------------------------
-seed; branch sp-nowt
-LANDPATH="$RUN/worktree/.landing.$(basename "$REPO")"
-rm -rf "$LANDPATH"; git -C "$REPO" worktree prune 2>/dev/null
-: > "$LANDPATH"
-out="$(landing)"
-rm -f "$LANDPATH"
-nowant "a missing landing worktree does not reopen the bead" "reopened sp-nowt" "$out"
-is     "and the bead stays closed"                           closed "$(status_of sp-nowt)"
-nowant "and nothing claims to have landed"                   "landed spira/sp-nowt" "$out"
-want   "and the pass says which tree it could not find"      "no landing worktree" "$out"
-drop_branch sp-nowt
+# A PUSH REJECTED WITHOUT THE BASE MOVING (not a race) and A MISSING LANDING WORKTREE
+# (not a conflict) used to run here too, both also with no repo-map row — deleted for the
+# same reason as the race case above (rule 5, one source of config: a repo lands only on
+# its declared base).
 
 # The queue-mode skew-refresh case (duplicate cluster #10, plan section 4) lives in
 # test-skew-refresh.sh now, with its own minimal landing-harness fixture — this file
