@@ -35,6 +35,15 @@ fn fixture(tag: &str) -> (testkit::TempDir, std::path::PathBuf, String, Env) {
 fn a_repo_name_finds_a_commit_only_the_configured_checkout_has() {
     let (t, checkout, sha, mut env) = fixture("repo-resolve-bare");
     std::env::set_current_dir(t.path()).unwrap();
+    // `spira_config::repos::registry_env` (per Ryan 2026-10-05: one source of config) now
+    // drops any `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` it finds in the environment outright and
+    // resolves both fresh from `$SPIRA_TOML` instead — so `fixture`'s own env entries for
+    // them (above) are inert for registry purposes; only read back here to build the real
+    // config file `registry_env` now requires. It checks `env.get("SPIRA_TOML")` before
+    // falling back to the real process environment, so inserting it into this `env` map is
+    // enough — no `testkit::env`/real env var mutation needed for this one.
+    let toml = spira_config::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &env["SPIRA_REPO_MAP"]), ("SPIRA_HOME_REPO", &env["SPIRA_HOME_REPO"])]);
+    env.insert("SPIRA_TOML".into(), toml.display().to_string());
     let r = release::repo::resolve(Some(std::path::Path::new("spira")), &env).unwrap();
     assert_eq!(r, checkout);
     assert_eq!(RealGit.resolve(&r, &sha).unwrap(), sha);

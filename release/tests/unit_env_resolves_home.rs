@@ -659,8 +659,17 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
 
     let spira_config_bin = build_bin("spira-config", "spira-config");
 
-    // Exactly CHECK6's own forwarded keys (`dispatch.rs`'s `setenv` list), plus `HOME` —
-    // never `SPIRA_REPO_DERIVED`.
+    // `spira_config::repos::registry_env` (per Ryan 2026-10-05: one source of config) now
+    // drops any `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` it finds in the environment outright,
+    // whatever forwarded them, and resolves both fresh from `$SPIRA_TOML` instead — so the
+    // two real env vars below are no longer what this test's assertion rests on; this file
+    // declares the same values for `spira-config repo root` to read instead.
+    // `SPIRA_REPO_DERIVED` is still deliberately absent — that is this test's whole point
+    // (see this test's own doc above) — and `fixture_toml` never touches it either.
+    let toml = spira_config::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &catalog.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+
+    // Exactly CHECK6's own forwarded keys (`dispatch.rs`'s `setenv` list), plus `HOME` and
+    // `SPIRA_TOML` — never `SPIRA_REPO_DERIVED`.
     let mut cmd = Command::new("env");
     cmd.arg("-i")
         .arg(format!("HOME={}", home.display()))
@@ -670,6 +679,7 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
         .arg(format!("SPIRA_REPO={}", release.display()))
         .arg(format!("SPIRA_REPO_MAP={}", catalog.display()))
         .arg("SPIRA_HOME_REPO=spira")
+        .arg(format!("SPIRA_TOML={}", toml.display()))
         .arg(&spira_config_bin)
         .arg("repo")
         .arg("root")

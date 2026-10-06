@@ -950,25 +950,52 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         d
     }
 
-    /// Sets `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given) for the duration of `f`,
-    /// restoring whatever was there before — the real-registry counterpart of `stub_home`'s
-    /// bash fakes, for the family-U/W fields only `spira_config::repos` resolves now.
+    /// Every fixture `spira.toml` that feeds a `lib.context(...)` call declares these
+    /// five, with the SAME values, even when the test at hand only cares about a
+    /// different key. Reason: `spira_config::process::cfg` (what `RealLib::context()`
+    /// reads these five through) caches its resolution once per process in a `OnceLock`
+    /// — whichever fixture happens to be on disk (named by `$SPIRA_TOML`) the FIRST time
+    /// any test's `lib.context(...)` call touches `cfg()` wins, permanently, for every
+    /// other test in this binary. A fixture that declared different values, or omitted
+    /// them (falling back to `complete.toml`'s own defaults, which do NOT all match
+    /// these), would make the result depend on test execution order. Keeping every such
+    /// fixture's declaration identical makes the race immaterial. A fixture that never
+    /// backs a `lib.context(...)` call (`repos()`-only, or the `resolve::*` family
+    /// `cancel_runs`/`is_suite_transition` use, which is a different, uncached path) has
+    /// no reason to carry these.
+    const PROCESS_CFG_DECLARE: &[(&str, &str)] = &[
+        ("SPIRA_CERTIFY_SUITES", "on"),
+        ("SPIRA_GIT_NAME", "spira"),
+        ("SPIRA_GIT_EMAIL", "spira@spira.invalid"),
+        ("SPIRA_MAIL_SESSION_MAILBOX", "concierge"),
+        ("SPIRA_EXPRESS_LABEL", "express"),
+    ];
+
+    /// Declares `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given), plus
+    /// [`PROCESS_CFG_DECLARE`], through a fixture `spira.toml` for the duration of `f` —
+    /// the real-registry counterpart of `stub_home`'s bash fakes, for the family-U/W
+    /// fields only `spira_config::repos` resolves now. `registry_env` strips any
+    /// inherited copy of these two REGISTERED keys and re-resolves them from `$SPIRA_TOML`
+    /// exclusively (per Ryan 2026-10-05: one source of config) — a bare `set_var` on them
+    /// no longer reaches `Registry::from_env` at all. That resolve path (unlike
+    /// `process::cfg`'s) re-reads `$SPIRA_TOML` fresh on every call, so the map/home-repo
+    /// pair is safe to vary per test; [`PROCESS_CFG_DECLARE`] still has to ride along in
+    /// case this fixture is the one that ends up seeding `process::cfg`'s cache.
     fn with_repo_map<R>(map: &Path, home_repo: Option<&str>, f: impl FnOnce() -> R) -> R {
-        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-        std::env::set_var("SPIRA_REPO_MAP", map);
-        match home_repo {
-            Some(h) => std::env::set_var("SPIRA_HOME_REPO", h),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        let prev_toml = std::env::var("SPIRA_TOML").ok();
+        let dir = map.parent().expect("map path has a parent directory");
+        let mut declare: Vec<(&str, &str)> = PROCESS_CFG_DECLARE.to_vec();
+        declare.push(("SPIRA_REPO_MAP", map.to_str().expect("map path is UTF-8")));
+        if let Some(h) = home_repo {
+            declare.push(("SPIRA_HOME_REPO", h));
         }
+        let toml = spira_config::process::fixture_toml(dir, &declare);
+        std::env::set_var("SPIRA_HOME", REAL_SPIRA_HOME);
+        std::env::set_var("SPIRA_TOML", &toml);
         let out = f();
-        match prev_map {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        match prev_home_repo {
-            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        match prev_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
         }
         out
     }
@@ -980,20 +1007,10 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     /// `$SPIRA_HOME` to point at a REAL `conf.d` (`registry::load` refuses a directory with
     /// no `conf.d` at all, sp-1cdgq) — the throwaway fixture dir `fixture_toml` writes into
     /// has none, so `SPIRA_HOME` must be this tree's own `spira/` (where `conf.d` actually
-    /// lives), not `fixture_dir`. `spira_config::process::cfg` caches its resolution once
-    /// per process (`OnceLock`), so every caller here declares the SAME values — whichever
-    /// test's fixture wins the race is immaterial.
+    /// lives), not `fixture_dir`. See [`PROCESS_CFG_DECLARE`] for why every caller here
+    /// declares the SAME values.
     fn declare_test_spira_toml(fixture_dir: &Path) {
-        let toml = spira_config::process::fixture_toml(
-            fixture_dir,
-            &[
-                ("SPIRA_CERTIFY_SUITES", "on"),
-                ("SPIRA_GIT_NAME", "spira"),
-                ("SPIRA_GIT_EMAIL", "spira@spira.invalid"),
-                ("SPIRA_MAIL_SESSION_MAILBOX", "concierge"),
-                ("SPIRA_EXPRESS_LABEL", "express"),
-            ],
-        );
+        let toml = spira_config::process::fixture_toml(fixture_dir, PROCESS_CFG_DECLARE);
         std::env::set_var("SPIRA_HOME", REAL_SPIRA_HOME);
         std::env::set_var("SPIRA_TOML", toml);
     }
@@ -1130,22 +1147,25 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     fn repos_seam_is_never_empty_even_with_no_map() {
         // spira_repos (sp-k6lku, "wave 4.13") in-process via Registry::all(), which always
         // puts the home repo first: there is no bash seam left to fail or answer nothing,
-        // so (unlike the retired seam call) this can no longer error.
+        // so (unlike the retired seam call) this can no longer error. SPIRA_REPO_MAP/
+        // SPIRA_HOME_REPO are REGISTERED keys now resolved only from $SPIRA_TOML
+        // (registry_env strips any inherited copy before resolving, per Ryan 2026-10-05) —
+        // "no map" means the declared SPIRA_REPO_MAP names a file that does not exist, not
+        // an unset env var, which no longer reaches the registry at all.
         let _serial = crate::testutil::serial();
         let home = stub_home();
         let lib = RealLib { home: home.to_path_buf() };
-        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-        std::env::remove_var("SPIRA_REPO_MAP");
-        std::env::set_var("SPIRA_HOME_REPO", "spira");
+        let prev_toml = std::env::var("SPIRA_TOML").ok();
+        let toml = spira_config::process::fixture_toml(
+            &home,
+            &[("SPIRA_REPO_MAP", home.join("no-such-map").to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
+        );
+        std::env::set_var("SPIRA_HOME", REAL_SPIRA_HOME);
+        std::env::set_var("SPIRA_TOML", toml);
         let names = lib.repos();
-        match prev_map {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        match prev_home_repo {
-            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        match prev_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
         }
         assert_eq!(names.unwrap(), vec!["spira".to_string()]);
     }

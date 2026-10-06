@@ -1986,6 +1986,15 @@ fn probe_failure_is_reported() {
     assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
 }
 
+// ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
+// hazard): every test below that resolves config takes this lock. `spira_config::repos::
+// registry_env` now drops any inherited `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` outright and
+// resolves them only from `$SPIRA_TOML` (per Ryan 2026-10-05: one source of config) — so a
+// test that used to hand them to `resolve_repos`/`Registry::from_env` as a plain env map
+// now needs a real `spira_config::process::fixture_toml` fixture and the real `SPIRA_TOML`
+// env var pinned at it instead.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// `resolve_repos` (sp-k6lku, "wave 4.13"): a trait seam over the registry, not a bash
 /// probe — the fixture here is a real repo-map FILE, the thing `spira_config::repos`
 /// itself reads, not a faked `repo_root`/`spira_landrefs` bash function (which is exactly
@@ -1996,16 +2005,30 @@ fn probe_failure_is_reported() {
 /// seam had).
 #[test]
 fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let saved = std::env::var("SPIRA_TOML").ok();
     let d = testkit::TempDir::new("sentinel-resolve-repos");
+    let home = d.join("home");
+    std::fs::create_dir_all(home.join("conf.d")).unwrap();
     let map = d.join("repo-map");
     std::fs::write(&map, "other|/nonexistent/other|queue.local||\n").unwrap();
-    let mut vars = std::collections::BTreeMap::new();
-    vars.insert("SPIRA_REPO_MAP".to_string(), map.to_string_lossy().into_owned());
-    vars.insert("SPIRA_HOME_REPO".to_string(), "spira".to_string());
-    vars.insert("SPIRA_REPO".to_string(), "/h".to_string());
-    vars.insert("SPIRA_REPO_DERIVED".to_string(), "/h".to_string());
+    // SPIRA_REPO_MAP/SPIRA_HOME_REPO are registered keys now — the only way in is a real
+    // spira.toml, not entries in the `vars` map handed to `resolve_repos`.
+    let toml = spira_config::process::fixture_toml(
+        &d,
+        &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
+    );
+    std::env::set_var("SPIRA_TOML", &toml);
 
-    let repos = crate::resolve_repos(&vars, Path::new("/h"));
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("SPIRA_REPO".to_string(), home.to_string_lossy().into_owned());
+
+    let repos = crate::resolve_repos(&vars, &home);
+
+    match saved {
+        Some(v) => std::env::set_var("SPIRA_TOML", v),
+        None => std::env::remove_var("SPIRA_TOML"),
+    }
 
     let spira = repos.iter().find(|r| r.name == "spira").expect("home repo always present");
     assert_eq!(spira.root, None, "unmapped — never a guessed default of the home checkout");
@@ -2017,18 +2040,15 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
     assert!(other.landrefs.is_empty(), "no declared base and no real checkout to ask — refuse, never guess");
 }
 
-// ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
-// hazard): the one test below that resolves config takes this lock. `resolve_for_process`
-// now requires `$SPIRA_TOML` to name a file that actually exists (`crate::load` reads it —
-// "every listed file must exist", spira-config/src/lib.rs's `load_layered`) — a missing pin
-// is a hard refusal, not "no config, use defaults" the way `locate()`'s own richer
-// `LocateOutcome` still treats it. So this test points `SPIRA_TOML` at a real
-// `spira_config::process::fixture_toml` fixture (every key declared, including the ones
-// `resolve()` now refuses to guess, e.g. SPIRA_REPO_MAP) instead of a nonexistent path —
-// it still never depends on, or interferes with, a real operator spira.toml on the machine
-// running this suite.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+// `resolve_for_process` requires `$SPIRA_TOML` to name a file that actually exists
+// (`crate::load` reads it — "every listed file must exist", spira-config/src/lib.rs's
+// `load_layered`) — a missing pin is a hard refusal, not "no config, use defaults" the way
+// `locate()`'s own richer `LocateOutcome` still treats it. So this test points `SPIRA_TOML`
+// at a real `spira_config::process::fixture_toml` fixture (every key declared, including
+// the ones `resolve()` now refuses to guess, e.g. SPIRA_REPO_MAP) instead of a nonexistent
+// path — it still never depends on, or interferes with, a real operator spira.toml on the
+// machine running this suite. `ENV_LOCK` (declared above, shared with the repo-registry
+// test) is what keeps this safe under parallel test threads.
 #[test]
 fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     let _g = ENV_LOCK.lock().unwrap();
