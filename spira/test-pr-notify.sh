@@ -202,6 +202,8 @@ for r in queue-repo pr-repo push-repo hold-repo; do
 done
 run --show
 out3="$(cat "$TMP/out")"
+printf 'DIAG err: %s\n' "$(cat "$TMP/err" 2>/dev/null)" >&2
+printf 'DIAG mail root listing: %s\n' "$(find "$RUN/mail" 2>&1)" >&2
 for r in queue-repo pr-repo push-repo hold-repo; do
     has "tick3: $r's now-red PR is reported, naming the failing check" \
         "$out3" "FAIL RED #1 Round batch [$r]: suites"
