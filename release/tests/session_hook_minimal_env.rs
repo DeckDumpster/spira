@@ -102,6 +102,7 @@ fn run_under_minimal_env_as(home: &Path, command: &str, stdin: &str) -> (i32, St
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+// covers: UC-operator-launchers-05 UC-operator-launchers-06
 #[test]
 fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     let workspace = workspace_root();
