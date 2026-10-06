@@ -631,6 +631,19 @@ mod tests {
         assert!(seam.agent_calls.borrow()[0].contains("task for sess-1"));
     }
 
+    // A fork elsewhere in the test binary can briefly hold a copy of a just-dropped flock fd,
+    // so a lock refusal (75) is retried; the timeout accounting under test is unaffected.
+    fn archive_past_lock_contention(seam: &FakeSeam, c: &Env, dir: &Path) -> i32 {
+        for _ in 0..200 {
+            let rc = archive(seam, c, dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+            if rc != 75 {
+                return rc;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        75
+    }
+
     #[test]
     fn archive_on_timeout_retries_until_the_budget_then_fails() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -643,11 +656,11 @@ mod tests {
         let seam = FakeSeam::new();
         *seam.agent_rc.borrow_mut() = 124;
 
-        let rc1 = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+        let rc1 = archive_past_lock_contention(&seam, &c, &dir);
         assert_eq!(rc1, 124);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("timeout".into()));
 
-        let rc2 = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+        let rc2 = archive_past_lock_contention(&seam, &c, &dir);
         assert_eq!(rc2, 124);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()), "budget of 2 exhausted on the second timeout");
     }
