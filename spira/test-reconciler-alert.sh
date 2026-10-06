@@ -57,13 +57,15 @@ SPIRA_DB="$T/db"; tl_config SPIRA_DB="$SPIRA_DB"        # never the operator's r
 # SPIRA_ASK_LABEL explicitly too, or every `mail send ... --kind question` call in section 9
 # below silently refuses instead of reaching the operator.
 tl_config SPIRA_ASK_LABEL="needs-operator"
-# SPIRA_MAIL_KINDS/SPIRA_MAIL_MUTE: both now declared by the fixture (a fictional
-# /fixture/home/... kinds path, mail_mute=true) instead of deriving from SPIRA_HOME — left
-# alone, `mail send` refuses every call with "unknown kind" (no kinds dir found there), and
-# even once that's fixed, a muted send lands straight in cur/ as already-seen, so every
+# SPIRA_MAIL/SPIRA_MAIL_KINDS/SPIRA_MAIL_INDEX/SPIRA_MAIL_MUTE: all four now declared by the
+# fixture (a fictional /fixture/home/... tree, mail_mute=true) instead of deriving from
+# SPIRA_RUN/SPIRA_HOME — left alone, `mail send` tries to create its mailbox under that
+# unwritable fixture path (permission denied) or refuses on an unknown kind, and even once
+# those are fixed, a muted send lands straight in cur/ as already-seen, so every
 # mailcount()/mailfile() in this suite (which only looks at new/) reads empty (one source of
 # config, per Ryan 2026-10-05).
-tl_config SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_MUTE=0
+tl_config SPIRA_MAIL="$SPIRA_RUN/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
+    SPIRA_MAIL_INDEX="$SPIRA_RUN/mail/index" SPIRA_MAIL_MUTE=0
 mkdir -p "$SPIRA_RUN"
 
 # Stub concierge.sh: "status" answers from a file the scenario toggles, so the fixture never
