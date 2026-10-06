@@ -2174,8 +2174,8 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
     assert_eq!(
         checks,
         [
-            "setup", "CHECK1", "CHECK2", "CHECK2b", "CHECK2c", "CHECK3", "CHECK6", "CHECK3b",
-            "CHECK3c", "CHECK7", "CHECK8"
+            "setup", "CHECK1", "CHECK2", "CHECK2b", "CHECK2c", "CHECK2d", "CHECK3", "CHECK6",
+            "CHECK3b", "CHECK3c", "CHECK7", "CHECK8"
         ]
         .map(|c| format!("check={c}"))
     );
@@ -2585,4 +2585,53 @@ fn a_poison_whose_tip_has_not_moved_is_not_lifted_by_the_tip_rule() {
     run_mode(&w, &r, &sink, &clock, Mode::Audit, &[("SPIRA_SKIP_RECLAIM", "1")], Some(&["spira\t/src/spira\torigin/main\t0"]));
     assert!(r.find(|s| s.prog == "spira-claim" && s.args[0] == "unpoison").is_none());
     assert!(!sink.has("poison lifted — tip-changed"));
+}
+
+// ---------------------------------------------------------------------------------------
+// CHECK 2d (ask holds outliving their cause)
+
+#[test]
+fn on_check2d_a_repo_map_hold_is_withdrawn_when_the_map_resolves_and_starvation_is_announced() {
+    let (w, r, sink, clock) = setup("check2d");
+    let checkout = w.dir.join("checkout");
+    std::fs::create_dir_all(checkout.join(".git")).unwrap();
+    let repo = format!("spira\t{}\t\t0", checkout.display());
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            let held = |id: &str| format!(
+                r#"{{"bead_id":"{id}","state":"READY","holds":"[\"ask\"]","reason":"repo:spira has no mapped entry","updated_at":"1","version":"2"}}"#
+            );
+            return ok(&format!("[{},{},{},{}]", held("sp-h1"), held("sp-h2"), held("sp-h3"), r#"{"bead_id":"sp-free","state":"READY","holds":"[]","version":"1"}"#));
+        }
+        if s.prog == "spira-lc" && s.args[0] == "show" {
+            return ok(r#"{"bead":{"state":"READY","version":"2"}}"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], Some(&[repo.as_str()]));
+    let withdrawn: Vec<String> = r
+        .calls
+        .borrow()
+        .iter()
+        .filter(|s| s.prog == "spira-lc" && s.args[0] == "event")
+        .map(|s| format!("{} {}", s.args[2], s.args.last().unwrap()))
+        .collect();
+    assert_eq!(withdrawn, ["sp-h1 \"AskWithdrawn\"", "sp-h2 \"AskWithdrawn\"", "sp-h3 \"AskWithdrawn\""], "{}", sink.text());
+    assert!(sink.has("CHECK2d STARVED: 3 of 4 READY beads are held"), "{}", sink.text());
+    let ev = r.find(|s| seam_name(s).as_deref() == Some("sentinel-event")).expect("a starvation event");
+    let stdin = String::from_utf8(ev.stdin.unwrap()).unwrap();
+    assert!(stdin.starts_with("queue.starved\0-\03 of 4 READY beads are held"), "{stdin}");
+}
+
+#[test]
+fn on_check2d_an_unresolved_repo_map_hold_stands() {
+    let (w, r, sink, clock) = setup("check2d-unresolved");
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(r#"[{"bead_id":"sp-h1","state":"READY","holds":"[\"ask\"]","reason":"repo:spira has no mapped entry","updated_at":"1","version":"2"}]"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "event"), 0, "{}", sink.text());
 }
