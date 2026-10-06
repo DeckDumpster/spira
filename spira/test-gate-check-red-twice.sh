@@ -44,14 +44,11 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/sbin" "$TMP/run" "$TMP/run/events"
 
 # bead.sh refuses a repo: label absent from the map (spira/test-bead-repo-guard.sh).
-# gate-check's own red-twice bead filing (gate-check/src/real.rs file_bead) passes
-# world.flaky_repo() — SPIRA_FLAKY_GH_REPO's value, "test-org/test-repo" below — as the
-# --repo bead.sh carries, not SPIRA_HOME_REPO or the tmp dir's basename (round 6: the
-# round-5 "spira" row never was the right one; the raise test at part 3 happened to pass
-# without it because raising an existing bead by title never goes through bead.sh's
-# repo-guard at all).
-printf '%s | %s | push | origin/main |  |\ntest-org/test-repo | %s | push | origin/main |  |\n' \
-    "$(basename "$TMP")" "$TMP" "$TMP" > "$TMP/repo-map"
+# gate-check's red_twice_beads (gate-check/src/main.rs) passes world.home_repo() —
+# SPIRA_HOME_REPO, "spira" — to file_bead's --repo, not the flaky-gh repo (that's only
+# used for the gh API calls). Both rows declared, belt and suspenders.
+printf '%s | %s | push | origin/main |  |\nspira | %s | push | origin/main |  |\ntest-org/test-repo | %s | push | origin/main |  |\n' \
+    "$(basename "$TMP")" "$TMP" "$TMP" "$TMP" > "$TMP/repo-map"
 
 count_red_twice() {
     B list --json 2>/dev/null | python3 -c '
@@ -125,6 +122,14 @@ GHSTUB
 chmod +x "$TMP/sbin/gh"
 
 run_gate_check
+
+# TEMPORARY DIAGNOSTIC (round 6): gate-check's file_bead swallows bead.sh's stderr/rc
+# entirely (Stdio::null() + `let _ = child.wait()`), so a silent repo-guard refusal or
+# any other bead.sh failure never surfaces. Replicate its exact invocation to see it.
+SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" PATH="$TMP/sbin:$PATH" \
+    SPIRA_CONF="$TMP/no.conf" \
+    bead.sh file "DIAG probe" --for builder --repo spira -p 1 --body-file - <<<'diag' \
+    2>&1 | sed 's/^/DIAG: /' >&2
 
 is "two P1 beads are filed"          "2" "$(count_red_twice)"
 is "bead for test-alpha.sh is P1"    "1" "$(priority_of_bead 'suite red on main: test-alpha.sh')"
