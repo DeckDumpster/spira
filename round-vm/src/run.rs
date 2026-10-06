@@ -216,10 +216,11 @@ env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/b
     GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
     cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
+# The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
-    testenv --mode parallel --profile release --suites "$suites" round
+    testenv --mode parallel --profile release --artifacts "$HOME/round-work/target/release" --suites "$suites" round
 else
-    testenv --mode parallel --profile release round
+    testenv --mode parallel --profile release --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
 wait "$unit_pid"; unit_rc=$?
