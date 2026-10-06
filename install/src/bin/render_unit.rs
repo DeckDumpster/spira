@@ -42,6 +42,7 @@ fn main() -> ExitCode {
             "--watcher-name" => watcher = if val.is_empty() { None } else { Some(val) },
             "--path-tail" => host.path_tail = val,
             "--lc-password-file" => host.lc_password_file = val,
+            "--toml" => host.toml = val,
             _ => {
                 eprintln!("render-unit: unknown flag: {key}");
                 return ExitCode::from(2);
