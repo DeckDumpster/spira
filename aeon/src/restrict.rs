@@ -256,7 +256,11 @@ mod tests {
     fn no_directory_on_the_models_path_holds_bd() {
         let tmp = testkit::TempDir::new("restrict-nobd");
         let root = tmp.path().to_path_buf();
-        let put = |rel: &str| testkit::write_exe(&root.join(rel), "#!/bin/sh\n");
+        let put = |rel: &str| {
+            let f = root.join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            testkit::write_exe(&f, "#!/bin/sh\n");
+        };
         put("rel/bin/work");
         put("rel/bin/bd");
         put("rel/model-bin/work");
