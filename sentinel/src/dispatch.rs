@@ -151,6 +151,8 @@ impl<'a> Sentinel<'a> {
                 // The release the worker's PATH was built from (sp-31gtu), for its own
                 // launches (a gate, an aeon worktree's hooks) to build theirs.
                 "SPIRA_RELEASE",
+                // The one source of config every launched process resolves from.
+                "SPIRA_TOML",
                 "HOME",
                 "SPIRA_HOME",
                 "SPIRA_RUN",
@@ -362,6 +364,8 @@ impl<'a> Sentinel<'a> {
                 // The release the worker's PATH was built from (sp-31gtu), for its own
                 // launches (a gate, an aeon worktree's hooks) to build theirs.
                 "SPIRA_RELEASE",
+                // The one source of config every launched process resolves from.
+                "SPIRA_TOML",
                 "HOME",
                 "SPIRA_HOME",
                 "SPIRA_RUN",

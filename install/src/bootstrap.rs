@@ -18,6 +18,18 @@ pub fn nonempty_env(k: &str) -> Option<String> {
     env::var(k).ok().filter(|v| !v.is_empty())
 }
 
+/// A REGISTERED key, from the one source of config (per Ryan 2026-10-05) — declared empty is
+/// `None`; config that does not resolve is a refusal, never "unset".
+pub fn declared(k: &str) -> Option<String> {
+    match spira_config::process::cfg(k) {
+        Ok(v) => Some(v).filter(|v| !v.is_empty()),
+        Err(e) => {
+            eprintln!("install: FATAL: {e}");
+            std::process::exit(1)
+        }
+    }
+}
+
 pub fn which(prog: &str) -> Option<String> {
     let path = env::var("PATH").ok()?;
     for dir in path.split(':') {
@@ -125,9 +137,12 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let repo_map = spira_config::process::cfg("SPIRA_REPO_MAP")?;
     let dolt_data = spira_config::process::cfg("SPIRA_DOLT_DATA")?;
     let testdb_data = spira_config::process::cfg("SPIRA_TESTDB_DATA")?;
+    // The units run under the same one source this installer runs under — named, required.
+    let toml = std::env::var("SPIRA_TOML").ok().filter(|t| !t.is_empty()).ok_or("SPIRA_TOML is not set — it names the one source of config the units run under")?;
     Ok(HostValues {
         home,
         lc_password_file,
+        toml,
         repo,
         run,
         db,
@@ -309,8 +324,8 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
     let repo_is_git_checkout = host_from_env(instance).map(|h| Path::new(&h.repo).join(".git").exists()).unwrap_or(false);
     let m = manifest::build(&manifest::Inputs {
         instance: instance.to_string(),
-        dolt_data_set: nonempty_env("SPIRA_DOLT_DATA").is_some(),
-        testdb_data_set: nonempty_env("SPIRA_TESTDB_DATA").is_some(),
+        dolt_data_set: declared("SPIRA_DOLT_DATA").is_some(),
+        testdb_data_set: declared("SPIRA_TESTDB_DATA").is_some(),
         // SPIRA_BROKER_ENABLE is a registered key — the one door, never a bare env read.
         broker_enable: spira_config::process::cfg("SPIRA_BROKER_ENABLE")? == "1",
         inotify_present,
@@ -326,7 +341,7 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
 }
 
 pub fn world_halted() -> bool {
-    nonempty_env("SPIRA_RUN").map(|r| Path::new(&r).join("world.halted").exists()).unwrap_or(false)
+    declared("SPIRA_RUN").map(|r| Path::new(&r).join("world.halted").exists()).unwrap_or(false)
 }
 
 #[cfg(test)]

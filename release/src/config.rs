@@ -242,6 +242,8 @@ impl Config {
         m.insert("DOLT".into(), self.env("DOLT").or_else(|| self.which("dolt")).unwrap_or_default());
         m.insert(crate::units::SCCACHE_DAV_ADDR_KEY.into(), self.sccache_dav_addr.clone());
         m.insert("SPIRA_LC_PASSWORD_FILE".into(), self.lc_password_file.clone());
+        // The spec every unit runs under (the one source); empty refuses any template using it.
+        m.insert("SPIRA_TOML".into(), self.env("SPIRA_TOML").unwrap_or_default());
         m.insert("SPIRA_REPO_MAP".into(), self.repo_map.clone());
         let tail = self.path_tail()?;
         m.insert("SPIRA_PATH_TAIL".into(), if tail.is_empty() { String::new() } else { format!(":{tail}") });

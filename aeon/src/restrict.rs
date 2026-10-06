@@ -89,6 +89,11 @@ const CONDITIONAL: &[&str] = &[
     "SPIRA_AEON_OVERRIDE",
     "SPIRA_RUN",
     "SPIRA_PROD",
+    // `work` (the one tool on the model's PATH) resolves its lifecycle socket from the one
+    // source of config: it needs the spec and the release that locates its key registry.
+    // Both only name files the model's HOME can already reach — no new exposure.
+    "SPIRA_TOML",
+    "SPIRA_RELEASE",
     "BEAD_ID",
     "BEADS_ACTOR",
     "SPIRA_MAIL",

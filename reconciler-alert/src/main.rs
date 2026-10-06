@@ -19,11 +19,15 @@ use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// SPIRA_REPO is this copy's checkout — an identity fact, never a config key (resolve()
+/// deliberately never returns it): derived from the located home, as every crate does.
 fn spira_repo() -> String {
-    spira_config::resolve::key_for_process("SPIRA_REPO").unwrap_or_else(|e| {
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
         eprintln!("reconciler-alert: {e}");
         std::process::exit(1)
-    })
+    });
+    let env: std::collections::BTreeMap<String, String> = env::vars().collect();
+    spira_config::resolve::derive_home_repo(&home, &env).to_string_lossy().into_owned()
 }
 
 /// mail by name on the launcher's PATH (sp-gypjk).

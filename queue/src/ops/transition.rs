@@ -75,7 +75,12 @@ fn refuse_in_delivery(w: &World, label: &str, c: &Ctx, path: &std::path::Path) -
 /// document's previous row, so the two are never left disagreeing by this call.
 fn write_row(w: &World, c: &Ctx, mode: LandMode, base: &str) -> Result<(), i32> {
     let name = &c.r.name;
-    let doc = w.lib.toml_path();
+    // The spec may be layered (base:override): a write lands in its LAST layer, the one this
+    // installation owns — conf.sh's spira_toml_write_target — never the joined spec as a path.
+    let doc = w.lib.toml_path().map(|spec| {
+        let s = spec.to_string_lossy().into_owned();
+        std::path::PathBuf::from(s.rsplit(':').next().unwrap_or(&s))
+    });
     let mut previous = None;
     if let Some(d) = &doc {
         previous = w.config.repo_row(d, name).ok();

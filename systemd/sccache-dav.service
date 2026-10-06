@@ -12,6 +12,7 @@ StartLimitBurst=5
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): see spira-loom.service's own comment —
 # the same reasoning applies verbatim.
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 # This box's own LAN address, never 0.0.0.0 and never the Tailscale address — the only

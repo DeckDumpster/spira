@@ -5,6 +5,7 @@ After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_RUN=@SPIRA_RUN@

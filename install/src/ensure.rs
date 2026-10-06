@@ -78,7 +78,7 @@ pub fn run(ctx: &Ctx) -> Report {
     // THE PRODUCER GUARD, every invocation: spira-broker.timer's enabled state tracks
     // `spira_broker_producer_present` regardless of whether its own rendered content
     // changed — the loop above only reaches newly installed units.
-    let producer_present = std::env::var("SPIRA_BROKER_ENABLE").map(|v| v == "1").unwrap_or(false);
+    let producer_present = crate::bootstrap::declared("SPIRA_BROKER_ENABLE").is_some_and(|v| v == "1");
     let bare = "spira-broker.timer";
     let named = inst_name(bare, &ctx.host.instance);
     for name in [named.as_str(), bare] {
@@ -107,7 +107,7 @@ mod tests {
     use crate::values::HostValues;
 
     fn host() -> HostValues {
-        HostValues { home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
+        HostValues { toml: "/h/spira.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
     }
 
     fn tiny_manifest() -> crate::manifest::Manifest {

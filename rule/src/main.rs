@@ -376,13 +376,9 @@ fn cmd_render_memories(home: &str, rest: &[String]) -> i32 {
         },
     };
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let harness = match spira_config::resolve::resolve_key(&env, std::path::Path::new(home), "SPIRA_REPO") {
-        Ok(h) => h,
-        Err(e) => {
-            eprintln!("rule: {e}");
-            return 1;
-        }
-    };
+    // SPIRA_REPO is this copy's checkout — an identity fact, never a config key (resolve()
+    // deliberately never returns it): the same derivation every crate uses for it.
+    let harness = spira_config::resolve::derive_home_repo(std::path::Path::new(home), &env).to_string_lossy().into_owned();
 
     let mem_json = match memories_json_cached() {
         Ok(j) => j,
