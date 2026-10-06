@@ -123,32 +123,31 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 
 inst() {
     > "$SCTL_LOG"
-    # SPIRA_PATH/SPIRA_RUN/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_PROD/
-    # SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
-    # declare via tl_config so every registry-backed reader (units-install's own
-    # host_from_env, and the watchd/manifest-building it shells out to) sees them.
-    # round 4 fix (pattern 7): SPIRA_INSTANCE/SPIRA_WORKSPACES are registered keys too;
-    # undeclared, SPIRA_INSTANCE resolves to the complete fixture's "prod" (containment
-    # exempt), but units-install is given "$_INST" ("mig") on argv — a mismatch. Declare
-    # the instance this suite actually drives, and a workspaces root wide enough for it.
-    tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_WATCHERS="$WATCHERS" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
-        SPIRA_INSTANCE="$_INST" SPIRA_WORKSPACES="$TMP"
-    # round 5 fix (pattern 7, continued): tl_config alone is not enough for SPIRA_RUN —
-    # install/src/bootstrap.rs's `world_halted()` reads it with a bare `nonempty_env()`
-    # (confirmed by reading bootstrap.rs directly), not through the registry, matching its
-    # own doc comment: it expects a CALLER that already sourced conf.sh and exported the
-    # resolved values, exactly as systemd/install.sh did before this binary existed. Without
-    # SPIRA_RUN also threaded as plain env, `world_halted()` never saw the `world.halted`
-    # sentinel this suite touches at the top, so the end-state "every enabled unit is
-    # active" check ran anyway and faulted on fixture units that never really start —
-    # every "exits 0" case failing, with every content/ordering assertion (which reads the
-    # log, not the exit code) passing right alongside it.
+    # SPIRA_PROD/SPIRA_REPO_MAP/SPIRA_WORKSPACES are registered keys that units-install
+    # actually resolves through the registry (install/src/bootstrap.rs's host_from_env calls
+    # spira_config::process::cfg("SPIRA_PROD"/"SPIRA_REPO_MAP"), and SPIRA_WORKSPACES backs
+    # every cfg() call's containment check) — declare these via tl_config, one source of
+    # config, per Ryan 2026-10-05.
+    #
+    # round 4 fix (pattern 7) narrowed this to "declare everything via tl_config" on the
+    # assumption that nothing reads these from env any more — true for most binaries, but
+    # NOT for install/src/bootstrap.rs: SPIRA_RUN, SPIRA_WATCHERS, SPIRA_DOLT_DATA and
+    # SPIRA_TESTDB_DATA are each read with a bare `nonempty_env()` there (confirmed by
+    # reading bootstrap.rs directly), matching its own doc comment — it expects a CALLER
+    # that already sourced conf.sh and exported the resolved values, exactly as
+    # systemd/install.sh and unit-ensure.sh did before this binary existed. tl_config alone
+    # left `world_halted()` unable to see the `world.halted` sentinel this suite touches
+    # (it reads SPIRA_RUN raw), so the end-state "every enabled unit is active" check ran
+    # anyway and faulted on fixture units that never really start — every "exits 0" case
+    # failing, with every content/ordering assertion (which reads the log, not the exit
+    # code) passing right alongside it.
+    tl_config SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent SPIRA_WORKSPACES="$TMP"
     SCTL_LOG="$SCTL_LOG" \
     PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    SPIRA_RUN="$SPIRA_RUN_DIR" \
+    SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_WATCHERS="$WATCHERS" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
     units-install "$_INST" "$@" 2>&1
 }
 
