@@ -143,12 +143,27 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$MOCK_BIN/tmux"; chmod +x "$MOCK_BIN/t
 for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$b"; chmod +x "$MOCK_BIN/$b"; done
 
 : > "$LOG"
+# SPIRA_MAIL_READERS="": this suite is about dolt-beads.service's restart dispatch, not
+# mail — the fixture's declared reader points units-install's own ensure_reader_mailboxes()
+# at a shared "/fixture/home/.../mail" tree this suite's sandboxed SPIRA_RUN never touches,
+# which has intermittently refused mkdir with EACCES under concurrent runs (same fix as
+# test-install-unit-prune.sh); declaring no readers means install never calls `mail ensure`.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
     SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA= SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
-    SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=prod
+    SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=prod \
+    SPIRA_MAIL_READERS=
+# SPIRA_DOLT_DATA also as plain env: `units-install` (unlike `spira-install`, which bridges
+# a handful of registered keys from SPIRA_TOML into its own process env before this same
+# manifest check) reads install::bootstrap::manifest_from_env's dolt_data_set straight off
+# the OS environment (nonempty_env("SPIRA_DOLT_DATA")), not through spira_config::process::cfg
+# — a one-source-of-config gap this suite works around rather than papers over, since without
+# it `install::manifest::build` treats dolt-beads.service as declined ("SPIRA_DOLT_DATA is
+# empty — not installing dolt-beads.service") and this whole suite's premise (a changed,
+# active dolt-beads.service that refuses restart) never gets exercised.
 out="$(env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$HERE" SPIRA_REPO="$FAKE_REPO" \
     SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \
+    SPIRA_DOLT_DATA="$DOLT_DATA" \
     SPIRA_TOML="$SPIRA_TOML" \
     CALL_LOG="$LOG" \
     units-install 2>&1)"
