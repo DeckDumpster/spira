@@ -221,9 +221,14 @@ struct FakeSystemctl {
     disabled: RefCell<Vec<String>>,
     /// When set, `disable_now` fails for this unit name.
     disable_fails: BTreeSet<String>,
+<<<<<<< HEAD
     /// Run at every daemon-reload — after `current` flips, before dropped keys are removed.
     probe: Option<Box<dyn Fn() -> String>>,
     probes: RefCell<Vec<String>>,
+=======
+    /// Units that go inactive once `state` has been asked about them this many more times.
+    exits_after: RefCell<BTreeMap<String, usize>>,
+>>>>>>> f6c8327d1 (sp-9ni1r3: gate worker notices a superseded release; activation drains running oneshots)
 }
 
 impl FakeSystemctl {
@@ -244,8 +249,12 @@ impl FakeSystemctl {
             restart_fails: BTreeSet::new(),
             disabled: RefCell::new(vec![]),
             disable_fails: BTreeSet::new(),
+<<<<<<< HEAD
             probe: None,
             probes: RefCell::new(vec![]),
+=======
+            exits_after: RefCell::new(BTreeMap::new()),
+>>>>>>> f6c8327d1 (sp-9ni1r3: gate worker notices a superseded release; activation drains running oneshots)
         }
     }
 }
@@ -259,6 +268,13 @@ impl Systemctl for FakeSystemctl {
         Ok(())
     }
     fn state(&self, unit: &str) -> Result<UnitState, String> {
+        if let Some(n) = self.exits_after.borrow_mut().get_mut(unit) {
+            if *n == 0 {
+                self.states.borrow_mut().entry(unit.into()).or_default().active = "inactive".into();
+            } else {
+                *n -= 1;
+            }
+        }
         Ok(self.states.borrow().get(unit).cloned().unwrap_or_else(|| UnitState { active: "inactive".into(), result: "success".into(), kind: "simple".into() }))
     }
     fn cat(&self, _unit: &str) -> Result<String, String> {
@@ -307,7 +323,7 @@ impl Systemctl for FakeSystemctl {
 }
 
 fn ctx<'a>(w: &'a World, sc: &'a FakeSystemctl) -> Ctx<'a> {
-    Ctx { cfg: &w.cfg, sc, git: &w.git, repo: Some(w.sb.p().to_path_buf()), landed_ref: "local/main".into(), settle: Duration::ZERO }
+    Ctx { cfg: &w.cfg, sc, git: &w.git, repo: Some(w.sb.p().to_path_buf()), landed_ref: "local/main".into(), settle: Duration::ZERO, drain: Duration::ZERO }
 }
 
 fn no_pre() -> VerifyOpts {
@@ -1628,6 +1644,7 @@ fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
     assert!(err2.contains("does not look like a stage"), "{err2}");
 }
 
+<<<<<<< HEAD
 // ---------------------------------------------------------------- config delta
 
 /// A `spira-config` standing in for one release's schema: `validate` loads iff every key in
@@ -1747,4 +1764,20 @@ fn a_malformed_config_delta_refuses_the_activation() {
     let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
     assert!(e.contains("config-delta.toml") && e.contains("surprise"), "{e}");
     assert_eq!(w.current(), None);
+=======
+#[test]
+fn activate_waits_for_a_running_oneshot_to_exit() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    sc.exits_after.borrow_mut().insert("spira-job-prod.service".into(), 3);
+    let mut c = ctx(&w, &sc);
+    c.drain = Duration::from_secs(5);
+    activate::activate(&c, B, None).unwrap();
+    assert_eq!(sc.state("spira-job-prod.service").unwrap().active, "inactive");
+    assert!(sc.exits_after.borrow()["spira-job-prod.service"] == 0, "activation polled the oneshot until it exited");
+>>>>>>> f6c8327d1 (sp-9ni1r3: gate worker notices a superseded release; activation drains running oneshots)
 }
