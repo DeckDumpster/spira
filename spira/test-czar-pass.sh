@@ -659,6 +659,8 @@ chmod +x "$STUB_FORGE"
 tl_config SPIRA_CZAR_STAGE_CI_STALLED=act
 timeout 30 "$CZAR" --pass >/dev/null 2>&1
 _ref_b="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
+echo "DEBUG INC_LOG: [$(cat "$INC_LOG" 2>/dev/null)]" >&2
+echo "DEBUG ref_a=[$_ref_a] ref_b=[$_ref_b]" >&2
 is "ci-stalled: dedupe ref stable across passes with different queued durations" \
     "$_ref_a" "$_ref_b"
 want "ci-stalled ref names the repo" "refstable" "$_ref_a"
