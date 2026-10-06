@@ -348,7 +348,11 @@ impl GateRun {
             }
         }
         let suite = suite.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".to_string());
-        GateRun { rc, outcome: GateOutcome::of(rc), out, reason, suite }
+        let mut outcome = GateOutcome::of(rc);
+        if outcome == GateOutcome::Fail && reason.as_deref() == Some("over-cap") {
+            outcome = GateOutcome::NoVerdict;
+        }
+        GateRun { rc, outcome, out, reason, suite }
     }
     pub fn reason_or(&self, dflt: &str) -> String {
         self.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| dflt.to_string())
@@ -431,4 +435,23 @@ pub struct Recut {
     pub ok: bool,
     pub applied: u32,
     pub conflicts: String,
+}
+
+#[cfg(test)]
+mod gate_run_tests {
+    use super::*;
+
+    #[test]
+    fn the_hard_cap_kill_is_no_verdict_not_red() {
+        let g = GateRun::parse(1, "gate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=- (killed)\n".into());
+        assert_eq!(g.outcome, GateOutcome::NoVerdict);
+        assert!(!g.outcome.blames_branch());
+        assert_eq!(g.reason_or("x"), "over-cap");
+    }
+
+    #[test]
+    fn a_branch_red_stays_red() {
+        let g = GateRun::parse(1, "gate: VERDICT=FAIL reason=branch-red branch=b repo=r suite=s\n".into());
+        assert_eq!(g.outcome, GateOutcome::Fail);
+    }
 }
