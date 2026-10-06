@@ -49,6 +49,10 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sour
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_MAIL="$TMP/mail"; export SPIRA_MAIL; tl_config SPIRA_MAIL="$SPIRA_MAIL"
+# The complete fixture declares mail_mute = true; this suite's assertions read the "new"
+# maildir specifically (mail_deliver, mute=true, lands in "cur" with :2,S instead — sp-9hwim)
+# — declare this suite's own unmuted intent (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_MAIL_MUTE=0
 export SPIRA_CONF=""   # prevent reading a real spira.conf
 
 
