@@ -938,6 +938,8 @@ mod tests {
     /// not a stand-in for it.
     fn stub_home() -> testkit::TempDir {
         let d = crate::testutil::tmpdir("reallib");
+        // A home carries the key registry (conf.d): the repo registry resolves through it.
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), d.join("conf.d")).unwrap();
         fs::write(
             d.join("lib.sh"),
             r#"SPIRA_RUN=/run/x; SPIRA_RELEASES=; SPIRA_DB=/db

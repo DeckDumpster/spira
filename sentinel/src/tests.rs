@@ -2009,7 +2009,11 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
     let saved = std::env::var("SPIRA_TOML").ok();
     let d = testkit::TempDir::new("sentinel-resolve-repos");
     let home = d.join("home");
-    std::fs::create_dir_all(home.join("conf.d")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    // A home lives in a checkout (as in production), so the forwarded SPIRA_REPO is that
+    // checkout itself, not an override of the home repo's root.
+    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&home).status().unwrap().success());
+    std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), home.join("conf.d")).unwrap();
     let map = d.join("repo-map");
     std::fs::write(&map, "other|/nonexistent/other|queue.local||\n").unwrap();
     // SPIRA_REPO_MAP/SPIRA_HOME_REPO are registered keys now — the only way in is a real
