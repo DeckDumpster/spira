@@ -141,7 +141,6 @@ spira/test-install-dolt-port-wait.sh
 spira/test-install-dolt-ready.sh
 spira/test-install-exec.sh
 spira/test-install-hooks-artifact.sh
-spira/test-install-refusal.sh
 spira/test-landing-base-fail.sh
 spira/test-landing-cutover-round.sh
 spira/test-landing-halt.sh
