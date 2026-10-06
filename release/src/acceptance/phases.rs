@@ -455,6 +455,23 @@ fn tail(text: &str, n: usize) -> String {
     l[l.len().saturating_sub(n)..].join("\n")
 }
 
+/// The nearest earlier tag with an acceptance note, when that note records an upgrade waiver:
+/// a waiver covers its own cut only.
+fn waived_predecessor(h: &dyn Host, repo: Option<&Path>, tag: &str) -> Option<String> {
+    let repo = repo?.display().to_string();
+    let listed = h.run(&Cmd::new("git").args(["-C", &repo, "tag", "--list", "--sort=-creatordate"]));
+    if listed.rc != 0 {
+        return None;
+    }
+    for t in listed.out.lines().map(str::trim).skip_while(|t| *t != tag).skip(1) {
+        let note = h.run(&Cmd::new("git").args(["-C", &repo, "notes", "--ref=acceptance", "show", &format!("refs/tags/{t}")]));
+        if note.rc == 0 && !note.out.trim().is_empty() {
+            return note.out.lines().any(|l| l == WAIVER_LINE).then(|| t.to_string());
+        }
+    }
+    None
+}
+
 /// The whole run; the exit code.
 pub fn run(h: &dyn Host, o: Opts) -> u8 {
     let mut r = Run::new(h, o);
@@ -491,6 +508,13 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         println!("\n{} passed, {} failed", r.pass, r.fail);
         eprintln!("release acceptance: prerequisite failures — cannot continue");
         return 2;
+    }
+
+    if prev.is_none() {
+        if let Some(w) = waived_predecessor(h, r.o.notes_repo.as_deref(), &tag) {
+            eprintln!("release acceptance: refusing {tag}: {w} carries an upgrade waiver, so this cut must run phases B/C/D (--prev-tag, no --waive-upgrade)");
+            return 2;
+        }
     }
 
     // ---- phase A --------------------------------------------------------------------------
