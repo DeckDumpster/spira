@@ -94,9 +94,10 @@ pub const IMAGE_PATH: &str =
     "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /// Writes the container's spira.toml ([`Fixture::config_toml`]): the complete fixture with
-/// `/fixture/home` rewritten to this user's `$HOME`, then the batch's own keys set over it.
+/// the installed release (`…/spira-releases/current`) rewritten to the staged one and
+/// `/fixture/home` to this user's `$HOME`, then the batch's own keys set over it.
 const CONFIGURE_SCRIPT: &str = r#"set -eu
-sed "s#/fixture/home#$HOME#g" "$CONFIGURE_FIXTURE" > "$CONFIGURE_OUT.tmp"
+sed -e "s#/fixture/home/spira/spira-releases/current#$SPIRA_RELEASE#g" -e "s#/fixture/home#$HOME#g" "$CONFIGURE_FIXTURE" > "$CONFIGURE_OUT.tmp"
 set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OUT.tmp" >/dev/null; }
 set_key instance "$CONFIGURE_INSTANCE"
 set_key prod "$CONFIGURE_PROD"
