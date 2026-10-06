@@ -83,14 +83,17 @@ chmod +x "$FAKE_BD"
 lc_mirror_bd "$T/lc"
 tl_config SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira SPIRA_BD="$FAKE_BD"
 
+# SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of the
+# real one) is exec'd as spira-claim's own child and reads them as raw shell variables,
+# never through spira-config — tl_config's declaration above never reaches it.
 ready_builder() {   # ready_builder [--json]
-    PATH="$T/lc:$PATH" \
+    PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" SPIRA_BD="$FAKE_BD" \
         _spira_claim fayth-ready builder "$@" 2>/dev/null
 }
 # POSITIVE CONTROL: the fixture reaches spira-claim at all — the plain bead counts. A machine
 # that answered nothing would read 0 and make the exclusion below vacuous.
 is "positive control: fayth_ready builder counts the plain plan bead" "1" \
-    "$(PATH="$T/lc:$PATH" fayth_ready builder 2>/dev/null)"
+    "$(PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" SPIRA_BD="$FAKE_BD" fayth_ready builder 2>/dev/null)"
 builder_set="$(ready_builder --json)"
 want   "fayth_ready builder's set holds the plain plan bead" "sp-qaplain" "$builder_set"
 nowant "fayth_ready builder's set excludes the qa-proposed bead" "sp-qaprop" "$builder_set"

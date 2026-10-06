@@ -425,8 +425,11 @@ RESTART_SC="$TMP/restart-sc"
 chmod +x "$RESTART_SC"
 
 auron_restart() {
+    # SPIRA_DB via tl_config too: auron resolves it via cfg(), not the plain env prefix
+    # below (same gap as auron()'s own call above it, line 78).
     tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" \
-        SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600
+        SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600 \
+        SPIRA_DB="${AURON_DB:-$SPIRA_DB}"
     SPIRA_HOME="$SH" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
     SPIRA_REPO="$TMP/repo" \
     SPIRA_SYSTEMCTL="$RESTART_SC" \

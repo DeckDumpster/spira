@@ -68,6 +68,11 @@ print(b.get(sys.argv[1]) or "")' "$2" 2>/dev/null
 # ─── T1: stage up creates expected structure ──────────────────────────────────
 printf '\nT1: stage up creates expected structure\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
@@ -136,6 +141,11 @@ printf '\nT1: stage up creates expected structure\n'
 # ─── T2: all stage paths are under STAGE_ROOT ────────────────────────────────
 printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
@@ -166,6 +176,11 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
 # ─── T3: stage db is usable (real bd round-trip) ─────────────────────────────
 printf '\nT3: stage db is usable\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
@@ -202,6 +217,11 @@ printf '\nT3: stage db is usable\n'
 # ─── T4: stage down removes the root completely ───────────────────────────────
 printf '\nT4: stage down removes STAGE_ROOT\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     saved_root="$STAGE_ROOT"
@@ -230,6 +250,11 @@ printf '\nT5: stage down refuses a non-stage path\n'
 # ─── T6: canary-worker claims through the machine, commits, submits ──────────
 printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
@@ -278,6 +303,9 @@ printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
 # ─── T7: full end-to-end canary ───────────────────────────────────────────────
 printf '\nT7: full canary (sentinel + landing)\n'
 (
+    # Reset before canary boots its own stage internally (same leak as the T-blocks above:
+    # a prior block's real, now-torn-down stage credential must not survive into this one).
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     # canary.sh runs `sentinel` and `landing-pass` by name, on this suite's PATH.
     # Capture what canary prints; exit code is what matters.
     out="$(release canary 2>&1)"

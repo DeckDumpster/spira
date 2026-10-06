@@ -72,7 +72,11 @@ lc_mirror_bd "$TMP/lc"
 run_report() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL="$SUBMITTED" \
         SPIRA_BD="$TMP/mock-bd"
+    # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH above) is
+    # exec'd as strand's own child and reads them as raw shell variables, never through
+    # spira-config — tl_config's declaration never reaches a child process's environment.
     SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
+    SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_LABELS="spira,test-groom" \
         strand report 2>/dev/null
@@ -89,6 +93,7 @@ echo "case 0 — positive control: the ready set holds the bead → starved IS r
 tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL=some-other-label-entirely \
     SPIRA_BD="$TMP/mock-bd"
 out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
+        SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
         SPIRA_SUMMON=stub \
         SPIRA_LABELS="spira,test-groom" \
             strand report 2>/dev/null)"

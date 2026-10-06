@@ -97,6 +97,7 @@ LOG
 tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
+    SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
@@ -117,6 +118,7 @@ LOG
 tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
+    SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null

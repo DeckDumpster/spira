@@ -89,6 +89,7 @@ CHECK_ENV=(
     SPIRA_STRAND_GRACE=0
     SPIRA_LABELS=-
     SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH"
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true
 )
 
 run_check() {
@@ -135,7 +136,12 @@ chmod +x "$BARRIER_HOME/mail"
 # tl_layer, not tl_config: runner 2 races this runner concurrently on the SAME suite
 # override file (CHECK_ENV's SPIRA_HOME is strand-home, not BARRIER_HOME) — a persisting
 # tl_config here would hand runner 2 this runner's chamber. One-call-only SPIRA_TOML.
+# GIT_TERMINAL_PROMPT=0: the new starved-row lane-liveness check (sfail round 5) derives
+# SPIRA_REPO via `git rev-parse --show-toplevel` on every roster probe now — defensive
+# against any git subprocess in that chain blocking on a credential prompt instead of
+# failing fast, which would hang this runner before it ever reaches its mail stub.
 env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
     SPIRA_TOML="$(tl_layer SPIRA_CHAMBER="$BARRIER_HOME/chamber")" \
     strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
@@ -231,6 +237,7 @@ STUB
 chmod +x "$TMP/home-a/mail"
 
 env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" PATH="$TMP/home-a:$PATH" \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
     strand check --from "$TMP/fixture-partition.tsv" >/dev/null 2>&1
 
 args_a="$(cat "$ARGS_A" 2>/dev/null || true)"

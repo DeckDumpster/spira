@@ -67,10 +67,14 @@ run_sweep() {
         SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_ASK_LABEL=needs-ryan \
         SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL=spira \
         SPIRA_BD="${SPIRA_BD:-bd}"
+    # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: the lcbin wrapper execs lc_mirror_bd's spira-lc
+    # stub for every non-`state` verb, and that stub reads them as raw shell variables,
+    # never through spira-config — tl_config's declaration never reaches a child process.
     env -i PATH="$TMP/lcbin:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
         groomer sweep "$@" 2>&1
 }
 

@@ -142,9 +142,11 @@ run_review() {
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_AGENT="$FAKE_CLAUDE" \
         SPIRA_REVIEWER_VERDICTS="$VERDICTS" SPIRA_REVIEWER_MODEL=claude-test-model \
         SPIRA_REVIEWER_TIMEOUT=30
+    # round 5 fix (pattern 1/7): the repo registry reads SPIRA_HOME's own conf.d/config
+    # registry now; env -i never carried SPIRA_HOME at all ("no config registry at ...").
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_REPO="$SH" \
+        SPIRA_HOME="$SH" SPIRA_REPO="$SH" \
         FAKE_REVIEW_VERDICT="${FAKE_REVIEW_VERDICT:-ship}" \
         SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/review.sh" "$@" 2>&1
@@ -156,7 +158,7 @@ run_release() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_REPO="$SH" \
+        SPIRA_HOME="$SH" SPIRA_REPO="$SH" \
         SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/release.sh" "$@" 2>&1
 }

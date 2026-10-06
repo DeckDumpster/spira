@@ -35,6 +35,8 @@ mkdir -p "$TMP/watchd"
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
     SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_MUTE=0 \
     SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" \
+    SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_BD="${SPIRA_BD:-bd}" \
+    SPIRA_OPERATOR_ACTOR=ryan \
     SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""       # prevent reading a real spira.conf
 

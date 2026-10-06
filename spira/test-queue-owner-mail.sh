@@ -72,7 +72,7 @@ queue() {
     # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config,
     # not the env prefix below, which no process reads them from any more.
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
-        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_HOME_REPO="$REPONAME" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_MAIL="$MAIL"
     SPIRA_HOME="$SH" \
         SPIRA_HOME="$SH" command queue "$@"

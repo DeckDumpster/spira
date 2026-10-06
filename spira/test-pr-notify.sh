@@ -63,7 +63,10 @@ REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_ID_PREFIX=sp SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$REPO_MAP"
 export SPIRA_CONF="$CONF" HOME="$TMP/home"
 # An operator-muted host files mail into cur/, where the unread-count checks never look.
-tl_config SPIRA_MAIL_MUTE=0
+# SPIRA_CONCIERGE_INBOX EXPLICITLY: mail's default reader for the concierge mailbox
+# (inbox-append.sh) resolves this from config, and the complete fixture's own value is a
+# fixed, unwritable "/fixture/home/..." path now.
+tl_config SPIRA_MAIL_MUTE=0 SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
 
 # SOURCEABLE, AND SILENT WHEN IT IS (pr-notify.sh's own guard): this reaches _PR_STATUS_PY
 # without triggering a live repo-map scan.

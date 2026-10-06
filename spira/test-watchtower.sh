@@ -102,7 +102,7 @@ chmod +x "$SYSTEMCTL_CLEAN"
 wt() {                   # wt [VAR=val ...] -> the snapshot
     tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
@@ -306,7 +306,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
     rm -f "$TMP/incident-called" "$TMP/ops-prompt"
     tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_MOOT_SH="$MOCK_MOOT" \
@@ -437,7 +437,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
@@ -455,7 +455,7 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
@@ -472,7 +472,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
@@ -487,7 +487,7 @@ wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted esc
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \

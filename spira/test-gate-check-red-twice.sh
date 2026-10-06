@@ -43,9 +43,14 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 mkdir -p "$TMP/sbin" "$TMP/run" "$TMP/run/events"
 
-# bead.sh refuses a repo: label absent from the map (spira/test-bead-repo-guard.sh); the
-# home repo is $(basename "$TMP") here, so it must have its own row like any other.
-printf '%s | %s | push | origin/main |  |\n' "$(basename "$TMP")" "$TMP" > "$TMP/repo-map"
+# bead.sh refuses a repo: label absent from the map (spira/test-bead-repo-guard.sh).
+# SPIRA_HOME_REPO now derives from SPIRA_HOME="$HERE"'s own git context (Registry::from_env
+# reads it from config only, round 5), landing on "spira" — not $(basename "$TMP") as under
+# the old SPIRA_REPO-basename derivation this comment used to describe — and that is the
+# label gate-check's own bead-filing (and the suite's own manually-filed P3 bead, part 3
+# below) actually carries. Both rows declared so neither derivation leaves bead.sh refusing.
+printf '%s | %s | push | origin/main |  |\nspira | %s | push | origin/main |  |\n' \
+    "$(basename "$TMP")" "$TMP" "$TMP" > "$TMP/repo-map"
 
 count_red_twice() {
     B list --json 2>/dev/null | python3 -c '

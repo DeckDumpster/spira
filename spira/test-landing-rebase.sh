@@ -52,6 +52,15 @@ stub mail '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat 
 export EMITTED="$TMP/events"; : > "$EMITTED"
 stub gh 'exit 1'
 
+# The gate protocol's fixed exit-code constants (spira-config/src/resolve.rs: always 75/76,
+# never settable — EXPORT_KEYS, read by a bash conf.sh caller). Not registered (no conf.d
+# entry) so tl_config cannot declare them; landing-pass does not thread them into its own
+# gate.sh child explicitly (only SPIRA_GATE_LOCK_WAIT/SPIRA_GATE_BEAD are), so this stub
+# gate.sh only sees them if something upstream exported them — declared directly here
+# rather than depending on that chain (round 5: this stub's own `${SPIRA_GATE_NOVERDICT:?}`
+# was unbound).
+export SPIRA_GATE_NOVERDICT=75 SPIRA_GATE_BASEFAIL=76
+
 stub gate.sh '
 r="$SPIRA_RUN/reap-during-gate"
 if [ -s "$r" ]; then

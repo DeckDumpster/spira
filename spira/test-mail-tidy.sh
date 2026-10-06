@@ -44,6 +44,7 @@ mkdir -p "$TMP/watchd"
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
     SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL" SPIRA_MAIL_TIDY_FRESH="$SPIRA_MAIL_TIDY_FRESH" \
     SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" \
+    SPIRA_RUN="$TMP/run" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_OPERATOR_ACTOR=ryan \
     SPIRA_DB="$SPIRA_DB" SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=/nonexistent
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads

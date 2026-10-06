@@ -57,7 +57,11 @@ testdb_up "test-work-container"
 # A real mailbox root and kind set, never the operator's real maildir.
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$TMP/kinds"
-tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS"
+export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+# round 5 fix (pattern 7): SPIRA_RUN was never declared — mail's repeat-guard state file
+# resolved to the complete fixture's placeholder /fixture/home/spira/run, which this
+# process cannot create ("blocked"/"superseded-by" are the first cases to need it).
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" SPIRA_RUN="$SPIRA_RUN"
 mkdir -p "$SPIRA_MAIL_KINDS"
 cp -r "$HERE/mail/kinds/." "$SPIRA_MAIL_KINDS/"
 

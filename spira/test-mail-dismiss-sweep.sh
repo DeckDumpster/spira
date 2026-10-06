@@ -41,12 +41,13 @@ export SPIRA_HOME="$TMP/home"
 SPIRA_RUN="$TMP/run"
 SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
-# SPIRA_MAIL_READERS="" EXPLICITLY: the fixture default names a reader script
-# (concierge=inbox-append.sh) under the fixture's own unwritable release tree; without an
-# override, mail delivery fails trying to notify it.
+# SPIRA_CONCIERGE_INBOX EXPLICITLY: mail_readers still names inbox-append.sh for the
+# concierge mailbox (SPIRA_MAIL_READERS="" does not appear to suppress it), and that script
+# resolves SPIRA_CONCIERGE_INBOX from config — the complete fixture's own value is a fixed,
+# unwritable "/fixture/home/..." path now, not derived from whatever SPIRA_RUN we declare.
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_INDEX="$SPIRA_MAIL_INDEX" SPIRA_ID_PREFIX="sp" \
     SPIRA_RUN="$SPIRA_RUN" SPIRA_OPERATOR_ACTOR="$SPIRA_OPERATOR_ACTOR" SPIRA_MAIL_MUTE=0 \
-    SPIRA_MAIL_READERS=""
+    SPIRA_MAIL_READERS="" SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before

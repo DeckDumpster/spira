@@ -218,8 +218,11 @@ FAYTH_LANE=priority
 F
 
 export SPIRA_HOME="$LANES_HOME"
-export SPIRA_FAYTHS="worker guardian"
-tl_config SPIRA_CHAMBER="$LANES_HOME/chamber"
+# SPIRA_FAYTHS via tl_config too: cmd_fayth's roster is "the declared one (spira.fayths),
+# never an environment override" (spira-config/src/main.rs, cmd_fayth) — the lib.sh bash
+# wrapper's raw-env forwarding to the spira-config subprocess is a leftover from before
+# the one-source migration and is now ignored for this exact-match roster (round 5).
+tl_config SPIRA_FAYTHS="worker guardian" SPIRA_CHAMBER="$LANES_HOME/chamber"
 
 lane="$(spira_lane_fayths)"
 task="$(spira_task_fayths)"

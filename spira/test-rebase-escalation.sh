@@ -48,13 +48,13 @@ testdb_up rebase-escalation || { echo "test-rebase-escalation: could not build a
 RUN="$TMP/run"; mkdir -p "$RUN"
 export SPIRA_HOME="$HERE"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
-# SPIRA_WORKSPACES EXPLICITLY: the complete fixture declares a fixed, unwritable
-# "/fixture/home/spira" now — landing-pass's GENERATED-file check stages a workspace
-# checkout under it to inspect the conflicting files, and "mkdir /fixture: Permission
-# denied" follows without a suite-owned directory of our own.
+# SPIRA_CONCIERGE_INBOX EXPLICITLY: landing-pass's mail send to "concierge" runs
+# inbox-append.sh (per SPIRA_MAIL_READERS's default), which resolves SPIRA_CONCIERGE_INBOX
+# from config — the complete fixture's own value is a fixed, unwritable "/fixture/home/..."
+# path now, hence "mkdir /fixture: Permission denied" and an empty mail body downstream.
 tl_config SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
     SPIRA_ASK_LABEL="needs-operator" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_MUTE=0 \
-    SPIRA_WORKSPACES="$TMP/workspaces"
+    SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
 
 ask_rebase_loop() {   # ask_rebase_loop <id> <branch> <repo> <n> <conflicts> <others>
     landing-pass ask-rebase-loop "$1" "$2" "$3" "$4" "$5" "$6"

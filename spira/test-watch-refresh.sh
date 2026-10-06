@@ -203,7 +203,7 @@ fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UN
 runpass() {
     : > "$ACT"
     tl_config SPIRA_WATCHERS="${WR_MAN:-$MAN}"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$CLONE/spira" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" SPIRA_HOME="$CLONE/spira" \
         \
         WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" SHIM="$SHIM" \
         SYSTEMCTL_RC="${SYSTEMCTL_RC:-0}" RESTART_RC="${RESTART_RC:-0}" \
@@ -262,7 +262,7 @@ restarts_on "its own target"                 "$COCKPIT/watch-answers.sh"
 # THE MEASURED FAILURE WAS A LIBRARY, NOT A TARGET. The watcher's own file was untouched for
 # days while the code it sourced was rewritten underneath it.
 restarts_on "a library beside its target"    "$COCKPIT/db.sh"
-restarts_on "the config file in force"       "$CONF"
+restarts_on "the config file in force"       "$_TL_CONF_OVERRIDE"
 restarts_on "conf.sh"                        "$CLONE/spira/conf.sh"
 # The manifest is what says which target the row means, so a row repointed is a watcher
 # running the wrong program with a perfectly current file behind it.
@@ -489,7 +489,7 @@ printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
 runreap() {
     : > "$REAP_ACT"
     tl_config SPIRA_WATCHERS="$MAN"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$CLONE/spira" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" SPIRA_HOME="$CLONE/spira" \
         \
         WR_PROC_ROOT="$FAKEPROC" WR_REAP_ACT="$REAP_ACT" \
         bash -c '
@@ -567,7 +567,7 @@ entry_deadline=$((SECONDS + 60))
 while :; do
     : > "$ACT"
     tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
-    out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
+    out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" \
           SPIRA_HOME="$CLONE/spira" \
           WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
           WR_PROC_ROOT="$EMPTYPROC" \
@@ -580,7 +580,7 @@ is "it runs"                       "0" "$rc"
 has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
 hasnt "and no raw manifest line leaked onto this process's own stdout" "$out" "|daemon|"
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
-out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
+out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" \
       SPIRA_HOME="$CLONE/spira" \
       WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \

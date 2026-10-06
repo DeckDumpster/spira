@@ -202,7 +202,11 @@ chmod +x "$SH/mock-summon"
 # REAL bd store — an open bead is a READY row — ahead of the tree's spira-lc on PATH.
 lc_mirror_bd "$TMP/lc"
 sentinel_run() {
+    # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
+    # the real one) is exec'd as sentinel's own child for its ready reads and reads them as
+    # raw shell variables, never through spira-config — tl_config's declaration never reaches it.
     PATH="$TMP/lc:$PATH" SPIRA_HOME="$SH" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
         SPIRA_SUMMON="$SH/mock-summon" SUMMONED_FILE="$SUMMONED" SPIRA_CONF=/nonexistent \
         sentinel --summon-pass
 }

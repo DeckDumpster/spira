@@ -124,7 +124,11 @@ printf 'From: Operator <op@h>\nSubject: Read message\nDate: %s\n\nbody\n' \
 printf 'From: Operator <op@h>\nSubject: Done message\nDate: %s\n\nbody\n' \
     "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')" > "$MAIL_DIR/concierge/cur/done-msg:2,R"
 
-keys="$(SPIRA_MAIL="$MAIL_DIR" cockpit-collect probe mail 2>/dev/null)"
+# SPIRA_MAIL is registered (cockpit-collect/src/probes/mod.rs's Cfg.mail resolves it via
+# cfg(), not raw env, unlike mail/src/env.rs which does read it raw) — the plain env prefix
+# below is ignored; tl_layer scopes the override to this one call only, since $MAIL_DIR is
+# section-local (round 5).
+keys="$(SPIRA_TOML="$(tl_layer SPIRA_MAIL="$MAIL_DIR")" cockpit-collect probe mail 2>/dev/null)"
 isz "cockpit-collect probe mail exits 0" "$?"
 
 want "SP_MAIL_UNREAD=1" "SP_MAIL_UNREAD=1" "$keys"
@@ -145,7 +149,7 @@ touch "$BUDGET"
 # Build a minimal snapshot from cockpit-collect probe mail probe output
 {
     printf 'SP_AT=%s\n' "$(date +%s)"
-    SPIRA_MAIL="$MAIL_DIR" cockpit-collect probe mail 2>/dev/null
+    SPIRA_TOML="$(tl_layer SPIRA_MAIL="$MAIL_DIR")" cockpit-collect probe mail 2>/dev/null
     # Minimal keys for health.sh to not crash
     printf 'SP_AEONS=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_AURON_AGE=5\n'
     printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_AURON_TIMER=1\nSP_AURON_FIRING=0\n'

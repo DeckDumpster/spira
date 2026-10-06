@@ -18,8 +18,14 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # SPIRA_MAIL/SPIRA_MAIL_KINDS are registered but mail/src/env.rs reads them with a plain
-# std::env::var, not spira_config::process::cfg — a direct-env exception, confirmed by
-# reading that source — so they stay plain exports; tl_config would never reach them.
+# std::env::var, not spira_config::process::cfg — so the "mail" binary itself only ever
+# sees the plain export below. But mail-health.sh (unlike a direct `mail` invocation) is a
+# bash script that sources conf.sh itself, and conf.sh's resolve --sh-all RE-EXPORTS every
+# registered key from SPIRA_TOML into mail-health.sh's own process — overwriting this plain
+# export with the complete fixture's bogus SPIRA_MAIL default before mail-health.sh ever
+# spawns its own `mail unread-age`/`mail count` children, which then inherit the bogus
+# value (same shape as the SPIRA_DB pattern elsewhere, round 5 — this suite's own core
+# detect-and-alert path was silently looking at the wrong maildir the whole time).
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 export SPIRA_HOME="$HERE"
@@ -29,7 +35,8 @@ export SPIRA_CONF="$TMP/no-such-spira.conf"
 # SPIRA_TOML and EXPORTS it (resolve --sh-all) into every subprocess's own environment —
 # the complete fixture now declares mail_mute=true, which would silently mute every
 # delivery this suite counts on. Declared false here so conf.sh exports the override.
-tl_config SPIRA_RUN="$TMP/run" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_UNREAD_AGE=60 SPIRA_MAIL_MUTE=false
+tl_config SPIRA_RUN="$TMP/run" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_UNREAD_AGE=60 SPIRA_MAIL_MUTE=false \
+    SPIRA_MAIL="$TMP/mail"
 
 HEALTH=mail-health.sh   # invoked by name on the suite's PATH (sp-gypjk)
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)

@@ -50,6 +50,11 @@ tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIR
 # every message this suite sends would be filed straight to cur/ (already seen) rather
 # than new/, so none of its own-sender checks would ever see anything unread.
 tl_config SPIRA_MAIL_MUTE=0
+# round 5 fix (pattern 7/9): the repo registry (Registry::from_env) reads SPIRA_REPO_MAP/
+# SPIRA_HOME_REPO only from config now; undeclared, land_escalate/skew/incident's repo
+# lookup could not resolve at all, which may be why none of their messages ever sent.
+printf 'fixture | %s | push | main | |\n' "$HERE" > "$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO=fixture
 
 # A stub bd: every emitter below only needs "is there already an open ask with this
 # subject" to answer no, so a send is always attempted for real.
