@@ -116,7 +116,15 @@ pub fn discover(explicit: Option<PathBuf>) -> Option<PathBuf> {
 /// Reads and [`validate`]s the document at `path` — the one place a caller turns a resolved
 /// path into a [`SpiraToml`], instead of pairing its own `fs::read_to_string` with `validate`.
 pub fn load(path: &Path) -> Result<SpiraToml, String> {
-    load_layered(&path.to_string_lossy())
+    load_layered(&path.to_string_lossy()).map(|(doc, _)| doc)
+}
+
+/// [`load`] plus the warnings and [`require_id_prefix`] — the check `spira-config validate`
+/// runs (doctor, pre-activate) over the config in force, layers and all.
+pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {
+    let (doc, warnings) = load_layered(&path.to_string_lossy())?;
+    require_id_prefix(&doc)?;
+    Ok((doc, warnings))
 }
 
 /// THE ONE SOURCE, LAYERED (per Ryan 2026-10-05): `spec` is one file, or a `:`-separated list.
@@ -124,7 +132,7 @@ pub fn load(path: &Path) -> Result<SpiraToml, String> {
 /// layer is parsed once; the layers' tables are unioned key by key (a later layer's leaf
 /// replaces the earlier one, nested tables merge); the result is validated once. Every listed
 /// file must exist. Callers never see layers — they get one [`SpiraToml`].
-fn load_layered(spec: &str) -> Result<SpiraToml, String> {
+fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let mut merged = toml::map::Map::new();
     let mut any = false;
     for p in spec.split(':').filter(|p| !p.is_empty()) {
@@ -138,7 +146,7 @@ fn load_layered(spec: &str) -> Result<SpiraToml, String> {
     if !any {
         return Err("no config file named".to_string());
     }
-    validate_value(toml::Value::Table(merged)).map(|(doc, _)| doc).map_err(|e| format!("{spec}: {e}"))
+    validate_value(toml::Value::Table(merged)).map_err(|e| format!("{spec}: {e}"))
 }
 
 /// `over`'s keys into `base`: a nested table merges, anything else replaces.

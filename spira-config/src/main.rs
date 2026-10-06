@@ -110,40 +110,37 @@ fn cmd_locate() -> ExitCode {
     }
 }
 
-fn read_input(file: Option<&str>) -> Result<String, String> {
-    match file {
+/// The config a command reads: `-` is a document on stdin; a named file, or with none the
+/// one `SPIRA_TOML` names, is loaded through [`spira_config::load_strict`]/[`load`] — layers
+/// and all, never read as one literal path.
+fn load_input(file: Option<&str>, strict: bool) -> Result<(SpiraToml, Vec<String>), String> {
+    let path = match file {
         Some("-") => {
             let mut s = String::new();
             std::io::stdin()
                 .read_to_string(&mut s)
                 .map_err(|e| e.to_string())?;
-            Ok(s)
+            return if strict { validate_strict(&s) } else { spira_config::validate_with_warnings(&s) };
         }
-        Some(f) => fs::read_to_string(f).map_err(|e| format!("{f}: {e}")),
-        // FAIL CLOSED (sp-hconl): no file argument means "resolve it the same way conf.sh
-        // does", never "guess the current directory" or "block on stdin" — the two things
-        // this branch did before. An unresolvable config names every path it tried instead
-        // of guessing.
+        Some(f) => PathBuf::from(f),
+        // FAIL CLOSED (sp-hconl): no file argument means the config SPIRA_TOML names, never
+        // "guess the current directory" or "block on stdin".
         None => match locate(None) {
-            LocateOutcome::Found(p) => {
-                fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
-            }
-            outcome => Err(describe_locate_failure(&outcome)),
+            LocateOutcome::Found(p) => p,
+            outcome => return Err(describe_locate_failure(&outcome)),
         },
+    };
+    if strict {
+        spira_config::load_strict(&path)
+    } else {
+        load(&path).map(|d| (d, Vec::new()))
     }
 }
 
 fn cmd_validate(file: Option<&str>) -> ExitCode {
-    let text = match read_input(file) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("spira-config: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
     // STRICT: the config in force must name its id prefix (sp-k6m1m). doctor and the
     // release's pre-activate run this, so a release is never activated over one without it.
-    match validate_strict(&text) {
+    match load_input(file, true) {
         Ok((_, warnings)) => {
             for w in &warnings {
                 eprintln!("spira-config: warning: {w}");
@@ -177,15 +174,8 @@ fn cmd_migrate(file: &str) -> ExitCode {
 }
 
 fn cmd_get(path: &str, file: Option<&str>) -> ExitCode {
-    let text = match read_input(file) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("spira-config: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let doc = match validate(&text) {
-        Ok(d) => d,
+    let doc = match load_input(file, false) {
+        Ok((d, _)) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
             return ExitCode::FAILURE;
@@ -201,15 +191,8 @@ fn cmd_get(path: &str, file: Option<&str>) -> ExitCode {
 }
 
 fn cmd_export_sh(file: Option<&str>) -> ExitCode {
-    let text = match read_input(file) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("spira-config: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    match validate(&text) {
-        Ok(doc) => {
+    match load_input(file, false) {
+        Ok((doc, _)) => {
             print!("{}", export_sh(&doc));
             ExitCode::SUCCESS
         }
@@ -317,7 +300,7 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
         None => locate(None).found(),
     };
     let doc = match toml_path {
-        Some(p) => match fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display())).and_then(|t| validate(&t)) {
+        Some(p) => match load(&p) {
             Ok(d) => Some(d),
             Err(e) => {
                 eprintln!("spira-config resolve: {e}");
