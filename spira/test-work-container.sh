@@ -61,7 +61,12 @@ export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 # round 5 fix (pattern 7): SPIRA_RUN was never declared — mail's repeat-guard state file
 # resolved to the complete fixture's placeholder /fixture/home/spira/run, which this
 # process cannot create ("blocked"/"superseded-by" are the first cases to need it).
-tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" SPIRA_RUN="$SPIRA_RUN"
+# SPIRA_MAIL_MUTE: the complete fixture declares it true (pattern 2); muted delivery lands
+# in cur/<id>:2,S pre-marked read (mail/src/maildir.rs mail_deliver), not new/ — this suite's
+# "an ask landed in the operator's mailbox" checks literally count new/, so it needs its own
+# unmuted declaration or every ask silently "delivers" into cur and the count never moves.
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_MAIL_MUTE=0
 mkdir -p "$SPIRA_MAIL_KINDS"
 cp -r "$HERE/mail/kinds/." "$SPIRA_MAIL_KINDS/"
 

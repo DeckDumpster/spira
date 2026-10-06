@@ -160,11 +160,16 @@ chmod +x "$MOCK_BIN/tmux"
 un() {
     > "$MOCK_LOG"; > "$LINGER_LOG"; > "$LAYOUT_LOG"
     # SPIRA_PATH/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/
-    # SPIRA_INSTANCE are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
-    # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    # SPIRA_INSTANCE/SPIRA_CLIENT_SETTINGS are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which
+    # clears it. SPIRA_CLIENT_SETTINGS's own conf.d default derives from $HOME, but that
+    # derivation no longer happens for registered keys (release/src/main.rs reads it via
+    # cfg(), no env fallback) — undeclared, `release session-hook uninstall` (run with
+    # `|| true` in uninstall.sh) silently fails to resolve it and the seeded hooks fixture
+    # at $SETTINGS is never touched.
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" SPIRA_COCKPIT="$REAL_COCKPIT" \
-        SPIRA_INSTANCE=test
+        SPIRA_INSTANCE=test SPIRA_CLIENT_SETTINGS="$TMP/home/.claude/settings.json"
     env -i \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \

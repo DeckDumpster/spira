@@ -92,7 +92,13 @@ mkdir -p "$SPIRA_RUN/queue" "$SPIRA_DB"
 # on has actually applied. desired_state_write below populates it on demand.
 DESIRED_DIR="$T/desired"
 export SPIRA_DESIRED_DIR="$DESIRED_DIR"
-tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_DESIRED_DIR="$SPIRA_DESIRED_DIR"
+# SPIRA_QUEUE_DIR is a registered key the reconciler binary reads directly (cfg(...)?, no
+# env fallback); its conf.d DEFAULT derives it from SPIRA_RUN, but that derivation runs
+# against the base fixture's SPIRA_RUN, not this suite's override, so the queue invariants
+# (15/17 below) were reading an unrelated queue dir with no "testrepo" in it. Declare it
+# explicitly (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_DESIRED_DIR="$SPIRA_DESIRED_DIR" \
+    SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
 
 # desired_state_write <resource-toml-fragment>... — hand-writes a single-version composite
 # document directly in the store's own on-disk shape (meta + [[resource]]), rather than
