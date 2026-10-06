@@ -16,16 +16,25 @@ use rule::{
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let mut home = ".".to_string();
+    let mut home: Option<String> = None;
     let mut rest: Vec<String> = Vec::new();
     let mut it = argv.into_iter();
     while let Some(a) = it.next() {
         if a == "--home" {
-            home = it.next().unwrap_or_else(|| ".".to_string());
+            home = it.next();
         } else {
             rest.push(a);
         }
     }
+
+    let home = home.unwrap_or_else(|| {
+        spira_config::resolve::locate_home_for_process()
+            .map(|h| h.to_string_lossy().into_owned())
+            .unwrap_or_else(|e| {
+                eprintln!("rule: {e} — pass --home");
+                std::process::exit(1)
+            })
+    });
 
     let mut args = rest.into_iter();
     let cmd = args.next().unwrap_or_default();
