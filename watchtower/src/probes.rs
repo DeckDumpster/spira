@@ -83,11 +83,16 @@ pub fn release_currency(cfg: &Cfg) -> Reading {
 pub struct Run {
     pub active_state: String,
     pub invocation: String,
+    pub result: String,
+    pub exec_status: String,
 }
+
+const SIGTERM: &str = "15";
 
 /// `Some((invocation, count))` is the new tally; `None` drops the unit.
 pub fn tally(prev: Option<(&str, i64)>, run: &Run) -> Option<(String, i64)> {
     match run.active_state.as_str() {
+        "failed" if run.result == "signal" && run.exec_status == SIGTERM => None,
         "failed" => match prev {
             Some((inv, n)) if inv == run.invocation => Some((inv.to_string(), n)),
             Some((_, n)) => Some((run.invocation.clone(), n + 1)),
@@ -118,9 +123,9 @@ fn render_tally(m: &BTreeMap<String, (String, i64)>) -> String {
 }
 
 fn unit_run(cfg: &Cfg, unit: &str) -> Option<Run> {
-    let show = systemctl_show(cfg, &[unit, "-p", "ActiveState", "-p", "InvocationID"])?;
+    let show = systemctl_show(cfg, &[unit, "-p", "ActiveState", "-p", "InvocationID", "-p", "Result", "-p", "ExecMainStatus"])?;
     let get = |k: &str| show.lines().find_map(|l| l.strip_prefix(k)).unwrap_or("").trim().to_string();
-    Some(Run { active_state: get("ActiveState="), invocation: get("InvocationID=") })
+    Some(Run { active_state: get("ActiveState="), invocation: get("InvocationID="), result: get("Result="), exec_status: get("ExecMainStatus=") })
 }
 
 fn last_log_lines(cfg: &Cfg, unit: &str) -> String {
@@ -341,6 +346,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_sigterm_stop_is_not_a_failed_run() {
+        let term = Run { result: "signal".into(), exec_status: "15".into(), ..run("failed", "i2") };
+        assert_eq!(tally(Some(("i1", 2)), &term), None);
+        let kill = Run { exec_status: "9".into(), ..term };
+        assert_eq!(tally(Some(("i1", 2)), &kill), Some(("i2".into(), 3)));
+    }
+
+    #[test]
     fn rowless_finds_an_injected_rowless_bead_and_caps_the_list() {
         let open: Vec<String> = ["sp-a", "sp-b", "sp-c"].iter().map(|s| s.to_string()).collect();
         let rows: Vec<String> = ["sp-a", "sp-c", "sp-gone"].iter().map(|s| s.to_string()).collect();
@@ -395,7 +408,7 @@ mod tests {
     }
 
     fn run(state: &str, inv: &str) -> Run {
-        Run { active_state: state.into(), invocation: inv.into() }
+        Run { active_state: state.into(), invocation: inv.into(), result: "exit-code".into(), exec_status: "1".into() }
     }
 
     #[test]
