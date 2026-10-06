@@ -82,7 +82,12 @@ printf '\nT1: stage up creates expected structure\n'
     # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
     # would otherwise persist and starve any `spira-lc` call below of the stage's real,
     # just-generated credential (eval'd above as a plain var).
-    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}"
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     [ -n "${STAGE_ROOT:-}" ] && ok "STAGE_ROOT is set" || bad "STAGE_ROOT is set" "empty"
     [ -d "${STAGE_ROOT:-/nonexistent}" ] && ok "STAGE_ROOT is a directory" || bad "STAGE_ROOT is a directory" "$STAGE_ROOT"
@@ -155,7 +160,12 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
     # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
     # would otherwise persist and starve any `spira-lc` call below of the stage's real,
     # just-generated credential (eval'd above as a plain var).
-    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}"
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH \
                SPIRA_LC_PASSWORD_FILE SPIRA_LC_SOCKET SPIRA_LC_DATA_DIR; do
@@ -190,7 +200,12 @@ printf '\nT3: stage db is usable\n'
     # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
     # would otherwise persist and starve any `spira-lc` call below of the stage's real,
     # just-generated credential (eval'd above as a plain var).
-    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}"
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     # Create a bead; bd exits non-zero on a broken db
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
@@ -264,7 +279,12 @@ printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
     # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
     # would otherwise persist and starve any `spira-lc` call below of the stage's real,
     # just-generated credential (eval'd above as a plain var).
-    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}"
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     # Create an unparented plan bead (there is no goal epic, sp-k6m1m)
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up

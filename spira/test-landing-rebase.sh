@@ -109,7 +109,14 @@ landing() {
     tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_DB="$SPIRA_DB" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
         SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
-    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
+    # SPIRA_RUN also as a raw env var: landing-pass's own gate.sh child is a bash script
+    # that never sources conf.sh (it's this suite's stub, not the real one) — it reads
+    # $SPIRA_RUN directly from whatever it inherits, and landing-pass's own `command()`
+    # helper (no env_clear) only forwards what landing-pass itself got as raw env, not
+    # what it resolved via cfg(). Without this, withhold-gate/claim-during-gate/
+    # tip-at-gate read from "/withhold-gate" etc. (SPIRA_RUN empty) and silently never
+    # matched (round 6).
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
