@@ -191,6 +191,13 @@ wantrc "cutover-deploy.sh exits 0 again" 0 "$rc2"
 
 echo
 echo "a unit-rendered environment alone authenticates as spira_lc:"
+# This call renders with no explicit SPIRA_HOME downstream (lc_caller below) — the caller
+# locates home by deriving it from the unit's own SPIRA_RELEASE (=dirname(--prod) = $FIX)
+# as SPIRA_RELEASE/spira (spira_config::resolve::locate_home), NOT $FIX itself. The real
+# registry needs to be reachable at THAT path too, alongside the one at $FIX/conf.d used by
+# every other SPIRA_HOME="$FIX" call in this suite (one source of config, per Ryan 2026-10-05).
+mkdir -p "$FIX/spira"
+ln -s "$HERE/conf.d" "$FIX/spira/conf.d" 2>/dev/null || true
 INSTALL_BIN="$(dirname "$(command -v render-unit)")"
 rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --home "$FIX" --repo "$REPO" --run "$FIX/run" \
     --db "$SPIRA_DB" --cockpit "$FIX/cockpit" --dolt /bin/true --prod "$FIX/spira" --instance prod \
