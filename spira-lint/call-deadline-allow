@@ -208,7 +208,6 @@
 10 spira/test-incident.sh
 2 spira/test-install-aeons.sh
 2 spira/test-install-dolt-breaker.sh
-3 spira/test-install-dolt-mode.sh
 4 spira/test-install-dolt-port-wait.sh
 2 spira/test-install-dolt-refuse-stop.sh
 6 spira/test-install-landref.sh

@@ -42,7 +42,7 @@ fi
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# Fixture layout (mirrors test-install-dolt-mode.sh).
+# Fixture layout (same skeleton as the other install suites).
 # ---------------------------------------------------------------------------
 . "$HERE/lib-test-install.sh"
 FIXTURE="$TMP/harness"
