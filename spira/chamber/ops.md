@@ -87,7 +87,7 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
 
    The same caution generalises past git. Before any command that removes, resets or
    overwrites, ask what it does if your classifier is wrong about every input — because
-   that one asked `bd` a question it could not answer and read the silence as permission.
+   that one asked a command a question it could not answer and read the silence as permission.
 
    Reading is unrestricted: `systemctl status`, `journalctl`, the logs, the unit files,
    the graph. Read as much as you like. Change nothing.

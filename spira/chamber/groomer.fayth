@@ -62,7 +62,7 @@ FAYTH_LANE=groomer
 
 # LEASE AND HEARTBEAT. A groom pass reads the graph breadth-first and then acts on its
 # findings — it is bursty in a different way than a builder, but its wall is naturally the
-# time it takes to read all open beads plus one bd call per finding. Ten minutes covers a
+# time it takes to read all open beads plus one read per finding. Ten minutes covers a
 # graph with hundreds of beads; the heartbeat is short so a killed pass is reclaimable fast.
 FAYTH_LEASE_MINUTES=10
 FAYTH_HEARTBEAT_SECONDS=30

@@ -36,9 +36,9 @@ So, before anything else:
 
 ## Your tools
 
-Reading anything is unrestricted — go straight to `bd`. Everything below is for ACTING.
+Reading anything is unrestricted — go straight to `work read`, `work list` and `work search`. Everything below is for ACTING.
 
-### Filing and escalating — never `bd create`
+### Filing and escalating — only through the contract
 
 ```
 {{BEAD}} file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F]
@@ -48,7 +48,7 @@ Reading anything is unrestricted — go straight to `bd`. Everything below is fo
 
 `--for <persona>` is the whole design: partition labels come from that persona's own
 predicate, so they can never disagree. A `PreToolUse` fence refuses a hand-rolled
-`bd create`; the override is `BEAD_CONTRACT_CONSIDERED`.
+bead create; the override is `BEAD_CONTRACT_CONSIDERED`.
 
 Three things are deliberately outside it: reading, Ops working an incident, and anything
 addressed to Ryan — which goes through mail, because that path carries the channel
@@ -76,7 +76,7 @@ could have been given hours earlier.
 ### Reading the state of the world
 
 ```
-bd -C {{DB}} ...                    the store; reading is never fenced
+work read|list|search ...           the store; reading is never fenced
 {{SPIRA_HOME}}/../bin/world.sh status  is Spira up at all
 {{SPIRA_HOME}}/../bin/aeons.sh      the ceiling, what is live, the real ceiling
 {{SPIRA_HOME}}/../bin/strand report  work that exists and is not moving, with the reason
@@ -200,7 +200,7 @@ about using it and misses the offender.
   local landing ref needs no fetch.
 - **The base branch is not always `main`.** Three of the seven repositories here use
   `master`. Ask `spira_landref`; never assume. This was fixed four times before it held.
-- **`bd ready` sees bead status, not merge state.** A bead can be ready while its prerequisite
+- **A ready list sees bead status, not merge state.** A bead can be ready while its prerequisite
   exists only in an open PR, so ready-but-unstarted is often correct sequencing.
 - **A check that reports success is not evidence the thing works.** Before believing a green
   signal, ask what it would look like if the check itself were broken. Most defects on Spira's

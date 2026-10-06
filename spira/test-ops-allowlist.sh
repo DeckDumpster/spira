@@ -124,13 +124,13 @@ journalctl -u spira-sentinel.service --since '1 hour ago'|journalctl
 cat /var/log/spira/ops.log|cat
 grep -r 'error' /var/log/spira/|grep
 ls -la /srv/spira/run/worktree|ls
-bd -C /srv/spira/db show sp-xyz|bd show
-bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note
 git log --oneline -10|git log
 git -C /srv/spira/harness log --oneline -5|git -C ... log
 git status|git status"
 
-OPS_DENY="rm -rf /srv/spira/run/worktree|rm
+OPS_DENY="bd -C /srv/spira/db show sp-xyz|bd show NOT granted (aeons reach the store only through work)
+bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note NOT granted (aeons reach the store only through work)
+rm -rf /srv/spira/run/worktree|rm
 systemctl restart spira-aeon-builder.service|systemctl restart
 systemctl start spira-sentinel.service|systemctl start
 systemctl stop spira-aeon-builder.service|systemctl stop
@@ -149,13 +149,13 @@ CZAR_TOOLS="$(fayth_tools czar)"
 CZAR_ALLOW="bash spira/czar-fence.sh deadlock|czar-fence.sh
 /srv/spira/bin/queue eject sp-xyz|queue eject
 /srv/spira/bin/landing-pass halt --reason-file -|landing-pass halt
-bd -C /srv/spira/db show sp-xyz|bd show
-bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note
 git log --oneline -10|git log
 cat /var/log/spira/czar.log|cat
 ls -la /srv/spira/run/worktree|ls"
 
-CZAR_DENY="rm -rf /srv/spira/run/worktree|rm
+CZAR_DENY="bd -C /srv/spira/db show sp-xyz|bd show NOT granted (aeons reach the store only through work)
+bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note NOT granted (aeons reach the store only through work)
+rm -rf /srv/spira/run/worktree|rm
 systemctl restart spira-sentinel.service|systemctl restart
 systemctl start spira-sentinel.service|systemctl start
 systemctl stop spira-sentinel.service|systemctl stop
