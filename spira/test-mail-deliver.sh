@@ -226,9 +226,12 @@ run_notify() {
     return "$_rc"
 }
 
-asks()     { find "$MAIL/operator/new" "$MAIL/concierge/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
+ROUTED='Routed here from an operator ask'
+ask_files() { { find "$MAIL/operator/new" -type f 2>/dev/null; grep -rl "$ROUTED" "$MAIL/concierge/new" 2>/dev/null; } || true; }
+asks()     { ask_files | wc -l | tr -d ' '; }
 reset_run() {
-    rm -rf "$MAIL/operator" "$MAIL/concierge"
+    rm -rf "$MAIL/operator"
+    grep -rl "$ROUTED" "$MAIL/concierge/new" 2>/dev/null | xargs -r rm -f
     rm -f "$WDIR/"*.unhealthy "$WDIR/notify-health.escalated" 2>/dev/null
 }
 # An old unread message in the concierge mailbox (mtime = 1 hour ago).
@@ -289,8 +292,8 @@ backdate "$MD_UF"
 run_notify ACTIVE_STATE=inactive SPIRA_MAIL_READERS="concierge=echo wake" SPIRA_MAIL_UNREAD_AGE=0 || true
 
 total="$(asks)"
-liveness="$(grep -l 'stopped producing events' "$MAIL/operator/new/"* 2>/dev/null | wc -l | tr -d ' ')"
-aged="$(grep -l 'is not reading its mail' "$MAIL/operator/new/"* 2>/dev/null | wc -l | tr -d ' ')"
+liveness="$(ask_files | xargs -r grep -l 'stopped producing events' 2>/dev/null | wc -l | tr -d ' ')"
+aged="$(ask_files | xargs -r grep -l 'is not reading its mail' 2>/dev/null | wc -l | tr -d ' ')"
 
 is "4a: exactly two operator messages total" "2" "$total"
 is "4b: exactly one liveness message from watchd" "1" "$liveness"

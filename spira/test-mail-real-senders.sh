@@ -76,6 +76,7 @@ export SPIRA_BD="$STUB_BD"
 export SPIRA_DB="$TMP/db"
 tl_config SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB"
 
+newest_ask() { ls -t "$SPIRA_MAIL"/operator/new/* "$SPIRA_MAIL"/concierge/new/* 2>/dev/null | head -1; }
 unread() { echo $(( $(mail count operator 2>/dev/null) + $(mail count concierge 2>/dev/null) )); }
 
 echo
@@ -88,8 +89,7 @@ printf 'gate keeps failing in the real emitter test\nevery finished branch has b
     sentinel --land-escalate >/dev/null 2>&1
 after="$(unread)"
 is "land_escalate delivers exactly one message" "$((before + 1))" "$after"
-msg="$(ls -t "$SPIRA_MAIL/operator/new" 2>/dev/null | head -1)"
-body="$(cat "$SPIRA_MAIL/operator/new/$msg" 2>/dev/null)"
+body="$(cat "$(newest_ask)" 2>/dev/null)"
 want "land_escalate message names the reason"  "gate keeps failing"  "$body"
 want "land_escalate message carries a Default"  "## Default"          "$body"
 
@@ -195,8 +195,7 @@ for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
 done
 after="$(unread)"
 is "incident.sh SIN escalation delivers exactly one message" "$((before + 1))" "$after"
-msg="$(ls -t "$SPIRA_MAIL/operator/new" 2>/dev/null | head -1)"
-body="$(cat "$SPIRA_MAIL/operator/new/$msg" 2>/dev/null)"
+body="$(cat "$(newest_ask)" 2>/dev/null)"
 want "incident.sh SIN message carries a Default"     "## Default"  "$body"
 want "incident.sh SIN message names the recurrence"  "recurred"    "$body"
 
