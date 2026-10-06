@@ -59,7 +59,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         hotfix: None,
         landed_ref: "local/main".into(),
         settle: Duration::from_secs(3),
-        drain: Duration::from_secs(2700),
+        drain: Duration::from_secs(2700), // batch-job: bounded wait for a running gate to finish, defaults to the gate cap
         pre_activate: true,
         dry_run: false,
         stage: None,
