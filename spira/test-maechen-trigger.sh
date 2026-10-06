@@ -768,6 +768,12 @@ is     "threshold=3 exits 0 — home repo not double-counted" 0 "$rc_wpjm2"
 nowant "no create at threshold=3 — exactly 2 landings, not 4" \
     "create" "$(cat "$BD_LOG")"
 
+# SPIRA_HOME_REPO RESTORED (pattern 10): tl_config persists for the rest of the suite, unlike
+# the per-call env prefix this replaced — "home-wpjm" pinned above for the db-wpjm regression
+# must not leak into the lane-guard tests below, which assert against SELFMAP/NOLANEMAP (named
+# "testrepo"/"dev-repo") and need the fixture's own default home repo, not this regression's.
+tl_config SPIRA_HOME_REPO=spira
+
 # ==========================================================================================
 echo
 echo "LANE GUARD: no repository admits maechen-sweep — trigger skips with one log line"
