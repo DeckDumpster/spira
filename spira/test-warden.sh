@@ -74,6 +74,7 @@ echo; echo "DEDUP: an open sweep suppresses filing (positive control: filing hap
 lc_bead READY sp-x deadbeef 0
 out="$(BD_LIST_OUTPUT='[{"id":"sp-x"}]' run_trigger)"; rc=$?
 is "dedup exits 0" 0 "$rc"
+echo "DEBUGOUT=[$out]"
 lack "no second bead" "create" "$(cat "$LOG")"
 
 echo; echo "DEDUP: a sweep the machine has seen handed on no longer suppresses filing"
