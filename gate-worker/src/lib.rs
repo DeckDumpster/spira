@@ -44,16 +44,20 @@ pub fn acquire_slot(dir: &Path, n: usize) -> Option<(usize, std::fs::File)> {
     None
 }
 
-/// Whether `home` is still the release its siblings' `current` link names. A home with no
-/// sibling `current` link (a dev checkout) is never superseded.
-pub fn release_is_current(home: &Path) -> bool {
-    let Some(parent) = home.parent() else { return true };
-    let link = parent.join("current");
-    match (std::fs::canonicalize(&link), std::fs::canonicalize(home)) {
-        (Ok(cur), Ok(me)) => cur == me,
-        (Err(_), _) => true,
-        (Ok(_), Err(_)) => false,
+/// Whether `path` lies in the release its releases directory's `current` link names. The
+/// release root is the nearest ancestor with a sibling `current` symlink, found on the
+/// canonical path so a path spelled through `current` itself still names its real release.
+/// A path under no such directory (a dev checkout) is never superseded.
+pub fn release_is_current(path: &Path) -> bool {
+    let Ok(real) = std::fs::canonicalize(path) else { return true };
+    for root in real.ancestors() {
+        let Some(parent) = root.parent() else { break };
+        let link = parent.join("current");
+        if std::fs::symlink_metadata(&link).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            return std::fs::canonicalize(&link).map(|cur| cur == root).unwrap_or(true);
+        }
     }
+    true
 }
 
 pub trait Gate {

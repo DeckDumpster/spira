@@ -269,3 +269,18 @@ fn release_currency_follows_the_sibling_current_link() {
     std::os::unix::fs::symlink("new", d.join("current")).unwrap();
     assert!(!release_is_current(&old));
 }
+
+#[test]
+fn a_path_inside_a_release_follows_the_release_not_its_subdirectory() {
+    let d = tmp("sub");
+    for r in ["old", "new"] {
+        std::fs::create_dir_all(d.join(r).join("spira")).unwrap();
+    }
+    std::os::unix::fs::symlink("old", d.join("current")).unwrap();
+    assert!(release_is_current(&d.join("old/spira")));
+    assert!(!release_is_current(&d.join("new/spira")));
+    assert!(release_is_current(&d.join("current/spira")));
+    std::fs::remove_file(d.join("current")).unwrap();
+    std::os::unix::fs::symlink("new", d.join("current")).unwrap();
+    assert!(!release_is_current(&d.join("old/spira")));
+}

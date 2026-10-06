@@ -18,8 +18,8 @@ use std::time::Duration;
 const USAGE: &str = "usage:
   release build <commit> [--repo R] [--target-dir T | --bin-dir D]
   release verify <sha> [--no-pre-activate]
-  release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS]
-  release rollback [--repo R] [--settle SECS]
+  release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS] [--drain-wait SECS]
+  release rollback [--repo R] [--settle SECS] [--drain-wait SECS]
   release prune [--keep N]
   release status
   release install-tarball <tarball> [--dry-run] [--settle SECS] [--skip-restart]
@@ -41,6 +41,7 @@ struct Args {
     hotfix: Option<String>,
     landed_ref: String,
     settle: Duration,
+    drain: Duration,
     pre_activate: bool,
     dry_run: bool,
     stage: Option<String>,
@@ -58,6 +59,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         hotfix: None,
         landed_ref: "local/main".into(),
         settle: Duration::from_secs(3),
+        drain: Duration::from_secs(2700), // batch-job: bounded wait for a running gate to finish, defaults to the gate cap
         pre_activate: true,
         dry_run: false,
         stage: None,
@@ -76,6 +78,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--bin-dir" => a.bin_dir = Some(val(x)?.into()),
             "--hotfix" => a.hotfix = Some(val(x)?),
             "--landed-ref" => a.landed_ref = val(x)?,
+            "--drain-wait" => a.drain = Duration::from_secs(val(x)?.parse().map_err(|_| "--drain-wait needs whole seconds".to_string())?),
             "--settle" => a.settle = Duration::from_secs(val(x)?.parse().map_err(|_| "--settle needs whole seconds".to_string())?),
             "--no-pre-activate" => a.pre_activate = false,
             "--dry-run" => a.dry_run = true,
@@ -390,7 +393,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "activate" | "rollback" => {
             let sc = RealSystemctl::from_env();
-            let ctx = Ctx { cfg: &cfg, sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle };
+            let ctx = Ctx { cfg: &cfg, sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain };
             if cmd == "activate" {
                 want(1)?;
                 let (s, p) = release::prune::activate_and_prune(&ctx, &rest[0], a.hotfix.as_deref()).map_err(fail)?;

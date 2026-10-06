@@ -47,6 +47,7 @@ fn main() -> ExitCode {
         eprintln!("gate-worker: SPIRA_HOME is unset");
         return ExitCode::FAILURE;
     };
+    let exe = std::env::current_exe().unwrap_or_else(|_| home.clone());
     let out = Reporter::stdout(None);
     let (s, repos) = match load_context(&home, &out) {
         Ok(x) => x,
@@ -112,9 +113,9 @@ fn main() -> ExitCode {
                 slot,
             };
             let filed = w.drain_while(&|| {
-                let current = release_is_current(&home);
+                let current = release_is_current(&exe);
                 if !current {
-                    println!("gate-worker: release {} is no longer current — exiting so the next tick runs the new one", home.display());
+                    println!("gate-worker: release {} is no longer current — exiting so the next tick runs the new one", exe.display());
                 }
                 current
             });

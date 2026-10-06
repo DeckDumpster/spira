@@ -28,6 +28,9 @@ pub struct Ctx<'a> {
     pub landed_ref: String,
     /// How long restarted units get to come up before they are checked.
     pub settle: Duration,
+    /// How long a running oneshot whose unit changed gets to finish its in-flight work and
+    /// exit before activation stops waiting for it.
+    pub drain: Duration,
 }
 
 /// A standing hotfix: the running system is on a commit that has not landed.
@@ -276,13 +279,19 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
     }
 
     let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), retired, ..Default::default() };
+    let mut draining = Vec::new();
     for c in &changes {
         if !c.unit.ends_with(".service") || !units::exec_changed(&c.old, &c.new) {
             continue;
         }
         match ctx.sc.state(&c.unit) {
             Ok(st) if is_up(&st.active) && st.kind != "oneshot" => out.restarted.push(c.unit.clone()),
-            Ok(_) => out.deferred.push(c.unit.clone()),
+            Ok(st) => {
+                if st.kind == "oneshot" && is_up(&st.active) {
+                    draining.push(c.unit.clone());
+                }
+                out.deferred.push(c.unit.clone());
+            }
             Err(e) => {
                 let undo = undo(ctx, &changes, prev.as_deref(), &[]);
                 return Err(format!("cannot read the state of {}: {e}; rolled back{undo}", c.unit));
@@ -319,7 +328,29 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
             failed.join("\n  ")
         ));
     }
+    drain(ctx, &draining);
     Ok(out)
+}
+
+/// Wait for each running oneshot of a changed unit to exit, so its next start runs the new
+/// release. The worker's own release check ends its pass between jobs; this only bounds how
+/// long the deploy waits for that, and a unit still running at the bound is named, not fatal.
+fn drain(ctx: &Ctx, units: &[String]) {
+    let deadline = std::time::Instant::now() + ctx.drain;
+    for u in units {
+        eprintln!("release: waiting for {u} to finish its pass on the previous release");
+        loop {
+            match ctx.sc.state(u) {
+                Ok(st) if is_up(&st.active) => {}
+                _ => break,
+            }
+            if std::time::Instant::now() >= deadline {
+                eprintln!("release: {u} still running its previous release after {}s; continuing", ctx.drain.as_secs());
+                break;
+            }
+            std::thread::sleep((ctx.drain / 20).clamp(Duration::from_millis(10), Duration::from_secs(1)));
+        }
+    }
 }
 
 fn restore_files(changes: &[Change]) -> Vec<String> {
