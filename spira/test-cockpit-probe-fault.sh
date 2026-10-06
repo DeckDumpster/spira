@@ -187,7 +187,7 @@ printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self
 
 tl_config SPIRA_RUN="$PD/repo/.runtime/spira" SPIRA_SNAP_STALE_S=60
 RENDER_ALL="$(env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$PD/repo" \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$PD/repo" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
     "$PANE" render-many "$FIXDIR" 0 0 2>/dev/null \
