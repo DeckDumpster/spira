@@ -166,7 +166,7 @@ if ! cargo build -q --profile release --workspace --config profile.release.incre
     exit 4
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
-rel_sha="$(target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
+rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
 export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
