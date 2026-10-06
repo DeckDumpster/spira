@@ -149,6 +149,7 @@ name = "beads-store"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -439,6 +440,7 @@ version = "1.0.0"
 dependencies = [
  "landing-pass",
  "libc",
+ "spira-config",
  "testkit",
 ]
 
@@ -628,6 +630,7 @@ name = "intent-report"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "tsd",
 ]
 
@@ -1424,6 +1427,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2",
+ "spira-config",
  "testkit",
  "toml",
 ]
@@ -1697,6 +1701,7 @@ dependencies = [
  "lifecycle",
  "serde",
  "serde_json",
+ "spira-config",
 ]
 
 [[package]]
