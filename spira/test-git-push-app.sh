@@ -118,12 +118,20 @@ EOF
 chmod +x "$BIN/git"
 
 rm -f "$TMP/git-args"
-tl_config SPIRA_RUN="$TMP/run" SPIRA_GH_APP_ID=99999 SPIRA_GH_APP_INSTALLATION_ID=11111
+tl_config SPIRA_RUN="$TMP/run"
+# queue-helpers git-push (queue/src/ops/helpers.rs git_push_cmd) reads SPIRA_GH_APP_ID and
+# SPIRA_GH_APP_INSTALLATION_ID with a raw std::env::var, deliberately: queue-helpers.rs's own
+# doc comment says this leaf binary resolves no harness context (bd, spira-lc, conf.sh) at
+# all, so a config problem elsewhere can never break a plain git/mail primitive. tl_config
+# only lands a registered key in the suite's SPIRA_TOML layer, which this binary never reads
+# — the plain env is the only door it has (one source of config, per Ryan 2026-10-05).
 (
     export PATH="$BIN:$PATH"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
+    export SPIRA_GH_APP_ID=99999
+    export SPIRA_GH_APP_INSTALLATION_ID=11111
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
     rm -f "$TMP/git-args"
@@ -141,7 +149,9 @@ echo
 echo "6. spira_git_push — plain git push when App creds are not configured"
 # =========================================================================
 rm -f "$TMP/git-args"
-tl_config SPIRA_RUN="$TMP/run" SPIRA_GH_APP_ID="" SPIRA_GH_APP_INSTALLATION_ID=""
+tl_config SPIRA_RUN="$TMP/run"
+# No SPIRA_GH_APP_ID/SPIRA_GH_APP_INSTALLATION_ID exported into this subshell at all (see
+# section 5's note) — app_configured in git_push_cmd reads them raw and unset is unset.
 (
     export PATH="$BIN:$PATH"
     export SPIRA_HOME="$HERE/.."
