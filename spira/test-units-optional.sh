@@ -52,7 +52,11 @@ _units() {
         done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
         path="$shadow"
     fi
-    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run"
+    # SPIRA_WATCHERS no longer derives from SPIRA_HOME (one source of config, per Ryan
+    # 2026-10-05): point it at the real manifest beside this suite, or units-install
+    # refuses outright ("no watcher manifest at /fixture/home/...").
+    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run" \
+        SPIRA_WATCHERS="$HERE/watchers"
     env -i \
         PATH="$path" \
         HOME="$HOME" \

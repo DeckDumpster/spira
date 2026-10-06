@@ -42,9 +42,15 @@ printf 'prerepo  | /opt/prerepo  | pr   | origin/main | | \n' >> "$MAP"
 SCOPE=spira
 
 run_sweep() {
+    # SPIRA_CHAMBER no longer derives from SPIRA_HOME (one source of config, per Ryan
+    # 2026-10-05): the unclaimable detector shells out to `sentinel --detect-unclaimable`,
+    # which sources lib.sh's fayth_names/fayth_get shims onto spira-config's chamber
+    # registry — point it at the real chamber beside this suite, or PARTS/ALL_PARTS come
+    # back empty and every bead reads as claimed by nobody being checked at all.
     tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
         SPIRA_REPO_MAP="$MAP" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_BD="${SPIRA_BD:-bd}"
+        SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_BD="${SPIRA_BD:-bd}" \
+        SPIRA_CHAMBER="$HERE/chamber"
     # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
     # the real one) is exec'd as groomer's own child and reads them as raw shell
     # variables, never through spira-config — tl_config's declaration never reaches it.
@@ -160,7 +166,8 @@ echo "AFTER REAL RUN — detector returns only unclaimable and described unmappe
 # ==========================================================================================
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$MAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE"
+    SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE" \
+    SPIRA_CHAMBER="$HERE/chamber"
 after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \

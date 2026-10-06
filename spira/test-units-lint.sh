@@ -80,8 +80,14 @@ printf 'test-units-lint.sh\n'
 # the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
 # SPIRA_HOME is exactly what the comment below this block is testing).
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD="" \
-    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential"
+    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" SPIRA_DB="$RUN/db"
+# SPIRA_LC_PASSWORD_FILE above no longer reaches units-install's render for this key: it is
+# PROCEDURAL (spira_config::resolve::lc_credential_default), computed straight from
+# XDG_CONFIG_HOME/HOME with no environment-override rung at all (one source of config, per
+# Ryan 2026-10-05) — point XDG_CONFIG_HOME under $RUN so the computed default lands
+# somewhere paths_are_configured() accepts, instead of this suite's own $TMP/home.
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$CONF" \
+    XDG_CONFIG_HOME="$RUN/xdg-config" \
     SPIRA_HOME="$CLONE/spira" units-install --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
@@ -182,8 +188,12 @@ printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s
 # reaches it. Left to the conf file alone, @SPIRA_PROD_ROOT@ fell back to dirname(SPIRA_HOME)
 # — this container's own real checkout root, not PRODROOT — so ExecStart pointed at this
 # box's /workspace/bin/sentinel (not yet built in this pass) instead of PRODROOT/bin's stub.
+# SPIRA_MAIL no longer derives from SPIRA_RUN (one source of config, per Ryan 2026-10-05):
+# left to the fixture's own default, install's own "mail ensure concierge" step tries to
+# create the mailbox under the fictional /fixture/home/... tree and refuses with
+# "Permission denied".
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" \
-    SPIRA_PROD="$PRODROOT/spira"
+    SPIRA_PROD="$PRODROOT/spira" SPIRA_MAIL="$RUN/mail"
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/install.conf" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
     units-install > "$TMP/install.out" 2>&1
