@@ -144,7 +144,6 @@ echo "one line per watcher, and nothing else — the positive control"
 # a real backlog, so silence later is about the case and not about the fixture.
 out="$(hook SessionStart startup)"; rc=$?
 is  "the hook exits clean"                       "0" "$rc"
-printf 'DEBUG rc=%s out=[%s]\n' "$rc" "$out" > "$HERE/DEBUG_OUT.txt"
 has "it names itself and how to re-attach"       "$out" "## Spira watchers — re-attach with:"
 has "the re-attach command names watchd tail"    "$out" "watchd tail <name>"
 has "the answers row is there, with its count"   "$out" "answers"
@@ -428,6 +427,8 @@ rm -f "$RUN/watchd/concierge-inbox.log"
 # SPIRA_CONCIERGE were somehow also set.
 aeon_out="$(hook SessionStart startup SPIRA_AEON=mindy SPIRA_CONCIERGE=1)"
 is "an aeon session gets nothing, even with SPIRA_CONCIERGE set" "" "$aeon_out"
+
+is "DEBUG early out dump" "__DEBUG_MARKER__" "$out"
 
 echo
 tl_summary
