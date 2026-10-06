@@ -473,6 +473,10 @@ is "SPIRA_MAIL_MUTE=1 sendmail: new/ does not grow" "$conc_new_before" \
 is "SPIRA_MAIL_MUTE=1 sendmail: recorded in cur/ instead" "$((conc_cur_before + 1))" \
     "$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
 
+# tl_config persists for the rest of the suite — MUTE=1 set above for the mute section would
+# otherwise silently discard every "lands in new/" assertion below into cur/ instead.
+tl_config SPIRA_MAIL_MUTE=0
+
 echo
 echo "escalation class: an aeon's operator ask must declare one (law-escalate-decisions-not-problems)"
 CLS_BODY="$(printf '## Question\nwhich shape?\n\n## Default\nthe crate\n\n## Class basis\nneeds a credential\n')"
