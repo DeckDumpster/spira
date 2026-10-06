@@ -56,8 +56,17 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     # copies of SPIRA_RUN/SPIRA_REPO_MAP are kept too — this file's own code still reads
     # them directly (fa_run_aeon's "$SPIRA_RUN/worktree", the repo-map write below).
     SPIRA_RUN="$FA_RUN"; SPIRA_REPO_MAP="$FA_REPO_MAP"; SPIRA_MAIL="$FA_TMP/mail"
+    # SPIRA_ASK_LABEL: the complete fixture declares "needs-ryan"; every caller in this
+    # fixture and its suite (the claude shims' own `${SPIRA_ASK_LABEL:-needs-operator}`
+    # fallback — never reached anyway, since the model session's restricted env carries no
+    # SPIRA_ASK_LABEL at all — and builder.fayth's FAYTH_EXCLUDE_LABELS below) was written
+    # against "needs-operator". aeon's own ask_label() now resolves the registered key from
+    # the one source with no code-level default (per Ryan 2026-10-05), so it would otherwise
+    # disagree with every literal here and open_ask_blocker would never match the shim's
+    # decision bead. Declare the suite's own value so both sides agree.
+    SPIRA_ASK_LABEL="needs-operator"
     tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$FA_HOME/chamber" \
-        SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+        SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
     printf 'fixture | %s | push | origin/main | |\n' "$FA_REPO" > "$SPIRA_REPO_MAP"
     cat > "$FA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
