@@ -99,6 +99,14 @@ echo "DRY-RUN — three actions named, one report-only, described bead left alon
 # ==========================================================================================
 # Pair: sp-sw-lit (acted) / sp-sw-desc (not acted) both unmapped-repo.
 : > "$RUN/groom.log"
+DEBUGSENT="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
+    SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+    bash -c '. "$0" 2>&1; detect_unclaimable_ready' "$HERE/lib.sh" 2>&1)"
+echo "DEBUGSENT_RC=$? DEBUGSENT=[$DEBUGSENT]"
 out="$(run_sweep --dry-run)"
 is "dry-run: exits 0" 0 "$?"
 echo "DEBUGOUT=[$out]"
