@@ -211,6 +211,13 @@ sentinel_run() {
         sentinel --summon-pass
 }
 
+# The complete fixture declares queue_throttle_override="off" (a positive control of its
+# own, elsewhere) — ck7_throttled is `stamp_exists && override != "off"`, so that default
+# pins every pass in this suite unthrottled regardless of the stamp file below, and the
+# whole CHECK7 bypass this section exists to prove never fires. Declare the suite's own
+# "no override" value (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_QUEUE_THROTTLE_OVERRIDE=""
+
 # POSITIVE CONTROL: throttle stamp present, no express bead anywhere -> held at 0.
 testdb_reset
 testdb_seed <<'SEED'
