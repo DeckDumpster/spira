@@ -205,12 +205,19 @@ run_notify() {
     rm -f "$WDIR/notify-health.escalated"
     # The fake home's mail stub and the mock binaries go FIRST on PATH: watchd calls
     # mail and systemctl by name (sp-gypjk).
+    # SPIRA_MAIL is a registered key (declared via tl_config above, for watchd itself to
+    # resolve through SPIRA_TOML), but the FAKE_HOME mail stub above is a bash script that
+    # reads $SPIRA_MAIL raw from its own environment — watchd's "mail" subprocess inherits
+    # only what this env -i lists, and resolved config never gets forwarded to a child
+    # process as plain env, so the stub needs the plain copy too (one source of config,
+    # per Ryan 2026-10-05).
     env -i \
         HOME="$TMP/home" \
         PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$FAKE_HOME" \
         SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_MAIL="$MAIL" \
         "$WATCHD" notify 2>/dev/null || true
 }
 
