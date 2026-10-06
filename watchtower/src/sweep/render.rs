@@ -414,4 +414,118 @@ mod tests {
         assert!(!is_nominal(&d, 60));
         assert!(render(&d).contains("SLOW PROBES (rendered `?`, deadline hit): aeons alive / ready (bd) (>30s)"));
     }
+
+    fn rendered(pairs: &[(&str, &str)]) -> String {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        for (k, v) in pairs {
+            d.env.set(*k, *v);
+        }
+        render(&d)
+    }
+
+    const SENDING: [(&str, &str); 6] = [
+        ("SP_UNSENT", "SP_UNSENT"),
+        ("SP_UNSENT_OLDEST_H", "oldest in-flight (hours)"),
+        ("SP_BATCHED_STRANDED", "BATCHED with no open batch"),
+        ("SP_UNADOPTED", "strays (no bead, commits on base)"),
+        ("SP_ORPHAN_WORK", "orphan work (no bead, has commits)"),
+        ("SP_SENT_FAILED", "fiends (FAILED deletes, came back)"),
+    ];
+
+    fn sending_row(out: &str, label: &str) -> String {
+        out.lines()
+            .find(|l| l.trim_start().starts_with(label))
+            .map(|l| l.trim_start()[label.len()..].trim().to_string())
+            .unwrap_or_else(|| panic!("no row {label}"))
+    }
+
+    #[test]
+    fn each_sending_field_renders_the_value_its_key_holds() {
+        let pairs: Vec<(&str, &str)> = SENDING.iter().map(|(k, _)| (*k, "7")).collect();
+        let out = rendered(&pairs);
+        for (key, label) in SENDING {
+            if key == "SP_UNSENT" {
+                assert_eq!(sending_row(&out, "unsent branches (total)"), "7");
+            } else {
+                assert_eq!(sending_row(&out, label), "7", "{key}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_sending_field_with_no_key_renders_a_question_mark() {
+        let out = rendered(&[]);
+        assert_eq!(sending_row(&out, "unsent branches (total)"), "?");
+        for (_, label) in &SENDING[1..] {
+            assert_eq!(sending_row(&out, label), "?", "{label}");
+        }
+    }
+
+    #[test]
+    fn a_zero_in_a_sending_field_renders_as_zero_never_a_question_mark() {
+        let pairs: Vec<(&str, &str)> = SENDING.iter().map(|(k, _)| (*k, "0")).collect();
+        let out = rendered(&pairs);
+        assert_eq!(sending_row(&out, "unsent branches (total)"), "0");
+        for (_, label) in &SENDING[1..] {
+            assert_eq!(sending_row(&out, label), "0", "{label}");
+        }
+    }
+
+    #[test]
+    fn the_repo_label_signs_render_a_value_a_zero_and_an_unread_key_distinctly() {
+        let out = rendered(&[("SP_REPO_UNMAPPED", "3"), ("SP_REPO_ABSENT", "7")]);
+        assert!(out.contains("repo: unmapped 3 \u{b7} absent 7"));
+        let out = rendered(&[("SP_REPO_UNMAPPED", "0"), ("SP_REPO_ABSENT", "0")]);
+        assert!(out.contains("repo: unmapped 0 \u{b7} absent 0"));
+        let out = rendered(&[]);
+        assert!(out.contains("repo: unmapped ? \u{b7} absent ?"));
+    }
+
+    #[test]
+    fn the_duplicate_ref_signs_render_a_value_a_zero_and_an_unread_key_distinctly() {
+        let out = rendered(&[("SP_DUP_REFS", "3"), ("SP_DUP_BEADS", "5")]);
+        assert!(out.contains("duplicate incident refs             3      (surplus beads: 5)"));
+        let out = rendered(&[("SP_DUP_REFS", "0"), ("SP_DUP_BEADS", "0")]);
+        assert!(out.contains("duplicate incident refs             0 "));
+        let out = rendered(&[]);
+        assert!(out.contains("duplicate incident refs             ?      (surplus beads: ?)"));
+    }
+
+    #[test]
+    fn an_old_snapshot_without_the_ghost_key_renders_it_unread_not_clear() {
+        let out = rendered(&[("SP_STRANDS", "7")]);
+        assert!(out.contains("stranded (claimed, nobody home)     ?"));
+    }
+
+    #[test]
+    fn a_drain_renders_its_banner_a_minutes_field_and_not_a_halt() {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        d.drain = Drain::Draining { since: "2026-09-08 20:02:00 UTC".into(), mins: Some(5) };
+        let out = render(&d);
+        assert!(out.contains("!! DRAINING since 2026-09-08 20:02:00 UTC (5m)"));
+        assert!(out.contains("Summons gated"));
+        assert!(!out.contains("HALTED") && !out.contains("No incidents are filed"));
+        assert!(out.contains("draining since (? = cannot read)    5      minutes"));
+    }
+
+    #[test]
+    fn an_unreadable_drain_age_renders_a_question_mark_and_no_drain_renders_zero() {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        d.drain = Drain::Draining { since: "not-a-timestamp".into(), mins: None };
+        let out = render(&d);
+        assert!(out.contains("!! DRAINING since not-a-timestamp (?m)"));
+        assert!(out.contains("draining since (? = cannot read)    ?      minutes"));
+        let out = render(&SweepData::fixture_nominal(1_700_000_000));
+        assert!(!out.contains("DRAINING"));
+        assert!(out.contains("draining since (? = cannot read)    0      minutes"));
+    }
+
+    #[test]
+    fn a_halted_render_still_carries_the_body_and_says_no_incidents_are_filed() {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        d.halt = Some(super::super::collect::Halt { since: "2026-09-08T01:23:45Z".into(), why: None });
+        let out = render(&d);
+        assert!(out.contains("No incidents are filed"));
+        assert!(out.contains("N workers pull"));
+    }
 }
