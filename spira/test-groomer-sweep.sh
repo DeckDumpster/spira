@@ -101,6 +101,7 @@ echo "DRY-RUN — three actions named, one report-only, described bead left alon
 : > "$RUN/groom.log"
 out="$(run_sweep --dry-run)"
 is "dry-run: exits 0" 0 "$?"
+echo "DEBUGOUT=[$out]"
 
 want "dry-run: OVERSEER action for needs-ryan bead"  "OVERSEER sp-sw-nr"   "$out"
 want "dry-run: UNSTUCK action for ci-stuck bead"     "UNSTUCK sp-sw-ci"    "$out"
