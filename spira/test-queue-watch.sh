@@ -56,13 +56,19 @@ ln -s "$HERE/conf.d" "$FX/conf.d"
 
 # A real base: an origin with main, and a checkout whose origin/main a tip can be an
 # ancestor of — "landed" is verified against the commit graph, never taken from the forge.
-git init -q --bare "$T/origin.git"
+# -b main on the bare init (pattern 9 — nothing derives a repo's base any more, and
+# landref's declared-base rung refuses outright on a verify_ref() mismatch rather than
+# falling through): an unqualified `git init --bare` picks up init.defaultBranch, which on
+# this host is not guaranteed to be "main", and base="origin/main" below is literal. A fetch
+# after the pushes makes origin/main resolve locally too — push alone never updates it.
+git init -q --bare -b main "$T/origin.git"
 git clone -q "$T/origin.git" "$T/repo" 2>/dev/null
 git -C "$T/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
 git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
 git -C "$T/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "land sp-a"
 TIP_A="$(git -C "$T/repo" rev-parse HEAD)"
 git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
+git -C "$T/repo" fetch -q origin 2>/dev/null
 
 cat > "$FX/spira.toml" <<EOF
 [repo.q]
@@ -150,7 +156,17 @@ rm -f "$Q/open"
 printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"},{"bead_id":"sp-c"}]' > "$FX/certified.json"
 EOF
 
-tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh"
+# SPIRA_DB undeclared resolves to the complete fixture's own /fixture/home/spira/db
+# (nonexistent): queue-watch falls back to cfg("SPIRA_DB") for --db when the flag is not
+# passed, and read_beads() does `cmd.current_dir(db)` before exec'ing SPIRA_BD — a
+# nonexistent cwd fails Command::spawn() with the SAME "No such file or directory (os
+# error 2)" text a missing binary would, which is why "bd show" looked like it couldn't
+# find $FX/bd even though that file exists and is executable.
+# SPIRA_QUEUE_DIR undeclared resolves to the complete fixture's own
+# /fixture/home/spira/run/queue (nonexistent, and non-empty so the "" -> run.join("queue")
+# fallback in queue-watch/src/main.rs never fires) — every "$Q/open" this suite writes under
+# "$RUN/queue/<repo>" went unread, reading as "no batch open" rather than a real refusal.
+tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh" SPIRA_DB="" SPIRA_QUEUE_DIR="$RUN/queue"
 export FX SPIRA_LC_BIN="$FX/spira-lc"
 out="$(timeout 30 "$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 printf '%s\n' "$out" | sed 's/^/    | /'
@@ -268,7 +284,10 @@ export SPIRA_INCIDENT_SH="$FX/incident.sh"
 # QUEUE_WATCH_HEAD_STALL_SECS is set absurdly high so a "stall" firing here can only be the
 # queued-threshold path — proof the two are judged separately, not that the smaller number
 # always wins.
-tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1
+# SPIRA_QUEUE_DIR persists from the earlier section's "$RUN/queue" (tl_config persists for
+# the rest of the suite, pattern 10) — this section's own run dir is "$SRUN", not "$RUN".
+tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1 \
+    SPIRA_QUEUE_DIR="$SRUN/queue"
 sout="$(QUEUE_WATCH_HEAD_STALL_SECS=100000000 \
     timeout 30 "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"
 printf '%s\n' "$sout" | sed 's/^/    | /'
