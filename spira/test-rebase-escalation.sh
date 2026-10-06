@@ -48,13 +48,22 @@ testdb_up rebase-escalation || { echo "test-rebase-escalation: could not build a
 RUN="$TMP/run"; mkdir -p "$RUN"
 export SPIRA_HOME="$HERE"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
-# SPIRA_CONCIERGE_INBOX EXPLICITLY: landing-pass's mail send to "concierge" runs
-# inbox-append.sh (per SPIRA_MAIL_READERS's default), which resolves SPIRA_CONCIERGE_INBOX
-# from config — the complete fixture's own value is a fixed, unwritable "/fixture/home/..."
-# path now, hence "mkdir /fixture: Permission denied" and an empty mail body downstream.
 tl_config SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
     SPIRA_ASK_LABEL="needs-operator" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_MUTE=0 \
     SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
+# PLAIN BASH VARS TOO (one source of config, per Ryan 2026-10-05): `. testdb.sh` above
+# sources conf.sh, which resolves every registered key from $SPIRA_TOML into a bash
+# variable OF THE SAME NAME at that moment — before the tl_config call just above has
+# written this suite's override layer. landing-pass/mail (compiled binaries) re-read
+# $SPIRA_TOML fresh on every invocation and see the override fine, but this suite's own
+# body_of/count_new/reset_mail/needs_ryan_count helpers below read the bash variables
+# $SPIRA_MAIL/$SPIRA_ASK_LABEL directly, which are still conf.sh's stale, pre-override
+# values ("/fixture/home/.../mail", "needs-ryan") — hence reset_mail's
+# "mkdir: cannot create directory '/fixture': Permission denied" and body_of/count_new
+# always reading an empty, wrong mailbox. Reassign them here so this script's own shell
+# code agrees with what it just told the binaries.
+SPIRA_MAIL="$TMP/mail"
+SPIRA_ASK_LABEL="needs-operator"
 
 ask_rebase_loop() {   # ask_rebase_loop <id> <branch> <repo> <n> <conflicts> <others>
     landing-pass ask-rebase-loop "$1" "$2" "$3" "$4" "$5" "$6"

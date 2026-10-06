@@ -80,12 +80,20 @@ printf 'test-units-lint.sh\n'
 # the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
 # SPIRA_HOME is exactly what the comment below this block is testing).
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD="" \
-    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" SPIRA_DB="$RUN/db"
+    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" SPIRA_DB="$RUN/db" SPIRA_DOLT_DATA=""
 # SPIRA_LC_PASSWORD_FILE above no longer reaches units-install's render for this key: it is
 # PROCEDURAL (spira_config::resolve::lc_credential_default), computed straight from
 # XDG_CONFIG_HOME/HOME with no environment-override rung at all (one source of config, per
 # Ryan 2026-10-05) — point XDG_CONFIG_HOME under $RUN so the computed default lands
 # somewhere paths_are_configured() accepts, instead of this suite's own $TMP/home.
+# SPIRA_DOLT_DATA="" (one source of config, per Ryan 2026-10-05): the complete fixture
+# declares a non-empty dolt_data, so manifest.rs's dolt-data gate — previously closed by an
+# unset/derived-empty default — now renders dolt-tmp-prune.service/.timer into this pass too.
+# That unit is a sanctioned, documented exception to law-isolate-greedy-work-in-vms (it
+# genuinely carries CPUQuota=/Nice=/IOSchedulingClass= on purpose, sp-n1l7y) that this
+# suite's render fixture never meant to exercise — it checks three specific "prod" units plus
+# the watch template, not dolt's own unit. Declaring it empty restores this suite's original,
+# pre-migration scope instead of weakening the global "no CPUQuota=" assertion below.
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$CONF" \
     XDG_CONFIG_HOME="$RUN/xdg-config" \
     SPIRA_HOME="$CLONE/spira" units-install --render 2>"$TMP/render.err")"
@@ -100,11 +108,23 @@ block() {  # block <unit-name> -> its rendered content
 
 # EVERY PATH IN A RENDERED UNIT MUST COME FROM CONFIGURATION. Both roots are pinned to
 # non-defaults above, so a path written as a literal in a template cannot pass by coincidence.
+#
+# $SPIRA_TOML ITSELF IS ALSO AN ALLOWED VALUE (one source of config, per Ryan 2026-10-05):
+# every unit now carries `Environment=SPIRA_TOML=@SPIRA_TOML@` (sp-v62vn follow-up — the
+# launched process reaches its config the same way this installer did), so its literal value
+# — this suite's own base:override pair, neither of which lives under $CLONE or $RUN — shows
+# up as a "path" in every rendered unit. That is the suite's own configuration passed through
+# unchanged, not a template literal, so it is exempted by exact match only — a stray real path
+# that merely starts with one half of $SPIRA_TOML still gets caught.
 paths_are_configured() {  # paths_are_configured <label> <unit-text>
     local stray="" p
     while IFS= read -r p; do
         [ -n "$p" ] || continue
-        case "$p" in "$CLONE"|"$CLONE"/*|"$RUN"|"$RUN"/*) ;; *) stray="$stray $p" ;; esac
+        case "$p" in
+            "$CLONE"|"$CLONE"/*|"$RUN"|"$RUN"/*) ;;
+            "$SPIRA_TOML") ;;
+            *) stray="$stray $p" ;;
+        esac
     done < <(sed 's|file://|file:|' <<< "$2" | grep -oE '[=:]/[^ ]+' | sed 's/^[=:]//')
     is "$1: every path in it came from configuration" "" "$stray"
 }

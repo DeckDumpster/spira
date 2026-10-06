@@ -126,7 +126,7 @@ BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME/chamber"; ln -s
 cat > "$BARRIER_HOME/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
-printf locked > "$LOCKED_FIFO"
+printf 'locked\n' > "$LOCKED_FIFO"
 read -r _ < "$PROCEED_FIFO"
 ( flock -x 9; n=\$(cat "$COUNT_FILE"); echo \$((n + 1)) > "$COUNT_FILE" ) 9>"$COUNT_FILE.lock"
 cat >/dev/null

@@ -141,7 +141,15 @@ run_concierge_brief() {
     # SPIRA_HOME any more (sfail round 2, pattern 6) — without this fx.fayth is never found.
     # SPIRA_DB via tl_config too (same pattern 3/7 as rule.sh above): concierge.sh sources
     # conf.sh, whose resolve --sh-all would otherwise overwrite the plain env value below.
-    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_DB="$DB"
+    # SPIRA_STATUTE_CORE / SPIRA_STATUTE_CORE_LOCAL (one source of config, per Ryan
+    # 2026-10-05): the complete fixture declares real slugs for both (e.g.
+    # law-absence-needs-a-positive-control) so every registered key is non-empty. This
+    # fixture's bd store only ever holds law-dbdown-seed, so concierge.sh's brief found
+    # every core slug missing — "demoted to the index" — and refused with rc=1 even against
+    # the reachable, non-empty-store positive control. Nothing derives these empty any more,
+    # so this suite must say so itself, matching the pre-migration behaviour of an unset env.
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_DB="$DB" \
+        SPIRA_STATUTE_CORE="" SPIRA_STATUTE_CORE_LOCAL=""
     SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
         bash "$CONCIERGE_SH" brief 2>&1
 }
