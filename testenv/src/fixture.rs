@@ -99,7 +99,6 @@ pub const IMAGE_PATH: &str =
 const CONFIGURE_SCRIPT: &str = r#"set -eu
 sed -e "s#/fixture/home/spira/spira-releases/current#$SPIRA_RELEASE#g" -e "s#/fixture/home#$HOME#g" "$CONFIGURE_FIXTURE" > "$CONFIGURE_OUT.tmp"
 set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OUT.tmp" >/dev/null; }
-set_key instance "$CONFIGURE_INSTANCE"
 set_key prod "$CONFIGURE_PROD"
 set_key chamber "$CONFIGURE_PROD/chamber"
 set_key ctrl "$CONFIGURE_RUN/control"
@@ -474,7 +473,6 @@ impl<'a> Session<'a> {
         env.extend([
             kv("CONFIGURE_OUT", self.config_toml()),
             kv("CONFIGURE_FIXTURE", format!("{WORKSPACE}/spira-config/tests/fixtures/complete.toml")),
-            kv("CONFIGURE_INSTANCE", &self.instance),
             kv("CONFIGURE_PROD", self.in_release("spira")),
             kv("CONFIGURE_RUN", self.batch_run()),
             kv("CONFIGURE_TESTDB_DATA", self.testdb_data()),
