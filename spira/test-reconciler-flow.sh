@@ -289,8 +289,9 @@ emit_landed rcf-base-2 7000
 emit_landed rcf-recent 300
 emit_waiting rcf-c1 60
 write_flow_doc 3.0 999999
-tl_config SPIRA_FLOW_BASELINE_HOURS=2
-run_pass
+# The 2h baseline is THIS pass only (tl_layer): a tl_config would persist into section 14,
+# whose 24h report-only warm-up then reads as warmed after 2h.
+SPIRA_TOML="$(tl_layer SPIRA_FLOW_BASELINE_HOURS=2)" run_pass
 is "a configured floor fires even when the baseline ratio alone would not" gap "$(status_of flow:velocity:queue status)"
 
 # ============================================================================
@@ -570,7 +571,6 @@ advance 3
 run_pass
 is "confirmed past its gap grace, but still report-only" True "$(status_of flow:rework is_gap)"
 is "still no alert — report-only until 24h of history exist" "0" "$(mail_count_for flow:rework)"
-echo "# DEBUG pass-out:"; sed "s/^/# /" "$T/pass-out.log" | tail -12; echo "# DEBUG mail:"; sed "s/^/# /" "$MAIL_LOG" | head -20; echo "# DEBUG rework rows:"; grep "flow:rework" "$SPIRA_RUN"/tsd/reconciler-status.jsonl 2>/dev/null | tail -3 | sed "s/^/# /"
 spira-config unset spira.flow_rework_window_hours "$_TL_CONF_OVERRIDE" >/dev/null
 
 # ============================================================================
