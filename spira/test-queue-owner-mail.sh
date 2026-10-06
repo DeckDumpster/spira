@@ -64,20 +64,21 @@ chmod +x "$SH/forge-fixture.sh"
 MAIL="$RUN/mail"
 
 queue() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${TESTDB_BD:-bd}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
-    SPIRA_MAIL="$MAIL" \
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/SPIRA_FORGE/SPIRA_MAIL are
+    # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config,
+    # not the env prefix below, which no process reads them from any more.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_MAIL="$MAIL"
+    SPIRA_HOME="$SH" \
         SPIRA_HOME="$SH" command queue "$@"
 }
 
 concierge_unread() {
     # mail is a compiled binary now (sp-ooh1k) — never `bash <path>`, which only ever
     # worked while this was a shell script. $SH is on PATH (below), so bare name resolves
-    # to the symlinked real binary staged there.
-    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" PATH="$SH:$PATH" mail count concierge 2>/dev/null
+    # to the symlinked real binary staged there. SPIRA_MAIL unchanged from queue()'s tl_config.
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" mail count concierge 2>/dev/null
 }
 
 echo "test-queue-owner-mail.sh"

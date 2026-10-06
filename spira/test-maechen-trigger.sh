@@ -140,21 +140,20 @@ now_ts="$(date +%s)"
 # Base environment shared by all runs. Individual tests override variables as needed.
 run_trigger() {
     : > "$BD_LOG"
+    tl_config SPIRA_BD="${SPIRA_BD_OVERRIDE:-$STUB_BD}" SPIRA_DB="$T/fixture.db" \
+        SPIRA_RUN="$RUNDIR" SPIRA_REPO_MAP="$SELFMAP" \
+        SPIRA_MAECHEN_LABEL="${SPIRA_MAECHEN_LABEL:-maechen-sweep}" \
+        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-spira}" \
+        SPIRA_MAECHEN_LANDING_INTERVAL="${SPIRA_MAECHEN_LANDING_INTERVAL:-25}" \
+        SPIRA_MAECHEN_MAX_GAP_SECONDS="${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}"
     env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="${SPIRA_BD_OVERRIDE:-$STUB_BD}" \
+        SPIRA_TOML="$SPIRA_TOML" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
         SPIRA_LC_BIN="$STUB_LC" \
         LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
-        SPIRA_REPO_MAP="$SELFMAP" \
-        SPIRA_MAECHEN_LABEL="${SPIRA_MAECHEN_LABEL:-maechen-sweep}" \
-        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-spira}" \
-        SPIRA_MAECHEN_LANDING_INTERVAL="${SPIRA_MAECHEN_LANDING_INTERVAL:-25}" \
-        SPIRA_MAECHEN_MAX_GAP_SECONDS="${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}" \
         "$TRIGSH" 2>&1
 }
 
@@ -289,19 +288,16 @@ printf 'nonmatch | %s | push | origin/main | | true | self\n' "$NONMATCH_REPO" >
 # Use a far-future gap threshold to doubly ensure only the landing trigger is tested.
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$NONMATCH_MAP" SPIRA_MAECHEN_LABEL="maechen-sweep" \
+    SPIRA_SCOPE_LABEL="spira" SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999
 out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
+        SPIRA_TOML="$SPIRA_TOML" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="[]" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$NONMATCH_REPO" \
-        SPIRA_REPO_MAP="$NONMATCH_MAP" \
-        SPIRA_MAECHEN_LABEL="maechen-sweep" \
-        SPIRA_SCOPE_LABEL="spira" \
-        SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-        SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
         "$TRIGSH" 2>&1)"; rc=$?
 is   "non-matching commits do not fire"   0 "$rc"
 nowant "no create for non-matching"       "create" "$(cat "$BD_LOG")"
@@ -375,21 +371,15 @@ echo
 echo "ERROR: bd create fails — exit code is 1"
 # ==========================================================================================
 printf '0\n' > "$WATERMARK_FILE"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+tl_config SPIRA_BD="$FAIL_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=999
+out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$FAIL_BD" \
+        SPIRA_TOML="$SPIRA_TOML" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="[]" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
-        SPIRA_REPO_MAP="$SELFMAP" \
-        SPIRA_MAECHEN_LABEL="maechen-sweep" \
-        SPIRA_SCOPE_LABEL="spira" \
-        SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-        SPIRA_MAECHEN_LANDING_INTERVAL=999 \
         "$TRIGSH" 2>&1)"; rc=$?
 is   "bd create failure exits 1"       1        "$rc"
 want "failure log mentions ERROR"      "ERROR"  "$out"
@@ -402,19 +392,15 @@ echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_MAECHEN_LABEL are used"
 # default passes even if the code has the literal written in.
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="myproject" SPIRA_MAECHEN_LABEL="retro" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=999
 out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
+        SPIRA_TOML="$SPIRA_TOML" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="[]" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
-        SPIRA_REPO_MAP="$SELFMAP" \
-        SPIRA_SCOPE_LABEL="myproject" \
-        SPIRA_MAECHEN_LABEL="retro" \
-        SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-        SPIRA_MAECHEN_LANDING_INTERVAL=999 \
         "$TRIGSH" 2>&1)"; rc=$?
 is   "custom labels exits 0"                       0            "$rc"
 want "custom scope label in create"                "myproject"  "$(cat "$BD_LOG")"
@@ -431,19 +417,15 @@ echo "LABELS: empty SPIRA_SCOPE_LABEL — no leading comma"
 # ==========================================================================================
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="" SPIRA_MAECHEN_LABEL="maechen-sweep" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=999
 out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
+        SPIRA_TOML="$SPIRA_TOML" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="[]" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
-        SPIRA_REPO_MAP="$SELFMAP" \
-        SPIRA_SCOPE_LABEL="" \
-        SPIRA_MAECHEN_LABEL="maechen-sweep" \
-        SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-        SPIRA_MAECHEN_LANDING_INTERVAL=999 \
         "$TRIGSH" 2>&1)"; rc=$?
 is     "empty scope exits 0"                0 "$rc"
 nowant "no leading comma in --label"        ",maechen-sweep" "$(grep 'create' "$BD_LOG" || true)"
@@ -500,19 +482,15 @@ REPOMAP_B4T="$T/repomap-b4t"
 printf 'home-b4t | %s | push | origin/main | | true | self\nnoremote|%s|\ncounted|%s|\n' \
     "$HOME_B4T" "$NOREMOTE_B4T" "$COUNTED_B4T" > "$REPOMAP_B4T"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$REPOMAP_B4T" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
 out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
+    SPIRA_TOML="$SPIRA_TOML" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$HOME_B4T" \
-    SPIRA_REPO_MAP="$REPOMAP_B4T" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     "$TRIGSH" 2>&1)"; rc_b4t=$?
 # (a) The arithmetic-error message must not appear — log() must not pollute $(...) capture.
 nowant "no 'value too great for base' from log stdout capture" \
@@ -573,19 +551,15 @@ REPOMAP_3LJK="$T/repomap-3ljk"
 printf 'home-3ljk | %s | push | origin/main | | true | self\ngitea-repo|%s|\n' \
     "$HOME_3LJK" "$GITEA_REPO" > "$REPOMAP_3LJK"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$REPOMAP_3LJK" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
 out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
+    SPIRA_TOML="$SPIRA_TOML" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$HOME_3LJK" \
-    SPIRA_REPO_MAP="$REPOMAP_3LJK" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     "$TRIGSH" 2>&1)"; rc_3ljk=$?
 nowant "no 'cannot resolve base ref' for gitea-remote repo" \
     "cannot resolve base ref" "$out_3ljk"
@@ -614,12 +588,12 @@ git -C "$LAND_FORM_REPO" rev-parse HEAD > "$LAND_FORM_REPO/.git/refs/remotes/ori
 
 printf 'land-form | %s | push | origin/main | | true | self\n' "$LAND_FORM_REPO" > "$T/map-land-form"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$T/map-land-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
 out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
-    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$LAND_FORM_REPO" \
-    SPIRA_REPO_MAP="$T/map-land-form" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_REPO="$LAND_FORM_REPO" \
     "$TRIGSH" 2>&1)"; rc_lf=$?
 is   "spira:land form: exits 0"         0        "$rc_lf"
 want "spira:land form: bd create called" "create" "$(cat "$BD_LOG")"
@@ -644,12 +618,12 @@ git -C "$MERGE_FORM_REPO" rev-parse HEAD > "$MERGE_FORM_REPO/.git/refs/remotes/o
 
 printf 'merge-form | %s | push | origin/main | | true | self\n' "$MERGE_FORM_REPO" > "$T/map-merge-form"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$T/map-merge-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
 out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
-    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$MERGE_FORM_REPO" \
-    SPIRA_REPO_MAP="$T/map-merge-form" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_REPO="$MERGE_FORM_REPO" \
     "$TRIGSH" 2>&1)"; rc_mf=$?
 is   "merge forms: exits 0"              0        "$rc_mf"
 want "merge forms: bd create called"     "create" "$(cat "$BD_LOG")"
@@ -677,12 +651,12 @@ git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/o
 printf 'dedup-form | %s | push | origin/main | | true | self\n' "$DEDUP_FORM_REPO" > "$T/map-dedup-form"
 # Threshold=2: only 1 distinct bead landed — trigger must NOT fire.
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
 out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
-    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
-    SPIRA_REPO_MAP="$T/map-dedup-form" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_REPO="$DEDUP_FORM_REPO" \
     "$TRIGSH" 2>&1)"; rc_dd=$?
 is     "dedup forms: same-bead merge+land: exits 0"       0 "$rc_dd"
 nowant "dedup forms: same-bead pair does not reach 2"    "create" "$(cat "$BD_LOG")"
@@ -691,12 +665,12 @@ nowant "dedup forms: same-bead pair does not reach 2"    "create" "$(cat "$BD_LO
 git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "spira: land sp-fff6"
 git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/origin/main"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
 out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
-    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
-    SPIRA_REPO_MAP="$T/map-dedup-form" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_REPO="$DEDUP_FORM_REPO" \
     "$TRIGSH" 2>&1)"; rc_dd2=$?
 is   "dedup forms: two distinct beads reach threshold 2" 0        "$rc_dd2"
 want "dedup forms: trigger fires at 2 distinct beads"    "create" "$(cat "$BD_LOG")"
@@ -737,19 +711,15 @@ printf 'home-wpjm | %s | push | origin/main | | true | self\n' "$HOMEREPO_WPJM" 
 printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_HOME_REPO="home-wpjm" SPIRA_REPO_MAP="$REPOMAP_WPJM" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
 out_wpjm="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
+    SPIRA_TOML="$SPIRA_TOML" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$RUNDIR" \
-    SPIRA_HOME_REPO="home-wpjm" \
-    SPIRA_REPO_MAP="$REPOMAP_WPJM" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     "$TRIGSH" 2>&1)"; rc_wpjm=$?
 nowant "no 'cannot resolve base ref' when home repo resolved via map" \
     "cannot resolve base ref" "$out_wpjm"
@@ -759,19 +729,15 @@ want "bd create called"  "create" "$(cat "$BD_LOG")"
 # Run 2: threshold=3 (above 2 landings, below 4) — must NOT fire, proving no double-count.
 printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_HOME_REPO="home-wpjm" SPIRA_REPO_MAP="$REPOMAP_WPJM" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=3
 out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
+    SPIRA_TOML="$SPIRA_TOML" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$RUNDIR" \
-    SPIRA_HOME_REPO="home-wpjm" \
-    SPIRA_REPO_MAP="$REPOMAP_WPJM" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=3 \
     "$TRIGSH" 2>&1)"; rc_wpjm2=$?
 is     "threshold=3 exits 0 — home repo not double-counted" 0 "$rc_wpjm2"
 nowant "no create at threshold=3 — exactly 2 landings, not 4" \
@@ -789,19 +755,15 @@ printf 'testrepo | %s | push | origin/main | | | develop\n' "$TESTREPO" > "$NOLA
 printf 'dev-repo | /tmp/dev | push | origin/main | | | develop\n' >> "$NOLANEMAP"
 printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$NOLANEMAP" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=0
 out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
+    SPIRA_TOML="$SPIRA_TOML" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$NOLANEMAP" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=0 \
     "$TRIGSH" 2>&1)"; rc_ng=$?
 is     "no-lane map: trigger exits 0"         0 "$rc_ng"
 nowant "no-lane map: no bd create call"       "create" "$(cat "$BD_LOG")"
@@ -810,19 +772,15 @@ want   "no-lane map: logs skipping trigger"   "skipping trigger" "$out_ng"
 # POSITIVE CONTROL: testrepo is in SELFMAP with self mode — maechen-sweep is admitted.
 printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=0
 out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
+    SPIRA_TOML="$SPIRA_TOML" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=0 \
     "$TRIGSH" 2>&1)"; rc_lp=$?
 is   "lane-admitted map: trigger exits 0"       0        "$rc_lp"
 want "lane-admitted map: bd create is called"   "create" "$(cat "$BD_LOG")"

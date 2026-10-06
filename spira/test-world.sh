@@ -138,17 +138,16 @@ SC
 STOP_FAILS=""
 ACTIVE_TIMERS=""
 
+tl_config SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$TMP/no-db"
 world() {
     : > "$CALLS"
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-    SPIRA_DB="$TMP/no-db" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
         "$SH/world.sh" "$@" 2>&1
 }
 world_rc() {
     : > "$CALLS"
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-    SPIRA_DB="$TMP/no-db" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
         "$SH/world.sh" "$@" 2>&1; echo "$?"
 }

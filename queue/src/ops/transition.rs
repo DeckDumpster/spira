@@ -222,6 +222,7 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
     let _ = w.git.update_ref(&path, &archive, &ls_, None);
     let _ = w.git.branch_delete(&path, &base);
     w.lib.notify(
+        &c.s.mailbox,
         &name,
         "flipped to queue.forge",
         &format!("{name} moved from queue.local to queue.forge; base is now {new_base}. {base} archived at {archive}."),
@@ -305,6 +306,7 @@ pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     w.lib.notify(
+        &c.s.mailbox,
         &name,
         "flipped to queue.local",
         &format!("{name} moved from queue.forge to queue.local; base is now {new_base}, synced to {remote}/{fbranch} at {forge_sha}."),

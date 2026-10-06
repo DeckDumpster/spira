@@ -61,14 +61,15 @@ trap 'fix_store; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 # against the working store, then trusted — without being re-verified — by the calls made
 # after the store is broken. That is the actual shape of the scar: the box had already
 # passed its schema check once, then the server under it died.
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_BD="$(command -v bd-embedded)"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_BD="$(command -v bd-embedded)"
 [ -n "$SPIRA_BD" ] || bail "bd-embedded not on PATH"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD"
 
 bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 \
     || bail "could not seed the fixture"
 
-run_rule() { SPIRA_DB="$DB" SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" bash "$RULE_SH" "$@" 2>&1; }
+run_rule() { SPIRA_DB="$DB" bash "$RULE_SH" "$@" 2>&1; }
 
 echo "=== rule.sh: against the reachable store (also primes the schema-stamp cache) ==="
 
@@ -129,8 +130,9 @@ FAYTH_NAME=fx
 EOF
 
 run_concierge_brief() {
-    SPIRA_DB="$DB" SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" \
-        SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx SPIRA_MEMORIES_CACHE="" \
+    tl_config SPIRA_MEMORIES_CACHE=""
+    SPIRA_DB="$DB" \
+        SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
         bash "$CONCIERGE_SH" brief 2>&1
 }
 

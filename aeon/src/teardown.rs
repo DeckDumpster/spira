@@ -140,7 +140,7 @@ impl Run<'_> {
             thrash_tip = short_tip(self);
             let n = if thrash_note.is_empty() { "?" } else { &thrash_note };
             streak = self.sv("thrash_streak_bump", &s(&[&id, &thrash_tip, n])).text().trim().parse().unwrap_or(0);
-            i.thrash_charged = streak >= self.conf.n("SPIRA_THRASH_STREAK_CAP", 2);
+            i.thrash_charged = streak >= self.conf.i("SPIRA_THRASH_STREAK_CAP");
         } else if run.join(format!("{id}.lapsed")).exists() {
             i.lapsed = true;
             let body = std::fs::read_to_string(run.join(format!("{id}.lapsed"))).unwrap_or_default().trim_end_matches('\n').to_string();
@@ -192,7 +192,7 @@ impl Run<'_> {
         let d = decide::disposition(&i);
         let cause = d.requeue_cause.clone().unwrap_or_default();
         let status = d.ledger_status.clone();
-        let thrash_minutes = self.conf.n("SPIRA_THRASH_MINUTES", 20);
+        let thrash_minutes = self.conf.i("SPIRA_THRASH_MINUTES");
         match d.note {
             NoteKey::Capacity => {
                 let at: i64 = reset.trim().parse().unwrap_or(0);
@@ -332,7 +332,7 @@ impl Run<'_> {
                     if r.is_empty() { "no reason given".to_string() } else { r }
                 };
                 let streak: i64 = self.sv("thrash_streak_bump", &s(&[&id, &tip, &reason])).text().trim().parse().unwrap_or(0);
-                let cap = self.conf.n("SPIRA_THRASH_STREAK_CAP", 2);
+                let cap = self.conf.i("SPIRA_THRASH_STREAK_CAP");
                 self.bump_requeue(&cause);
                 self.release();
                 if streak >= cap {

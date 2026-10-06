@@ -43,16 +43,39 @@ ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
-# The "config file" block below exercises conf.sh's auto-convert-from-spira.conf path,
-# which calls spira-config by name on this suite's PATH (sp-gypjk).
+# THE ONE SOURCE OF CONFIG applies to conf.sh too: every registered key below is now read
+# only from SPIRA_TOML, never the environment, and there is no legacy spira.conf tier left
+# to auto-convert (spira-config::locate drops it entirely — "no legacy spira.conf, no
+# shipped example"). SPIRA_WATCHERS is registered and fixed for the whole suite, so it is
+# declared once into the suite's own override file (the second SPIRA_TOML layer testlib.sh
+# already set up).
+tl_config SPIRA_WATCHERS="$HARNESS/spira/watchers"
 
-# Load conf.sh in a subprocess and print the value of the requested key.
+# Load conf.sh in a subprocess and print the value of the requested key. "$@" simulates an
+# override: a registered SPIRA_* name is written into a fresh, call-scoped toml layer (the
+# same KEY -> spira.key convention tl_config uses) so conf.sh sees it through SPIRA_TOML;
+# a non-registered identity var (SPIRA_REPO) or a plain env var (XDG_DATA_HOME) still rides
+# the env -i prefix, since neither is a registered config key.
 conf_val() {
     local key="$1"; shift
-    env -i "$@" PATH="$PATH" HOME="$TMP/home" \
+    local override="$TMP/conf_val-override.toml"
+    printf '[spira]\n' > "$override"
+    local -a env_extra=()
+    local kv k v d
+    for kv in "$@"; do
+        k="${kv%%=*}"; v="${kv#*=}"
+        case "$k" in
+            SPIRA_REPO|XDG_DATA_HOME)
+                env_extra+=("$kv") ;;
+            *)
+                d="spira.$(printf '%s' "${k#SPIRA_}" | tr '[:upper:]' '[:lower:]')"
+                spira-config set "$d" "$v" "$override" >/dev/null ;;
+        esac
+    done
+    env -i SPIRA_TOML="$SPIRA_TOML:$override" "${env_extra[@]}" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${${key}:-}\"" 2>/dev/null
+    rm -f "$override"
 }
 
 # ==========================================================================
@@ -82,22 +105,12 @@ isne "default changes with SPIRA_WORKSPACES" "$prod_a" "$prod_b"
 want "default includes SPIRA_WORKSPACES path" "$ws_a" "$prod_a"
 want "default includes SPIRA_WORKSPACES path" "$ws_b" "$prod_b"
 
-# ==========================================================================
-echo
-echo "config file — SPIRA_PROD from spira.conf wins over derived default:"
-# ==========================================================================
-CONF_FILE="$TMP/spira.conf"
-conf_prod="$TMP/conf-chosen/spira"
-printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\n' "$conf_prod" > "$CONF_FILE"
-got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" \
-    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
-is "config-file SPIRA_PROD wins over derived default" "$conf_prod" "$got"
-
-# env still overrides the config file
-override="$TMP/env-overrides/spira"
-got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" SPIRA_PROD="$override" \
-    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
-is "env wins over config file" "$override" "$got"
+# DELETED: "config file — SPIRA_PROD from spira.conf wins over derived default" and "env
+# still overrides the config file". Both tested the legacy spira.conf tier, which
+# spira-config::locate no longer searches at all under the one-source-of-config law ("no
+# legacy spira.conf, no shipped example" — SPIRA_TOML is the only file a caller sees); a
+# SPIRA_CONF path pointing at a spira.conf-format file is no longer converted into a config
+# layer by anything, so there is no behaviour left here to assert.
 
 # ==========================================================================
 echo
@@ -132,9 +145,8 @@ isne "test SPIRA_RUN differs from prod SPIRA_RUN" "$run_prod" "$run_test"
 want "test SPIRA_RUN is instance-qualified"        "spira-test" "$run_test"
 
 # SPIRA_INSTANCE is exported so child processes see it without re-sourcing conf.sh.
-exported="$(env -i PATH="$PATH" HOME="$TMP/home" \
+exported="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     bash -c ". '$HARNESS/spira/conf.sh'; env | grep '^SPIRA_INSTANCE='" 2>/dev/null)"
 want "SPIRA_INSTANCE is exported" "SPIRA_INSTANCE=" "$exported"
 
@@ -213,9 +225,8 @@ WTEST_WT="$TMP/wtest-worktree-xyzzy"   # name that must NOT appear as SPIRA_HOME
 git -C "$WTEST_MAIN" worktree add -q "$WTEST_WT" -b wt-branch
 mkdir -p "$WTEST_WT/spira"
 ln -sf "$HERE/conf.sh" "$WTEST_WT/spira/conf.sh"
-wt_got="$(env -i PATH="$PATH" HOME="$TMP/home" \
+wt_got="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     bash -c ". '$WTEST_WT/spira/conf.sh'; printf '%s' \"\${SPIRA_HOME_REPO:-}\"" 2>/dev/null)"
 is    "worktree: SPIRA_HOME_REPO equals main repo name" "wtest-main-repo" "$wt_got"
 isne  "worktree: SPIRA_HOME_REPO is not the worktree dir name" "wtest-worktree-xyzzy" "$wt_got"
@@ -284,7 +295,7 @@ GH="$TMP/git-harness"
 mkdir -p "$GH/spira"
 ln -s "$HERE/conf.sh" "$GH/spira/conf.sh"
 git -C "$GH" init -q
-hook_repo="$(env -i PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
+hook_repo="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
     bash -c ". '$GH/spira/conf.sh' >/dev/null 2>&1; printf '%s' \"\$SPIRA_REPO\"" 2>/dev/null)"
 is "SPIRA_REPO is the checkout's top even with GIT_DIR exported" "$(cd "$GH" && pwd -P)" "$hook_repo"
 

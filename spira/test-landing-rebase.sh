@@ -94,9 +94,10 @@ notes_of() { B show "$1" 2>/dev/null; }
 
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
+    SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
@@ -195,7 +196,9 @@ git -C "$REPO" add shared-recut.txt
 git -C "$REPO" commit -q -m "main writes shared-recut.txt"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 : > "$EMITTED"
-out="$(SPIRA_REBASE_DECOMPOSE_FILES=1 landing)"
+tl_config SPIRA_REBASE_DECOMPOSE_FILES=1
+out="$(landing)"
+spira-config unset spira.rebase_decompose_files "$_TL_CONF_OVERRIDE" >/dev/null
 want "the pass escalates the partial-conflict branch"   "escalated sp-recut2" "$out"
 is   "the merge-base moved to current main after recut" yes "$(on_base sp-recut2)"
 is   "the bead stays closed"                            closed "$(status_of sp-recut2)"
@@ -327,14 +330,15 @@ git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 # Pre-bump the lifetime requeue counter to AT-1 so the pass's own bump (below) brings it
 # to AT on the FIRST sighting of this conflict — land_state is not yet RED, so the
 # RED-recurring guard does not intercept it first.
-SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
+tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$SH/repo-map"
+SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     bash -c '. "$1/lib.sh" >/dev/null 2>&1
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1' \
     _ "$SH"
 : > "$EMITTED"
-SPIRA_REBASE_ESCALATE_AT=3 landing >/dev/null 2>&1 || true
+tl_config SPIRA_REBASE_ESCALATE_AT=3
+landing >/dev/null 2>&1 || true
 is   "escalate path reopens the bead"   open "$(status_of sp-escl)"
 want "and fires the escalation ask"     "rebase loop" "$(cat "$EMITTED")"
 drop_branch sp-escl

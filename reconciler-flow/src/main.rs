@@ -103,6 +103,7 @@ fn harness_home() -> PathBuf {
 
 impl Config {
     fn from_env() -> Result<Config, String> {
+        use spira_config::process::{cfg, cfg_parse};
         // sp-ivfu3: `spira.run`, resolved in-process through `spira_config` — never the
         // literal `/tmp/spira` a bare shell used to get whenever `$SPIRA_RUN` itself was
         // unset (law-a-binary-resolves-the-config-it-reads). REFUSES, named, rather than
@@ -111,53 +112,45 @@ impl Config {
         let spira_run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home())?;
         Ok(Config {
             lock_path: spira_run.join("reconciler-flow.lock"),
+            // SPIRA_RECONCILER_FLOW_STATE is not a registered config key (spira/conf.d) —
+            // left as a direct env read.
             state_path: env::var("SPIRA_RECONCILER_FLOW_STATE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler-flow-state.json")),
+            // SPIRA_RECONCILER_FLOW_ALERTED is not a registered config key — left as env.
             alerted_path: env::var("SPIRA_RECONCILER_FLOW_ALERTED")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler-flow-alerted.json")),
             // Under run/tsd/ (design reconciler-time-series-2026-09-27 §2), same move and
             // same env var as reconciler/src/main.rs — one family, two writers.
+            // SPIRA_RECONCILER_STATUS_LOG is not a registered config key — left as env.
             status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
             tsd_bin: "tsd-write".to_string(), // by name, on the launcher's PATH (sp-gypjk)
+            // SPIRA_DUCKDB_BIN is not a registered config key — left as env.
             duckdb_bin: env::var("SPIRA_DUCKDB_BIN").unwrap_or_else(|_| "duckdb".to_string()),
-            bd_bin: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string()),
-            spira_db: env::var("SPIRA_DB").unwrap_or_default(),
-            scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
-            desired_dir: env::var("SPIRA_DESIRED_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-                let config_home = env::var("XDG_CONFIG_HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"));
-                config_home.join("spira").join("desired")
-            }),
+            bd_bin: cfg("SPIRA_BD")?,
+            spira_db: cfg("SPIRA_DB")?,
+            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
+            desired_dir: PathBuf::from(cfg("SPIRA_DESIRED_DIR")?),
+            // SPIRA_MAIL_SH is not a registered config key — left as env.
             mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string()),
-            window_hours: env::var("SPIRA_FLOW_WINDOW_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5),
-            baseline_hours: env::var("SPIRA_FLOW_BASELINE_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24.0),
-            grace_secs: env::var("SPIRA_FLOW_GRACE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(1800),
+            window_hours: cfg_parse::<f64>("SPIRA_FLOW_WINDOW_HOURS")?,
+            baseline_hours: cfg_parse::<f64>("SPIRA_FLOW_BASELINE_HOURS")?,
+            grace_secs: cfg_parse::<u64>("SPIRA_FLOW_GRACE_SECS")?,
             // Deliberately its own knob, not derived from grace_secs: a flow gap's 30-minute
             // grace is tuned for real slowdowns, but a blind detector (the query layer
             // itself unreachable) is a different failure and must always cross 1h before it
             // alerts — tuning the gap window faster must never speed this one up too.
-            unobservable_grace_secs: env::var("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(3600),
+            unobservable_grace_secs: cfg_parse::<u64>("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")?,
             // The design's own rework window (6h), distinct from the 30-minute flow window
             // the other new invariants share — a ratio over 30 minutes of landings is too
             // thin a sample to mean anything.
-            rework_window_hours: env::var("SPIRA_FLOW_REWORK_WINDOW_HOURS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(6.0),
+            rework_window_hours: cfg_parse::<f64>("SPIRA_FLOW_REWORK_WINDOW_HOURS")?,
             // Must match systemd/spira-sentinel.timer's OnUnitActiveSec — two independent
             // literals of the same fact is exactly how they drift.
-            sentinel_timer_secs: env::var("SPIRA_FLOW_SENTINEL_PERIOD_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(120),
+            sentinel_timer_secs: cfg_parse::<u64>("SPIRA_FLOW_SENTINEL_PERIOD_SECS")?,
             now_secs: unix_now(),
             now_iso: compute_now_iso(),
             spira_run,

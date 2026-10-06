@@ -24,25 +24,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 echo "test-archive-no-sessions.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-arch() {   # arch <home> [SPIRA_TOKEN_PROJECTS]
-    env -i PATH="$PATH" HOME="$1" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        SPIRA_DB="$TMP/db" ${2:+SPIRA_TOKEN_PROJECTS="$2"} \
+arch() {   # arch <home> <SPIRA_TOKEN_PROJECTS>
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_TOKEN_PROJECTS="$2"
+    env -i PATH="$PATH" HOME="$1" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         archive.sh sweep 2>&1
 }
 
+# The "default ~/.claude/projects missing/empty" cases are gone: SPIRA_TOKEN_PROJECTS is a
+# registered key, so an un-set override no longer falls back to $HOME — it reads the fixture's
+# own (fixed, non-$HOME) value. Only the positive control, where the operator configured a
+# path and it's missing, still applies.
 mkdir -p "$TMP/h1"
 out="$(arch "$TMP/h1" "$TMP/configured-but-missing")"; rc=$?
 [ "$rc" -ne 0 ] && ok "positive control: a configured source directory that is missing still refuses" \
                 || bad "positive control: a configured source directory that is missing still refuses" "rc=0"
 want "positive control: and names it" "$TMP/configured-but-missing" "$out"
-
-mkdir -p "$TMP/h2"
-out="$(arch "$TMP/h2")"; rc=$?
-is   "the default ~/.claude/projects missing (no session yet) exits 0" 0 "$rc"
-want "and says why nothing was archived"                               "no Claude session has run" "$out"
-
-mkdir -p "$TMP/h3/.claude/projects"
-out="$(arch "$TMP/h3")"; rc=$?
-is   "the default present but empty exits 0"                           0 "$rc"
 
 tl_summary

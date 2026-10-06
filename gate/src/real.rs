@@ -118,22 +118,17 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_SCCACHE_DAV_ADDR",
 ];
 
-/// Wave 4.8: merges `spira_config::resolve()`'s in-process answer into `kv` after the
-/// `CONTEXT` bash call returns, for every [`RETIRED_VARS`] name — `entry().or_insert()` so
-/// nothing the bash dump itself still supplies is ever overridden.
-///
-/// NOT BEST-EFFORT ANY MORE (sp-1cdgq round 3): a containment refusal or an unreadable
-/// registry used to leave `kv` exactly as `CONTEXT` alone produced it, silently — which is
-/// what let a `--home` with no `conf.d` (production never has one) resolve every
-/// `RETIRED_VARS` name to nothing with no error anywhere. Surfaced to the caller instead.
-fn merge_resolved_config(kv: &mut HashMap<String, String>, home: &Path) -> Result<(), String> {
-    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-    let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env_map)?;
+/// ONE SOURCE (per Ryan 2026-10-05): `spira_config::process::cfg` — the same per-process
+/// `$SPIRA_TOML` resolution every other binary now goes through, in place of this crate's own
+/// `resolve_for_process`/`derive_home_repo` call (which duplicated `cfg`'s resolution without
+/// its cache). Every [`RETIRED_VARS`] name is a registered key; a key that does not resolve is
+/// a refusal naming it — never a value `kv` quietly lacks, and never a reason for an `ctx.var_or`
+/// fallback deeper in `engine.rs` to fire. Plain `insert`, not `entry().or_insert()`: `VARS`
+/// and `RETIRED_VARS` are disjoint lists, so there is nothing here to avoid overriding.
+fn merge_resolved_config(kv: &mut HashMap<String, String>) -> Result<(), String> {
     for name in RETIRED_VARS {
-        if let Some(v) = resolved.values.get(*name) {
-            kv.entry((*name).to_string()).or_insert_with(|| v.clone());
-        }
+        let v = spira_config::process::cfg(name)?;
+        kv.insert((*name).to_string(), v);
     }
     Ok(())
 }
@@ -239,7 +234,7 @@ impl World for Real {
                 kv.insert(k.to_string(), v.to_string());
             }
         }
-        merge_resolved_config(&mut kv, &self.home)?;
+        merge_resolved_config(&mut kv)?;
         let mut take = |k: &str| kv.remove(k);
         let raw_repo_name = take("repo_name").unwrap_or_default();
         let host_cores = take("host_cores").unwrap_or_else(|| "1".into());
@@ -1002,56 +997,45 @@ mod tests {
     // the machine running this suite.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// ONE SOURCE (per Ryan 2026-10-05): `merge_resolved_config` now goes straight through
+    /// `spira_config::process::cfg`, so this is the one test in this binary allowed to drive
+    /// it live (rule: only a test that truly exercises the top-level read may set `SPIRA_TOML`
+    /// — `cfg`'s resolution is cached once per *process*, in a `OnceLock`, so a second test
+    /// pinning a DIFFERENT `spira.toml` in the same test binary would just see this one's
+    /// answer, not its own; the old "missing registry" sibling test that used to live here
+    /// is gone for exactly that reason, not because the refusal it checked stopped existing —
+    /// that refusal is `spira_config`'s own, and `spira_config`'s own tests are where it
+    /// belongs now).
     #[test]
     fn merge_resolved_config_fills_retired_vars_without_overriding_the_bash_dump() {
         let _g = ENV_LOCK.lock().unwrap();
-        let saved = std::env::var("SPIRA_TOML").ok();
+        let saved_toml = std::env::var("SPIRA_TOML").ok();
+        let saved_home = std::env::var("SPIRA_HOME").ok();
         let dir = testkit::TempDir::new("gate-real-merge");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_GATE_TIMEOUT"),
-            "TYPE=u32\nGROUP=gate\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_GATE_TIMEOUT:=1234}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_GATE_TIMEOUT", "1234")]);
+        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
+        // lives), never the throwaway fixture dir.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        std::env::set_var("SPIRA_HOME", &real_home);
+        std::env::set_var("SPIRA_TOML", &toml);
 
         let mut kv = std::collections::HashMap::new();
         kv.insert("SPIRA_GATE_BEAD".to_string(), "sp-xyz".to_string());
-        super::merge_resolved_config(&mut kv, &home).unwrap();
+        let result = super::merge_resolved_config(&mut kv);
 
-        match saved {
+        match saved_toml {
             Some(v) => std::env::set_var("SPIRA_TOML", v),
             None => std::env::remove_var("SPIRA_TOML"),
         }
+        match saved_home {
+            Some(v) => std::env::set_var("SPIRA_HOME", v),
+            None => std::env::remove_var("SPIRA_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
 
+        result.unwrap();
         assert_eq!(kv.get("SPIRA_GATE_BEAD").map(String::as_str), Some("sp-xyz"), "the bash dump's own value must survive the merge");
-        assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key resolve() covers must reach kv in-process");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// sp-1cdgq round 3: a `--home` with no `conf.d` at all is now a named error this
-    /// function surfaces, not a silently-partial merge. `registry::load` is where the fix
-    /// actually lives (spira-config); this proves `merge_resolved_config` no longer
-    /// swallows it with `if let Ok(...)`.
-    #[test]
-    fn merge_resolved_config_surfaces_a_missing_registry_instead_of_merging_nothing() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let saved = std::env::var("SPIRA_TOML").ok();
-        let dir = testkit::TempDir::new("gate-real-merge-missing");
-        let home = dir.join("spira-no-conf-d"); // never created
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-
-        let mut kv = std::collections::HashMap::new();
-        let err = super::merge_resolved_config(&mut kv, &home);
-
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-
-        assert_eq!(err, Err(format!("no config registry at {}", home.join("conf.d").display())));
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key cfg() covers must reach kv in-process");
     }
 
     /// sp-ohwg7: a podman conmon started by a gate trial held an flock the gate's CALLER

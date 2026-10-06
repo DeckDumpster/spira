@@ -39,13 +39,14 @@ pub fn resolve_db(
     }
 }
 
-/// `cockpit_db()` against the real process environment and filesystem.
+/// `cockpit_db()` against the real process's resolved config (`spira_config::process::cfg`,
+/// the one door). `COCKPIT_DB`'s own toml default already chains to `SPIRA_DB`
+/// (`spira/conf.d`), so `resolve_db`'s own OR is now belt-and-suspenders, not load-bearing —
+/// kept anyway so this still answers correctly if that default ever changes.
 pub fn cockpit_db() -> Result<PathBuf, String> {
-    resolve_db(
-        std::env::var("COCKPIT_DB").ok().as_deref(),
-        std::env::var("SPIRA_DB").ok().as_deref(),
-        |p| p.is_dir(),
-    )
+    let cockpit_db = spira_config::process::cfg("COCKPIT_DB").ok();
+    let spira_db = spira_config::process::cfg("SPIRA_DB").ok();
+    resolve_db(cockpit_db.as_deref(), spira_db.as_deref(), |p| p.is_dir())
 }
 
 /// `$BD_BIN` if set and non-empty, else `"bd"` — resolved off `PATH`, never a guessed

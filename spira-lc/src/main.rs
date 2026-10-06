@@ -152,7 +152,7 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
     if let Some((what, detail)) = ans.cert_log {
         // lifecycle-cert.sh's log, same path and line shape: `<epoch> <verb> bead=<id> <detail>`.
         let id = args.first().map(String::as_str).unwrap_or("");
-        match spira_config::resolve::run_dir_for_process() {
+        match lifecycle_run_dir() {
             Ok(dir) => {
                 let _ = std::fs::OpenOptions::new()
                     .create(true)
@@ -164,6 +164,21 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
         }
     }
     ans.code
+}
+
+/// `spira.run` (`SPIRA_RUN`), the one source of config (per Ryan 2026-10-05): the value
+/// `$SPIRA_TOML` declares, judged against a confined (non-prod) instance's workspace the
+/// same way an explicit, env-pinned `SPIRA_RUN` always was — never this process's own
+/// environment, and no guessed literal.
+fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
+    let dir = spira_config::process::cfg("SPIRA_RUN")?;
+    if dir.is_empty() {
+        return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
+    }
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
+    let workspaces = spira_config::process::cfg("SPIRA_WORKSPACES")?;
+    spira_config::containment::check_path(&instance, &workspaces, "SPIRA_RUN", &dir)?;
+    Ok(std::path::PathBuf::from(dir))
 }
 
 /// Every verb but `serve` (which never reaches here — see `main`, and `serve::run`'s own

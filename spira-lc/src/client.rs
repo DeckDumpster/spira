@@ -16,7 +16,10 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
     if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-migrate")) {
         return None;
     }
-    let socket_path = spira_config::resolve::key_for_process("SPIRA_LC_SOCKET").ok()?;
+    // One source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
+    // this process's own environment. A resolution failure folds into "no usable service",
+    // same as every other reason this falls back to a direct connection.
+    let socket_path = spira_config::process::cfg("SPIRA_LC_SOCKET").ok()?;
     let stream = UnixStream::connect(&socket_path).ok()?;
     stream.set_read_timeout(Some(TIMEOUT)).ok()?;
     stream.set_write_timeout(Some(TIMEOUT)).ok()?;

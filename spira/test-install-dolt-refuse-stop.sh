@@ -143,12 +143,13 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$MOCK_BIN/tmux"; chmod +x "$MOCK_BIN/t
 for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$b"; chmod +x "$MOCK_BIN/$b"; done
 
 : > "$LOG"
-out="$(env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_PATH="$MOCK_BIN" \
-    SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
     SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA= SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
-    SPIRA_RUN="$RUN_DIR" SPIRA_HOME="$HERE" SPIRA_PROD="$PROD" SPIRA_REPO="$FAKE_REPO" \
-    SPIRA_COCKPIT="$REAL_COCKPIT" \
-    SPIRA_INSTANCE=prod SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \
+    SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=prod
+out="$(env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
+    SPIRA_HOME="$HERE" SPIRA_REPO="$FAKE_REPO" \
+    SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \
+    SPIRA_TOML="$SPIRA_TOML" \
     CALL_LOG="$LOG" \
     units-install 2>&1)"
 rc=$?

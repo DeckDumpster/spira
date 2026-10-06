@@ -24,38 +24,61 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Directories prepended to every child's PATH, from `SPIRA_PATH` in `spira.conf`. `bd` and
-/// `gt` live in a different place on every box, and this panel is started by tmux, whose
-/// global PATH has neither.
-fn extra_path() -> Vec<String> {
-    std::env::var("SPIRA_PATH")
-        .unwrap_or_default()
-        .split(':')
-        .filter(|d| !d.is_empty())
-        .map(str::to_string)
-        .collect()
+/// The panel's resolved configuration — `SPIRA_PATH`, the beads database, and the operator's
+/// actor name — read ONCE through `spira_config::process::cfg` (per Ryan 2026-10-05: one
+/// source of config) at the top of `main`, then passed down through `App`/`store`/`model` to
+/// every function that needs a value. Never re-read via `std::env::var` once built: `cfg`
+/// caches its own resolution for the life of the process, so a second read would just be a
+/// slower way to ask the same cache, and a unit test could never vary it per case. Tests build
+/// a literal `Cfg` directly (`test_support::StubBd::cfg`) instead.
+#[derive(Clone, Default)]
+pub struct Cfg {
+    /// Directories prepended to every child's PATH, from `SPIRA_PATH` in `spira.conf`. `bd`
+    /// and `gt` live in a different place on every box, and this panel is started by tmux,
+    /// whose global PATH has neither.
+    pub extra_path: Vec<String>,
+    /// THE beads database this panel raises, reads, answers and closes in.
+    ///
+    /// (the operator, verbatim: "let's just use the spira one for everything from here on
+    /// out. i don't want this migration/deprecation to bake a bunch of complexity and
+    /// modality into our tools.")
+    ///
+    /// There was a walk here — the town, one entry per rig, then Spira — with a precedence
+    /// order, a per-row `_db` tag and a dedupe by id. All four existed because two live
+    /// databases held the same beads, and all four are gone with that. They were not free
+    /// while they lasted: the shell tools were switched to Spira before the panel was, which
+    /// split one conversation across two databases within the hour. Their 18:54 comment
+    /// landed in the town because the pane wrote there, while `unanswered.sh` read Spira and
+    /// reported nothing waiting. A half-migrated tool is worse than either end of the
+    /// migration, because each half is individually correct and together they lose messages.
+    pub db: String,
+    /// The actor name the OPERATOR's own comments are recorded under, from
+    /// `SPIRA_OPERATOR_ACTOR`.
+    ///
+    /// The pane and the agent both write into the same thread, so the two have to be tellable
+    /// apart or the turn marker claims it is the operator's move on a reply the agent just
+    /// wrote. A literal here would be one installation's name, and every other installation
+    /// would see its own replies as somebody else's.
+    pub operator_actor: String,
 }
 
-/// THE beads database this panel raises, reads, answers and closes in.
-///
-/// (the operator, verbatim: "let's just use the spira one for everything from here on out. i
-/// don't want this migration/deprecation to bake a bunch of complexity and modality into our
-/// tools.")
-///
-/// There was a walk here — the town, one entry per rig, then Spira — with a precedence order,
-/// a per-row `_db` tag and a dedupe by id. All four existed because two live databases held
-/// the same beads, and all four are gone with that. They were not free while they lasted: the
-/// shell tools were switched to Spira before the panel was, which split one conversation
-/// across two databases within the hour. Their 18:54 comment landed in the town because the
-/// pane wrote there, while `unanswered.sh` read Spira and reported nothing waiting. A
-/// half-migrated tool is worse than either end of the migration, because each half is
-/// individually correct and together they lose messages.
-pub fn db() -> String {
-    // No hardcoded fallback. conf.sh exports COCKPIT_DB, defaulting it to SPIRA_DB, and a
-    // panel that guessed a database instead would read someone else's conversation.
-    std::env::var("COCKPIT_DB")
-        .or_else(|_| std::env::var("SPIRA_DB"))
-        .unwrap_or_default()
+impl Cfg {
+    /// Resolve every field through the one door. No hardcoded fallback on `db`: conf.sh
+    /// exports `COCKPIT_DB`, defaulting it to `SPIRA_DB`, and a panel that guessed a database
+    /// instead would read someone else's conversation. A config that cannot resolve at all
+    /// degrades to empty fields rather than panicking a TUI — `db` being empty already has a
+    /// defined, visible failure mode (every `bd` call errors, which `beads_err` surfaces).
+    pub fn load() -> Cfg {
+        let extra_path = spira_config::process::cfg("SPIRA_PATH")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(str::to_string)
+            .collect();
+        let db = spira_config::process::cfg("COCKPIT_DB").unwrap_or_default();
+        let operator_actor = spira_config::process::cfg("SPIRA_OPERATOR_ACTOR").unwrap_or_else(|_| "operator".to_string());
+        Cfg { extra_path, db, operator_actor }
+    }
 }
 
 /// The label that means "waiting on the operator" — the same one the escalation gate defers
@@ -138,7 +161,7 @@ pub fn settled(s: &Snapshot, id: &str, e: Expect) -> bool {
 /// gt-dashboard unit having to set PATH explicitly because systemd does not inherit one.
 ///
 /// A tool that only works when started by hand is not installed, it is coincidental.
-pub fn bin(cmd: &str) -> String {
+pub fn bin(cmd: &str, cfg: &Cfg) -> String {
     if cmd.contains('/') {
         return cmd.to_string();
     }
@@ -147,7 +170,7 @@ pub fn bin(cmd: &str) -> String {
     // hold a shim directory whose tools are not duplicates of the real binaries. Resolving
     // straight to ~/.local/bin looks tidier and would step around whatever the operator put
     // in front of them.
-    let mut dirs = extra_path();
+    let mut dirs = cfg.extra_path.clone();
     dirs.extend([
         format!("{home}/.local/bin"),
         "/usr/local/bin".into(),
@@ -168,10 +191,10 @@ pub fn bin(cmd: &str) -> String {
 /// tool may shell out to another BY NAME. So a child inherits our PATH and fails one level
 /// down, which is how NOTIFICATIONS once rendered `?` while DECISIONS worked. Hand them a
 /// PATH that has the tools.
-pub fn child_path() -> String {
+pub fn child_path(cfg: &Cfg) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
     let inherited = std::env::var("PATH").unwrap_or_default();
-    let mut dirs = extra_path();
+    let mut dirs = cfg.extra_path.clone();
     dirs.extend([
         format!("{home}/.local/bin"),
         "/usr/local/bin".into(),
@@ -184,9 +207,9 @@ pub fn child_path() -> String {
     dirs.join(":")
 }
 
-fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
-    let mut c = Command::new(bin(cmd));
-    c.args(args).env("PATH", child_path());
+fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<String, String> {
+    let mut c = Command::new(bin(cmd, cfg));
+    c.args(args).env("PATH", child_path(cfg));
     // NO `current_dir`. It existed so `gt` could resolve its town, and `gt` is gone from this
     // panel; `bd` takes its database from `-C`, so a working directory here could only ever
     // decide something by accident.
@@ -223,8 +246,8 @@ fn rows(text: &str, key: &str) -> Result<Vec<Value>, String> {
 /// One call against one database. An error here is a real error and reaches the pane as one:
 /// there is no other database whose rows could stand in for these, so silently returning an
 /// empty list would render "nothing is waiting" over an unread queue.
-fn fetch_beads() -> Result<Vec<Value>, String> {
-    let out = run("bd", &["-C", &db(), "list", "--all", "--limit", "0", "--json"])?;
+fn fetch_beads(cfg: &Cfg) -> Result<Vec<Value>, String> {
+    let out = run("bd", &["-C", &cfg.db, "list", "--all", "--limit", "0", "--json"], cfg)?;
     rows(&out, "issues")
 }
 
@@ -233,7 +256,7 @@ fn fetch_beads() -> Result<Vec<Value>, String> {
 /// A thread is fetched, not counted, because the pane has to SHOW the conversation: a count
 /// tells the operator something was said and then makes them go elsewhere to read it, which is the
 /// thing that pushed replies into the chat transcript in the first place.
-fn fetch_threads(beads: &[Value]) -> std::collections::HashMap<String, Vec<Value>> {
+fn fetch_threads(beads: &[Value], cfg: &Cfg) -> std::collections::HashMap<String, Vec<Value>> {
     let ask = ask_label();
     let wanted: Vec<String> = beads
         .iter()
@@ -279,8 +302,9 @@ fn fetch_threads(beads: &[Value]) -> std::collections::HashMap<String, Vec<Value
     let handles: Vec<_> = wanted
         .into_iter()
         .map(|id| {
+            let cfg = cfg.clone();
             thread::spawn(move || {
-                let out = run("bd", &["-C", &db(), "comments", &id, "--json"]).ok()?;
+                let out = run("bd", &["-C", &cfg.db, "comments", &id, "--json"], &cfg).ok()?;
                 Some((id, rows(&out, "comments").ok()?))
             })
         })
@@ -349,7 +373,7 @@ fn load_fixture(shared: &Shared, path: &str) {
 
 /// Refresh in the background. Never blocks the caller, and never runs two at once — a
 /// second refresh while one is in flight would double the subprocess load for nothing.
-pub fn refresh(shared: &Shared) {
+pub fn refresh(shared: &Shared, cfg: &Cfg) {
     if let Some(path) = fixture() {
         load_fixture(shared, &path);
         return;
@@ -362,14 +386,15 @@ pub fn refresh(shared: &Shared) {
         s.refreshing = true;
     }
     let shared = Arc::clone(shared);
+    let cfg = cfg.clone();
     thread::spawn(move || {
         // ONE call. There was a `thread::spawn` here to overlap this with `gt mail inbox`;
         // with the mail fetch gone the concurrency was overlapping a query with nothing.
-        let b = fetch_beads();
+        let b = fetch_beads(&cfg);
         // Only for beads that actually have comments — `comment_count` is already in the
         // list payload, so this is usually two or three extra calls, not one per bead.
         let threads = match &b {
-            Ok(v) => fetch_threads(v),
+            Ok(v) => fetch_threads(v, &cfg),
             Err(_) => Default::default(),
         };
         let mut s = shared.lock().unwrap();
@@ -387,9 +412,9 @@ pub fn refresh(shared: &Shared) {
     });
 }
 
-pub fn spawn_refresher(shared: Shared, every: Duration) {
+pub fn spawn_refresher(shared: Shared, every: Duration, cfg: Cfg) {
     thread::spawn(move || loop {
-        refresh(&shared);
+        refresh(&shared, &cfg);
         thread::sleep(every);
     });
 }
@@ -658,7 +683,7 @@ fn alerts(s: &Snapshot, dismissed: bool, now: i64) -> Result<Vec<Item>, String> 
 ///
 /// FALSE WHEN THERE IS NO THREAD, which is the safe direction here: an insight with nothing
 /// said on it is a notice, and dismissing a notice must end it.
-fn operator_spoke_last(s: &Snapshot, id: &str) -> bool {
+fn operator_spoke_last(s: &Snapshot, id: &str, cfg: &Cfg) -> bool {
     let Some(cs) = s.threads.get(id) else {
         return false;
     };
@@ -677,8 +702,7 @@ fn operator_spoke_last(s: &Snapshot, id: &str) -> bool {
     if t.iter().all(|(_, when)| when.len() >= 16) {
         t.sort_by(|a, b| a.1.cmp(b.1));
     }
-    let op = crate::model::operator_actor();
-    t.last().map(|(a, _)| op == *a).unwrap_or(false)
+    t.last().map(|(a, _)| cfg.operator_actor == *a).unwrap_or(false)
 }
 
 /// Filter the cached rows down to one view. Pure, in memory, instant.
@@ -693,6 +717,7 @@ pub fn view_items(
     view: View,
     dismissed: bool,
     now: i64,
+    cfg: &Cfg,
 ) -> Result<Vec<Item>, String> {
     if view == View::Alerts {
         return alerts(s, dismissed, now);
@@ -766,7 +791,7 @@ pub fn view_items(
                         // The question is whose turn it is, and `operator_spoke_last`
                         // asks it.
                         return !arch
-                            || operator_spoke_last(s, r["id"].as_str().unwrap_or(""));
+                            || operator_spoke_last(s, r["id"].as_str().unwrap_or(""), cfg);
                     }
                     if is_insight {
                         return false;
@@ -1002,7 +1027,7 @@ mod tests {
     }
 
     fn notif_ids(s: &Snapshot, dismissed: bool) -> Vec<String> {
-        view_items(s, View::Notifications, dismissed, NOW)
+        view_items(s, View::Notifications, dismissed, NOW, &Cfg::default())
             .unwrap()
             .into_iter()
             .map(|i| i.id)
@@ -1010,7 +1035,7 @@ mod tests {
     }
 
     fn decision_ids(s: &Snapshot) -> Vec<String> {
-        view_items(s, View::Decisions, false, NOW)
+        view_items(s, View::Decisions, false, NOW, &Cfg::default())
             .unwrap()
             .into_iter()
             .map(|i| i.id)
@@ -1083,7 +1108,7 @@ mod tests {
     #[test]
     fn an_events_badge_is_its_event_kind_and_it_has_no_lead() {
         let s = snap(vec![event_row("sp-ev", &[])]);
-        let it = &view_items(&s, View::Notifications, false, NOW).unwrap()[0];
+        let it = &view_items(&s, View::Notifications, false, NOW, &Cfg::default()).unwrap()[0];
         assert_eq!(it.badge, "spira.landed");
         assert_eq!(it.lead, "");
     }
@@ -1136,7 +1161,7 @@ mod tests {
         r["description"] = Value::from("");
         let s = snap(vec![r]);
         assert_eq!(
-            view_items(&s, View::Notifications, false, NOW).unwrap()[0].body,
+            view_items(&s, View::Notifications, false, NOW, &Cfg::default()).unwrap()[0].body,
             r#"{"bead":"sp-q7k"}"#
         );
     }
@@ -1185,12 +1210,17 @@ mod tests {
     /// "ryan" the live database happens to hold — so the tests ask for it the same way the
     /// filter does. Writing the name in by hand made the owed-a-reply case fail against a
     /// correct filter, which is the test asserting about one box rather than about the rule.
+    /// A literal `Cfg` now, not a live env read, so no lock is needed to vary it per test.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         crate::test_support::LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn op_cfg() -> Cfg {
+        Cfg { operator_actor: "the-operator".to_string(), ..Default::default() }
+    }
+
     fn op() -> String {
-        crate::model::operator_actor()
+        op_cfg().operator_actor
     }
 
     fn threaded(rows: Vec<Value>, id: &str, authors: &[(&str, &str)]) -> Snapshot {
@@ -1215,9 +1245,9 @@ mod tests {
             "sp-nm7",
             &[(&op(), "2026-09-06T10:00:00Z"), ("claude", "2026-09-06T11:00:00Z")],
         );
-        assert!(ids(view_items(&s, View::Insights, false, NOW)).is_empty());
+        assert!(ids(view_items(&s, View::Insights, false, NOW, &op_cfg())).is_empty());
         // And it is still reachable, which is the whole reason dismissal is reversible.
-        assert_eq!(ids(view_items(&s, View::Insights, true, NOW)), ["sp-nm7"]);
+        assert_eq!(ids(view_items(&s, View::Insights, true, NOW, &op_cfg())), ["sp-nm7"]);
     }
 
     /// The half worth keeping: a thread where the OPERATOR spoke last is still owed an answer,
@@ -1234,7 +1264,7 @@ mod tests {
                 (&op(), "2026-09-06T12:00:00Z"),
             ],
         );
-        assert_eq!(ids(view_items(&s, View::Insights, false, NOW)), ["sp-owed"]);
+        assert_eq!(ids(view_items(&s, View::Insights, false, NOW, &op_cfg())), ["sp-owed"]);
     }
 
     /// Order is not trusted: the same thread shuffled must give the same verdict, because
@@ -1247,7 +1277,7 @@ mod tests {
             "sp-shuf",
             &[("claude", "2026-09-06T11:00:00Z"), (&op(), "2026-09-06T10:00:00Z")],
         );
-        assert!(ids(view_items(&s, View::Insights, false, NOW)).is_empty());
+        assert!(ids(view_items(&s, View::Insights, false, NOW, &op_cfg())).is_empty());
     }
 
     /// A dismissed notice nobody ever replied to simply leaves. The positive control for the
@@ -1256,8 +1286,8 @@ mod tests {
     fn a_dismissed_insight_with_no_thread_leaves_the_tab() {
         let _env = env_lock();
         let s = snap(vec![fyi("sp-quiet", 0, true)]);
-        assert!(ids(view_items(&s, View::Insights, false, NOW)).is_empty());
-        assert_eq!(ids(view_items(&s, View::Insights, true, NOW)), ["sp-quiet"]);
+        assert!(ids(view_items(&s, View::Insights, false, NOW, &Cfg::default())).is_empty());
+        assert_eq!(ids(view_items(&s, View::Insights, true, NOW, &Cfg::default())), ["sp-quiet"]);
     }
 
     /// An insight nobody has dismissed is on the tab whatever its thread says.
@@ -1269,7 +1299,7 @@ mod tests {
             "sp-live",
             &[(&op(), "2026-09-06T10:00:00Z"), ("claude", "2026-09-06T11:00:00Z")],
         );
-        assert_eq!(ids(view_items(&s, View::Insights, false, NOW)), ["sp-live"]);
+        assert_eq!(ids(view_items(&s, View::Insights, false, NOW, &op_cfg())), ["sp-live"]);
     }
 
     fn firing(id: &str, created: &str) -> Value {
@@ -1315,12 +1345,12 @@ mod tests {
             firing("sp-a1", "2026-09-05T10:00:00Z"),
             d1,
         ]);
-        assert_eq!(ids(view_items(&s, View::Decisions, false, NOW)), ["sp-d1"]);
-        assert_eq!(ids(view_items(&s, View::Alerts, false, NOW)), ["sp-a1"]);
+        assert_eq!(ids(view_items(&s, View::Decisions, false, NOW, &Cfg::default())), ["sp-d1"]);
+        assert_eq!(ids(view_items(&s, View::Alerts, false, NOW, &Cfg::default())), ["sp-a1"]);
         // And it is not an FYI either — that view wants `insight`.
-        assert!(ids(view_items(&s, View::Insights, false, NOW)).is_empty());
+        assert!(ids(view_items(&s, View::Insights, false, NOW, &Cfg::default())).is_empty());
         // And not a notification — the event arm is checked by a_wrongly_typed_alert_is_still_shown.
-        assert!(ids(view_items(&s, View::Notifications, false, NOW)).is_empty());
+        assert!(ids(view_items(&s, View::Notifications, false, NOW, &Cfg::default())).is_empty());
     }
 
     /// THE POSITIVE CONTROL (law-absence-needs-a-positive-control). "No alerts" and "the
@@ -1329,17 +1359,17 @@ mod tests {
     /// a genuine all-clear and is allowed through.
     #[test]
     fn an_empty_read_is_refused_and_a_proved_read_is_not() {
-        assert!(view_items(&snap(vec![]), View::Alerts, false, NOW).is_err());
+        assert!(view_items(&snap(vec![]), View::Alerts, false, NOW, &Cfg::default()).is_err());
         let other = snap(vec![bead(
             "sp-d1",
             "open",
             "2026-09-05T10:00:00Z",
             &["needs-operator", "overseer"], // literal-ok: test fixture data
         )]);
-        assert_eq!(view_items(&other, View::Alerts, false, NOW).unwrap().len(), 0);
+        assert_eq!(view_items(&other, View::Alerts, false, NOW, &Cfg::default()).unwrap().len(), 0);
         // And a reader that is genuinely broken is an error, never an empty list.
         let broken = Snapshot { beads_err: Some("bd: no such database".into()), ..Default::default() };
-        assert!(view_items(&broken, View::Alerts, false, NOW).is_err());
+        assert!(view_items(&broken, View::Alerts, false, NOW, &Cfg::default()).is_err());
     }
 
     /// Oldest first, and stated rather than inherited from `bd list`'s own ordering: the
@@ -1352,7 +1382,7 @@ mod tests {
             firing("sp-mid", "2026-09-04T09:00:00Z"),
         ]);
         assert_eq!(
-            ids(view_items(&s, View::Alerts, false, NOW)),
+            ids(view_items(&s, View::Alerts, false, NOW, &Cfg::default())),
             ["sp-old", "sp-mid", "sp-new"]
         );
     }
@@ -1366,8 +1396,8 @@ mod tests {
             firing("sp-live", "2026-09-05T10:00:00Z"),
             bead("sp-gone", "closed", "2026-09-04T10:00:00Z", &["alert", "overseer"]),
         ]);
-        assert_eq!(ids(view_items(&s, View::Alerts, false, NOW)), ["sp-live"]);
-        assert_eq!(ids(view_items(&s, View::Alerts, true, NOW)), ["sp-gone"]);
+        assert_eq!(ids(view_items(&s, View::Alerts, false, NOW, &Cfg::default())), ["sp-live"]);
+        assert_eq!(ids(view_items(&s, View::Alerts, true, NOW, &Cfg::default())), ["sp-gone"]);
     }
 
     /// A SILENCE EXPIRES BY BEING READ. The deadline lives in the label, so nothing has to
@@ -1384,17 +1414,17 @@ mod tests {
             )])
         };
         let ahead = quiet("silent-until:2026-09-05T17:00:00Z");
-        assert!(ids(view_items(&ahead, View::Alerts, false, NOW)).is_empty());
-        assert_eq!(ids(view_items(&ahead, View::Alerts, true, NOW)), ["sp-q"]);
+        assert!(ids(view_items(&ahead, View::Alerts, false, NOW, &Cfg::default())).is_empty());
+        assert_eq!(ids(view_items(&ahead, View::Alerts, true, NOW, &Cfg::default())), ["sp-q"]);
 
         let passed = quiet("silent-until:2026-09-05T15:00:00Z");
-        assert_eq!(ids(view_items(&passed, View::Alerts, false, NOW)), ["sp-q"]);
-        assert!(ids(view_items(&passed, View::Alerts, true, NOW)).is_empty());
+        assert_eq!(ids(view_items(&passed, View::Alerts, false, NOW, &Cfg::default())), ["sp-q"]);
+        assert!(ids(view_items(&passed, View::Alerts, true, NOW, &Cfg::default())).is_empty());
 
         // A deadline that will not parse is NO silence, never an eternal one: the failure
         // direction has to be "you still see it".
         let junk = quiet("silent-until:whenever");
-        assert_eq!(ids(view_items(&junk, View::Alerts, false, NOW)), ["sp-q"]);
+        assert_eq!(ids(view_items(&junk, View::Alerts, false, NOW, &Cfg::default())), ["sp-q"]);
     }
 
     /// ACKNOWLEDGING IS NOT CLEARING. An acked alert is still firing, so it stays on the tab;
@@ -1408,7 +1438,7 @@ mod tests {
             "2026-09-05T10:00:00Z",
             &["alert", "overseer", "acked"],
         )]);
-        let got = view_items(&s, View::Alerts, false, NOW).unwrap();
+        let got = view_items(&s, View::Alerts, false, NOW, &Cfg::default()).unwrap();
         assert_eq!(got.len(), 1);
         assert!(crate::model::acked(&got[0]));
     }
@@ -1421,7 +1451,7 @@ mod tests {
             bead("sp-f", "open", "2026-09-05T09:00:00Z", &["alert", "overseer", "flaps:7"]),
             firing("sp-once", "2026-09-05T10:00:00Z"),
         ]);
-        let got = view_items(&s, View::Alerts, false, NOW).unwrap();
+        let got = view_items(&s, View::Alerts, false, NOW, &Cfg::default()).unwrap();
         assert_eq!(got[0].badge, "alert ×7");
         assert_eq!(crate::model::flaps(&got[0]), 7);
         assert_eq!(got[1].badge, "alert");
@@ -1449,7 +1479,7 @@ mod tests {
             &["alert", "alert:sentinel-stalled", "flaps:2", "overseer"],
         );
         let s = snap(vec![a]);
-        let got = view_items(&s, View::Alerts, false, NOW).unwrap();
+        let got = view_items(&s, View::Alerts, false, NOW, &Cfg::default()).unwrap();
         assert_eq!(ids(Ok(got.clone())), ["sp-auron1"]);
         assert_eq!(crate::model::flaps(&got[0]), 2);
         assert!(!crate::model::acked(&got[0]));
@@ -1535,7 +1565,7 @@ mod tests {
             ask_bead("sp-oldest", "2026-09-01T09:00:00Z"),
         ]);
         assert_eq!(
-            ids(view_items(&s, View::Decisions, false, NOW)),
+            ids(view_items(&s, View::Decisions, false, NOW, &Cfg::default())),
             ["sp-newest", "sp-middle", "sp-oldest"],
         );
     }
@@ -1549,21 +1579,22 @@ mod tests {
             firing("sp-old", "2026-09-01T09:00:00Z"),
         ]);
         // Alerts: oldest on top.
-        let alert_ids = ids(view_items(&s, View::Alerts, false, NOW));
+        let alert_ids = ids(view_items(&s, View::Alerts, false, NOW, &Cfg::default()));
         assert_eq!(alert_ids, ["sp-old", "sp-new"], "alerts must be oldest-first");
         // Decisions: newest on top (positive control — same store, different view).
         let d = snap(vec![
             ask_bead("sp-new-d", "2026-09-09T16:00:00Z"),
             ask_bead("sp-old-d", "2026-09-01T09:00:00Z"),
         ]);
-        let decision_ids = ids(view_items(&d, View::Decisions, false, NOW));
+        let decision_ids = ids(view_items(&d, View::Decisions, false, NOW, &Cfg::default()));
         assert_eq!(decision_ids, ["sp-new-d", "sp-old-d"], "decisions must be newest-first");
     }
 
     // =========================================================================================
     // REFRESH (gap #3, docs/test-plan/cockpit-observability.md): the bd subprocess call
     // underneath every view had no test at all. crate::test_support::StubBd puts a recording
-    // `bd` on SPIRA_PATH via the same lookup `bin()` already does.
+    // `bd` on its own stub directory, which its `cfg()` names in `Cfg::extra_path` — the
+    // same lookup `bin()` already does.
     // =========================================================================================
 
     fn wait_for<F: Fn() -> bool>(cond: F) {
@@ -1579,13 +1610,13 @@ mod tests {
     #[test]
     fn refresh_populates_beads_from_the_real_bd_shape() {
         let stub = crate::test_support::StubBd::new()
-            .env("SPIRA_DB", "/fake/db")
+            .db("/fake/db")
             .env(
                 "BD_LIST_OUT",
                 r#"{"issues":[{"id":"sp-r1","status":"open","labels":[]}]}"#,
             );
         let shared: Shared = Arc::new(Mutex::new(Snapshot::default()));
-        refresh(&shared);
+        refresh(&shared, &stub.cfg());
         wait_for(|| shared.lock().unwrap().at.is_some());
         let s = shared.lock().unwrap();
         assert_eq!(s.beads_err, None, "{:?}", s.beads_err);
@@ -1601,12 +1632,12 @@ mod tests {
     /// an empty list reads as "nothing is waiting" over a queue that was never actually read.
     #[test]
     fn refresh_relays_a_bd_failure_verbatim() {
-        let _stub = crate::test_support::StubBd::new()
-            .env("SPIRA_DB", "/fake/db")
+        let stub = crate::test_support::StubBd::new()
+            .db("/fake/db")
             .env("BD_LIST_RC", "1")
             .env("BD_LIST_ERR", "schema version mismatch: database is at v61");
         let shared: Shared = Arc::new(Mutex::new(Snapshot::default()));
-        refresh(&shared);
+        refresh(&shared, &stub.cfg());
         wait_for(|| shared.lock().unwrap().at.is_some());
         let s = shared.lock().unwrap();
         assert!(s.beads.is_none(), "a failed fetch must not populate beads");

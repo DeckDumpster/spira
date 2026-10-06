@@ -81,7 +81,9 @@ fn num(f: &Flags, k: &str, default: u64) -> Result<u64, String> {
 }
 
 fn run_dir(f: &Flags) -> Result<PathBuf, String> {
-    flag(f, "run").map(str::to_string).or_else(|| std::env::var("SPIRA_RUN").ok()).filter(|s| !s.is_empty()).map(PathBuf::from).ok_or("--run or SPIRA_RUN is required".into())
+    // SPIRA_RUN is a registered key (spira/conf.d) — the one source of config, through
+    // `spira_config::process::cfg` (per Ryan 2026-10-05), never the raw environment.
+    flag(f, "run").map(str::to_string).or_else(|| spira_config::process::cfg("SPIRA_RUN").ok()).filter(|s| !s.is_empty()).map(PathBuf::from).ok_or("--run or SPIRA_RUN is required".into())
 }
 
 /// The ref a pass certifies when `--base` is absent: `local/main` when `repo` has it (the
@@ -340,8 +342,11 @@ impl Rt<'_> {
     }
 
     fn open_beads(&self) -> Result<Vec<(String, String)>, String> {
-        let db = std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()).ok_or("SPIRA_DB is required to look for an open duplicate")?;
-        let bd = std::env::var("SPIRA_BD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "bd".into());
+        // SPIRA_DB/SPIRA_BD are registered keys (spira/conf.d) — the one source of config
+        // (per Ryan 2026-10-05), through `spira_config::process::cfg`, never a literal
+        // default standing in for an unresolved value.
+        let db = spira_config::process::cfg("SPIRA_DB")?;
+        let bd = spira_config::process::cfg("SPIRA_BD")?;
         let out = Command::new(&bd)
             .args(["-C", &db, "list", "--all", "--limit", "0", "--brief", "--json"])
             .stdin(Stdio::null())

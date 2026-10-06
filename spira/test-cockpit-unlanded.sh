@@ -171,15 +171,19 @@ JSON
 # classification too), with bd reads answered from a canned-JSON fixture rather than a
 # live store.
 unlanded() {    # unlanded <fixture-file>
+    # SPIRA_HOME_REPO/SPIRA_SCOPE_LABEL/SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are
+    # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config
+    # and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-        SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
+        SPIRA_REPO="$ALPHA" \
         SPIRA_BDJSON_FIXTURE="$1" \
         SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
         SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
         SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe unsent 2>/dev/null
 }
 
@@ -225,10 +229,14 @@ for line in sys.stdin:
 } > "$RUN/cockpit.env"
 
 REAL_BD="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null)"
+# SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
+# 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through
+# env -i, which clears it.
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="${REAL_BD:-bd}" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t
 pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$ALPHA" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="${REAL_BD:-bd}" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
+    SPIRA_TOML="$SPIRA_TOML" \
     "$PANE" once 0 120 2>/dev/null)"
 
 want "pane renders QUEUE label" "QUEUE" "$pane"

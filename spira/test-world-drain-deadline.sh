@@ -60,10 +60,15 @@ chmod +x "$SH/slay"
 # Fake aeon.sh so live_aeons() finds the process in /proc via argv match.
 printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/aeon.sh"; chmod +x "$SH/aeon.sh"
 
+# SPIRA_PROD/SPIRA_RUN/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare via tl_config, not the env prefixes below, which no process reads them
+# from any more. Same values throughout this file, so one declaration covers every call.
+tl_config SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$TMP/no-db"
+
 drain() {
     rc=0
-    out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
-           SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl" \
+    out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no.conf" \
+           SPIRA_SYSTEMCTL="$TMP/systemctl" \
            "$SH/world.sh" drain "$@" 2>&1)" || rc=$?
 }
 
@@ -157,14 +162,14 @@ chmod +x "$TMP/systemctl-units"
 UNITS_LIVE="$TMP/units-live"; export UNITS_LIVE
 
 rm -f "$UNITS_LIVE" "$RUN/world.draining"
-rc=0; out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
-    SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl-units" "$SH/world.sh" drain --timeout 0 2>&1)" || rc=$?
+rc=0; out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_SYSTEMCTL="$TMP/systemctl-units" "$SH/world.sh" drain --timeout 0 2>&1)" || rc=$?
 [ "$rc" = "0" ] && ok "no live unit: drain exits 0" || bad "no live unit: drain exits 0" "rc=$rc: $out"
 want "no live unit: says DRAINED" "DRAINED" "$out"
 
 : > "$UNITS_LIVE"; rm -f "$RUN/world.draining"
-rc=0; out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
-    SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl-units" "$SH/world.sh" drain --timeout 0 2>&1)" || rc=$?
+rc=0; out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_SYSTEMCTL="$TMP/systemctl-units" "$SH/world.sh" drain --timeout 0 2>&1)" || rc=$?
 [ "$rc" = "1" ] && ok "live unit: drain exits 1" || bad "live unit: drain exits 1" "rc=$rc: $out"
 want "live unit: says NOT DRAINED" "NOT DRAINED" "$out"
 rm -f "$UNITS_LIVE" "$RUN/world.draining"
@@ -213,8 +218,11 @@ SC
 chmod +x "$TMP/systemctl-g11"
 
 : > "$G11_CALLS"
-g11_out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" SPIRA_DB="$TMP/no-db" \
-           SPIRA_SYSTEMCTL="$TMP/systemctl-g11" SPIRA_INSTANCE=prod \
+# SPIRA_INSTANCE is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG); the
+# rest (SPIRA_PROD/SPIRA_RUN/SPIRA_DB) are already declared by the tl_config call above.
+tl_config SPIRA_INSTANCE=prod
+g11_out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no.conf" \
+           SPIRA_SYSTEMCTL="$TMP/systemctl-g11" \
            "$SH/world.sh" start 2>&1)"
 g11_calls="$(cat "$G11_CALLS")"
 

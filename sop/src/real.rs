@@ -142,7 +142,12 @@ impl Proc for RealProc {
     }
 }
 
-pub struct RealClock;
+/// `tz` is `SPIRA_TZ`'s declared value (spira-config's one door), resolved once at the
+/// process's top level and passed down here — never read from the environment in this
+/// struct (per Ryan 2026-10-05: one source of config).
+pub struct RealClock {
+    pub tz: String,
+}
 
 impl Clock for RealClock {
     fn now(&self) -> (u64, String) {
@@ -153,9 +158,8 @@ impl Clock for RealClock {
     }
 
     fn today(&self) -> String {
-        let tz = std::env::var("SPIRA_TZ").or_else(|_| std::env::var("TZ")).unwrap_or_default();
         let out = Command::new("date")
-            .env("TZ", tz)
+            .env("TZ", &self.tz)
             .args(["+%Y-%m-%d"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())

@@ -88,13 +88,23 @@ mkdir -p "$XDG_CONFIG_HOME"
 # admin-migrate's own connection is the lifecycle service user, as lc-serve's is.
 printf '%s\n' "$SVCPW" > "$TMP/svc.cred"; chmod 600 "$TMP/svc.cred"
 export SPIRA_LC_USER=spira_lc
-export SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred"
 unset SPIRA_LC_PASSWORD
 # The admin a pending migration is applied as; cases that test its absence unset these.
 export SPIRA_LC_ADMIN_USER=root
 export SPIRA_LC_ADMIN_PASSWORD="$ROOTPW"
 unset SPIRA_LC_ADMIN_PASSWORD_FILE
-as_root() { env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="$ROOTPW" SPIRA_LC_PASSWORD_FILE= "$@"; }
+# as_root: no credential FILE can stand in for root (hermetic). SPIRA_LC_PASSWORD_FILE is a
+# registered key (read only via SPIRA_TOML now, never env), so it is flipped to empty for
+# this one call and restored to the service credential right after — every OTHER spira-lc
+# call in this file runs outside as_root and needs the real svc.cred back in force.
+as_root() {
+    tl_config SPIRA_LC_PASSWORD_FILE=""
+    env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="$ROOTPW" "$@"
+    local _rc=$?
+    tl_config SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred"
+    return "$_rc"
+}
 no_admin() { env -u SPIRA_LC_ADMIN_USER -u SPIRA_LC_ADMIN_PASSWORD "$@"; }
 sed -e "s/@SPIRA_LC_PASSWORD@/$SVCPW/" -e "s/@SPIRA_LC_RO_PASSWORD@/ro-$SVCPW/" "$REPO/lifecycle/grants.sql" > "$TMP/grants.sql"
 

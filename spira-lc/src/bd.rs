@@ -1,18 +1,19 @@
 //! Shells to `bd` for the non-lifecycle half of the aeon semantic layer (design §3.5):
 //! titles, descriptions, dependencies, notes and filing stay bd's job (§3.3/3.4) — this
-//! module never touches `spira_lifecycle`. Resolved the same way the harness's shell code
-//! resolves them, `SPIRA_BD`/`SPIRA_DB`, read directly since a Rust binary cannot source
-//! `conf.sh`.
+//! module never touches `spira_lifecycle`. `SPIRA_BD`/`SPIRA_DB` are declared config
+//! (spira/conf.d), resolved from `$SPIRA_TOML` (one source of config, per Ryan 2026-10-05) —
+//! never this process's own environment.
 
 use std::process::Command;
 
-fn bd_bin() -> String {
-    std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string())
+fn bd_bin() -> Result<String, String> {
+    spira_config::process::cfg("SPIRA_BD")
 }
 
 fn run(args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new(bd_bin());
-    if let Ok(db) = std::env::var("SPIRA_DB") {
+    let mut cmd = Command::new(bd_bin()?);
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    if !db.is_empty() {
         cmd.args(["-C", &db]);
     }
     cmd.args(args);
@@ -109,8 +110,9 @@ pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, bod
 /// `bd <args>` with `stdin` piped in when given — the lane verbs' one door to bd
 /// (sp-st0mm). Same `SPIRA_BD`/`SPIRA_DB` resolution as [`run`].
 pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(bd_bin());
-    if let Ok(db) = std::env::var("SPIRA_DB") {
+    let mut cmd = Command::new(bd_bin()?);
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    if !db.is_empty() {
         cmd.args(["-C", &db]);
     }
     cmd.args(args);

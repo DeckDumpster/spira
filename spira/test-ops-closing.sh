@@ -138,11 +138,12 @@ aeon_fixture_agent "$BIN/claude"
 run_aeon() {             # run_aeon <fayth> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
-    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_PATH="${SPIRA_PATH:-}" TMP="$TMP" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_WIKI="" \
-        SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_WIKI="" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" \
-        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
+        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
+    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_TOML="$SPIRA_TOML" TMP="$TMP" \
+        SPIRA_CONF="$TMP/nonexistent.conf" \
+        SPIRA_HOME="$HOMEDIR" \
         BEADS_NO_AUTO_IMPORT=1 \
         timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
 }

@@ -38,7 +38,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run"
 
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
+tl_config SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
@@ -79,15 +79,16 @@ case " \$* " in *" list "*) cat "$FIXTURE" ;; *) echo '[]' ;; esac
 EOF
 chmod +x "$FAKE_BD"
 lc_mirror_bd "$T/lc"
+tl_config SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira
 
 ready_builder() {   # ready_builder [--json]
-    PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+    PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" \
         _spira_claim fayth-ready builder "$@" 2>/dev/null
 }
 # POSITIVE CONTROL: the fixture reaches spira-claim at all — the plain bead counts. A machine
 # that answered nothing would read 0 and make the exclusion below vacuous.
 is "positive control: fayth_ready builder counts the plain plan bead" "1" \
-    "$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira fayth_ready builder 2>/dev/null)"
+    "$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" fayth_ready builder 2>/dev/null)"
 builder_set="$(ready_builder --json)"
 want   "fayth_ready builder's set holds the plain plan bead" "sp-qaplain" "$builder_set"
 nowant "fayth_ready builder's set excludes the qa-proposed bead" "sp-qaprop" "$builder_set"

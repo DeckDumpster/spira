@@ -85,22 +85,22 @@ RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 run() {
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/
+    # SPIRA_FORGE are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="${SPIRA_DB:-/nonexistent}" SPIRA_BD="$SH/bd-stub.sh" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_FORGE="$SH/forge-fake.sh"
     env -i ${LCENV:-$(lcfix_env)} PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_DB="${SPIRA_DB:-/nonexistent}" \
-        SPIRA_BD="$SH/bd-stub.sh" \
         BD_LOG="$BD_LOG" \
-        SPIRA_HOME_REPO="$REPONAME" \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        SPIRA_FORGE="$SH/forge-fake.sh" \
         FORGE_LOG="$FORGE_LOG" \
         RUNS_FILE="$RUNS_FILE" \
         CANCEL_FAIL="$CANCEL_FAIL" \
         BEADS_ACTOR="aeon-abandontest" \
         SPIRA_EVENT_COOLDOWN=0 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
@@ -482,11 +482,16 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 
 real_run() {
-    env -i $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/
+    # SPIRA_FORGE are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        SPIRA_FORGE="$SH/forge-fake.sh" FORGE_LOG="$FORGE_LOG" \
+        SPIRA_FORGE="$SH/forge-fake.sh"
+    env -i $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" \
+        FORGE_LOG="$FORGE_LOG" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 

@@ -25,6 +25,7 @@ has() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 log() { :; }
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
@@ -57,8 +58,12 @@ export CALLS
 # A non-default ask label and repo-map path, pinned here rather than inherited from this
 # host's own conf.sh — a fixture that asserted against the shipped default would pass just
 # as well if park_unmapped had the literal "needs-operator" written into it.
-export PATH="$TMP/bin:$PATH" SPIRA_BD=bd SPIRA_DB=fixture BEADS_ACTOR=aeon-tester \
-    SPIRA_ASK_LABEL=needs-fixture-operator SPIRA_REPO_MAP="$TMP/fixture-repo-map"
+# SPIRA_BD/SPIRA_DB/SPIRA_ASK_LABEL/SPIRA_REPO_MAP are registered keys (per Ryan
+# 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+# which no process reads them from any more.
+tl_config SPIRA_BD=bd SPIRA_DB=fixture SPIRA_ASK_LABEL=needs-fixture-operator \
+    SPIRA_REPO_MAP="$TMP/fixture-repo-map"
+export PATH="$TMP/bin:$PATH" BEADS_ACTOR=aeon-tester
 park_unmapped sp-typo1 typo-repo
 n_calls="$(grep -c . "$CALLS" || true)"
 [ "${n_calls:-0}" -gt 0 ] && ok "positive control: bd was called at all ($n_calls call(s))" \

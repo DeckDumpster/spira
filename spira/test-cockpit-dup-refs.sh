@@ -44,10 +44,10 @@ lc_mirror_bd "$TMP/lc"
 # Run cockpit-collect probe dup_refs — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 dup_refs() {    # dup_refs <fixture-file>
+    tl_config SPIRA_DB="$TMP/nodb" SPIRA_RUN="$TMP"
     env -i PATH="$PATH" HOME="$HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_DB="$TMP/nodb" \
-        SPIRA_RUN="$TMP" \
         SPIRA_BDJSON_FIXTURE="$1" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         cockpit-collect probe dup_refs 2>/dev/null

@@ -18,12 +18,14 @@ pub(crate) mod test_support {
     use std::sync::Mutex;
     pub static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    /// Pins `SPIRA_HOME` beside `SPIRA_RUN`: `run_dir()` judges the run dir against the home's
-    /// config, so a test that sets only `SPIRA_RUN` passes or exits the binary by test order.
+    /// Pins `SPIRA_HOME` beside a `SPIRA_TOML` fixture declaring `spira.run` as `run`: per
+    /// Ryan 2026-10-05 (one source of config), `resolve_run_dir` no longer takes a bare
+    /// `SPIRA_RUN` environment override — the value must come from the one file.
     pub fn set_run(run: &std::path::Path) -> testkit::EnvGuard {
+        let toml = spira_config::process::fixture_toml(run, &[("SPIRA_RUN", run.to_str().unwrap())]);
         testkit::env(&[
             ("SPIRA_HOME", Some(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira"))),
-            ("SPIRA_RUN", Some(run.to_str().unwrap())),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
         ])
     }
 }
@@ -64,8 +66,16 @@ fn run(args: &[String]) -> i32 {
     }
 }
 
+/// `SPIRA_INSTANCE`, through the one door (`spira_config::resolve::resolve_instance`, the
+/// same call `loom`'s own `Config::from_env` makes). `None` only when resolution itself
+/// fails (no `$SPIRA_TOML`, an unresolvable registry, …) — this binary degrades to the
+/// single-instance write-admission check in that case rather than refusing outright, since
+/// `may_write`'s own fence (`INVOCATION_ID`) is the hard gate here, not this name.
 fn instance() -> Option<String> {
-    std::env::var("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty())
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    spira_config::resolve::resolve_instance(&env, &io::home_dir())
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// `once`: the backward-compatible full serial pass. Writes the snapshot when this process
@@ -76,8 +86,15 @@ fn cmd_once() -> i32 {
     let _ = std::fs::create_dir_all(&run_dir);
     sweep_stale_snapshot_tmps(&run_dir);
 
+    let pcfg = match probes::Cfg::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cockpit-collect: {e}");
+            return 1;
+        }
+    };
     let may_write = supervisor::may_write(instance().as_deref());
-    let kv = probes::full_pass();
+    let kv = probes::full_pass(&pcfg);
 
     if may_write {
         write_snapshot_and_history(&kv, &run_dir);
@@ -204,7 +221,14 @@ fn cmd_sweep_temps() -> i32 {
 
 fn cmd_probe(name: Option<&str>) -> i32 {
     let Some(name) = name else { return usage() };
-    match probes::run(name) {
+    let pcfg = match probes::Cfg::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cockpit-collect: {e}");
+            return 1;
+        }
+    };
+    match probes::run(name, &pcfg) {
         Some(kv) => {
             print!("{}", probes::render(&kv));
             0

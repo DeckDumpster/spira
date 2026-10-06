@@ -471,8 +471,27 @@ mod tests {
     use super::*;
     use crate::seam::fake::FakeSeam;
 
+    /// A plain `Env` literal — these tests exercise `sweep`/`mark`/etc, which take config as
+    /// an argument, so they must not go through `config::resolve`'s real
+    /// `spira_config::process::cfg` door (a process-global `OnceLock`; `config.rs`'s own test
+    /// is the only one in this crate allowed to touch it). Values mirror what `spira/conf.sh`
+    /// used to default these keys to, for continuity with this test suite's existing fixtures.
     fn cfg() -> Env {
-        crate::config::resolve(&std::collections::HashMap::new())
+        Env {
+            db: ".".to_string(),
+            run: "/tmp".to_string(),
+            chamber: String::new(),
+            token_projects: String::new(),
+            wiki: None,
+            agent: "claude".to_string(),
+            tz: "UTC".to_string(),
+            every: 40,
+            idle: 1800,
+            model: "claude-opus-5".to_string(),
+            timeout: 900,
+            per_pass: 1,
+            timeout_retries: 3,
+        }
     }
 
     #[test]

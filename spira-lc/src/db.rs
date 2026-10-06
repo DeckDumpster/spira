@@ -78,8 +78,11 @@ impl Conn {
             .parse()
             .map_err(|e| DbError::CannotTell(format!("SPIRA_LC_PORT: {e}")))?;
         let user = std::env::var("SPIRA_LC_USER").unwrap_or_else(|_| "spira_lc".to_string());
-        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let password = password_from(Some(spira_config::resolve::lc_password_file(&env)), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
+        // SPIRA_LC_PASSWORD_FILE is declared config (spira/conf.d): the one source is
+        // $SPIRA_TOML (per Ryan 2026-10-05), never this process's own environment. The
+        // credential itself still comes from reading that file's contents, same as always.
+        let password_file = spira_config::process::cfg("SPIRA_LC_PASSWORD_FILE").ok();
+        let password = password_from(password_file, std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
         Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: std::time::Duration::from_secs(5) })

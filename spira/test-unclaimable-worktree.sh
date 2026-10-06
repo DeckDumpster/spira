@@ -47,7 +47,7 @@ lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"
 # broken gitdir, so auto-derivation would produce "workspace" instead.
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF=/tmp/.spira-test-noconf-$$   # nonexistent — no conf file loaded
-export SPIRA_HOME_REPO=spira
+tl_config SPIRA_HOME_REPO=spira
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -87,7 +87,8 @@ trap cleanup EXIT INT TERM
 testdb_up unclaimable_wt || { echo "test-unclaimable-worktree: could not build fixture database"; exit 1; }
 
 # Source production lib.sh so detect_unclaimable_ready is available for case 3.
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 acted=0; progressed=0
 act()      { acted=$((acted+1)); }
 progress() { progressed=$((progressed+1)); act "$@"; }
@@ -101,6 +102,18 @@ echo "test-unclaimable-worktree.sh"
 # Unsets SPIRA_HOME so conf.sh derives it from BASH_SOURCE (the fake lib.sh path),
 # not from this test's exported SPIRA_HOME. Also unsets label vars so the modified
 # conf.sh sets them to partition:plan/incident. Keeps SPIRA_DB for the fixture.
+#
+# NOTE (per Ryan 2026-10-05, the one-source-of-config law): detect_unclaimable_ready is now
+# a one-line shim onto the compiled `sentinel --detect-unclaimable`, which resolves every
+# registered key (SPIRA_DB included) fresh from SPIRA_TOML, never from inherited env — the
+# `-u SPIRA_PLAN_LABEL` etc. unsets and conf.sh's old `: "${SPIRA_PLAN_LABEL:=plan}"` bash
+# defaults this suite's sed patch targets are both gone from conf.sh already, so the
+# "worktree sees partition:plan" half of this fixture no longer has a mechanism to construct
+# — sourcing $FAKE_WT/spira/lib.sh vs $HERE/lib.sh now runs the exact same compiled binary.
+# Only SPIRA_DB is fixed here (tl_config, so sentinel queries the actual fixture database);
+# the worktree-divergence simulation this suite's "case 1/2/3" rest on is flagged in the
+# batch report rather than redesigned.
+tl_config SPIRA_DB="$SPIRA_DB"
 run_from_worktree() {
     env -u SPIRA_HOME \
         -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
@@ -108,7 +121,6 @@ run_from_worktree() {
         -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
         -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
         -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
-        SPIRA_DB="$SPIRA_DB" \
         SPIRA_CONF="$TMP/no-such.conf" \
         bash -c ". \"$FAKE_WT/spira/lib.sh\"; detect_unclaimable_ready" 2>/dev/null
 }

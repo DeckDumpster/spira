@@ -45,12 +45,17 @@ wait_for_marker() {
 }
 
 run_loom() {      # run_loom <conf> <window> <marker>
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
+    # through env -i, which clears it. SPIRA_CONF stays a direct env var — it is this
+    # suite's own subject (loom.sh noticing SPIRA_CONF's file change), not a registered key.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
     timeout "$2" env -i PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$1" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_GOAL=sp-test \
         ARMED_MARKER="${3:-}" \
         SPIRA_LOOM_TICK="$TICK" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$HERE/loom.sh"
 }
 

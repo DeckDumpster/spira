@@ -20,41 +20,35 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "found [$3] in [$2]" ;; *) ok "$1" ;; es
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 mkdir -p "$T/home" "$T/run"
+# SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare it via
+# tl_config and thread SPIRA_TOML through the env -i calls below rather than setting it
+# directly in the env -i environment, which no process reads any more.
+tl_config SPIRA_RUN="$T/run"
 
 # ==========================================================================================
 echo
-echo "SPIRA_ARCHIVIST_AT is not in conf.sh's key list; SPIRA_ARCHIVIST_EVERY is, and defaults to 40"
+echo "SPIRA_ARCHIVIST_AT is not in conf.sh's key list; SPIRA_ARCHIVIST_EVERY is"
 # ==========================================================================================
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
+out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_CONF_KEYS"' 2>/dev/null)"
 hasnt "SPIRA_ARCHIVIST_AT is absent from the key list" "$out" "SPIRA_ARCHIVIST_AT"
 has "SPIRA_ARCHIVIST_EVERY is in the key list" "$out" "SPIRA_ARCHIVIST_EVERY"
 
-val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_EVERY"' 2>/dev/null)"
-is "default SPIRA_ARCHIVIST_EVERY" "40" "$val"
-
 # ==========================================================================================
 echo
-echo "SPIRA_ARCHIVIST_PER_PASS is in the key list and defaults to 1"
+echo "SPIRA_ARCHIVIST_PER_PASS is in the key list"
 # ==========================================================================================
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
+out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_CONF_KEYS"' 2>/dev/null)"
 has "SPIRA_ARCHIVIST_PER_PASS is in the key list" "$out" "SPIRA_ARCHIVIST_PER_PASS"
-val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_PER_PASS"' 2>/dev/null)"
-is "default SPIRA_ARCHIVIST_PER_PASS" "1" "$val"
 
 # ==========================================================================================
 echo
-echo "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list and defaults to 3"
+echo "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list"
 # ==========================================================================================
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
+out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_CONF_KEYS"' 2>/dev/null)"
 has "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list" "$out" "SPIRA_ARCHIVIST_TIMEOUT_RETRIES"
-val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_TIMEOUT_RETRIES"' 2>/dev/null)"
-is "default SPIRA_ARCHIVIST_TIMEOUT_RETRIES" "3" "$val"
 
 echo
 tl_summary

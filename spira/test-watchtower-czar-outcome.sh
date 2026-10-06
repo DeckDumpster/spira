@@ -54,14 +54,20 @@ chmod +x "$MOCK_INC"
 # A trigger's state is its lifecycle row (sp-mve9i); this world's machine mirrors the store.
 lc_mirror_bd "$TMP/lc"
 wt_co() {   # wt_co [VAR=val ...]
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
+        SPIRA_PATH="${SPIRA_PATH:-}"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_CZAR_UNCLAIMED_MINS=*) tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$TMP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
-        SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_INCIDENT_SH="$MOCK_INC" \
-        "$@" watchtower --czar-outcome-check 2>/dev/null
+        "${extra[@]+"${extra[@]}"}" watchtower --czar-outcome-check 2>/dev/null
 }
 
 # ======================================================================================

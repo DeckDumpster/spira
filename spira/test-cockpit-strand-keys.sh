@@ -24,9 +24,10 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
 run_strands() {
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    tl_config SPIRA_RUN="$RUN"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_DB="$TMP/nodb" \
         cockpit-collect probe strands 2>/dev/null
 }
 

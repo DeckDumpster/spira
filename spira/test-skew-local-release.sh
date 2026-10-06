@@ -126,16 +126,12 @@ chmod +x "$STUBBIN/mail"
 
 run_check() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    env -i PATH="$STUBBIN:$PATH" \
+    tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$run_dir" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_REPO="$REPO" \
-        SPIRA_HOME_REPO="lfixq" \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -248,16 +244,12 @@ refresh_run="$(mktemp -d "$TMP/run-XXXXX")"
 # would instead trip repo_root's "somebody set this on purpose" override and hand back
 # $FAKE_RELEASE_DIR verbatim — exactly the ambiguity the real unit does NOT create, since it
 # sets only SPIRA_RELEASE and PATH.
-refresh_out="$(env -i PATH="$STUBBIN:$PATH" \
+tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$refresh_run" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+refresh_out="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$FAKE_RELEASE_DIR/spira" \
-    SPIRA_HOME_REPO="lfixq" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RUN="$refresh_run" \
-    SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" \
-    SPIRA_RELEASES="$RELEASES" \
     skew refresh 2>&1)"; refresh_rc=$?
 is     "refresh no-arg: exits 0"                 "0"                  "$refresh_rc"
 want   "refresh no-arg: reached queue.local check-only" "nothing to deploy" "$refresh_out"
@@ -268,16 +260,12 @@ nowant "refresh no-arg: not a git checkout error"       "is not a git checkout" 
 # release-mode branch (which would fail on $FAKE_RELEASE_DIR having no .git).
 activate "$C1"
 refresh_run2="$(mktemp -d "$TMP/run-XXXXX")"
-refresh_out2="$(env -i PATH="$STUBBIN:$PATH" \
+tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$refresh_run2" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+refresh_out2="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$FAKE_RELEASE_DIR/spira" \
-    SPIRA_HOME_REPO="lfixq" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RUN="$refresh_run2" \
-    SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" \
-    SPIRA_RELEASES="$RELEASES" \
     skew refresh 2>&1)"; refresh_rc2=$?
 is     "refresh no-arg, behind: exits 1"           "1"          "$refresh_rc2"
 want   "refresh no-arg, behind: LOCAL-SKEW"        "LOCAL-SKEW" "$refresh_out2"
@@ -292,16 +280,12 @@ activate "$C3"
 printf 'RUNNING UNLANDED %s: stop the world fix (since 2026-09-30T00:00:00Z)\n' "$C3" > "$STUBCTL/status_output"
 
 refresh_run3="$(mktemp -d "$TMP/run-XXXXX")"
-refresh_out3="$(env -i PATH="$STUBBIN:$PATH" \
+tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$refresh_run3" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+refresh_out3="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="lfixq" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RUN="$refresh_run3" \
-    SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" \
-    SPIRA_RELEASES="$RELEASES" \
     skew refresh "$REPO" 2>&1)"; refresh_rc3=$?
 is     "refresh hotfix: exits 0"              "0"                 "$refresh_rc3"
 want   "refresh hotfix: names the hotfix"     "standing hotfix"   "$refresh_out3"

@@ -54,14 +54,42 @@ impl Fx {
 
     fn cert(&self, args: &[&str]) -> (i32, String, String) {
         let p = self.d.path();
+        // SPIRA_RUN/SPIRA_DB/SPIRA_BD are registered keys (spira/conf.d) — cert-sweep now
+        // reads them through `spira_config::process::cfg`, resolved from `$SPIRA_TOML`,
+        // never a bare env var (per Ryan 2026-10-05: one source of config). Each test here
+        // spawns a fresh process, so a per-test fixture is safe (`cfg`'s `OnceLock` is
+        // per-process, not shared across these `Command::new` children). SPIRA_HOME still
+        // has to be the checkout's own spira/ (where conf.d — the key registry — lives).
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(
+            p,
+            &[
+                ("SPIRA_RUN", &p.join("run").display().to_string()),
+                ("SPIRA_DB", &p.join("db").display().to_string()),
+                ("SPIRA_BD", "bd"),
+            ],
+        );
+        // `landing_ref`'s own `spira_config::repos::Registry::from_env` call ALSO reads
+        // this process's `SPIRA_HOME` (raw, unrelated to `cfg()`) — and, with it now real,
+        // `registry_env`'s fallback resolves `SPIRA_HOME_REPO`/`SPIRA_REPO_DERIVED` from
+        // this SAME fixture toml when they are not already present. Left alone,
+        // `SPIRA_REPO_DERIVED` would resolve to the REAL checkout's own root (not this
+        // fixture repo), making `repo_override` treat `SPIRA_REPO` (this fixture's own
+        // repo path) as a deliberate root override — which then matches `name_at` and
+        // pulls in the fixture toml's `[repo.spira]` row (`base = "local/main"`), exactly
+        // the ref this test asserts the fixture repo does NOT have. Declaring
+        // SPIRA_REPO_DERIVED equal to SPIRA_REPO here means no override is detected,
+        // restoring the fixture's own "no map, fall through to the repo's real current
+        // branch" behavior.
         let o = Command::new(env!("CARGO_BIN_EXE_cert-sweep"))
             .args(args)
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", p.join("bin").display()))
             .env("FX", p)
-            .env("SPIRA_RUN", p.join("run"))
-            .env("SPIRA_DB", p.join("db"))
+            .env("SPIRA_HOME", &real_home)
+            .env("SPIRA_TOML", &toml)
             .env("SPIRA_REPO", p.join("repo"))
+            .env("SPIRA_REPO_DERIVED", p.join("repo"))
             .output()
             .unwrap();
         (o.status.code().unwrap(), String::from_utf8_lossy(&o.stdout).into(), String::from_utf8_lossy(&o.stderr).into())

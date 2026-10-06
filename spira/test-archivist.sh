@@ -34,6 +34,13 @@ EPOCH=1750000000
 IDLE=300
 EVERY=40
 
+# Registered config, fixed for the whole suite — declared once via tl_config; every env -i
+# invocation below reads it back through SPIRA_TOML="$SPIRA_TOML".
+tl_config SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
+    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
+    SPIRA_ARCHIVIST_IDLE="$IDLE" SPIRA_ARCHIVIST_EVERY="$EVERY" \
+    SPIRA_CHAMBER="$T/chamber" SPIRA_ARCHIVIST_TIMEOUT=10
+
 # Build a synthetic transcript with a given number of turns and approximate context.
 mktranscript() {   # mktranscript <path> <turns> <ctx>
     local tp="$1" n="$2" ctx="$3" i per
@@ -58,25 +65,16 @@ chmod +x "$STUB_CLAUDE"
 
 # Run archivist list in a clean environment.
 alist() {
-    env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-        SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-        SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-        SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-        SPIRA_ARCHIVIST_EVERY="$EVERY" \
+    env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+        SPIRA_NOW="$EPOCH" \
         "$ARC" list 2>/dev/null
 }
 
 # Run archivist sweep in a clean environment with the stub claude.
 asweep() {
-    env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-        SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-        SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-        SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-        SPIRA_ARCHIVIST_EVERY="$EVERY" \
-        SPIRA_AGENT="$STUB_CLAUDE" \
-        SPIRA_ARCHIVIST_TIMEOUT=10 \
-        SPIRA_ARCHIVIST_PER_PASS="${BUDGET:-1}" \
-        SPIRA_CHAMBER="$T/chamber" \
+    tl_config SPIRA_AGENT="$STUB_CLAUDE" SPIRA_ARCHIVIST_PER_PASS="${BUDGET:-1}"
+    env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+        SPIRA_NOW="$EPOCH" \
         "$ARC" sweep 2>&1
 }
 
@@ -264,10 +262,8 @@ mktranscript "$T/projects/-test-project/sess-viz.jsonl" 50 300000
 # Plant a sweep.state saying skipped for capacity.
 printf 'sweep_state=skipped\nreason=capacity\nat=%s\n' "$EPOCH" > "$T/run/archivist/sweep.state"
 # No per-session state exists, so arc_name will be "none" and sweep_skipped will be True.
-out="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
+out="$(env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_NOW="$EPOCH" \
     ctx-meter.sh env "$T/projects/-test-project/sess-viz.jsonl" 2>/dev/null)"
 has "env mode shows skipped archivist state" "$out" "SP_CTX_ARCHIVIST=skipped"
 
@@ -345,15 +341,9 @@ exit 1
 STUB
 chmod +x "$REFUSE_CLAUDE"
 
-out="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-    SPIRA_ARCHIVIST_EVERY="$EVERY" \
-    SPIRA_AGENT="$REFUSE_CLAUDE" \
-    SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_ARCHIVIST_PER_PASS=5 \
-    SPIRA_CHAMBER="$T/chamber" \
+tl_config SPIRA_AGENT="$REFUSE_CLAUDE" SPIRA_ARCHIVIST_PER_PASS=5
+out="$(env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_NOW="$EPOCH" \
     "$ARC" sweep 2>&1)"
 
 _st="$(sed -n 's/^state=//p' "$T/run/archivist/sess-refused.state" 2>/dev/null)"
@@ -410,15 +400,13 @@ rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
 mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
 cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
 mktranscript "$T/projects/-test-project/sess-alias.jsonl" 50 300000
-alias_out="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-    SPIRA_ARCHIVIST_EVERY="$EVERY" \
+# The base fixture declares spira.agent="claude" (non-empty), so the config layer would
+# otherwise win over the deprecated env alias every time; clear it back to empty so
+# resolve.rs's SPIRA_AGENT seed is None and the SPIRA_CLAUDE fallback actually fires.
+tl_config SPIRA_AGENT= SPIRA_ARCHIVIST_PER_PASS=1
+alias_out="$(env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_NOW="$EPOCH" \
     SPIRA_CLAUDE="$STUB_CLAUDE" \
-    SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_ARCHIVIST_PER_PASS=1 \
-    SPIRA_CHAMBER="$T/chamber" \
     "$ARC" sweep 2>&1)"
 has    "SPIRA_CLAUDE alias: deprecation warning is emitted" "$alias_out" "SPIRA_CLAUDE is deprecated"
 has    "SPIRA_CLAUDE alias: sweep still runs via the alias"  "$alias_out" "safe to clear"
@@ -444,16 +432,9 @@ exit 124
 STUB
 chmod +x "$TIMEOUT_CLAUDE"
 
-tout="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-    SPIRA_ARCHIVIST_EVERY="$EVERY" \
-    SPIRA_AGENT="$TIMEOUT_CLAUDE" \
-    SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_ARCHIVIST_PER_PASS=5 \
-    SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
-    SPIRA_CHAMBER="$T/chamber" \
+tl_config SPIRA_AGENT="$TIMEOUT_CLAUDE" SPIRA_ARCHIVIST_PER_PASS=5 SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3
+tout="$(env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_NOW="$EPOCH" \
     "$ARC" sweep 2>&1)"
 
 _st="$(sed -n 's/^state=//p' "$T/run/archivist/sess-timed.state" 2>/dev/null)"
@@ -483,16 +464,9 @@ exit 1
 STUB
 chmod +x "$CRASH_CLAUDE"
 
-env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-    SPIRA_ARCHIVIST_EVERY="$EVERY" \
-    SPIRA_AGENT="$CRASH_CLAUDE" \
-    SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_ARCHIVIST_PER_PASS=1 \
-    SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
-    SPIRA_CHAMBER="$T/chamber" \
+tl_config SPIRA_AGENT="$CRASH_CLAUDE" SPIRA_ARCHIVIST_PER_PASS=1 SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3
+env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_NOW="$EPOCH" \
     "$ARC" sweep 2>/dev/null
 
 _st_crash="$(sed -n 's/^state=//p' "$T/run/archivist/sess-crash.state" 2>/dev/null)"
@@ -512,16 +486,9 @@ mktranscript "$T/projects/-test-project/sess-exhaust.jsonl" 60 300000
 # Plant a timeout_count file at budget-1 so the next timeout crosses the threshold.
 printf '2\n' > "$T/run/archivist/sess-exhaust.timeout_count"
 
-env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-    SPIRA_ARCHIVIST_EVERY="$EVERY" \
-    SPIRA_AGENT="$TIMEOUT_CLAUDE" \
-    SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_ARCHIVIST_PER_PASS=1 \
-    SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
-    SPIRA_CHAMBER="$T/chamber" \
+tl_config SPIRA_AGENT="$TIMEOUT_CLAUDE" SPIRA_ARCHIVIST_PER_PASS=1 SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3
+env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_NOW="$EPOCH" \
     "$ARC" sweep 2>/dev/null
 
 _st_ex="$(sed -n 's/^state=//p' "$T/run/archivist/sess-exhaust.state" 2>/dev/null)"
@@ -530,9 +497,13 @@ elist="$(alist)"
 hasnt "an exhausted timeout is excluded from the next pass" "$elist" "archive"
 
 adigest() {  # adigest <archivist.sh args...>
-    env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-        SPIRA_RUN="$T/run" SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
-        SPIRA_TOKEN_PROJECTS="$T/projects" SPIRA_TZ=UTC \
+    # SPIRA_MAIL/SPIRA_MAIL_KINDS are registered but mail/src/env.rs reads them with a plain
+    # std::env::var, not spira_config::process::cfg — a direct-env exception like SPIRA_HOME,
+    # confirmed by reading that source; tl_config would silently never reach them. SPIRA_TZ
+    # IS read through cfg() (archivist/src/config.rs), so it alone goes through tl_config.
+    tl_config SPIRA_TZ=UTC
+    env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+        SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
         "$ARC" "$@" 2>&1
 }
 

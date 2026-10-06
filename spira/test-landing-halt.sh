@@ -34,12 +34,13 @@ SPIRA_REPO_MAP="$TMP/repo-map"
 # Minimal conf seam: SPIRA_CONF points nowhere so lib.sh uses defaults.
 # SPIRA_REPO_MAP is passed explicitly; before the file exists repo_names() returns nothing.
 run_halt() {
+    # SPIRA_RUN/SPIRA_PROD/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
     env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_RUN="$SPIRA_RUN" \
         SPIRA_HOME="$HERE" \
-        SPIRA_PROD="$HERE" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         landing-pass halt "$@" 2>&1
 }
 
@@ -220,13 +221,14 @@ printf 'pid=%s\nstarted=%s\nrepo=spira\nbranch=spira/sp-cont\nphase=gate\n' \
     "$CONT_PID" "$(date +%s)" > "$LAND_RUN"
 printf '%s\n' "$CONT_NAME" > "$LAND_CONTAINERS"
 
+# SPIRA_RUN/SPIRA_PROD/SPIRA_PATH/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05,
+# ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$PROD_DIR" SPIRA_PATH="$BIN_DIR" \
+    SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 out="$(env -i PATH="$PROD_DIR:$BIN_DIR:$PATH" HOME="$HOME" \
-    SPIRA_RUN="$SPIRA_RUN" \
     SPIRA_HOME="$HERE" \
-    SPIRA_PROD="$PROD_DIR" \
-    SPIRA_PATH="$BIN_DIR" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+    SPIRA_TOML="$SPIRA_TOML" \
     landing-pass halt --reason "container teardown test" 2>&1)"; rc=$?
 kill "$CONT_PID" 2>/dev/null || true
 
@@ -275,14 +277,16 @@ printf '%s\n' "$FAKE_CNAME" > "$LAND_CONTAINERS"
 # (`export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:..."`), so a plain
 # PATH prefix set here is discarded the moment landing.sh sources it — the stub
 # must go in the one seam conf.sh actually reads.
-out="$(env -i PATH="$STUBDIR:$PATH" SPIRA_PATH="$STUBDIR" HOME="$HOME" \
-    SPIRA_RUN="$SPIRA_RUN" \
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05,
+# ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+tl_config SPIRA_PATH="$STUBDIR" SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" \
+    SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+out="$(env -i PATH="$STUBDIR:$PATH" HOME="$HOME" \
     SPIRA_HOME="$HERE" \
-    SPIRA_PROD="$HERE" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
     PODMAN_LOG="$PODMAN_LOG" \
     FAKE_CNAME="$FAKE_CNAME" \
+    SPIRA_TOML="$SPIRA_TOML" \
     landing-pass halt 2>&1)"
 kill "$VOL_PID" 2>/dev/null || true
 

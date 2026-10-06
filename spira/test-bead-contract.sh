@@ -53,10 +53,10 @@ MAP
 
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 run_contract() {
-    env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
+    tl_config SPIRA_REPO_MAP="${1-$T/repo-map}"
+    env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$T/none.conf" \
         SPIRA_HOME="$T" \
-        SPIRA_REPO_MAP="${1-$T/repo-map}" \
         bead.sh contract 2>&1
 }
 

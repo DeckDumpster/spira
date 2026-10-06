@@ -105,6 +105,11 @@ struct Fixture {
     root: PathBuf,
     home: PathBuf,
     systemd_run_log: PathBuf,
+    /// A complete `spira.toml` (`spira_config::process::fixture_toml`), for `run_unit` to
+    /// hand every exec'd binary via `SPIRA_TOML` — none of the rendered unit templates carry
+    /// it themselves (it is not a registered key, per Ryan 2026-10-05: one source of
+    /// config), and every binary this file execs now refuses outright without it.
+    toml: PathBuf,
     /// Kept alive for as long as the fixture is in use — `TempDir::drop` removes
     /// everything under it.
     _dir: testkit::TempDir,
@@ -147,7 +152,29 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     if with_aeon {
         write_script(&root.join("bin/aeon"), "exit 0");
     }
-    Fixture { root, home, systemd_run_log, _dir: t }
+    // `run` and `db` match what `run_unit`'s own rendered `host` map hands these same units
+    // as `SPIRA_RUN`/`SPIRA_DB` — so a binary reading them through `cfg` (sentinel,
+    // spira-claim, watchd) agrees with what the unit's own `Environment=` lines say.
+    //
+    // `chamber`/`chamber_overlay` are NOT derived from `$SPIRA_HOME` by `spira_config`'s own
+    // resolve() any more — SPIRA_CHAMBER has no procedural step there (unlike
+    // SPIRA_RELEASES/SPIRA_RUN/SPIRA_INSTANCE), so it is resolved generically, straight from
+    // whatever `spira.toml` declares. The complete fixture `fixture_toml` writes declares a
+    // fixed placeholder (`/fixture/home/spira/spira-releases/<sha>/spira/chamber`) that does
+    // not exist on disk — without this override, spira-claim/sentinel read THAT path and see
+    // "no fayth in the chamber" for every real fayth, never this fixture's own `root/spira/
+    // chamber` (the real chamber, symlinked in above, or `build_fixture_with_planted_fayth`'s
+    // own planted one). `chamber_overlay` is pointed at a directory that does not exist,
+    // matching an operator who configured none.
+    let run_s = home.join(".local/share/spira/run").display().to_string();
+    let db_s = home.join(".local/share/spira/db").display().to_string();
+    let chamber_s = root.join("spira/chamber").display().to_string();
+    let overlay_s = home.join("chamber-overlay-unset").display().to_string();
+    let toml = spira_config::process::fixture_toml(
+        &home,
+        &[("SPIRA_RUN", &run_s), ("SPIRA_DB", &db_s), ("SPIRA_INSTANCE", "prod"), ("SPIRA_CHAMBER", &chamber_s), ("SPIRA_CHAMBER_OVERLAY", &overlay_s)],
+    );
+    Fixture { root, home, systemd_run_log, toml, _dir: t }
 }
 
 /// A `bd` stub that answers a DIFFERENT, deterministic ready count depending on which
@@ -273,10 +300,12 @@ fn exec_start_argv(rendered: &str) -> Vec<String> {
 
 /// Renders `template` from this checkout's own `systemd/` against `fixture`'s release
 /// root, execs `argv_override` (or the template's own `ExecStart=` argv when empty) under
-/// `env -i` plus EXACTLY the rendered `Environment=` lines, `HOME=<fixture home>` and
-/// `extra_env` (operational overrides a real unit never carries but this bead's own part 3
-/// explicitly sanctions stubbing, e.g. none for the generic cases). Returns (exit code,
-/// combined stdout+stderr).
+/// `env -i` plus EXACTLY the rendered `Environment=` lines, `HOME=<fixture home>`,
+/// `SPIRA_TOML=<fixture.toml>` (not a registered key, so no template carries it itself, but
+/// every binary this file execs now refuses outright without it — per Ryan 2026-10-05, one
+/// source of config) and `extra_env` (operational overrides a real unit never carries but
+/// this bead's own part 3 explicitly sanctions stubbing, e.g. none for the generic cases).
+/// Returns (exit code, combined stdout+stderr).
 fn run_unit(fixture: &Fixture, template: &str, argv_override: &[&str], extra_env: &[(&str, &str)]) -> (i32, String) {
     let text = std::fs::read_to_string(workspace_root().join("systemd").join(template))
         .unwrap_or_else(|e| panic!("cannot read systemd/{template}: {e}"));
@@ -292,7 +321,7 @@ fn run_unit(fixture: &Fixture, template: &str, argv_override: &[&str], extra_env
     let (bin, rest) = (argv[0].clone(), &argv[1..]);
 
     let mut cmd = Command::new("env");
-    cmd.arg("-i").arg(format!("HOME={}", fixture.home.display()));
+    cmd.arg("-i").arg(format!("HOME={}", fixture.home.display())).arg(format!("SPIRA_TOML={}", fixture.toml.display()));
     for (k, v) in &env {
         cmd.arg(format!("{k}={v}"));
     }

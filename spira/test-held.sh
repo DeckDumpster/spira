@@ -40,7 +40,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such-conf"
 # NEVER THE REAL STORE. conf.sh only runs bd's schema check against a $SPIRA_DB that already
 # exists on disk — a nonexistent path skips it, and skipping it is what keeps this suite from
@@ -78,7 +78,7 @@ case "$id" in
 esac
 EOF
 chmod +x "$STUB_BD"
-export SPIRA_BD="$STUB_BD"
+tl_config SPIRA_BD="$STUB_BD"
 
 # ---------------------------------------------------------------------------
 # Build a no-remote fixture git repo with three kinds of spira/* branches.
@@ -104,7 +104,7 @@ git -C "$REPO" checkout -q -b spira/tst-orphan
 git -C "$REPO" commit --allow-empty -m "orphan work"
 git -C "$REPO" checkout -q "$BASE_BR"
 
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 # Six-column row: name | path | land | base | format | gate
 printf 'fixture | %s | hold | | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 

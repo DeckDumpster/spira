@@ -31,6 +31,12 @@ mkdir -p "$SPIRA_RUN_DIR"
 
 CALL_LOG="$TMP/bd-calls"
 
+# SPIRA_WATCHERS/SPIRA_BD/SPIRA_DB/SPIRA_RUN are registered keys (per Ryan 2026-10-05, ONE
+# SOURCE OF CONFIG): declare them via tl_config rather than through source_conf's env -i,
+# which no process reads them from any more.
+tl_config SPIRA_WATCHERS="$HARNESS/spira/watchers" SPIRA_BD="$TMP/bin/bd" \
+    SPIRA_DB="$TESTDB" SPIRA_RUN="$SPIRA_RUN_DIR"
+
 # Counting bd stub that exits 0 (schema OK).
 make_ok_bd() {
     mkdir -p "$TMP/bin"
@@ -65,10 +71,7 @@ source_conf() {
         PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-        SPIRA_BD="$TMP/bin/bd" \
-        SPIRA_DB="$TESTDB" \
-        SPIRA_RUN="$SPIRA_RUN_DIR" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf 'REACHED-PAST-GUARD\n'" 2>&1) || rc=$?
     printf '%s' "$out"
     return "$rc"

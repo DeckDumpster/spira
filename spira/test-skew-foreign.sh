@@ -78,8 +78,9 @@ plain | $WS/plain | pr   | main |  |
 MAP
 
 export SPIRA_CONF=/nonexistent-spira-conf
-export SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db
-export SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home
+export SPIRA_HOME="$SH" PATH="$SH:$PATH"
+export SPIRA_REPO="$WS/home"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db SPIRA_HOME_REPO=home
 
 SKEW="$SH/skew"
 
@@ -212,8 +213,8 @@ cp "$(command -v skew)" "$TMP/broken-spira/skew"
 printf '# broken conf.sh — simulates bd migrate schema failure\nexit 1\n' \
     > "$TMP/broken-spira/conf.sh"
 SPIRA_CONF=/nonexistent-spira-conf \
-SPIRA_HOME="$TMP/broken-spira" PATH="$TMP/broken-spira:$PATH" SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db \
-SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home \
+SPIRA_HOME="$TMP/broken-spira" PATH="$TMP/broken-spira:$PATH" \
+SPIRA_REPO="$WS/home" \
     "$TMP/broken-spira/skew" foreign "$WS/guest" main touches-harness >/dev/null 2>&1
 is "an init failure (conf.sh exit 1) exits 3, not 1" 3 "$?"
 

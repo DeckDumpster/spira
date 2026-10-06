@@ -284,13 +284,11 @@ tinstall_render() {    # tinstall_render <fixture> <home> -> rendered text (memo
     key="$(printf '%s\x1e%s' "$fixture" "$home" | cksum | cut -d' ' -f1)"
     if [ -z "${_TINSTALL_RENDER_CACHE[$key]+x}" ]; then
         local out rc
-        out="$(env -i PATH="$PATH" HOME="$home" \
-            SPIRA_RUN="$home/run" \
+        tl_config SPIRA_RUN="$home/run" SPIRA_WATCHERS="$fixture/spira/watchers" \
+            SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+        out="$(env -i PATH="$PATH" HOME="$home" SPIRA_TOML="$SPIRA_TOML" \
             SPIRA_HOME="$fixture/spira" SPIRA_REPO="$fixture" \
             SPIRA_CONF=/nonexistent \
-            SPIRA_WATCHERS="$fixture/spira/watchers" \
-            SPIRA_DOLT_DATA="" \
-            SPIRA_TESTDB_DATA="" \
             units-install --render 2>&1)"; rc=$?
         _TINSTALL_RENDER_CACHE[$key]="$out"
         _TINSTALL_RENDER_RC[$key]="$rc"

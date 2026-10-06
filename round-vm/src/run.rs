@@ -896,6 +896,7 @@ fn after_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Fields;
     use crate::pool::{Attempt, Spawner};
     use crate::provider::Timing;
     use crate::testutil::{FakeAlarm, FakeProvider, TempDir};
@@ -1270,14 +1271,38 @@ mod tests {
         let run_dir = d.path().join("run");
         let key = d.path().join("host_key");
         fs::write(&key, "k").unwrap();
-        let mut src = BTreeMap::new();
-        src.insert("SPIRA_RUN".to_string(), run_dir.to_string_lossy().to_string());
-        src.insert("SPIRA_ROUND_VM_HOST_ADDR".to_string(), "192.168.1.10".to_string());
-        src.insert("SPIRA_ROUND_VM_CACHE_HOME".to_string(), "/opt/spira/cargo".to_string());
-        src.insert("SPIRA_ROUND_VM_HOST_KEY".to_string(), key.to_string_lossy().to_string());
-        src.insert("SPIRA_ROUND_VM_SSH_TRIES".to_string(), "2".to_string());
-        src.insert("SPIRA_ROUND_VM_BOOT_POLL".to_string(), "0".to_string());
-        let cfg = Config::load(&src).unwrap();
+        // Values passed directly to Config::build (DESIGN.md / round-vm's config migration
+        // notes) — this used to be a fake env Config::load read through; now it is the
+        // Fields literal the old defaults would have produced, with this fixture's own
+        // overrides (host_key/host_addr/cache_home/ssh_tries/boot_poll) spelled out alongside
+        // them instead of layered on top by Config::load itself.
+        let cfg = Config::build(Fields {
+            run: run_dir.to_string_lossy().to_string(),
+            spira_home: None,
+            pve_env: String::new(),
+            ssh_user: "root".to_string(),
+            ssh_port: 22,
+            state_dir: run_dir.join("round-vm").to_string_lossy().to_string(),
+            host_key: key.to_string_lossy().to_string(),
+            host_pubkey: format!("{}.pub", key.to_string_lossy()),
+            host_addr: Some("192.168.1.10".to_string()),
+            cache_home: Some("/opt/spira/cargo".to_string()),
+            testenv_registry: None,
+            vcpus: 16,
+            maxpar: 16,
+            max_retries: 0,
+            retry_interval_secs: 60,
+            mirror_port: 9430,
+            setup_alarm_secs: 180,
+            acquire_deadline_secs: 3600,
+            mailbox: "operator".to_string(),
+            net_iface: "ens18".to_string(),
+            boot_tries: 60,
+            boot_poll_secs: 0,
+            ssh_tries: 2,
+            stream_every_secs: 10,
+            attr_linger_secs: 3600,
+        });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
 

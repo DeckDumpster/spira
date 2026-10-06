@@ -117,12 +117,11 @@ chmod +x "$INC_STUB"
 
 # Run --pr-stall-check in an isolated environment.
 psc() {  # psc [VAR=val...]
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_GH="$GH_BIN"
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_GH="$GH_BIN" \
         GH_LOG="$TMP/gh.log" \
         GH_ALLOW_AUTO_MERGE="${GH_ALLOW_AUTO_MERGE:-false}" \
         GH_MERGEABLE="${GH_MERGEABLE:-MERGEABLE}" \
@@ -311,13 +310,15 @@ echo
 echo "conf.sh: SPIRA_PR_STALL_MINS is a settable key"
 # ====================================================================================
 conf_out="$(env -i SPIRA_CONF=/nonexistent SPIRA_REPO="$ROOT" PATH="$PATH" \
+    SPIRA_TOML="$_TL_CONF_BASE" \
     bash -c '. '"$HERE"'/conf.sh; echo "stall=${SPIRA_PR_STALL_MINS}"' 2>/dev/null || true)"
-want  "SPIRA_PR_STALL_MINS has default value of 60" "stall=60" "$conf_out"
+want  "SPIRA_PR_STALL_MINS has the fixture's default value of 60" "stall=60" "$conf_out"
 
+tl_config SPIRA_PR_STALL_MINS=30
 conf_out2="$(env -i SPIRA_CONF=/nonexistent SPIRA_REPO="$ROOT" PATH="$PATH" \
-    SPIRA_PR_STALL_MINS=30 \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. '"$HERE"'/conf.sh; echo "stall=${SPIRA_PR_STALL_MINS}"' 2>/dev/null || true)"
-want "SPIRA_PR_STALL_MINS is overridable from env" "stall=30" "$conf_out2"
+want "SPIRA_PR_STALL_MINS is overridable via config" "stall=30" "$conf_out2"
 
 # ====================================================================================
 echo

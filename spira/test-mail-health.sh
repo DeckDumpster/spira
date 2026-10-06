@@ -17,14 +17,15 @@ is1()    { is "$1" 1 "$2"; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# SPIRA_MAIL/SPIRA_MAIL_KINDS are registered but mail/src/env.rs reads them with a plain
+# std::env::var, not spira_config::process::cfg — a direct-env exception, confirmed by
+# reading that source — so they stay plain exports; tl_config would never reach them.
 export SPIRA_MAIL="$TMP/mail"
-export SPIRA_RUN="$TMP/run"
-export SPIRA_HOME="$HERE"
 export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+export SPIRA_HOME="$HERE"
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export SPIRA_CONF="$TMP/no-such-spira.conf"
-export SPIRA_ID_PREFIX="sp"
-export SPIRA_MAIL_UNREAD_AGE=60
+tl_config SPIRA_RUN="$TMP/run" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_UNREAD_AGE=60
 
 HEALTH=mail-health.sh   # invoked by name on the suite's PATH (sp-gypjk)
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
@@ -43,7 +44,7 @@ op_count() {
     "$MAIL" count operator 2>/dev/null
 }
 
-export SPIRA_MAIL_READERS="concierge=echo wake"
+tl_config SPIRA_MAIL_READERS="concierge=echo wake"
 
 # install.sh runs this before any timer can read the operator mailbox; a read verb now
 # refuses a mailbox that was never provisioned, so the fixture must match that order.
@@ -104,7 +105,7 @@ echo
 echo "=== silent below threshold ==="
 
 # Send fresh mail to a different mailbox — not old enough.
-export SPIRA_MAIL_READERS="freshbox=echo wake"
+tl_config SPIRA_MAIL_READERS="freshbox=echo wake"
 echo "fresh" | SPIRA_MAIL_LINT_CONSIDERED="test" \
     "$MAIL" send freshbox --from "T <t@t>" --subject "Fresh message" 2>/dev/null
 

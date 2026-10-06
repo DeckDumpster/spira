@@ -29,17 +29,17 @@ FRAG_DIR="$TMP/cockpit.d"
 SNAP="$TMP/cockpit.env"
 mkdir -p "$FRAG_DIR"
 BASE_PATH="$PATH"
+tl_config SPIRA_RUN="$TMP" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t SPIRA_COCKPIT="$TMP"
 
 # Merge fixture fragments through the real cockpit-collect, not a copy of its logic. The
 # generic ok/never fragment cases live in test-cockpit-tiered-collector.sh (cluster 6,
 # docs/test-plan/cockpit-observability.md); this suite only needs the merge to prove the
 # real `queue` probe's keys reach cockpit.env.
 run_merge() {
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
+        SPIRA_DB="$TMP/nodb" \
+        FRAG_DIR="$FRAG_DIR" \
         cockpit-collect merge 2>/dev/null
 }
 
@@ -59,11 +59,9 @@ chmod +x "$MOCK_COCK"
 
 rm -f "$FRAG_DIR"/*.env
 printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG_DIR/queue.env"
-env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+env -i SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-    SPIRA_COCKPIT="$TMP" \
+    SPIRA_DB="$TMP/nodb" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
     cockpit-collect _probe_body_test queue 10 queue 2>/dev/null || true
 

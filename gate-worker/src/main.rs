@@ -93,12 +93,21 @@ fn main() -> ExitCode {
             let gate = RealGate(&tools);
             let branches = Repos(&repos);
             let log = |m: &str| println!("{m}");
+            // SPIRA_GATE_TIMEOUT is a registered key (spira/conf.d) — the one source of
+            // config, read once here rather than from the process environment.
+            let gate_timeout = match spira_config::process::cfg("SPIRA_GATE_TIMEOUT") {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("gate-worker: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let w = Worker {
                 queue: &queue,
                 gate: &gate,
                 branches: &branches,
                 clock: &Wall,
-                lock_wait: lock_wait(std::env::var("SPIRA_GATE_TIMEOUT").ok().as_deref(), s.gate_lock_wait.as_deref()),
+                lock_wait: lock_wait(Some(&gate_timeout), s.gate_lock_wait.as_deref()),
                 log: &log,
                 slot,
             };

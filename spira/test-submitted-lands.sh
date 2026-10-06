@@ -63,11 +63,11 @@ trap '[ -n "$SERVE_PID" ] && kill "$SERVE_PID" >/dev/null 2>&1; lcfix_down; test
 testdb_up submittedlands || { echo "test-submitted-lands: could not build a fixture database"; exit 1; }
 lcfix_up || { echo "test-submitted-lands: could not build a lifecycle fixture"; exit 1; }
 LC_SOCK="$TMP/lc.sock"
-SPIRA_LC_SOCKET="$LC_SOCK" spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
+tl_config SPIRA_LC_SOCKET="$LC_SOCK"
+spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do [ -S "$LC_SOCK" ] && break; sleep 0.1; done
 [ -S "$LC_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$TMP/serve.log")"
-export SPIRA_LC_SOCKET="$LC_SOCK"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-submitted-lands.sh"
@@ -88,8 +88,8 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 \( -name '*.sh' -o -name '*.py' \) ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SPIRA_HOME/$1"; chmod +x "$SPIRA_HOME/$1"; }
@@ -131,7 +131,7 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # conversion any more. conf.sh replaces PATH, so the model is injected through SPIRA_AGENT,
 # and $TMP is baked in because the restricted environment does not carry it. The fixture
 # ids are sp-sl1..sp-sl4, not sp-sl-1: `work` refuses a binding that is not sp-<alnum>.
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude"
+BIN="$TMP/bin"; mkdir -p "$BIN"; tl_config SPIRA_AGENT="$BIN/claude"
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-submitted-lands: aeon is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<SHIM
@@ -166,13 +166,14 @@ run_aeon() {
     [ "$(cat "$TMP/submit.rc" 2>/dev/null)" = 0 ] && return 0
     { cat "$TMP/submit.out" 2>/dev/null; tail -n 15 "$TMP/aeon.out"; } | sed 's/^/# /'
 }
+tl_config SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh"
 landing() {
     rm -f "$SPIRA_RUN/landing.progress" "$TMP/gate-state"
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh" \
+    SPIRA_REPO="$REPO" \
         landing-pass land 2>&1
 }
 sending() {
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_GH="$SPIRA_HOME/gh" \
+    SPIRA_REPO="$REPO" \
         command sending 2>&1
 }
 on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }

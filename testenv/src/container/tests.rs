@@ -236,7 +236,7 @@ impl Host for Fake {
 fn conf(root: &str) -> Conf {
     Conf {
         harness: Some(PathBuf::from(root)),
-        bd_pin: Some(PathBuf::from("/run/bd-pin")),
+        bd_pin: PathBuf::from("/run/bd-pin"),
         registry: String::new(),
         max_concurrent: 8,
         cpus: None,
@@ -728,15 +728,10 @@ fn up_passes_the_configured_cpu_cap_to_podman_run() {
 
 #[test]
 fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
-    let load = |v: Option<&'static str>| {
-        let env = move |k: &str| (k == "SPIRA_TESTENV_CPUS").then(|| v.map(String::from)).flatten();
-        Conf::load(&Source { env: &env, config: None }, None).cpus
-    };
-    assert_eq!(load(None), None);
-    assert_eq!(load(Some("")), None);
-    assert_eq!(load(Some("0")), None);
-    assert_eq!(load(Some("many")), None);
-    assert_eq!(load(Some("16")), Some("16".into()));
+    assert_eq!(valid_cpus(""), None);
+    assert_eq!(valid_cpus("0"), None);
+    assert_eq!(valid_cpus("many"), None);
+    assert_eq!(valid_cpus("16"), Some("16".into()));
 }
 
 #[test]
@@ -1223,35 +1218,11 @@ fn an_unknown_subcommand_prints_usage_and_fails() {
         .starts_with("usage: testenv container up|down|exec|probe|tag|image|publish"));
 }
 
-#[test]
-fn settings_come_from_the_environment_then_the_config_then_conf_sh_defaults() {
-    let env = |k: &str| match k {
-        "SPIRA_RUN" => Some("/r".to_string()),
-        "SPIRA_TESTENV_MAX_CONCURRENT" => Some("3".to_string()),
-        _ => None,
-    };
-    let src = Source {
-        env: &env,
-        config: None,
-    };
-    let c = Conf::load(&src, Some(PathBuf::from("/h")));
-    assert_eq!(c.bd_pin, Some(PathBuf::from("/r/bd-pin")));
-    assert_eq!(
-        (c.max_concurrent, c.queue_timeout, c.queue_poll, c.heartbeat),
-        (3, 900, 5, 60)
-    );
-    assert_eq!((c.basic_wait_ticks, c.basic_retry_sleep), (20, 2));
-    assert_eq!(c.registry, "");
-    let env = |k: &str| (k == "SPIRA_BD_PIN").then(|| "/pin".to_string());
-    let c = Conf::load(
-        &Source {
-            env: &env,
-            config: None,
-        },
-        None,
-    );
-    assert_eq!(c.bd_pin, Some(PathBuf::from("/pin")));
-}
+// `Conf::load`'s registered-key defaulting (SPIRA_RUN, SPIRA_TESTENV_MAX_CONCURRENT,
+// SPIRA_BD_PIN, ...) now goes through `spira_config::process::cfg`/`cfg_parse`, which
+// resolve once per process from spira-config's own cache — not something a unit test here
+// can drive per-case. That behavior is spira-config's to test; `cpu_cap_is_unset_unless_a_
+// positive_number_is_configured` above still covers this crate's own pure validation.
 
 #[test]
 fn sizes_read_like_df_h() {

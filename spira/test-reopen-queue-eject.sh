@@ -86,9 +86,9 @@ is "no eject history: nothing reaches the gate command" "" "$(seen_ejected sp-no
 # RUN, so its ejected/ is the directory gate.sh's subprocess below reads.
 # ---------------------------------------------------------------------------
 _hostmail_before="$(_maildir_count "$HOSTMAIL/concierge")"
+tl_config SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" SPIRA_DB="$SPIRA_DB"
 (
-    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
-           SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
+    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_BD="$SPIRA_BD"
     . "$HERE/lib.sh"
     bead_reopen sp-ej1 eject-red "" test-other.sh >/dev/null 2>&1
 )

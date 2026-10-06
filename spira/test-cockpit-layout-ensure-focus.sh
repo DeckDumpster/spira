@@ -116,11 +116,15 @@ with_duplicate() {
 call_repair() {   # call_repair <window> -> nothing; runs the real `ensure`, which calls
                   # repair_dashboards internally for this window.
     local window="$1"
+    # COCKPIT_MAIL/SPIRA_COCKPIT/SPIRA_RUN/SPIRA_INSTANCE/COCKPIT_CWD/COCKPIT_BOTTOM_PCT/
+    # COCKPIT_RIGHT_PCT are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config COCKPIT_MAIL="fakemail" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_RUN="$RUN" \
+        SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33
     TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$_FAKE_RELEASE" HOME="$TMP" \
         PATH="$_FAKE_RELEASE/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
-        COCKPIT_MAIL="fakemail" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
-        SPIRA_RUN="$RUN" SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" \
-        COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        SPIRA_REPO="$TMP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$LAYOUT" ensure 2>/dev/null || true
 }
 

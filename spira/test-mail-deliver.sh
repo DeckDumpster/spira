@@ -104,11 +104,13 @@ exit 0
 MOCK
 chmod +x "$WBIN/systemctl"
 
+tl_config SPIRA_RUN="$WRUN"
 run_start() {
     : > "$MOCK_LOG"
     env -i HOME="$WTMP/home" PATH="$WBIN:$PATH" \
-        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_RUN="$WRUN" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_SYSTEMCTL="$WBIN/systemctl" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "${@}" "$WORLD" start >/dev/null 2>&1
 }
 
@@ -172,24 +174,31 @@ BASE_ENV=(
     HOME="$TMP/home"
     PATH="$MOCK_BIN:$PATH"
     SPIRA_CONF=/nonexistent
-    SPIRA_RUN="$RUN"
-    SPIRA_INSTANCE=test
-    SPIRA_WATCHERS="$MAN"
     SPIRA_HOME="$HERE"
-    SPIRA_MAIL="$MAIL"
+    SPIRA_TOML="$SPIRA_TOML"
 )
+# SPIRA_MAIL_REPEAT_WINDOW=0: this section sends several DISTINCT escalations to operator
+# with the SAME literal subject ("A watcher has stopped producing events") in one shared
+# SPIRA_RUN — mail's own repeat-check would otherwise silently swallow every one after the
+# first, which is correct anti-spam behaviour in production and exactly wrong for a test
+# proving each condition escalates on its own.
+tl_config SPIRA_RUN="$RUN" SPIRA_INSTANCE=test SPIRA_WATCHERS="$MAN" SPIRA_MAIL="$MAIL" \
+    SPIRA_NOTIFY_AGE=0 SPIRA_ACTIONABLE=WAKEME SPIRA_MAIL_REPEAT_WINDOW=0
 
 run_notify() {
-    # SPIRA_MAIL_REPEAT_WINDOW=0: this section sends several DISTINCT escalations to
-    # operator with the SAME literal subject ("A watcher has stopped producing events") in
-    # one shared SPIRA_RUN — mail's own repeat-check would otherwise silently swallow
-    # every one after the first, which is correct anti-spam behaviour in production and
-    # exactly wrong for a test proving each condition escalates on its own.
+    # Extra args split: SPIRA_* overrides (SPIRA_MAIL_READERS, SPIRA_MAIL_UNREAD_AGE) are
+    # registered keys, declared via tl_config; ACTIVE_STATE is a mock-systemctl-only knob,
+    # forwarded through env -i as before.
+    local -a _passthrough=()
+    local _kv
+    for _kv in "$@"; do
+        case "$_kv" in
+            SPIRA_*) tl_config "$_kv" ;;
+            *) _passthrough+=("$_kv") ;;
+        esac
+    done
     env -i "${BASE_ENV[@]}" \
-        SPIRA_NOTIFY_AGE=0 \
-        SPIRA_ACTIONABLE=WAKEME \
-        SPIRA_MAIL_REPEAT_WINDOW=0 \
-        "${@}" \
+        "${_passthrough[@]}" \
         watchd notify 2>/dev/null
     local _rc=$?
     # sp-pnogc (round 209, check 8): a real condition, not a timing guess — bash prints
@@ -287,9 +296,11 @@ echo "5. LOG PATH — the unit's StandardOutput is the path watchd's own status 
 LOGRUN="$TMP/logpath-run"
 LOGWATCHERS="$TMP/logpath-watchers"
 printf 'mail-deliver|extern|mail-deliver\n' > "$LOGWATCHERS"
+tl_config SPIRA_RUN="$LOGRUN" SPIRA_WATCHERS="$LOGWATCHERS"
 expected_logfile="$(
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_RUN="$LOGRUN" \
-        SPIRA_WATCHERS="$LOGWATCHERS" "$WATCHD" status 2>/dev/null \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
+        "$WATCHD" status 2>/dev/null \
         | awk '$1=="mail-deliver" { print $NF }'
 )"
 is "5a: watchd status computes the log under watchd/" "$LOGRUN/watchd/mail-deliver.log" "$expected_logfile"
@@ -331,8 +342,9 @@ STUB
 chmod +x "$TMP/wake-stub-t1.sh"
 
 ATT1="$TMP/wake-attempts-t1.log"; : > "$ATT1"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_RUN="$WRUN1" SPIRA_MAIL="$WMAIL1" \
-    SPIRA_CONF=/nonexistent SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1" \
+tl_config SPIRA_RUN="$WRUN1" SPIRA_MAIL="$WMAIL1" SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1"
+env -i HOME="$TMP/home" PATH="$PATH" \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _wake_loop wakebox "$2"' _ "$HERE/spira-mail-deliver.sh" "$TMP/wake-stub-t1.sh" \
     > "$ATT1" 2>&1 &
 LOOP1_PID=$!
@@ -372,8 +384,9 @@ STUB
 chmod +x "$TMP/wake-stub-t2.sh"
 
 ATT2="$TMP/wake-attempts-t2.log"; : > "$ATT2"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_RUN="$WRUN2" SPIRA_MAIL="$WMAIL2" \
-    SPIRA_CONF=/nonexistent SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1" \
+tl_config SPIRA_RUN="$WRUN2" SPIRA_MAIL="$WMAIL2" SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1"
+env -i HOME="$TMP/home" PATH="$PATH" \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _wake_loop wakebox "$2"' _ "$HERE/spira-mail-deliver.sh" "$TMP/wake-stub-t2.sh" \
     > "$ATT2" 2>&1 &
 LOOP2_PID=$!
@@ -385,7 +398,7 @@ while [ "$(_wake_count "$ATT2")" -lt 1 ] && [ "$tries" -lt 150 ]; do
 done
 first_seen="$(_wake_count "$ATT2")"
 
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_MAIL="$WMAIL2" SPIRA_CONF=/nonexistent \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     mail read wakebox >/dev/null 2>&1
 
 sleep 2.5
@@ -410,8 +423,8 @@ echo "8a. POSITIVE CONTROL — an event present from the start settles near-inst
 rm -rf "$SDIR"; mkdir -p "$SDIR"
 msg_event > "$SDIR/event1"
 t0=$SECONDS
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
-    SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0 \
+tl_config SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
 elapsed=$((SECONDS - t0))
 is "8a: an already-present event settles well under the reply window" "1" "$([ "$elapsed" -le 2 ] && echo 1 || echo 0)"
@@ -421,8 +434,8 @@ echo "8b. a reply-only burst still waits the full reply window (no regression):"
 rm -rf "$SDIR"; mkdir -p "$SDIR"
 msg_reply > "$SDIR/reply1"
 t0=$SECONDS
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
-    SPIRA_MAIL_SETTLE=3 SPIRA_MAIL_SETTLE_EVENT=0 \
+tl_config SPIRA_MAIL_SETTLE=3 SPIRA_MAIL_SETTLE_EVENT=0
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
 elapsed=$((SECONDS - t0))
 is "8b: reply-only settle takes the full SPIRA_MAIL_SETTLE window" "1" "$([ "$elapsed" -ge 3 ] && echo 1 || echo 0)"
@@ -435,8 +448,8 @@ msg_reply > "$SDIR/reply1"
 ( sleep 2; msg_event > "$SDIR/event1" ) &
 DROP_PID=$!
 t0=$SECONDS
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
-    SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0 \
+tl_config SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
 elapsed=$((SECONDS - t0))
 wait "$DROP_PID" 2>/dev/null

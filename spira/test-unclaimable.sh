@@ -195,7 +195,7 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up unclaimable || { echo "test-unclaimable: could not build fixture database"; exit 1; }
 
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
 acted=0; progressed=0
 act()      { acted=$((acted+1)); }

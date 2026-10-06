@@ -154,7 +154,8 @@ touch "$BUDGET"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_out="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
+tl_config SPIRA_RUN="$TMP"
+pane_out="$(health once 2>/dev/null)"
 want "MAIL label in pane"  "MAIL"  "$pane_out"
 want "NEW state in pane"   "NEW"   "$pane_out"
 want "READ state in pane"  "READ"  "$pane_out"

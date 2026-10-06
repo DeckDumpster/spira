@@ -84,14 +84,12 @@ ln -s "spira-${TS1}" "$RELEASES/current"
 run_skew() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         skew check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -100,14 +98,12 @@ run_skew() {
 run_skew_ro() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -115,14 +111,12 @@ run_skew_ro() {
 
 run_skew_shared() {
     local run_dir="$1"; shift
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         skew check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"

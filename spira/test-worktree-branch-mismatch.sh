@@ -47,6 +47,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 export SPIRA_RUN="$T/run"; mkdir -p "$SPIRA_RUN/worktree"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_REAPLOG="$T/reap.log"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 

@@ -57,13 +57,25 @@ gate_fixture_branch() {
 }
 
 # gate_fixture_run <branch> <repo-name> [VAR=VAL ...] — the copied gate.sh, in the fixed env.
+# A VAR=VAL override is a REGISTERED key (spira/conf.d/<VAR> exists) -> tl_config, so it
+# reaches gate.sh through SPIRA_TOML; anything else still rides the env -i prefix as before.
 gate_fixture_run() {
     local br="$1" repo="$2"; shift 2
-    env -i HOME="$HOMEDIR" SPIRA_RELEASE="$REL" PATH="$REL/bin:$REL/spira:/usr/local/bin:/usr/bin:/bin" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$MAP" SPIRA_VERDICT_TTL=0
+    local -a env_extra=()
+    local kv k
+    for kv in "$@"; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then
+            tl_config "$kv"
+        else
+            env_extra+=("$kv")
+        fi
+    done
+    env -i SPIRA_TOML="$SPIRA_TOML" HOME="$HOMEDIR" SPIRA_RELEASE="$REL" PATH="$REL/bin:$REL/spira:/usr/local/bin:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" \
+        SPIRA_DB="$SPIRA_DB_NONE" \
         SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" \
-        SPIRA_VERDICT_TTL=0 \
-        "$@" bash "$SH/gate.sh" "$br" "$repo" 2>&1
+        "${env_extra[@]}" bash "$SH/gate.sh" "$br" "$repo" 2>&1
 }

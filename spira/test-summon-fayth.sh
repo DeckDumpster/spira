@@ -81,10 +81,10 @@ cp -r "$HERE/conf.d" "$T/"
 # literals out of conf.sh (law-gates-run-in-a-clean-environment). $T/bin goes FIRST so our
 # own spira-claim/mock-summon stubs shadow the release's real ones; the release's real
 # `aeon` (never placed in $T/bin) still resolves further down the same PATH.
-export SPIRA_RUN="$T/run"
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T/bin:$T:$PATH"
-export SPIRA_DB="$T/no-db"
+SPIRA_DB="$T/no-db"; tl_config SPIRA_DB="$SPIRA_DB"
 
 # THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
 # on PATH (sp-gypjk). The mock SPIRA_SUMMON never execs it.
@@ -200,9 +200,7 @@ F
 echo
 echo "elastic last-slot reservation — criterion 1: refused when last slot and non-elastic has ready work"
 # ======================================================================================
-export SPIRA_FAYTHS="anchor stretchy"
-export SPIRA_MAX_LIVE_AEONS=3
-unset SPIRA_LANES_MAX_LIVE 2>/dev/null || true
+tl_config SPIRA_FAYTHS="anchor stretchy" SPIRA_MAX_LIVE_AEONS=3 SPIRA_LANES_MAX_LIVE=""
 clear_live
 # The fleet-total pidfiles are tagged under "stretchy" throughout this section, never
 # "anchor": stretchy is elastic AND every call below passes a pool, so its OWN
@@ -271,7 +269,7 @@ is "cost: that call was for stretchy" "stretchy" "$(cat "$FAYTH_READY_CALL_FILE"
 
 echo
 echo "no ceiling — SPIRA_MAX_LIVE_AEONS unset means today's behaviour exactly"
-unset SPIRA_MAX_LIVE_AEONS
+tl_config SPIRA_MAX_LIVE_AEONS=""
 set_live stretchy 999
 rm -f "$SUMMONED"
 summon_fayth stretchy 4 >/dev/null 2>&1 || true
@@ -283,9 +281,7 @@ clear_live
 echo
 echo "lane ceiling (a) — a non-lane task fayth is held back when last slot and a lane has ready work"
 # ======================================================================================
-export SPIRA_FAYTHS="tasker laner"
-export SPIRA_MAX_LIVE_AEONS=4
-export SPIRA_LANES_MAX_LIVE=1
+tl_config SPIRA_FAYTHS="tasker laner" SPIRA_MAX_LIVE_AEONS=4 SPIRA_LANES_MAX_LIVE=1
 clear_live
 # The fleet-total pidfiles below are tagged under "tasker": tasker's own cap is 4, well
 # above every value used in this section, so tagging the fleet total there never corrupts
@@ -319,7 +315,7 @@ echo "lane ceiling (a2) — tasker IS summoned when the only ready lane is at it
 # those two facts cannot be pulled apart with real state, so SPIRA_LANES_MAX_LIVE is
 # raised to 2 for this one case to keep the SAME path exercised (a ready lane refused only
 # because IT ITSELF has no room, not because the collective cap already absorbed it).
-export SPIRA_LANES_MAX_LIVE=2
+tl_config SPIRA_LANES_MAX_LIVE=2
 set_live tasker 2        # total 3/4 -> exactly 1 fleet slot free, the reservation's gate
 set_live laner 1        # laner's own cap (1) is now met, AND the lane total is 1 (< 2)
 set_ready laner 1
@@ -328,7 +324,7 @@ rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "(a2): tasker summoned when laner is ready but at its own concurrency cap" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
-export SPIRA_LANES_MAX_LIVE=1
+tl_config SPIRA_LANES_MAX_LIVE=1
 set_live laner 0
 
 echo
@@ -377,7 +373,7 @@ set_live laner 0
 
 echo
 echo "no lane cap — SPIRA_LANES_MAX_LIVE unset: no preference, the task fayth fills freely"
-unset SPIRA_LANES_MAX_LIVE
+tl_config SPIRA_LANES_MAX_LIVE=""
 set_live tasker 3
 set_ready laner 1
 set_ready tasker 1
@@ -386,7 +382,7 @@ summon_fayth tasker >/dev/null 2>&1 || true
 is "no lane cap: tasker fills last slot when SPIRA_LANES_MAX_LIVE unset" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
 
-unset SPIRA_MAX_LIVE_AEONS SPIRA_LANES_MAX_LIVE 2>/dev/null || true
+tl_config SPIRA_MAX_LIVE_AEONS="" SPIRA_LANES_MAX_LIVE=""
 clear_live
 
 # ======================================================================================
@@ -631,8 +627,7 @@ echo "G6 — plain fleet-ceiling refusal, not merely the last-slot rules"
 # SPIRA_FAYTHS restored: the lane-ceiling section above left it at "tasker laner", and
 # live_total/aeon_count only count pidfiles tagged under the CURRENT roster — unlike the
 # old independent MOCK_LIVE, a real fleet total is the roster's own sum.
-export SPIRA_FAYTHS="anchor stretchy"
-export SPIRA_MAX_LIVE_AEONS=3
+tl_config SPIRA_FAYTHS="anchor stretchy" SPIRA_MAX_LIVE_AEONS=3
 set_ready anchor 1
 clear_live
 
@@ -649,7 +644,7 @@ out="$(summon_fayth anchor 2>&1 || true)"
 is "G6: fleet at ceiling — nothing summoned" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 want "G6: log names the live/ceiling count" "3/3 aeon(s) live across the whole fleet" "$out"
 want "G6: log says 'not summoning'" "not summoning" "$out"
-unset SPIRA_MAX_LIVE_AEONS
+tl_config SPIRA_MAX_LIVE_AEONS=""
 clear_live
 
 # ======================================================================================

@@ -128,22 +128,17 @@ run_ready() {
         extra_env+=("$1"); shift
     done
     [ "${1:-}" = "--" ] && shift
+    tl_config SPIRA_PATH="$BIN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUN="$RUN" SPIRA_DB="$DB" \
+        SPIRA_BD="$BIN/bd" SPIRA_INSTANCE="prod" SPIRA_LOOM_ADDR="127.0.0.1:8788" \
+        SPIRA_LOOM_BUDGET_MS="1500" SPIRA_AGENT="fake-agent"
     env -i \
         HOME="$FAKE_HOME" \
-        SPIRA_PATH="$BIN" \
         SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$FAKE_SPIRA_HOME" PATH="$BIN:$FAKE_SPIRA_HOME:$PATH" \
         SPIRA_REPO="$TMP" \
-        SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_DB="$DB" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" \
-        SPIRA_BD="$BIN/bd" \
-        SPIRA_INSTANCE="prod" \
-        SPIRA_LOOM_ADDR="127.0.0.1:8788" \
-        SPIRA_LOOM_BUDGET_MS="1500" \
         SPIRA_LOOM_PROBE="$BIN/loom-probe" \
-        SPIRA_AGENT="fake-agent" \
         FAKE_SC_ACTIVE="spira-sentinel-prod.timer spira-mail-tidy-prod.timer" \
         FAKE_SC_ENABLED="spira-sentinel-prod.timer" \
         "${extra_env[@]}" \

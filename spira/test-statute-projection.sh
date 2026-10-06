@@ -56,7 +56,8 @@ printf '#!/bin/sh\necho "should not run" >&2\n' > "$NON_EXEC_HOOK"
 MISSING_HOOK="$TMP/does-not-exist.sh"
 
 run_enact() {   # run_enact <hook> <key> <text>
-    SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$1" bash "$RULE_SH" enact "$2" "$3" 2>&1
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$1"
+    bash "$RULE_SH" enact "$2" "$3" 2>&1
 }
 
 # POSITIVE CONTROL: good hook → exits 0 and prints "Statute is live".
@@ -115,12 +116,12 @@ printf '#!/bin/sh\nprintf "\\n### new entry\\n" >> "%s/wiki/notes/common-law.md"
 chmod +x "$CL_HOOK"
 
 run_enact_wiki() {
-    SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL" \
-        bash "$RULE_SH" enact "$1" "$2" 2>&1
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL"
+    bash "$RULE_SH" enact "$1" "$2" 2>&1
 }
 run_retire_wiki() {
-    SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL" \
-        bash "$RULE_SH" retire "$1" 2>&1
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL"
+    bash "$RULE_SH" retire "$1" 2>&1
 }
 
 # POSITIVE CONTROL: enact commits common-law.md itself and leaves the tree clean.
@@ -153,8 +154,8 @@ is "commit: retire commit message names the statute" "law: retire law-sp-4fl2e-c
 # NEGATIVE CONTROL: no SPIRA_WIKI → no auto-commit attempted, manual-commit hint printed
 # (unchanged behaviour — this is the "rule.sh: synth failure propagation" section's own
 # GOOD_HOOK, which never touches a wiki checkout at all).
-out_cl_nowiki=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK" SPIRA_WIKI="" \
-    bash "$RULE_SH" enact "sp-4fl2e-commit-nowiki" "No wiki canary." 2>&1)
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK" SPIRA_WIKI=""
+out_cl_nowiki=$(bash "$RULE_SH" enact "sp-4fl2e-commit-nowiki" "No wiki canary." 2>&1)
 want "commit: no SPIRA_WIKI prints manual-commit hint" \
     "Commit wiki/notes/common-law.md to replicate it off this box." "$out_cl_nowiki"
 
@@ -191,7 +192,7 @@ echo
 echo "=== G-07: rule.sh list, show and retire ==="
 # ==========================================================================
 
-run_rule() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK" bash "$RULE_SH" "$@" 2>&1; }
+run_rule() { tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK"; bash "$RULE_SH" "$@" 2>&1; }
 
 want "list names an enacted statute"     "law-sp-p0xyt-test-canary" "$(run_rule list)"
 want "and reports a statute count"       "statutes in force"        "$(run_rule list)"
@@ -223,7 +224,8 @@ want "and names the missing statute" "no statute" "$(run_rule retire no-such-slu
 # retire with a failing synth hook: the book is still changed, the hook failure is reported,
 # and the command exits non-zero about it — the same contract enact holds.
 run_rule enact sp-p0xyt-retire-hookfail "Canary for the retire hook-failure path." >/dev/null 2>&1
-out_retire_fail="$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK" bash "$RULE_SH" retire sp-p0xyt-retire-hookfail 2>&1)"
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
+out_retire_fail="$(bash "$RULE_SH" retire sp-p0xyt-retire-hookfail 2>&1)"
 rc_retire_fail=$?
 is   "retire with a failing hook exits non-zero" "1" "$rc_retire_fail"
 want "the book write is reported to have succeeded" "removed from the book" "$out_retire_fail"
@@ -290,8 +292,8 @@ echo "=== rule.sh: default hook is the harness's own law-synth.sh (sp-fe3ee) ===
 # disturb WIKI_TMP's fixture state (its 10 committed headings are asserted on below).
 WIKI_DEFAULT_HOOK="$TMP/wiki-default-hook"
 mkdir -p "$WIKI_DEFAULT_HOOK"
-out_default_hook=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_DEFAULT_HOOK" \
-    bash "$RULE_SH" enact "sp-fe3ee-default-hook-test" "Default hook canary statute." 2>&1)
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_DEFAULT_HOOK" SPIRA_WIKI_HOOK=""
+out_default_hook=$(bash "$RULE_SH" enact "sp-fe3ee-default-hook-test" "Default hook canary statute." 2>&1)
 rc_default_hook=$?
 if [ $rc_default_hook -eq 0 ]; then
     ok "rule.sh: default hook (no SPIRA_WIKI_HOOK) exits 0"
@@ -307,7 +309,7 @@ nowant "rule.sh: default hook: no brain path named" "brain/.claude"   "$out_defa
 echo
 echo "=== cockpit-collect statute_keys: SP_STATUTE_SKEW (no-wiki case) ==="
 
-run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="${1:-}" cockpit-collect probe statute 2>/dev/null; }
+run_statute_keys() { tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="${1:-}"; cockpit-collect probe statute 2>/dev/null; }
 
 # NEGATIVE CONTROL: SPIRA_WIKI unset → all ? (the WIKI-dependent MISMATCH/OK cases live in
 # test-law-synth.sh, which needs a wiki checkout and reports its absence as a skip).

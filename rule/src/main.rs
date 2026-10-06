@@ -37,9 +37,21 @@ fn main() {
     // `render_memories`/`system_prompt_split` shim doors: pure string transforms, or a read
     // the `SPIRA_MEMORIES_CMD` test seam bypasses `bd` for entirely, so they must not share
     // this gate — concierge.sh is their one production caller and always has a real `$SPIRA_DB`,
-    // but test-render-memories.sh's seam cases deliberately never set one.
+    // but test-render-memories.sh's seam cases deliberately never set one. SPIRA_DB is a
+    // registered config key (spira/conf.d) — resolved only for the commands that need it, via
+    // the one source of config, never a process-environment read.
     let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "list" | "show");
-    let db = std::env::var("SPIRA_DB").unwrap_or_default();
+    let db = if needs_db {
+        match spira_config::process::cfg("SPIRA_DB") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("rule: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        String::new()
+    };
     if needs_db && !Path::new(&format!("{db}/.beads")).is_dir() {
         eprintln!("rule: {db} has no .beads — refusing to guess a database");
         std::process::exit(1);
@@ -88,28 +100,18 @@ fn memories_json(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String
     Ok(serde_json::from_str(&stdout).unwrap_or_default())
 }
 
-/// `SPIRA_MEMORIES_CACHE`, resolved in-process via `spira_config::resolve::resolve_for_process`
-/// (wave 4.9, sp-k80sa). `rule.sh` used to `export` this across the `exec` boundary because
-/// its derived default (`$SPIRA_RUN/memories-cache.json`) is deliberately not in
-/// `spira_config::resolve::EXPORT_KEYS` — the same "read in-process, never exported to a
-/// child" category `SPIRA_REPO_MAP`/`SPIRA_FAYTHS` carry — so a caller that no longer
-/// re-exports it must resolve it itself instead.
-fn memories_cache_path(home: &str) -> Option<String> {
-    resolved_key(home, "SPIRA_MEMORIES_CACHE")
+/// `SPIRA_MEMORIES_CACHE`, a registered config key (spira/conf.d) — the one source of config,
+/// resolved once per process (wave 4.9, sp-k80sa). `rule.sh` used to `export` this across the
+/// `exec` boundary because its derived default (`$SPIRA_RUN/memories-cache.json`) is
+/// deliberately not in `spira_config::resolve::EXPORT_KEYS` — the same "read in-process,
+/// never exported to a child" category `SPIRA_REPO_MAP`/`SPIRA_FAYTHS` carry — so a caller
+/// that no longer re-exports it must resolve it itself instead.
+fn memories_cache_path() -> Option<String> {
+    spira_config::process::cfg("SPIRA_MEMORIES_CACHE").ok().filter(|p| !p.is_empty())
 }
 
-fn resolved_key(home: &str, key: &str) -> Option<String> {
-    let home_path = std::path::Path::new(home);
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home_path, &env);
-    spira_config::resolve::resolve_for_process(home_path, &repo, &env)
-        .ok()
-        .and_then(|r| r.values.get(key).cloned())
-        .filter(|p| !p.is_empty())
-}
-
-fn rm_memories_cache(home: &str) {
-    if let Some(p) = memories_cache_path(home) {
+fn rm_memories_cache() {
+    if let Some(p) = memories_cache_path() {
         let _ = std::fs::remove_file(p);
     }
 }
@@ -120,7 +122,11 @@ fn rm_memories_cache(home: &str) {
 const SYNTH_HOOK_NAME: &str = "law-synth.sh";
 
 fn synth(home: &str) -> bool {
-    let hook = std::env::var("SPIRA_WIKI_HOOK")
+    // SPIRA_WIKI_HOOK is a registered config key (spira/conf.d) whose own declared default is
+    // the empty string: empty IS the configured meaning "no override, use rule.sh's built-in
+    // hook" (see spira/conf.d/SPIRA_WIKI_HOOK) — this is not a crate-local fallback, it is the
+    // config's own documented value for "unset".
+    let hook = spira_config::process::cfg("SPIRA_WIKI_HOOK")
         .ok()
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| std::path::Path::new(home).join(SYNTH_HOOK_NAME).to_string_lossy().into_owned());
@@ -141,11 +147,13 @@ fn synth(home: &str) -> bool {
 /// `synth()` regenerates it, named only under `law: <verb> <key>` (sp-4fl2e). Best-effort:
 /// no `$SPIRA_WIKI` checkout, or nothing to stage, are not failures.
 fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
-    let wiki = match std::env::var("SPIRA_WIKI") {
+    // SPIRA_WIKI/SPIRA_STATUTE_PAGE are registered config keys (spira/conf.d) — the one
+    // source of config; no second, process-environment read behind it.
+    let wiki = match spira_config::process::cfg("SPIRA_WIKI") {
         Ok(w) if !w.is_empty() && Path::new(&w).join(".git").is_dir() => w,
         _ => return CommitOutcome::Skipped,
     };
-    let page = match std::env::var("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()).or_else(|| resolved_key(home, "SPIRA_STATUTE_PAGE")) {
+    let page = match spira_config::process::cfg("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()) {
         Some(p) => p,
         None => {
             eprintln!("rule: SPIRA_STATUTE_PAGE is not resolvable from spira_config — wiki page NOT committed.");
@@ -249,7 +257,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         eprintln!("rule: failed to write {key} to the statute book at {db}: {stderr}");
         return 1;
     }
-    rm_memories_cache(home);
+    rm_memories_cache();
     println!("enacted {key} ({words} words)");
 
     finish_write(
@@ -287,7 +295,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
     println!("forgot {key}");
-    rm_memories_cache(home);
+    rm_memories_cache();
 
     finish_write(
         home,
@@ -355,9 +363,17 @@ fn cmd_render_memories(home: &str, rest: &[String]) -> i32 {
             Err(_) => return 0,
         },
     };
+    // SPIRA_STATUTE_CORE is a registered config key (spira/conf.d) — the one source of
+    // config; a resolution failure refuses rather than silently rendering with no core set.
     let core_csv = match rest.get(2).map(String::as_str) {
         Some(s) if !s.is_empty() => s.to_string(),
-        _ => std::env::var("SPIRA_STATUTE_CORE").unwrap_or_default(),
+        _ => match spira_config::process::cfg("SPIRA_STATUTE_CORE") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("rule: {e}");
+                return 1;
+            }
+        },
     };
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let harness = match spira_config::resolve::resolve_key(&env, std::path::Path::new(home), "SPIRA_REPO") {
@@ -368,7 +384,13 @@ fn cmd_render_memories(home: &str, rest: &[String]) -> i32 {
         }
     };
 
-    let mem_json = memories_json_cached(home);
+    let mem_json = match memories_json_cached() {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("rule: {e}");
+            return 1;
+        }
+    };
     println!("{}", rule::memories::render(&mem_json, &prefixes, budget, &core_csv, &harness));
     0
 }
@@ -384,9 +406,11 @@ fn epoch_secs(t: SystemTime) -> i64 {
 /// `now - mtime < age`) short-circuits the fetch entirely; anything else — missing, stale,
 /// or present but empty once read — falls through to [`fetch_memories_json`], and a
 /// non-empty result only is written back.
-fn memories_json_cached(home: &str) -> String {
-    let cache = memories_cache_path(home);
-    let age: i64 = std::env::var("SPIRA_MEMORIES_CACHE_AGE").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+fn memories_json_cached() -> Result<String, String> {
+    let cache = memories_cache_path();
+    // SPIRA_MEMORIES_CACHE_AGE is a registered config key (spira/conf.d) — the one source of
+    // config; no crate-local default on it.
+    let age: i64 = spira_config::process::cfg_parse("SPIRA_MEMORIES_CACHE_AGE")?;
 
     let mut mem_json = String::new();
     if let Some(path) = cache.as_deref() {
@@ -408,7 +432,7 @@ fn memories_json_cached(home: &str) -> String {
             }
         }
     }
-    mem_json
+    Ok(mem_json)
 }
 
 /// `SPIRA_MEMORIES_CMD` stands in for the live read in every test but one — set, it runs

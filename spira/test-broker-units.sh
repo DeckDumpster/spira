@@ -32,16 +32,14 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # install/src/manifest.rs now), one entry per line, in a minimal env.
 get_enable() {
     local broker_enable="$1"
+    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_SELF_TEST=0 SPIRA_BROKER_ENABLE="$broker_enable"
     env -i \
         PATH="$PATH" \
         HOME="$HOME" \
-        SPIRA_INSTANCE=prod \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_BROKER_ENABLE="$broker_enable" \
-        SPIRA_SELF_TEST=0 \
         units-install --list-enable 2>/dev/null
 }
 

@@ -43,19 +43,15 @@ printf 'prerepo  | /opt/prerepo  | pr   | origin/main | | \n' >> "$MAP"
 SCOPE=spira
 
 run_sweep() {
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
+        SPIRA_REPO_MAP="$MAP" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE"
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_BD="${SPIRA_BD:-bd}" \
-        SPIRA_DB="$SPIRA_DB" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_REPO_MAP="$MAP" \
-        SPIRA_ASK_LABEL=needs-ryan \
-        SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="$SCOPE" \
         groomer sweep "$@" 2>&1
 }
 
@@ -160,13 +156,12 @@ want "groom.log has CLOSED action"   "groom: sweep: CLOSED"   "$groom_log"
 echo
 echo "AFTER REAL RUN — detector returns only unclaimable and described unmapped-repo"
 # ==========================================================================================
-after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO_MAP="$MAP" \
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$MAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_SPIKE_LABEL=spike \
-    SPIRA_SCOPE_LABEL="$SCOPE" \
+    SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL="$SCOPE"
+after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     cockpit-collect probe livelock 2>/dev/null)"
 
 want  "after sweep: unclaimable bead still reported"       "sp-sw-unc"  "$after_ll"

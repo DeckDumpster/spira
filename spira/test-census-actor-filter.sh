@@ -44,6 +44,7 @@ testdb_up census-actor-filter || {
     printf 'SKIP test-census-actor-filter: server testdb not available\n' >&2
     exit 77
 }
+tl_config SPIRA_DB="$TESTDB_DIR"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -56,7 +57,7 @@ recur_event() { _bump_write_event "${1:-}" recurred "${2:-unrecorded}"; }
 echo "test-census-actor-filter.sh"
 
 census_out() {
-    SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null
+    census --with-suppressed 2>/dev/null
 }
 
 # ======================================================================================
@@ -85,7 +86,7 @@ nowant "hand-written heading does not name the aeon actor" "actor aeon-test"    
 echo
 echo "sp-m4xp9: without --with-suppressed the hand-written heading is gone, the ranked count still excludes the overseer row"
 # ======================================================================================
-_default_out="$(SPIRA_DB="$TESTDB_DIR" census 2>/dev/null)"
+_default_out="$(census 2>/dev/null)"
 nowant "default output carries no hand-written heading" "hand-written" "$_default_out"
 want   "default output still ranks the aeon-written bead alone" "1 sp-requeue-same-cause" "$_default_out"
 nowant "default output does not fold in the overseer bead's count" "2 sp-requeue-same-cause" "$_default_out"

@@ -5,20 +5,20 @@
 //! so every call here mirrors the bash's own repo/ref resolution through the `lib.sh` bridge
 //! rather than re-deriving it.
 
-use super::{push, Kv};
+use super::{push, Cfg, Kv};
 use crate::io;
 use crate::quoting::{parse_iso8601, rel_age, sanitize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-pub fn unsent_keys() -> Kv {
+pub fn unsent_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    branch_backlog_section(&mut out);
+    branch_backlog_section(&mut out, cfg);
     yield_section(&mut out);
     suite_times_section(&mut out);
-    landing_funnel_section(&mut out, &io::run_dir());
-    acceptance_section(&mut out);
+    landing_funnel_section(&mut out, &io::run_dir(), cfg);
+    acceptance_section(&mut out, cfg);
     gate_section(&mut out, &io::run_dir());
     out
 }
@@ -29,8 +29,7 @@ pub fn unsent_keys() -> Kv {
 // batched-too-long/closed-stranded — and the oldest unsent branch's age.
 // ---------------------------------------------------------------------------------------
 
-fn branch_backlog_section(out: &mut Kv) {
-    let run = io::run_dir();
+fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
     let now = io::now();
 
     let mut fail = false;
@@ -55,13 +54,13 @@ fn branch_backlog_section(out: &mut Kv) {
     let mut awaiting_round = 0usize;
 
     let reg = io::repo_registry();
-    let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
+    let qdir = std::path::PathBuf::from(&cfg.queue_dir);
     let in_delivery: std::collections::HashMap<String, super::lc::LcRow> =
         super::lc::list(Some("IN_DELIVERY")).unwrap_or_default().into_iter().map(|r| (r.id.clone(), r)).collect();
     // A branch's bead state is its lifecycle row's (design §3.4, sp-mve9i): one read for
     // every branch instead of a bd show per branch.
     let lc_index = super::lc::state_index();
-    let batch_wait: i64 = std::env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1800);
+    let batch_wait: i64 = cfg.queue_batch_wait;
 
     for rname in reg.all() {
         let Some(rp) = reg.root(&rname) else { continue };
@@ -385,8 +384,8 @@ fn value_to_plain(v: &Value) -> String {
 // it (a body mention does not count) — `law-aeon-commits-name-their-bead`.
 // ---------------------------------------------------------------------------------------
 
-fn landing_funnel_section(out: &mut Kv, run: &Path) {
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
+    let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let home_repo = io::repo_registry().home_repo().to_string();
     // Every plan bead's content; which of them the builder finished is the lifecycle row's
@@ -486,7 +485,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let subject_lines: Vec<&str> = subjects.iter().flat_map(|s| s.lines()).collect();
     let branch_lines: Vec<&str> = branches.iter().flat_map(|s| s.lines()).collect();
 
-    let cert_win: i64 = std::env::var("SPIRA_CERT_WINDOW_MINS").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
+    let cert_win: i64 = cfg.cert_window_mins;
 
     let mut landed_set: HashSet<&str> = HashSet::new();
     for r in &closed_pairs {
@@ -541,13 +540,13 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
 // `refs/notes/acceptance` note on the newest release tag that carries one.
 // ---------------------------------------------------------------------------------------
 
-fn acceptance_section(out: &mut Kv) {
+fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
     let mut verdict = "?".to_string();
     let mut tag = "-".to_string();
     let mut at = "?".to_string();
     let mut since = "?".to_string();
 
-    let prod = std::env::var("SPIRA_PROD").unwrap_or_default();
+    let prod = &cfg.prod;
     if !prod.is_empty() {
         let acc_repo = prod.trim_end_matches("/spira").to_string();
         let acc_repo_path = Path::new(&acc_repo);
@@ -735,7 +734,7 @@ mod tests {
         let _env = crate::test_support::set_run(run.path());
         std::env::set_var("SPIRA_REPO_MAP", run.path().join("no-map"));
         let mut out = Kv::new();
-        branch_backlog_section(&mut out);
+        branch_backlog_section(&mut out, &Cfg::default());
         let get = |k: &str| out.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("SP_UNSENT"), Some("0".to_string()));
     }

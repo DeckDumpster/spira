@@ -32,6 +32,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # which defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json — and none of the
 # fixtures below override HOME. Exported once here rather than on every invocation below.
 export SPIRA_CLIENT_SETTINGS="$TMP/settings.json"
+tl_config SPIRA_CLIENT_SETTINGS="$SPIRA_CLIENT_SETTINGS"
 
 echo "the escalation list — three classes, not the old five (sp-3dggv)"
 
@@ -85,7 +86,10 @@ FIX_JSON='{"law-rm-alpha":"Alpha fixture statute body.","law-rm-beta":"Beta fixt
 fixture_cmd() { printf 'printf %s' "$(printf '%q' "$FIX_JSON")"; }
 
 brief_fx() { # brief_fx [persona] -> compose the brief for a fixture persona
-    SPIRA_HOME="$FX" CONCIERGE_FAYTH="${1:-fx}" SPIRA_MEMORIES_CACHE="" \
+    # SPIRA_MEMORIES_CACHE is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # declare via tl_config, not the env prefix below, which no process reads it from any more.
+    tl_config SPIRA_MEMORIES_CACHE=""
+    SPIRA_HOME="$FX" CONCIERGE_FAYTH="${1:-fx}" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" brief
 }
 
@@ -150,7 +154,11 @@ echo "the brief — no-wiki install (SPIRA_WIKI unset)"
 # SPIRA_WIKI UNSET: every path the brief names must be a file that exists on this host.
 # THE POSITIVE CONTROL: the brief must still name the bead tool; absence of a wiki-relative
 # path alone would pass just as well against a brief that named nothing at all.
-BRIEF_NW="$(SPIRA_WIKI= brief_fx 2>"$TMP/err_nw")"
+# SPIRA_WIKI is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG); the empty
+# value here is the real "no wiki installed" state under test, not a default fallback —
+# declare it via tl_config rather than the env prefix, which no process reads any more.
+tl_config SPIRA_WIKI=""
+BRIEF_NW="$(brief_fx 2>"$TMP/err_nw")"
 if [ -n "$BRIEF_NW" ] && [ -f "$BRIEF_NW" ]; then
     ok "no-wiki brief renders"
     BNW="$(cat "$BRIEF_NW")"
@@ -188,7 +196,10 @@ printf '#!/bin/sh\nprintf "REAL:%%s\\n" "$*"\n' > "$SHIM_REAL/tmux"; chmod +x "$
 
 # A PATH prefix: conf.sh keeps the caller's PATH first and only appends its tail (sp-gypjk),
 # so write_tmux_shim's own `command -v tmux` finds the fake.
-shim_dir="$(PATH="$SHIM_REAL:$PATH" SPIRA_RUN="$SHIM_TMP/run" bash "$HARNESS/concierge.sh" _write-tmux-shim)"
+# SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
+# tl_config, not the env prefix below, which no process reads it from any more.
+tl_config SPIRA_RUN="$SHIM_TMP/run"
+shim_dir="$(PATH="$SHIM_REAL:$PATH" bash "$HARNESS/concierge.sh" _write-tmux-shim)"
 want "the shim dir is under SPIRA_RUN" "$SHIM_TMP/run/concierge-tmux-shim" "$shim_dir"
 [ -x "$shim_dir/tmux" ] && ok "the shim script is executable" \
     || bad "the shim script is executable" "missing at $shim_dir/tmux"
@@ -237,15 +248,19 @@ tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
 # this test's own "no brief at" (sp-wm2a3). The sibling fixture below (CONV_EMPTY) already
 # gets this right via `mktemp -d`.
 mkdir -p "$TMP/empty-chamber"
+# SPIRA_RUN/SPIRA_WIKI are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config, not the env prefixes below, which no process reads them from any
+# more. Same values for both calls, so one declaration covers them.
+tl_config SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain"
 here_nostart="$(SPIRA_HOME="$TMP/empty-chamber" CONCIERGE_FAYTH=concierge \
-    SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_CONF="$TMP/no.conf" \
     CONCIERGE_SOCKET="$HERE_SOCK" CONCIERGE_SESSION="$HERE_SOCK" \
     bash "$HARNESS/concierge.sh" here 2>&1)" || true
 want "here calls start when no session (brief-composition error visible)" "no brief at" "$here_nostart"
 
 # THE PROPERTY: when the session exists, here exec-attaches — no brief is composed.
 tmux -L "$HERE_SOCK" new-session -d -s "$HERE_SOCK" 2>/dev/null
-here_out="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
+here_out="$(SPIRA_CONF="$TMP/no.conf" \
     CONCIERGE_SOCKET="$HERE_SOCK" CONCIERGE_SESSION="$HERE_SOCK" \
     bash "$HARNESS/concierge.sh" here 2>&1)" || true
 nowant "here does not compose brief when session exists (no second client)" \
@@ -272,9 +287,20 @@ else
         "$HARNESS/spira/chamber/concierge.fayth" > "$MT_TMP/chamber/modeltest.fayth"
 
     MT_TOML="$MT_TMP/spira.toml"
-    cat > "$MT_TOML" <<'EOF'
+    # SPIRA_RUN/SPIRA_WIKI/SPIRA_REPO_MAP/SPIRA_CHAMBER/SPIRA_MEMORIES_CACHE are registered
+    # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG). This case's own subject IS config
+    # loading (persona.model out of spira.toml), so per that rule it keeps its own file —
+    # written here, not via tl_config — layered under the complete fixture below.
+    cat > "$MT_TOML" <<EOF
 [persona.modeltest]
 model = "concierge-toml-model"
+
+[spira]
+run = "$MT_TMP/run"
+wiki = "$MT_TMP"
+repo_map = "/nonexistent"
+chamber = "$MT_TMP/chamber-empty"
+memories_cache = ""
 EOF
 
     SOCK_MT="test-concierge-model-$$"
@@ -291,11 +317,11 @@ EOF
     # SPIRA_RELEASE and PATH: concierge.sh start refuses without the first (sp-31gtu), and a
     # transient unit gets the user manager's environment, not a launcher's — so it is handed
     # the suite's own release and the PATH the suite's launcher built from it.
-    ENVARGS=(SPIRA_RELEASE="$SPIRA_RELEASE" PATH="$PATH" SPIRA_HOME="$MT_TMP" SPIRA_RUN="$MT_TMP/run" SPIRA_WIKI="$MT_TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$MT_TMP/chamber-empty" \
-        SPIRA_TOML="$MT_TOML" CONCIERGE_FAYTH=modeltest \
+    ENVARGS=(SPIRA_RELEASE="$SPIRA_RELEASE" PATH="$PATH" SPIRA_HOME="$MT_TMP" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="${SPIRA_TOML%%:*}:$MT_TOML" CONCIERGE_FAYTH=modeltest \
         CONCIERGE_SOCKET="$SOCK_MT" CONCIERGE_SESSION="$SOCK_MT" \
-        SPIRA_MEMORIES_CACHE="" SPIRA_MEMORIES_CMD="$(fixture_cmd)")
+        SPIRA_MEMORIES_CMD="$(fixture_cmd)")
     env "${ENVARGS[@]}" \
         systemd-run --user --wait --collect --quiet --pipe -- \
         env "${ENVARGS[@]}" \
@@ -345,8 +371,11 @@ if len(sys.argv) > 3:
 time.sleep(float(sys.argv[2]))
 PY
 
-lp() { SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_TOKEN_PROJECTS="$TMP/lp-projects" \
+lp() {  # SPIRA_RUN/SPIRA_WIKI/SPIRA_TOKEN_PROJECTS are registered keys (per Ryan
+        # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix,
+        # which no process reads them from any more.
+        tl_config SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_TOKEN_PROJECTS="$TMP/lp-projects"
+        SPIRA_CONF="$TMP/no.conf" \
         bash "$HARNESS/concierge.sh" _live-pid "$1" 2>/dev/null; }
 
 # POSITIVE CONTROL: an id with no transcript file anywhere must return nothing.
@@ -425,7 +454,10 @@ trap 'kill "$CONV_PID" "$CONV_WRAP" 2>/dev/null; rm -rf "$CONV_DIR" "$CONV_PROJ"
 want "the headless fixture holder has no tty (positive control)" "?" "$(ps -o tty= -p "$CONV_PID" 2>/dev/null | tr -d '[:space:]')"
 
 CONV_SOCK="conv-no-second-$$"
-conv_out="$(PATH="$CONV_DIR/bin:$PATH" SPIRA_RUN="$CONV_DIR" SPIRA_TOKEN_PROJECTS="$CONV_PROJ" \
+# SPIRA_RUN/SPIRA_TOKEN_PROJECTS are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
+tl_config SPIRA_RUN="$CONV_DIR" SPIRA_TOKEN_PROJECTS="$CONV_PROJ"
+conv_out="$(PATH="$CONV_DIR/bin:$PATH" \
     CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
     bash "$HARNESS/concierge.sh" start 2>&1)"; conv_rc=$?
 kill "$CONV_PID" "$CONV_WRAP" 2>/dev/null; wait "$CONV_WRAP" 2>/dev/null
@@ -444,7 +476,8 @@ nowant "it does not advise an attach that cannot work"       "attach:  tmux"   "
 # and start proceeds to compose_brief. Pointed at an empty chamber, compose_brief fails with
 # "no brief at..." — proving this is a fallthrough and not a second accidental short-circuit.
 CONV_EMPTY="$(mktemp -d)"
-conv_no_out="$(SPIRA_HOME="$CONV_EMPTY" SPIRA_RUN="$CONV_DIR" SPIRA_TOKEN_PROJECTS="$CONV_PROJ" \
+# SPIRA_RUN/SPIRA_TOKEN_PROJECTS unchanged from the tl_config declared above.
+conv_no_out="$(SPIRA_HOME="$CONV_EMPTY" \
     CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
     bash "$HARNESS/concierge.sh" start 2>&1)"; conv_no_rc=$?
 rm -rf "$CONV_EMPTY"
@@ -505,7 +538,10 @@ LIVE_SOCK="live-no-second-$$"
 # the holder survives even with recovery enabled is the point: this is the flag that turns the
 # HEADLESS branch's "kill and restart" from advice into an action, and a live holder must never
 # reach that action.
-live_out="$(PATH="$LIVE_DIR/bin:$PATH" SPIRA_RUN="$LIVE_DIR" SPIRA_TOKEN_PROJECTS="$LIVE_PROJ" \
+# SPIRA_RUN/SPIRA_TOKEN_PROJECTS are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
+tl_config SPIRA_RUN="$LIVE_DIR" SPIRA_TOKEN_PROJECTS="$LIVE_PROJ"
+live_out="$(PATH="$LIVE_DIR/bin:$PATH" \
     CONCIERGE_SOCKET="$LIVE_SOCK" CONCIERGE_SESSION="$LIVE_SOCK" CONCIERGE_RECOVER_HEADLESS=1 \
     bash "$HARNESS/concierge.sh" start 2>&1)"; live_rc=$?
 
@@ -540,7 +576,11 @@ SH_TMP="$TMP/stray"; mkdir -p "$SH_TMP"
 SH_FAKE="$SH_TMP/fakeclaude"
 printf '#!/bin/sh\nsleep 30\n' > "$SH_FAKE"; chmod +x "$SH_FAKE"
 
-sh_holders() { SPIRA_RUN="$SH_TMP" SPIRA_WIKI="$SH_TMP" SPIRA_CONF="$TMP/no.conf" \
+# SPIRA_RUN/SPIRA_WIKI are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config, not the env prefixes below (sh_holders and out_start share this
+# value), which no process reads them from any more.
+tl_config SPIRA_RUN="$SH_TMP" SPIRA_WIKI="$SH_TMP"
+sh_holders() { SPIRA_CONF="$TMP/no.conf" \
     CONCIERGE_SOCKET="$SH_SESS" CONCIERGE_SESSION="$SH_SESS" \
     bash "$HARNESS/concierge.sh" _stray-holders 2>/dev/null; }
 
@@ -556,7 +596,7 @@ is "the bare holder is found by name, with no resume id involved" "$SH_PID" "$(s
 
 # start REFUSES rather than launching a third session on top of the confusion, and it does
 # so before compose_brief — the statute book need not be present for this check to fire.
-out_start="$(SPIRA_RUN="$SH_TMP" SPIRA_WIKI="$SH_TMP" SPIRA_CONF="$TMP/no.conf" \
+out_start="$(SPIRA_CONF="$TMP/no.conf" \
     CONCIERGE_SOCKET="$SH_SESS" CONCIERGE_SESSION="$SH_SESS" \
     bash "$HARNESS/concierge.sh" start 2>&1)"; rc_start=$?
 is   "start refuses (exit 4) when a stray holder is live" 4 "$rc_start"
@@ -618,8 +658,11 @@ want "the fixture pane shows the half-written input line (positive control)" \
     "❯ half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
 
 WK_HOLD_RUN="$TMP/wake-hold-run"; mkdir -p "$WK_HOLD_RUN"
+# SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
+# tl_config, not the env prefix below, which no process reads it from any more.
+tl_config SPIRA_RUN="$WK_HOLD_RUN"
 (
-    CONCIERGE_WAKE_WARN_SECS=0 SPIRA_RUN="$WK_HOLD_RUN" CONCIERGE_SOCKET="$WK_HOLD" CONCIERGE_SESSION="$WK_HOLD" \
+    CONCIERGE_WAKE_WARN_SECS=0 CONCIERGE_SOCKET="$WK_HOLD" CONCIERGE_SESSION="$WK_HOLD" \
         bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-hold.out" 2>&1
 ) &
 WK_WAKE_PID=$!
@@ -689,8 +732,11 @@ _wake_input_busy() {
 _wake_deliver() { printf '%s\n' "$1" >> "$DET_LOG"; }
 export -f _wake_input_busy _wake_deliver
 
+# SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
+# tl_config, not the env prefix below, which no process reads it from any more.
+tl_config SPIRA_RUN="$DET_RUN"
 (
-    CONCIERGE_WAKE_POLL_SECS=0 CONCIERGE_WAKE_SETTLE_SECS=0 SPIRA_RUN="$DET_RUN" \
+    CONCIERGE_WAKE_POLL_SECS=0 CONCIERGE_WAKE_SETTLE_SECS=0 \
         CONCIERGE_SOCKET="$DET_SOCK" CONCIERGE_SESSION="$DET_SOCK" \
         timeout 30 bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-det.out" 2>&1
 ) &

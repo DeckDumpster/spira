@@ -18,6 +18,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 export SPIRA_NO_LOOP_LABEL="no-loop"
+tl_config SPIRA_NO_LOOP_LABEL="no-loop"
 
 echo "test-bead-lint.sh"
 
@@ -34,9 +35,13 @@ testdb_up bead_lint || { printf 'test-bead-lint: could not build fixture databas
 # status (sp-mve9i): this world's machine mirrors the store (open READY, closed LANDED).
 lc_mirror_bd "$TMP/lc"
 run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from ONE call
-    LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    # SPIRA_DB/SPIRA_BD/SPIRA_NO_LOOP_LABEL/SPIRA_ASK_LABEL are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+    # which no process reads them from any more.
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test"
+    LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" \
         SPIRA_ALARM_LABEL="incident-test" \
         bead.sh lint "$@" 2>&1)"
     LINT_RC=$?

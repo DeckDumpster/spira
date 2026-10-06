@@ -42,7 +42,7 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use cfg::{Context, Repo};
+use cfg::{Context, Declared, Repo};
 use host::{Clock, Host, Io, RealClock, RealRunner, RealSink, Runner, Spec};
 use pass::{Mode, Sentinel};
 
@@ -181,6 +181,13 @@ fn main() {
         Ok(c) => c,
         Err(e) => std::process::exit(fatal(&e)),
     };
+    // One source of config (per Ryan 2026-10-05): every registered key `Cfg` needs, read
+    // once here via spira_config::process::cfg/cfg_parse — never defaulted, never a second
+    // reading off the probe's own Context.
+    let declared = match Declared::resolve() {
+        Ok(d) => d,
+        Err(e) => std::process::exit(fatal(&e)),
+    };
     // The retired lifecycle switch (sp-v62vn): a unit environment saying off is refused.
     match spira_config::check_lifecycle_switch_env(std::env::var(spira_config::LIFECYCLE_ENFORCE_ENV).ok().as_deref()) {
         Ok(Some(w)) => eprintln!("sentinel: {w}"),
@@ -196,6 +203,7 @@ fn main() {
     let s = Sentinel::new(
         &h,
         ctx,
+        declared,
         &home,
         mode,
         exe.to_string_lossy().into_owned(),

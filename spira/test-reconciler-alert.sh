@@ -47,8 +47,8 @@ command -v reconciler-alert >/dev/null 2>&1 || bail "reconciler-alert is not on 
 # Real mail and its real conf.sh, so this suite exercises the actual lint and the actual
 # alert.md kind file this bead adds — not a hand-written model of what mail accepts.
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
-export SPIRA_DB="$T/db"                 # never the operator's real store (law-run-the-suite-in-a-container)
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_DB="$T/db"; tl_config SPIRA_DB="$SPIRA_DB"        # never the operator's real store (law-run-the-suite-in-a-container)
 # sp-70ocl dropped mail's literal "needs-operator" Rust fallback: mail now refuses to file
 # any question/decision ask (mail/src/cmds.rs::send) when SPIRA_ASK_LABEL does not resolve,
 # rather than guessing. A real install's conf.sh always exports it; this fixture has no
@@ -56,7 +56,7 @@ export SPIRA_DB="$T/db"                 # never the operator's real store (law-r
 # spira_config derive one — resolve_run_dir's own sp-ivfu3-2 note), so it must pin
 # SPIRA_ASK_LABEL explicitly too, or every `mail send ... --kind question` call in section 9
 # below silently refuses instead of reaching the operator.
-export SPIRA_ASK_LABEL="needs-operator"
+tl_config SPIRA_ASK_LABEL="needs-operator"
 mkdir -p "$SPIRA_RUN"
 
 # Stub concierge.sh: "status" answers from a file the scenario toggles, so the fixture never

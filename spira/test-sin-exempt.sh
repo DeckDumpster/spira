@@ -61,15 +61,19 @@ chmod +x "$TMP/home/mail"
 
 file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
+    # SPIRA_BD/SPIRA_DB/SPIRA_RUN are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+    # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
     printf '%s' "$payload" | \
         env -i HOME="$HOME" PATH="$PATH" \
-        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+        STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         MAIL_LOG="$MAIL_LOG" \
-        SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/sinex-test.lock" \
         SPIRA_INCIDENT_REPO= \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         incident.sh file "$title" - 2>/dev/null
 }

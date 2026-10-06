@@ -147,7 +147,8 @@ rm -f "$Q/open"
 printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"},{"bead_id":"sp-c"}]' > "$FX/certified.json"
 EOF
 
-export FX SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh" SPIRA_LC_BIN="$FX/spira-lc"
+tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh"
+export FX SPIRA_LC_BIN="$FX/spira-lc"
 out="$("$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 printf '%s\n' "$out" | sed 's/^/    | /'
 
@@ -263,7 +264,8 @@ chmod +x "$FX/incident.sh"
 # QUEUE_WATCH_HEAD_STALL_SECS is set absurdly high so a "stall" firing here can only be the
 # queued-threshold path — proof the two are judged separately, not that the smaller number
 # always wins.
-sout="$(SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1 QUEUE_WATCH_HEAD_STALL_SECS=100000000 \
+tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1
+sout="$(QUEUE_WATCH_HEAD_STALL_SECS=100000000 \
     "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"
 printf '%s\n' "$sout" | sed 's/^/    | /'
 

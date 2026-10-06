@@ -89,8 +89,10 @@ chmod +x "$BIN/journalctl"
 
 # wt_show -> the --show snapshot (touches nothing: no incident.sh, no state write)
 wt_show() {
+    tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
         watchtower --show 2>/dev/null
@@ -107,8 +109,10 @@ printf '%s\t%s\n' "\$2" "\${SPIRA_INCIDENT_REF:-}" >> "$TMP/inc-calls"
 { printf '=== %s ===\n' "\$2"; cat; } >> "$TMP/inc-bodies"
 MOCK
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF=/nonexistent \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
         SPIRA_INCIDENT_SH="$mock" \

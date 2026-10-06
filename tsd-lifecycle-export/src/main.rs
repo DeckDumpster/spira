@@ -41,12 +41,8 @@ fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
-fn env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|_| format!("{name} is not set"))
-}
-
 fn spira_run() -> Result<PathBuf, String> {
-    Ok(PathBuf::from(env_var("SPIRA_RUN")?))
+    Ok(PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?))
 }
 
 fn checkpoint_path(run: &Path, mode: &str) -> PathBuf {
@@ -104,8 +100,8 @@ fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
 }
 
 fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
-    let bd = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string());
-    let db = env_var("SPIRA_DB")?;
+    let bd = spira_config::process::cfg("SPIRA_BD")?;
+    let db = spira_config::process::cfg("SPIRA_DB")?;
     let query = format!(
         "SELECT id, issue_id, event_type, actor, new_value, created_at FROM events \
          WHERE created_at >= {} ORDER BY created_at, id",
@@ -193,6 +189,9 @@ struct LcRoConn {
 
 impl LcRoConn {
     fn from_env() -> Result<Self, String> {
+        // SPIRA_LC_DOLT_BIN/HOST/PORT/USER/PASSWORD/DB/DATA_DIR are not registered config keys
+        // (no spira/conf.d entry) — left reading the raw environment. Only
+        // SPIRA_LC_PASSWORD_FILE below is registered.
         let dolt_bin = std::env::var("SPIRA_LC_DOLT_BIN").unwrap_or_else(|_| "dolt".to_string());
         let host = std::env::var("SPIRA_LC_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let port: u16 = std::env::var("SPIRA_LC_PORT")
@@ -200,9 +199,9 @@ impl LcRoConn {
             .parse()
             .map_err(|e| format!("SPIRA_LC_PORT: {e}"))?;
         let user = std::env::var("SPIRA_LC_USER").unwrap_or_else(|_| "spira_lc_ro".to_string());
-        let password = match std::env::var("SPIRA_LC_PASSWORD_FILE").ok().filter(|p| !p.is_empty()) {
-            Some(path) => std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string(),
-            None => std::env::var("SPIRA_LC_PASSWORD").unwrap_or_default(),
+        let password = match spira_config::process::cfg("SPIRA_LC_PASSWORD_FILE")?.as_str() {
+            "" => std::env::var("SPIRA_LC_PASSWORD").unwrap_or_default(),
+            path => std::fs::read_to_string(path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string(),
         };
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
         let data_dir = std::env::var("SPIRA_LC_DATA_DIR").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| {

@@ -19,7 +19,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""   # prevent reading a real spira.conf
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which

@@ -92,17 +92,12 @@ chmod +x "$SH/forge-fixture.sh"
 
 export SPIRA_CONF=/nonexistent
 export SPIRA_HOME="$SH"
-export SPIRA_HOME_REPO="$REPONAME"
 export SPIRA_REPO="$REPO"
-export SPIRA_RUN="$RUN"
-export SPIRA_QUEUE_DIR="$QDIR"
-export SPIRA_REPO_MAP="$RMAP"
-export SPIRA_FORGE="$SH/forge-fixture.sh"
-export SPIRA_RELEASES="$RELEASES"
 # queue/DESIGN.md §8 D12: these hand-built heads were never gated; the named override lands them.
 export SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged"
-export SPIRA_QUEUE_TRANSITION_POLLSEC=1
-export SPIRA_QUEUE_TRANSITION_MAXSEC=5
+tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" \
+    SPIRA_REPO_MAP="$RMAP" SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_RELEASES="$RELEASES" \
+    SPIRA_QUEUE_TRANSITION_POLLSEC=1 SPIRA_QUEUE_TRANSITION_MAXSEC=5
 
 queue() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \

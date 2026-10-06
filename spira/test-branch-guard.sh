@@ -25,9 +25,10 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # Sections below drive `git commit` directly, rather than through the `env -i` wrapper
 # run_guard() uses, so the pre-commit hook it triggers sources conf.sh in THIS suite's own
-# ambient environment. An operator's SPIRA_TOML, exported for their own shell's
-# convenience, would otherwise leak a real config into the guard's decisions.
-unset SPIRA_TOML SPIRA_CONF 2>/dev/null || true
+# ambient environment. SPIRA_TOML stays set to testlib's own hermetic fixture (per Ryan
+# 2026-10-05, ONE SOURCE OF CONFIG — conf.sh refuses outright with no SPIRA_TOML at all);
+# only the legacy SPIRA_CONF var is cleared so it cannot point at a real config file.
+unset SPIRA_CONF 2>/dev/null || true
 
 # Minimal harness copy the guard resolves relative to its own location.
 SH="$TMP/spira"
@@ -61,17 +62,21 @@ GIT_BIN="$(dirname "$(command -v git)")"
 SPIRA_CONFIG_BIN="$(dirname "$(command -v spira-config)")" || bail "spira-config is not on PATH"
 mkdir -p "$TMP/run"
 
+# SPIRA_REPO_MAP/SPIRA_DB/SPIRA_RUN are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare them via tl_config and thread SPIRA_TOML through every env -i call below —
+# env -i clears it otherwise, and no process reads these three from the environment any more.
+tl_config SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" SPIRA_RUN="$TMP/run"
+
 # run_guard <email> <repo> -> exit code of branch-guard.sh staged
 run_guard() {
     local email="$1" root="$2"
     # RUN IN AN EXPLICIT MINIMAL ENVIRONMENT. Ambient conf is the thing that silently decides
     # verdicts in a suite that inherits it. SPIRA_CONF points at a nonexistent file so no
-    # config file is read; SPIRA_REPO_MAP likewise so no map is consulted.
+    # legacy config file is read.
     env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         GIT_COMMITTER_NAME="test" GIT_COMMITTER_EMAIL="$email" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$root" \
-        SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/branch-guard.sh" staged "$root" >/dev/null 2>&1
 }
 
@@ -89,8 +94,7 @@ git -C "$REPO" add -A
 out="$(env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
     GIT_COMMITTER_NAME="aeon-shiva" GIT_COMMITTER_EMAIL="aeon-shiva@spira.local" \
     SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
-    SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
-    SPIRA_RUN="$TMP/run" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$SH/branch-guard.sh" staged "$REPO" 2>&1)"; guard_rc=$?
 is   "aeon on base branch: guard exits 1" 1 "$guard_rc"
 want "aeon on base branch: names the committer email" "aeon-shiva@spira.local" "$out"
@@ -132,8 +136,7 @@ git -C "$REPO" commit -q -m "sp-test: aeon commit planted directly on main"
 run_check() {
     env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
-        SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/branch-guard.sh" check 2>&1
 }
 

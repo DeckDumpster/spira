@@ -116,24 +116,27 @@ SC
 world_stop() {
     local inst="$1"; shift
     : > "$CALLS"
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-    SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
+    tl_config SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_INSTANCE="$inst"
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no-such-conf" \
+    SPIRA_SYSTEMCTL="$TMP/systemctl" \
         "$SH/world.sh" stop "$@" 2>&1
 }
 
 world_start() {
     local inst="$1"; shift
     : > "$CALLS"
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-    SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
+    tl_config SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_INSTANCE="$inst"
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no-such-conf" \
+    SPIRA_SYSTEMCTL="$TMP/systemctl" \
         "$SH/world.sh" start "$@" 2>&1
 }
 
 world_status() {
     local inst="$1"
     : > "$CALLS"
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-    SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
+    tl_config SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_INSTANCE="$inst"
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no-such-conf" \
+    SPIRA_SYSTEMCTL="$TMP/systemctl" \
         "$SH/world.sh" status 2>&1
 }
 

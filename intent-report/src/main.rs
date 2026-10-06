@@ -29,7 +29,7 @@ fn run(args: Vec<String>) -> Result<String, String> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let mut run: Option<PathBuf> = std::env::var_os("SPIRA_RUN").map(PathBuf::from);
+    let mut run: Option<PathBuf> = None;
     let mut since = "24h".to_string();
     let mut until: Option<String> = None;
     let mut backfill = true;
@@ -47,7 +47,12 @@ fn run(args: Vec<String>) -> Result<String, String> {
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
-    let run = run.ok_or("no --run and SPIRA_RUN is unset")?;
+    // No --run flag: SPIRA_RUN, the one source of config (per Ryan 2026-10-05) — never a
+    // bare literal default.
+    let run = match run {
+        Some(r) => r,
+        None => PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?),
+    };
     if !run.is_dir() {
         return Err(format!("{} is not a directory", run.display()));
     }

@@ -50,18 +50,16 @@ done
 # inst [args] — units-install in a minimal environment; TEST_PROD overrides SPIRA_PROD.
 inst() {
     > "$MOCK_LOG"
+    tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
+        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_PROD=${TEST_PROD-$PROD}" "SPIRA_COCKPIT=$REAL_COCKPIT"
     env -i \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_TOML=$SPIRA_TOML" \
         "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=${TEST_PROD-$PROD}" \
         "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
         "MOCK_LOG=$MOCK_LOG" \
         SPIRA_INSTALL_FORCE=1 \
         units-install "$@" 2>&1
@@ -91,8 +89,9 @@ want    "noexec: output says 'not executable'" "not executable" "$noexec_out"
 
 echo
 echo "CONF EMPTY — SPIRA_PROD= (empty) is preserved, not replaced by default:"
+tl_config SPIRA_PROD=
 conf_result="$(
-    env -i "PATH=$PATH" "HOME=$TMP/home" SPIRA_CONF=/nonexistent SPIRA_PROD= \
+    env -i "PATH=$PATH" "HOME=$TMP/home" SPIRA_CONF=/nonexistent "SPIRA_TOML=$SPIRA_TOML" \
         bash -c '. '"$HERE/conf.sh"'; printf "%s" "${SPIRA_PROD:-__EMPTY__}"' 2>/dev/null
 )"
 [ "$conf_result" = "__EMPTY__" ] && ok "conf empty: SPIRA_PROD= preserved as empty" \

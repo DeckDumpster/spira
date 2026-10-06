@@ -81,10 +81,11 @@ if [ -z "$decoy_sock" ] || [ -z "$decoy_pid" ]; then
     bail "fixture: could not read the decoy server's own socket/pid"
 fi
 
+tl_config SPIRA_COCKPIT="$FAKE_COCK" SPIRA_RUN="$RUN1" COCKPIT_MAIL=""
 TMUX="$DECOY_TMUX" TMUX_PANE="$decoy_pane" \
 SPIRA_RELEASE="$FAKE_RELEASE" \
-SPIRA_COCKPIT="$FAKE_COCK" SPIRA_REPO="$T" SPIRA_RUN="$RUN1" SPIRA_HOME="$HERE" \
-SPIRA_CONF="$T/no.conf" COCKPIT_MAIL="" \
+SPIRA_REPO="$T" SPIRA_HOME="$HERE" \
+SPIRA_CONF="$T/no.conf" \
     "$LAYOUT" up --window brain:0 >/dev/null 2>&1
 rc=$?
 is "up exits 0 even with a decoy \$TMUX in the environment" "0" "$rc"
@@ -110,8 +111,9 @@ for s in $SESSLIST cockpit; do tmux -L decoy new-session -d -s "$s" -c "$T" 2>/d
 # The DECOY carries every session, including "cockpit" — if probe read the decoy
 # instead of the real server, it would wrongly report "cockpit" present.
 
+tl_config COCKPIT_SESSIONS="$SESSLIST"
 out="$(TMUX="$DECOY_TMUX" TMUX_PANE="$decoy_pane" \
-    SPIRA_CONF="$T/no.conf" COCKPIT_SESSIONS="$SESSLIST" \
+    SPIRA_CONF="$T/no.conf" \
     "$REBUILD" probe 2>&1)"
 
 want "probe reflects the REAL server: session cockpit MISSING" \

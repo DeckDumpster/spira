@@ -45,9 +45,12 @@ mkdir -p "$T/run"
 # process, and an ambient SPIRA_TOML — set for an operator's own shell convenience —
 # would otherwise be read ahead of the fixture and inject a real persona roster.
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_TOML="$T/no-such.toml"
+# Registered config (SPIRA_RUN) is declared via tl_config into testlib.sh's own override
+# layer rather than pinning a private SPIRA_TOML: that layered SPIRA_TOML is already the
+# clean, fully-specified environment law-gates-run-in-a-clean-environment asks for — no
+# ambient operator config can reach it either way.
+tl_config SPIRA_RUN="$T/run"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -65,8 +68,8 @@ cat > "$FAKE_BD" <<EOF
 case " \$* " in *" list "*) cat "$STORE_FILE" 2>/dev/null || echo '[]' ;; *) echo '[]' ;; esac
 EOF
 chmod +x "$FAKE_BD"
-export SPIRA_BD="$FAKE_BD"
 export SPIRA_DB="/fake/db"
+tl_config SPIRA_BD="$FAKE_BD"
 lc_mirror_bd "$T/lc"
 export PATH="$T/lc:$PATH"
 # bead_json <id> <comma-labels> — one open task bead carrying exactly those labels.
@@ -282,8 +285,8 @@ done
 # exactly conf.sh's own default, so they are left set rather than unset.
 unset SPIRA_FAYTHS SPIRA_REPO_MAP SPIRA_DB
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
+tl_config SPIRA_RUN="$T/run"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh" 2>/dev/null
 
@@ -357,8 +360,9 @@ for key in plan incident; do
 done
 
 # DISCRIMINATING: a custom SPIRA_PLAN_LABEL must propagate through schema_name.
+tl_config SPIRA_PLAN_LABEL=work
 custom_label="$(SPIRA_HOME="$HERE" SPIRA_CONF="$SCHEMA_T" \
-    SPIRA_PLAN_LABEL=work schema.sh name plan 2>/dev/null)"
+    schema.sh name plan 2>/dev/null)"
 is "schema_name plan: SPIRA_PLAN_LABEL=work propagates to 'work', not 'plan'" \
    "work" "$custom_label"
 
@@ -382,7 +386,7 @@ want "spike: and edit"                   "Edit"      "$fayth_src"
 # call fayth_ready/summon_fayth. A direct row proves the exclusion set itself: every OTHER
 # persona's fayth:<name>, plus $SPIRA_QUEUE_WAIT_LABEL, never the caller's own name.
 export SPIRA_FAYTHS="builder ops groomer"
-export SPIRA_QUEUE_WAIT_LABEL="g16-queue-wait"
+tl_config SPIRA_QUEUE_WAIT_LABEL="g16-queue-wait"
 
 excl="$(fayth_exclude ops "ops-own-label")"
 want   "G16: the persona's own exclude labels are kept"          "ops-own-label"  "$excl"
@@ -391,6 +395,7 @@ want   "G16: excludes another persona's fayth: label (builder)"  "fayth:builder"
 want   "G16: excludes another persona's fayth: label (groomer)"  "fayth:groomer"  "$excl"
 nowant "G16: does not exclude its own fayth: label (ops)"        "fayth:ops"      "$excl"
 
+spira-config unset spira.queue_wait_label "$_TL_CONF_OVERRIDE" >/dev/null
 unset SPIRA_QUEUE_WAIT_LABEL SPIRA_FAYTHS
 
 # ==========================================================================================

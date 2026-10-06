@@ -80,24 +80,20 @@ chmod +x "$STUB_BD"
 # already does, not just $HERE/usr/bin/bin.
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repo-map" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_GROOMER_LABEL="groom" \
+    SPIRA_SPIKE_LABEL="spike" SPIRA_CZAR_LABEL="czar-trigger" \
+    SPIRA_INCIDENT_LABEL="incident" SPIRA_PLAN_LABEL="plan" \
+    SPIRA_SUBMITTED_LABEL="testsubmitted" SPIRA_SCOPE_LABEL="testscope"
+
 run_bead() {
     : > "$BD_LOG"
     env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
-        SPIRA_DB="$T/db" \
         SPIRA_HOME="$T" \
         SPIRA_REPO="$T" \
-        SPIRA_REPO_MAP="$T/repo-map" \
-        SPIRA_MAECHEN_LABEL="maechen-sweep" \
-        SPIRA_GROOMER_LABEL="groom" \
-        SPIRA_SPIKE_LABEL="spike" \
-        SPIRA_CZAR_LABEL="czar-trigger" \
-        SPIRA_INCIDENT_LABEL="incident" \
-        SPIRA_PLAN_LABEL="plan" \
-        SPIRA_SUBMITTED_LABEL="testsubmitted" \
-        SPIRA_SCOPE_LABEL="testscope" \
         SPIRA_BEAD_LANE_OVERRIDE="${SPIRA_BEAD_LANE_OVERRIDE:-}" \
         bead.sh file "$@" 2>&1
 }

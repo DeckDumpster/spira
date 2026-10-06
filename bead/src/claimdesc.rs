@@ -144,12 +144,16 @@ pub fn parse_iso(s: &str) -> Option<i64> {
 }
 
 /// Mails the aeon actually working `id`, if one is alive and its mailbox is open.
-pub fn notify_live_aeon(id: &str, message: &str) {
-    if id.is_empty() || message.is_empty() {
+///
+/// `run`/`mail` are `SPIRA_RUN`/`SPIRA_MAIL` (both registered config keys) — this is pure
+/// logic, so it takes them as arguments rather than reading config itself (per Ryan
+/// 2026-10-05: one source of config); callers resolve them through
+/// `spira_config::process::cfg` at their own top level.
+pub fn notify_live_aeon(id: &str, message: &str, run: &str, mail: &str) {
+    if id.is_empty() || message.is_empty() || run.is_empty() {
         return;
     }
-    let Some(run) = std::env::var("SPIRA_RUN").ok().filter(|r| !r.is_empty()) else { return };
-    let Ok(entries) = std::fs::read_dir(&run) else { return };
+    let Ok(entries) = std::fs::read_dir(run) else { return };
     let suffix = format!("-{id}.pid");
     let mut candidates: Vec<String> = entries
         .filter_map(|e| e.ok())
@@ -161,7 +165,6 @@ pub fn notify_live_aeon(id: &str, message: &str) {
         if !aeon_alive(&format!("{run}/{name}")) {
             continue;
         }
-        let mail = std::env::var("SPIRA_MAIL").unwrap_or_default();
         if !Path::new(&format!("{mail}/aeon-{id}/new")).is_dir() {
             break;
         }

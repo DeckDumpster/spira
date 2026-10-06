@@ -68,13 +68,14 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # reintroduced through the config seam instead of the inline check this time (sp-8qm8g).
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
-export SPIRA_DB="$TMP/no-db"
+tl_config SPIRA_DB="$TMP/no-db"
 # The fence (fayth_fenced, lib.sh) refuses an empty FAYTH_LABELS and, when SPIRA_SCOPE_LABEL
 # is set, requires the label naming this scope. Neither is what this suite is testing, so
 # disable scope restriction the same way an operator would to allow an unrestricted predicate.
-export SPIRA_SCOPE_LABEL=""
+tl_config SPIRA_SCOPE_LABEL=""
 
 # The stub: source the REAL lib.sh (so fayth_free is the genuine article), then override
 # aeon_count so "have" is a controlled number rather than a real /proc scan.
@@ -101,7 +102,7 @@ FAYTH_LABELS="test,plan"
 FAYTH_MAX_CONCURRENT=3
 FAYTH_ELASTIC=1
 F
-export SPIRA_MAX_AEONS=6
+tl_config SPIRA_MAX_AEONS=6
 
 : > "$LEDGER"
 export MOCK_AEON_COUNT=5

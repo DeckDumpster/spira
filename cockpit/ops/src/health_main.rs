@@ -65,7 +65,7 @@ fn read_snapshot(path: &Path) -> (String, bool) {
 /// so this is a deliberately narrower reimplementation of just the one call site needs. See
 /// `../DESIGN.md` Decisions.
 fn sentinel_active() -> Option<bool> {
-    let instance = env_nonempty("SPIRA_INSTANCE");
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty());
     let mut candidates = Vec::new();
     if let Some(i) = &instance {
         if i != "prod" {
@@ -154,7 +154,7 @@ fn renderer_rev() -> String {
 /// a reader can legitimately disagree. Only meaningful (and only called) when the
 /// snapshot is absent at `run`; mirrors `snap_absent_banner`'s own probe exactly.
 fn mismatch_alt(run: &str) -> Option<String> {
-    let instance = env_nonempty("SPIRA_INSTANCE").unwrap_or_else(|| "prod".to_string());
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "prod".to_string());
     let inst_sfx = if instance == "prod" { String::new() } else { format!("-{instance}") };
     let mut alts = Vec::new();
     if let Some(repo) = env_nonempty("SPIRA_REPO") {
@@ -186,8 +186,8 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default()
     };
-    let snap_stale_s = env_nonempty("SPIRA_SNAP_STALE_S").and_then(|s| s.parse().ok()).unwrap_or(60);
-    let trace_lines = env_nonempty("COCKPIT_TRACE_LINES").and_then(|s| s.parse().ok()).unwrap_or(2);
+    let snap_stale_s = spira_config::process::cfg_parse::<i64>("SPIRA_SNAP_STALE_S").unwrap_or(60);
+    let trace_lines = spira_config::process::cfg_parse::<i64>("COCKPIT_TRACE_LINES").unwrap_or(2);
 
     let inputs = FrameInputs {
         // 'static is a lie we immediately own up to: content is leaked intentionally for the
@@ -214,7 +214,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
 }
 
 fn run_dir() -> String {
-    env_nonempty("SPIRA_RUN").unwrap_or_else(|| "/tmp/spira-run".to_string())
+    spira_config::process::cfg("SPIRA_RUN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp/spira-run".to_string())
 }
 
 fn do_render(rows: i64, cols: i64) -> Vec<String> {

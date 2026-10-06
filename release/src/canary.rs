@@ -96,16 +96,23 @@ struct ProdEnv {
 }
 
 impl ProdEnv {
+    /// `SPIRA_DB`, `SPIRA_RUN`, `SPIRA_NOTIFY`, `SPIRA_BD` and `SPIRA_HOME_REPO` are
+    /// registered keys (spira/conf.d) — read through `cfg`, never a raw environment lookup
+    /// (per Ryan 2026-10-05: one source of config). A `cfg` that cannot resolve at all (no
+    /// `$SPIRA_TOML`) is treated the same as the key resolving empty: this is the best-effort
+    /// production identity for [`file_incident`]'s own side channel, which already no-ops
+    /// without a `db` — never a reason to fail `canary` itself. `SPIRA_HOME` is not a
+    /// registered key, so it keeps reading the raw environment.
     fn capture() -> ProdEnv {
-        let get = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let reg = |k: &str| spira_config::process::cfg(k).ok().filter(|v| !v.is_empty());
         ProdEnv {
-            db: get("SPIRA_DB"),
-            run: get("SPIRA_RUN"),
-            home: get("SPIRA_HOME"),
-            notify: get("SPIRA_NOTIFY"),
-            bd: get("SPIRA_BD").unwrap_or_else(|| "bd".into()),
+            db: reg("SPIRA_DB"),
+            run: reg("SPIRA_RUN"),
+            home: std::env::var("SPIRA_HOME").ok().filter(|v| !v.is_empty()),
+            notify: reg("SPIRA_NOTIFY"),
+            bd: reg("SPIRA_BD").unwrap_or_default(),
             path: std::env::var("PATH").unwrap_or_default(),
-            home_repo: get("SPIRA_HOME_REPO"),
+            home_repo: reg("SPIRA_HOME_REPO"),
         }
     }
 }

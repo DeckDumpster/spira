@@ -82,12 +82,21 @@ BARSECS=30
 
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_VERDICT_TTL=0
+    # Any caller override: a registered key goes to tl_config too; anything else (e.g. the
+    # non-registered SPIRA_GATE_LOG/SPIRA_GATE_LOCK_WAIT seams) stays a plain env assignment.
+    local extra_env=() kv k
+    for kv in "$@"; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
+    done
     env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
+        SPIRA_TOML="$SPIRA_TOML" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
-        "$@" bash "$SH/gate.sh" "$br" repo
+        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" \
+        SPIRA_GATE_LOG="$GATELOG" \
+        SPIRA_VERDICTS="$VDIR" \
+        "${extra_env[@]}" bash "$SH/gate.sh" "$br" repo
 }
 
 # label_self_overlaps <label> <events-file> — 0 (true) iff two START/END windows recorded

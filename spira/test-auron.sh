@@ -72,8 +72,9 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 printf 'brain | %s | push | origin/main | |\n' "$TMP/repo" > "$SH/repo-map"
 
 auron() {   # auron [--report] — one run against the fixture, with a chosen database
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
-    SPIRA_REPO="$TMP/repo" SPIRA_EXPORTER="" SPIRA_SYSTEMCTL=true \
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER=""
+    SPIRA_HOME="$SH" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
+    SPIRA_REPO="$TMP/repo" SPIRA_SYSTEMCTL=true \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
         command auron --home "$SH" "$@" 2>&1
 }
@@ -253,7 +254,8 @@ chmod +x "$WRITE_FAIL_BD"
 # A healthy loop — no conditions firing. With a working database, the write probe
 # creates its bead and publishes SP_AURON_DB_WRITE=ok.
 heal; rm -f "$RUN/auron.state"   # clear state so probe starts fresh
-SPIRA_BD="$TESTDB_BD" auron >/dev/null
+tl_config SPIRA_BD="$TESTDB_BD"
+auron >/dev/null
 grep -q 'SP_AURON_DB_WRITE=ok' "$RUN/auron.status" \
     && ok "write probe: healthy database shows write ok" \
     || bad "write probe baseline" "SP_AURON_DB_WRITE is not ok before the fault"
@@ -267,7 +269,8 @@ grep -q 'SP_AURON_DB_READ=ok' "$RUN/auron.status" \
 # Now switch to the write-fail shim. Reads succeed, writes fail.
 # The write probe detects the failure and the fallback file appears.
 rm -f "$RUN/auron.state"   # clear state so probe tries to create (which will fail)
-SPIRA_BD="$WRITE_FAIL_BD" auron >/dev/null
+tl_config SPIRA_BD="$WRITE_FAIL_BD"
+auron >/dev/null
 grep -q 'SP_AURON_DB_READ=ok' "$RUN/auron.status" \
     && ok "write probe: read path still shows ok during write-only failure" \
     || bad "write probe read during fault" "SP_AURON_DB_READ is not ok with writes broken"
@@ -287,7 +290,8 @@ print(d.get("db_reachable"), d.get("db_write_ok"))' "$RUN/auron.alerts.json" 2>/
     || bad "write probe fallback content" "got [$fb_write]"
 
 # Restore the healthy database. The fallback file is removed and writes are ok again.
-SPIRA_BD="$TESTDB_BD" auron >/dev/null
+tl_config SPIRA_BD="$TESTDB_BD"
+auron >/dev/null
 grep -q 'SP_AURON_DB_WRITE=ok' "$RUN/auron.status" \
     && ok "write probe: write ok restored after the fault clears" \
     || bad "write probe restore" "SP_AURON_DB_WRITE is not ok after restoring the database"
@@ -315,7 +319,8 @@ chmod +x "$REDERIVE_FAIL_BD"
 
 heal; rm -f "$RUN/auron.state"   # empty state: PROBE_ID empty, re-derive will run
 _n_probes_before="$(n_probe_beads)"
-SPIRA_BD="$REDERIVE_FAIL_BD" auron >/dev/null
+tl_config SPIRA_BD="$REDERIVE_FAIL_BD"
+auron >/dev/null
 _n_probes_after="$(n_probe_beads)"
 [ "$_n_probes_after" = "$_n_probes_before" ] \
     && ok "re-derive fail: no probe bead created when re-derive fails" \
@@ -336,7 +341,8 @@ _p1="$(create_probe)"; _p2="$(create_probe)"; _p3="$(create_probe)"
 if [ -z "$_p1" ] || [ -z "$_p2" ] || [ -z "$_p3" ]; then
     bad "extras setup" "could not create three probe beads for extras test"
 else
-    SPIRA_BD="$TESTDB_BD" auron >/dev/null
+    tl_config SPIRA_BD="$TESTDB_BD"
+    auron >/dev/null
     # Exactly 1 probe bead should be open; all others (pre-existing + 2 of the 3 new ones)
     # should be closed rather than deleted.
     n_open="$(bd -C "$SPIRA_DB" list --limit 0 --label auron:probe --json 2>/dev/null \
@@ -369,7 +375,8 @@ TIMEOUT_BD="$TMP/timeout-bd"
 chmod +x "$TIMEOUT_BD"
 
 heal; rm -f "$RUN/auron.state"
-AURON_DB=/nonexistent-spira-db SPIRA_BD="$TIMEOUT_BD" auron >/dev/null
+tl_config SPIRA_BD="$TIMEOUT_BD"
+AURON_DB=/nonexistent-spira-db auron >/dev/null
 grep -q 'SP_AURON_DB_READ=saturated' "$RUN/auron.status" \
     && ok "saturation: timeout on read probe reports DB_READ=saturated" \
     || bad "saturation read" "expected SP_AURON_DB_READ=saturated, got $(grep SP_AURON_DB_READ "$RUN/auron.status" 2>/dev/null || echo none)"
@@ -410,11 +417,12 @@ RESTART_SC="$TMP/restart-sc"
 chmod +x "$RESTART_SC"
 
 auron_restart() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
-    SPIRA_REPO="$TMP/repo" SPIRA_EXPORTER="" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" \
+        SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600
+    SPIRA_HOME="$SH" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
+    SPIRA_REPO="$TMP/repo" \
     SPIRA_SYSTEMCTL="$RESTART_SC" \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
-    SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600 \
         command auron --home "$SH" "$@" 2>&1
 }
 restart_alert_status() {

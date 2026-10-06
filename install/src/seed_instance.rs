@@ -6,7 +6,7 @@
 //! `spira_config_set_at`, which this shells to the same binary rather than re-deriving.
 //!
 //! Names neither config filename itself: every path this file builds goes through
-//! `spira_config::toml_path_at`/`repo_map_candidate`/`convert_command` (config-fence: only
+//! `spira_config::toml_path_at`/`convert_command` (config-fence: only
 //! spira-config may name the typed config file or the repo map).
 
 use std::path::{Path, PathBuf};
@@ -59,7 +59,9 @@ fn fayth_paths(home: &Path) -> Result<Vec<PathBuf>, String> {
 /// when it was already correct or the write failed (the failure itself already reported on
 /// stderr).
 pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path) -> Option<String> {
-    let rm = spira_config::repo_map_candidate(conf.parent(), home);
+    // No map is discovered or read from the environment (per Ryan 2026-10-05): the repo map is
+    // declared in spira.toml itself (spira.repo_map), which this convert does not invent.
+    let rm: Option<PathBuf> = None;
     let fy = match fayth_paths(home) {
         Ok(f) => f,
         Err(e) => {

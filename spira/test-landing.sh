@@ -176,9 +176,10 @@ landing() {
     # other_beads_on_conflicts a pattern that does not match the sp- ids used in this
     # fixture's commits, so the function returns empty and the parallel-duplicate note
     # omits the bead name it is written to carry (law-gates-run-in-a-clean-environment).
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 notes_of() { B show "$1" 2>/dev/null; }
@@ -263,7 +264,7 @@ drop_branch sp-reused
 # pass in this suite would go on claiming a reused verdict.
 unset GATE_REASON
 
-export SPIRA_VERDICT_TTL=600
+tl_config SPIRA_VERDICT_TTL=600
 mkdir -p "$RUN/verdicts"
 : > "$RUN/verdicts/stale"; touch -d '3 hours ago' "$RUN/verdicts/stale"
 : > "$RUN/verdicts/fresh"
@@ -272,7 +273,7 @@ seed; landing >/dev/null 2>&1
     || ok "a verdict past the TTL is deleted by a pass"
 [ -e "$RUN/verdicts/fresh" ] && ok "and one inside it is kept" \
     || bad "and one inside it is kept" "the pass deleted a live verdict"
-unset SPIRA_VERDICT_TTL
+tl_config SPIRA_VERDICT_TTL=86400   # restore the fixture's own default for the rest of the suite
 
 # A REAL DISAGREEMENT STILL REOPENS. The branch and the base both write the same file with
 # different content after they diverged, so the rebase genuinely conflicts and the bead
@@ -386,9 +387,10 @@ case "$*" in *" show "*|*" show") printf '%s\n' "$*" >> "${BD_CALL_LOG:?}" ;; es
 exec "$BD_REAL" "$@"
 SHIM
 chmod +x "$TMP/bd-counter.sh"
-export BD_CALL_LOG="$TMP/bd-calls.log" BD_REAL="${SPIRA_BD:-bd}" SPIRA_BD="$TMP/bd-counter.sh"
+export BD_CALL_LOG="$TMP/bd-calls.log" BD_REAL="${SPIRA_BD:-bd}"
+SPIRA_BD="$TMP/bd-counter.sh"   # shell var only: landing()'s own tl_config read picks this up
 landing >/dev/null 2>&1
-SPIRA_BD="$BD_REAL"; export SPIRA_BD; unset BD_CALL_LOG BD_REAL
+SPIRA_BD="$BD_REAL"; unset BD_CALL_LOG BD_REAL
 show_calls="$(grep -c '^show' "$TMP/bd-calls.log" 2>/dev/null || echo 0)"
 # One bulk show for the scan, plus one re-read per branch that reaches the gate (three
 # here). The scan must not grow with the branch count — three branches and eleven must

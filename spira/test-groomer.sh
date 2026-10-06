@@ -76,9 +76,9 @@ chmod +x "$STUB_BD"
 # real config is read; defaults from conf.sh still apply. SPIRA_BD is the stub so no real
 # bd is called. SPIRA_DB is a temp path (bd never runs, so the value does not need to exist).
 run_groomer() {
-    env -i HOME="$T" PATH="$PATH" \
+    tl_config SPIRA_BD="$STUB_BD"
+    env -i SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
         groomer "$@" 2>&1

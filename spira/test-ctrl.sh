@@ -39,13 +39,11 @@ CTRL_FILE="$TMP/control"
 # ctrl.sh needs conf.sh. Run it with a minimal env pointing SPIRA_CTRL at our temp file
 # and SPIRA_CONF=/nonexistent so no real config is loaded.
 # SPIRA_SYSTEMCTL is set to the stub for divergence tests.
+tl_config SPIRA_RUN="$TMP/run" SPIRA_CTRL="$CTRL_FILE" SPIRA_INSTANCE=prod
 ctrl() {
-    env -i PATH="$PATH" HOME="$TMP/home" \
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_CTRL="$CTRL_FILE" \
-        SPIRA_INSTANCE=prod \
         SPIRA_SYSTEMCTL="$TMP/sc" \
         ctrl "$@"
 }

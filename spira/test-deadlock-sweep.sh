@@ -104,6 +104,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # attempts.sh's candidates() reads fayth_partitions from the chamber (lib.sh) — the same
 # partition builder.fayth declares, so this tool and the summoner cannot disagree about
@@ -152,8 +153,12 @@ for b in sp-rq-s sp-rq-k; do
     cycle "$b" 3
     mkpoison "$b"
 done
-sweep() { SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
-          SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_REPO="$REPO" SPIRA_FAYTHS=builder \
+sweep() {
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+    # which no process reads them from any more.
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_FAYTHS=builder
+    SPIRA_HOME="$SPIRA_HOME" SPIRA_REPO="$REPO" \
           groomer deadlocked "$@" 2>&1; }
 out="$(sweep)"
 want "the deadlocked bead is named"            "WOULD    sp-rq-s" "$out"

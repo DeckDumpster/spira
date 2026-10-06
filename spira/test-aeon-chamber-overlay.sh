@@ -54,16 +54,19 @@ cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 # THE REAL BUILDER PERSONA, not a synthetic stand-in — the golden check means nothing
 # against a brief this suite invented.
 cp "$HERE/chamber/builder.md" "$HERE/chamber/builder.fayth" "$SPIRA_HOME/chamber/"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
-export SPIRA_CHAMBER_OVERLAY="$TMP/overlay-empty"   # deliberately absent for the golden check
+SPIRA_CHAMBER_OVERLAY="$TMP/overlay-empty"   # deliberately absent for the golden check
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+    SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY"
 
 command -v aeon >/dev/null 2>&1 \
     || { printf 'test-aeon-chamber-overlay: aeon is not on PATH\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
-export SPIRA_AGENT="$BIN/claude" TMP
+export TMP
+tl_config SPIRA_AGENT="$BIN/claude"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$TMP/claude-argv"
@@ -170,7 +173,8 @@ close_bead "$BID_F1"
 echo
 echo "OVERLAY: a section file replaces one ## heading, an append file is appended"
 # ==========================================================================================
-export SPIRA_CHAMBER_OVERLAY="$TMP/overlay"; mkdir -p "$SPIRA_CHAMBER_OVERLAY"
+SPIRA_CHAMBER_OVERLAY="$TMP/overlay"; mkdir -p "$SPIRA_CHAMBER_OVERLAY"
+tl_config SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY"
 printf '## Tests\n\nOperator-overlaid Tests section — run only test-fixture-thing.sh.\n' \
     > "$SPIRA_CHAMBER_OVERLAY/builder.Tests.md"
 printf 'Operator append: a standing local note for every builder session.\n' \
@@ -226,14 +230,14 @@ echo "doctor reports an active overlay by name and reports none when the directo
 # ==========================================================================================
 mkdir -p "$SPIRA_CHAMBER_OVERLAY"
 printf 'Operator append.\n' > "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
-out_active="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" doctor 2>&1)"
+tl_config SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" SPIRA_DB="$SPIRA_DB"
+out_active="$(SPIRA_HOME="$SPIRA_HOME" doctor 2>&1)"
 want "doctor names the active overlay file" "builder.append.md" "$out_active"
 rm -f "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
 
 EMPTY_OVERLAY="$TMP/overlay-none"
-out_none="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" doctor 2>&1)"
+tl_config SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" SPIRA_DB="$SPIRA_DB"
+out_none="$(SPIRA_HOME="$SPIRA_HOME" doctor 2>&1)"
 want "doctor reports none active when the overlay directory is empty" "none active" "$out_none"
 
 tl_summary

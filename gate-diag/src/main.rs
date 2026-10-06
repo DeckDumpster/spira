@@ -35,7 +35,23 @@ fn main() {
     };
     let root = PathBuf::from(root);
     let home = home.unwrap_or_else(default_home);
-    let world = Real;
+    // ONE SOURCE: spira.toml via spira_config::process::cfg_parse — no env fallback, no
+    // literal default (per Ryan 2026-10-05: one source of config).
+    let batch_tail_lines = match spira_config::process::cfg_parse::<usize>("SPIRA_BATCH_TAIL_LINES") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("gate-diag: {e}");
+            std::process::exit(1);
+        }
+    };
+    let suite_timeout_default = match spira_config::process::cfg_parse::<u64>("SPIRA_SUITE_TIMEOUT") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("gate-diag: {e}");
+            std::process::exit(1);
+        }
+    };
+    let world = Real { batch_tail_lines, suite_timeout_default };
     std::process::exit(run(&world, &home, &root));
 }
 
@@ -82,8 +98,8 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
     }
 
     let in_gha = world.github_actions();
-    let tail_n = world.batch_tail_lines(home);
-    let default_timeout = world.suite_timeout_default(home);
+    let tail_n = world.batch_tail_lines();
+    let default_timeout = world.suite_timeout_default();
 
     let mut red_list: Vec<String> = Vec::new();
     let mut flaky_list: Vec<String> = Vec::new();

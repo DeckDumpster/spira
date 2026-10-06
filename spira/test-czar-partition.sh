@@ -33,8 +33,8 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run"
 
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
+tl_config SPIRA_RUN="$T/run"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -78,9 +78,10 @@ lc_mirror_bd "$T/lc"
 
 # SPIRA_SCOPE_LABEL pinned to the fixture's own scope label, so czar.fayth's FAYTH_LABELS
 # (scope + czar label) is a predicate both fixture beads could satisfy but for the czar label.
-czar_count="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+tl_config SPIRA_BD="$FAKE_BD" SPIRA_SCOPE_LABEL=spira
+czar_count="$(PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" \
     fayth_ready czar 2>/dev/null)"
-czar_set="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+czar_set="$(PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" \
     _spira_claim fayth-ready czar --json 2>/dev/null)"
 # POSITIVE CONTROL: the fixture reaches spira-claim — exactly one bead counts.
 is     "positive control: fayth_ready czar counts exactly one bead" "1" "$czar_count"

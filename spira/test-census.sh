@@ -73,20 +73,18 @@ STUB
 chmod +x "$TMP/spira-lc-stub"
 
 run_census() {
-    env SPIRA_DB="$SPIRA_DB" \
-        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
-        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+        SPIRA_RUN="${_CENSUS_RUN:-$TMP/no-run}"
+    env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
-        SPIRA_RUN="${_CENSUS_RUN:-$TMP/no-run}" \
         "$CENSUS" "$@" 2>/dev/null
 }
 
 run_census_repo() {  # run_census_repo <repo-path> [census-args...]
     local _rp="$1"; shift
-    env SPIRA_DB="$SPIRA_DB" \
-        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
-        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL"
+    env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$_rp" \
@@ -238,9 +236,8 @@ git init -q "$FIXTURE_REPO" \
 
 
 run_census_fixture() {
-    env SPIRA_DB="$SPIRA_DB" \
-        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
-        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL"
+    env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$FIXTURE_REPO" \

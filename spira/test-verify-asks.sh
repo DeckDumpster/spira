@@ -30,7 +30,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 . "$HERE/testlib.sh"
 
-export SPIRA_ASK_LABEL=needs-attention   # non-default (law-gates-run-in-a-clean-environment)
+SPIRA_ASK_LABEL=needs-attention   # non-default (law-gates-run-in-a-clean-environment)
+tl_config SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 export SPIRA_CONF=/nonexistent
 
 echo "test-verify-asks.sh"
@@ -45,7 +46,9 @@ verify() { bash "$COCKPIT/verify-asks.sh" "$@"; }
 # T1 — sweep classification against a stub bd (no testdb, no real bead store).
 # ==========================================================================
 FAKE_DB="$TMP/fakedb"; mkdir -p "$FAKE_DB/.beads"
-export COCKPIT_DB="$FAKE_DB"
+# COCKPIT_DB is registered — db.sh (sourced by verify-asks.sh, a fresh subprocess each
+# `verify` call) resolves it fresh from SPIRA_TOML, never from inherited env.
+tl_config COCKPIT_DB="$FAKE_DB"
 ROWS_FILE="$TMP/rows.json"
 CLOSED_LOG="$TMP/closed.log"
 export SPIRA_TESTBD_ROWS="$ROWS_FILE" SPIRA_TESTBD_CLOSED="$CLOSED_LOG"
@@ -177,7 +180,8 @@ echo "G-04: a hanging VERIFY is killed by the timeout, not waited out"
 
 printf '[%s]' "$(row sp-vhang open decision "" "hangs\\n\\nVERIFY: sleep 5")" > "$ROWS_FILE"
 : > "$CLOSED_LOG"
-out="$(SPIRA_VERIFY_TIMEOUT=1 verify --apply 2>&1)"
+tl_config SPIRA_VERIFY_TIMEOUT=1
+out="$(verify --apply 2>&1)"
 want "a hanging VERIFY is reported as still open, not satisfied" "still open" "$out"
 nowant "SEEN RED control: a hung check is never SATISFIED" "SATISFIED" "$out"
 is "the stub's close was never called for a killed VERIFY" "" "$(cat "$CLOSED_LOG")"
@@ -197,12 +201,14 @@ echo "G-04: an unreachable database prints 'checked nothing' and exits 0 — pin
 echo "      CURRENT behaviour; whether fail-open here is intended is escalated, not decided"
 
 NO_BEADS_DIR="$TMP/no-beads-dir"; mkdir -p "$NO_BEADS_DIR"
-out="$(COCKPIT_DB="$NO_BEADS_DIR" verify --apply 2>&1)"; rc=$?
+tl_config COCKPIT_DB="$NO_BEADS_DIR"
+out="$(verify --apply 2>&1)"; rc=$?
 want "a missing .beads dir prints 'checked nothing'" "checked nothing" "$out"
 is "verify-asks.sh exits 0 even though it read nothing (missing .beads)" "0" "$rc"
 
 # THE OTHER HALF: .beads exists (cockpit_db succeeds) but the engine itself refuses to answer
 # — cockpit_beads() is what returns 1 here, a different branch of the same fail-open exit.
+tl_config COCKPIT_DB="$FAKE_DB"
 DEAD_BD="$TMP/dead-bd"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$DEAD_BD"; chmod +x "$DEAD_BD"
 out="$(BD_BIN="$DEAD_BD" verify --apply 2>&1)"; rc=$?
@@ -222,7 +228,7 @@ unset BD_BIN COCKPIT_DB
 testdb_require test-verify-asks
 testdb_up verifyasks || { echo "testdb_up failed"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-export COCKPIT_DB="$SPIRA_DB"
+tl_config COCKPIT_DB="$SPIRA_DB"
 
 bd_show_status() {
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \

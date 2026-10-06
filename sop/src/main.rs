@@ -97,6 +97,25 @@ fn ledger_path() -> PathBuf {
     run.join("sop").join("applied.jsonl")
 }
 
+/// A registered key's declared value, or a named refusal exit — never a substituted
+/// default (per Ryan 2026-10-05: one source of config).
+fn cfg_or_exit(key: &str) -> Result<String, ExitCode> {
+    spira_config::process::cfg(key).map_err(|e| {
+        eprintln!("sop: {e}");
+        ExitCode::from(1)
+    })
+}
+
+/// `synth`'s out path: `SOP_PAGE` (not a registered key — a per-invocation override) wins,
+/// else `SPIRA_WIKI`'s declared value. A `SPIRA_WIKI` the config cannot resolve is a
+/// refusal, never a silent "no wiki" (per Ryan 2026-10-05: one source of config); an empty
+/// *declared* value still means "no wiki configured" — `resolve_out_path` itself treats it
+/// that way.
+fn synth_out_path() -> Result<Option<String>, ExitCode> {
+    let wiki = cfg_or_exit("SPIRA_WIKI")?;
+    Ok(resolve_out_path(std::env::var("SOP_PAGE").ok().as_deref(), Some(wiki.as_str())))
+}
+
 fn print_report(r: &logic::Report) -> ExitCode {
     for l in &r.out {
         println!("{l}");
@@ -105,6 +124,14 @@ fn print_report(r: &logic::Report) -> ExitCode {
         eprintln!("{l}");
     }
     ExitCode::from(r.code.clamp(0, 255) as u8)
+}
+
+/// `SPIRA_TZ`, only for the subcommands that actually need a clock — `list`/`show`/`match`/
+/// `validate`/`log`/`digest`/`lint` must keep working (sop's own degraded-but-functional
+/// mode, sp-upubz/sp-iku03) even when `$SPIRA_TOML` cannot resolve at all, so this is never
+/// called at the top of `main` unconditionally.
+fn make_clock() -> Result<RealClock, ExitCode> {
+    Ok(RealClock { tz: cfg_or_exit("SPIRA_TZ")? })
 }
 
 fn main() -> ExitCode {
@@ -117,7 +144,6 @@ fn main() -> ExitCode {
     let spira_home = home.to_string_lossy().into_owned();
     let bd = RealBd { spira_home };
     let proc = RealProc;
-    let clock = RealClock;
 
     let Some(sub) = args.first().map(String::as_str) else {
         print!("{USAGE}");
@@ -141,7 +167,14 @@ fn main() -> ExitCode {
             let r = logic::write(&bd, &proc, &env, key, &text);
             let code = print_report(&r);
             if r.code == 0 {
-                let out = resolve_out_path(std::env::var("SOP_PAGE").ok().as_deref(), std::env::var("SPIRA_WIKI").ok().as_deref());
+                let out = match synth_out_path() {
+                    Ok(o) => o,
+                    Err(c) => return c,
+                };
+                let clock = match make_clock() {
+                    Ok(c) => c,
+                    Err(c) => return c,
+                };
                 let _ = print_report(&logic::synth(&bd, &clock, out.as_deref()));
             }
             code
@@ -229,6 +262,10 @@ fn main() -> ExitCode {
             let env = build_env();
             let lp = ledger_path();
             let a = AppliedArgs { key, bead, pass, check, held, why: why_text.as_deref() };
+            let clock = match make_clock() {
+                Ok(c) => c,
+                Err(c) => return c,
+            };
             print_report(&logic::applied(&bd, &proc, &clock, &env, &lp, &a))
         }
         "log" => {
@@ -280,13 +317,27 @@ fn main() -> ExitCode {
             let r = logic::retire(&bd, key);
             let code = print_report(&r);
             if r.code == 0 {
-                let out = resolve_out_path(std::env::var("SOP_PAGE").ok().as_deref(), std::env::var("SPIRA_WIKI").ok().as_deref());
+                let out = match synth_out_path() {
+                    Ok(o) => o,
+                    Err(c) => return c,
+                };
+                let clock = match make_clock() {
+                    Ok(c) => c,
+                    Err(c) => return c,
+                };
                 let _ = print_report(&logic::synth(&bd, &clock, out.as_deref()));
             }
             code
         }
         "synth" => {
-            let out = resolve_out_path(std::env::var("SOP_PAGE").ok().as_deref(), std::env::var("SPIRA_WIKI").ok().as_deref());
+            let out = match synth_out_path() {
+                Ok(o) => o,
+                Err(c) => return c,
+            };
+            let clock = match make_clock() {
+                Ok(c) => c,
+                Err(c) => return c,
+            };
             print_report(&logic::synth(&bd, &clock, out.as_deref()))
         }
         "lint" => {

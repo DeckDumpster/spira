@@ -139,26 +139,12 @@ struct Config {
     desired: DesiredState,
 }
 
-/// `SPIRA_*` values a bash process `Config::from_env`'s own callers spawn must never see
-/// pre-set — the same per-copy-fact / host-policy keys `cockpit-collect`'s
-/// `bootstrap_config` names (wave4-decomposition.md row (b)).
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
-
-/// Wave 4.8 ("retire conf re-import seams in Rust"): every `env::var(...)` read below used
-/// to see only this process's own already-set environment — no spira.toml load at all
-/// (wave4-decomposition.md row (b) names reconciler by file). Merges
-/// `spira_config::resolve()`'s in-process answer into THIS process's own environment once,
-/// inserting a key only when it is not already set and never one of [`NEVER_EXPORTED`], so
-/// every `env::var(...)` read below sees a toml override exactly as conf.sh would have
-/// resolved it. Best-effort: a missing registry or a containment refusal leaves the
-/// environment exactly as it was.
-/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — the
-/// same "a compiled binary has no BASH_SOURCE, `current_exe()` is the equivalent" fallback
-/// `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own `harness_home`
-/// already use. `resolve_for_process` needs a REAL `home/conf.d` to resolve almost every
-/// key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it refuse outright
-/// ("no config registry at conf.d"), which is exactly what a bare shell with no
-/// `$SPIRA_HOME` exported would otherwise hit.
+/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
+/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
+/// `harness_home` already use, and the same one `reconciler-flow`'s own copy of this
+/// function uses. `resolve_run_dir` needs a REAL `home/conf.d` to resolve `SPIRA_RUN`
+/// (sp-ivfu3) — an empty `home` makes it refuse outright ("no config registry at
+/// conf.d"), exactly what a bare shell with no `$SPIRA_HOME` exported would otherwise hit.
 fn harness_home() -> PathBuf {
     if let Ok(h) = env::var("SPIRA_HOME") {
         if !h.is_empty() {
@@ -175,42 +161,25 @@ fn harness_home() -> PathBuf {
         .unwrap_or_default()
 }
 
-fn merge_resolved_env() {
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let home = harness_home();
-    let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(&home, &repo, &env_map) {
-        for (k, v) in resolved.values {
-            if NEVER_EXPORTED.contains(&k.as_str()) {
-                continue;
-            }
-            if env::var_os(&k).is_none() {
-                env::set_var(k, v);
-            }
-        }
-    }
-}
-
 impl Config {
-    fn from_env() -> Config {
-        merge_resolved_env();
-        // sp-ivfu3: `merge_resolved_env` above already set `SPIRA_RUN` in this process's
-        // own environment when `spira_config` could resolve it at all — the only way this
-        // read still comes up empty is a `spira.toml` that failed to parse, and that is a
-        // named refusal now, never the literal `/tmp/spira` a bare shell used to get.
-        let spira_run_str = env::var("SPIRA_RUN").unwrap_or_default();
-        if spira_run_str.is_empty() {
-            eprintln!("reconciler: FATAL: cannot resolve spira.run (SPIRA_RUN is unset and spira_config could not resolve it)");
-            std::process::exit(1);
-        }
-        let spira_run = PathBuf::from(&spira_run_str);
+    fn from_env() -> Result<Config, String> {
+        use spira_config::process::{cfg, cfg_parse};
+
+        // SPIRA_RUN is a PROCEDURAL registry key (spira/conf.d/SPIRA_RUN carries no
+        // generated default — spira/conf.sh's spira_conf_defaults() still sets it inline),
+        // so it is resolved through `resolve_run_dir` rather than a bare `cfg("SPIRA_RUN")`
+        // — same as reconciler-flow's own copy of this read. A `spira.toml` that fails to
+        // resolve, or resolves SPIRA_RUN empty, is a named refusal (sp-ivfu3), never the
+        // literal `/tmp/spira` a bare shell used to get.
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        let spira_run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home())?;
+        // SPIRA_HOME is not a registered config key (spira/conf.d) — a per-copy fact, read
+        // from the raw environment same as always.
         let spira_home = env::var("SPIRA_HOME").unwrap_or_default();
-        let sessions = env::var("COCKPIT_SESSIONS")
-            .unwrap_or_else(|_| "brain hunk chat".to_string())
-            .split_whitespace()
-            .map(String::from)
-            .collect();
-        Config {
+        let sessions = cfg("COCKPIT_SESSIONS")?.split_whitespace().map(String::from).collect();
+        Ok(Config {
+            // SPIRA_RECONCILER_LOG/_STATE/_STATUS_LOG are not registered config keys —
+            // per-invocation paths under spira_run, left as direct env reads.
             log: env::var("SPIRA_RECONCILER_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler.log")),
@@ -224,10 +193,13 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
             lock_path: spira_run.join("reconciler.lock"),
-            spira_db: env::var("SPIRA_DB").unwrap_or_default(),
-            scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
-            reconciler_label: env::var("SPIRA_RECONCILER_LABEL")
-                .unwrap_or_else(|_| "reconciler-gap".to_string()),
+            spira_db: cfg("SPIRA_DB")?,
+            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
+            reconciler_label: cfg("SPIRA_RECONCILER_LABEL")?,
+            // SPIRA_INCIDENT_SH / SPIRA_SYSTEMCTL / SPIRA_TMUX / SPIRA_GIT /
+            // SPIRA_UNITS_MANIFEST_SH / SPIRA_FLEET_STATUS_SH / SPIRA_QUEUE_CERTIFIED_LIST_SH
+            // / SPIRA_COCKPIT_SH are not registered config keys — script/binary names,
+            // overridable only as a test seam, left as direct env reads.
             incident_sh: env::var("SPIRA_INCIDENT_SH")
                 .unwrap_or_else(|_| "incident.sh".to_string()),
             systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
@@ -244,38 +216,30 @@ impl Config {
             // The queue binary, by name on the launcher's PATH (sp-gypjk).
             queue_bin: "queue".into(),
             lc_bin: "spira-lc".into(),
-            queue_dir: env::var("SPIRA_QUEUE_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("queue")),
-            repo_map: env::var("SPIRA_REPO_MAP").ok().map(PathBuf::from),
-            releases_dir: env::var("SPIRA_RELEASES").map(PathBuf::from).unwrap_or_default(),
+            queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
+            repo_map: Some(PathBuf::from(cfg("SPIRA_REPO_MAP")?)),
+            releases_dir: PathBuf::from(cfg("SPIRA_RELEASES")?),
+            // SPIRA_STORE_UNIT is not a registered config key — left as a direct env read.
             store_unit: env::var("SPIRA_STORE_UNIT")
                 .unwrap_or_else(|_| "dolt-beads.service".to_string()),
             cockpit_sessions: sessions,
-            cockpit_mail: env::var("COCKPIT_MAIL").unwrap_or_default(),
+            cockpit_mail: cfg("COCKPIT_MAIL")?,
+            // SPIRA_DISK_USAGE_SH / SPIRA_DISK_REMEDY_SH are not registered config keys —
+            // left as direct env reads.
             disk_usage_sh: env::var("SPIRA_DISK_USAGE_SH")
                 .unwrap_or_else(|_| "disk-usage.sh".to_string()),
             disk_remedy_sh: env::var("SPIRA_DISK_REMEDY_SH")
                 .unwrap_or_else(|_| "disk-remedy.sh".to_string()),
-            disk_floor_pct: env::var("SPIRA_DISK_FLOOR_PCT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(15),
-            grace_secs: env::var("SPIRA_RECONCILER_GRACE_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(300),
-            preflight_wall_secs: env::var("SPIRA_PREFLIGHT_WALL_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(240),
+            disk_floor_pct: cfg_parse::<u32>("SPIRA_DISK_FLOOR_PCT")?,
+            grace_secs: cfg_parse::<u64>("SPIRA_RECONCILER_GRACE_SECS")?,
+            preflight_wall_secs: cfg_parse::<u64>("SPIRA_PREFLIGHT_WALL_SECS")?,
             now_secs: unix_now(),
             now_iso: compute_now_iso(),
             desired_dir: spira_desired_state::store::default_dir(),
             desired: DesiredState::default(),
             spira_run,
             spira_home,
-        }
+        })
     }
 }
 
@@ -1030,7 +994,7 @@ fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_env().with_desired_state();
+    let cfg = Config::from_env()?.with_desired_state();
 
     if cfg.spira_run.join("world.halted").exists() {
         log_print(&cfg, "reconciler: skipped — world is halted");
@@ -1078,53 +1042,6 @@ mod tests {
 
     fn scratch_dir(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("reconciler-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
-    }
-
-    // ENV VARS ARE PROCESS-GLOBAL: the one test below that resolves config takes this
-    // lock for its whole body.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    // Wave 4.8: merge_resolved_env() must reach a registry key Config::from_env never
-    // hardcoded a default for, and must never leak a NEVER_EXPORTED key into this
-    // process's own environment.
-    #[test]
-    fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_home = env::var_os("SPIRA_HOME");
-        let saved_floor = env::var_os("SPIRA_DISK_FLOOR_PCT");
-        let saved_max_aeons = env::var_os("SPIRA_MAX_AEONS");
-        env::remove_var("SPIRA_DISK_FLOOR_PCT");
-        env::remove_var("SPIRA_MAX_AEONS");
-        let dir = scratch_dir("merge-env");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_DISK_FLOOR_PCT"),
-            "TYPE=u32\nGROUP=disk\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_DISK_FLOOR_PCT:=15}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        env::set_var("SPIRA_HOME", &home);
-
-        merge_resolved_env();
-
-        let got_floor = env::var("SPIRA_DISK_FLOOR_PCT").ok();
-        let got_max_aeons = env::var_os("SPIRA_MAX_AEONS");
-
-        match saved_home {
-            Some(v) => env::set_var("SPIRA_HOME", v),
-            None => env::remove_var("SPIRA_HOME"),
-        }
-        match saved_floor {
-            Some(v) => env::set_var("SPIRA_DISK_FLOOR_PCT", v),
-            None => env::remove_var("SPIRA_DISK_FLOOR_PCT"),
-        }
-        match saved_max_aeons {
-            Some(v) => env::set_var("SPIRA_MAX_AEONS", v),
-            None => env::remove_var("SPIRA_MAX_AEONS"),
-        }
-
-        assert_eq!(got_floor, Some("15".to_string()), "a registry default must reach the real environment");
-        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
     }
 
     #[test]

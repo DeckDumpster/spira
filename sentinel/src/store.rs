@@ -308,24 +308,21 @@ pub fn bulk(bd: &Bd, h: &Host, ready_args: &[String]) -> Reads {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfg::{Cfg, Context};
+    use crate::cfg::{Cfg, Context, Declared};
 
     fn cfg(scope: &str) -> Cfg {
-        let b = crate::cfg::tests::probe_bytes(
-            &[
-                ("SPIRA_RUN", "/r"),
-                ("SPIRA_SCOPE_LABEL", scope),
-                ("SPIRA_ASK_LABEL", "ask"),
-                ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
-                ("SPIRA_DB", "/db"),
-            ],
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-        );
-        Cfg::from_context(&Context::parse(&b).unwrap(), std::path::Path::new("/h"))
+        let b = crate::cfg::tests::probe_bytes(&[], &[], &[], &[], &[], None);
+        // scope/ask/no_loop/db/run are registered keys now: a literal `Declared`, not a
+        // Context fixture — Cfg::from_context never reads them off Context any more.
+        let d = Declared {
+            run: std::path::PathBuf::from("/r"),
+            scope: scope.into(),
+            ask: "ask".into(),
+            no_loop: "no-loop".into(), // literal-ok: test fixture
+            db: "/db".into(),
+            ..Declared::test_default()
+        };
+        Cfg::from_context(&Context::parse(&b).unwrap(), std::path::Path::new("/h"), d)
     }
 
     fn snap() -> Snapshot {

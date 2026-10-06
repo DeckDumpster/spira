@@ -172,11 +172,18 @@ testdb_up() {            # testdb_up <tag>
         }
         printf 'testdb: baseline copy from %s\n' "$TESTDB_BASELINE" >&2
         export SPIRA_DB="$TESTDB_PRIVATE_DIR" SPIRA_BD="$TESTDB_BD"
+        # SPIRA_DB/SPIRA_BD/SPIRA_PATH are registered keys: a compiled Spira binary the
+        # suite runs afterward resolves them fresh from SPIRA_TOML, never from this shell's
+        # exported environment (per Ryan 2026-10-05, the one-source-of-config law) — so
+        # tl_config declares them too, alongside the plain export every bash-level caller
+        # here (bdq, B(), etc.) still reads directly.
+        tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
         # conf.sh resets PATH from SPIRA_PATH; add TESTDB_BIN to both so child processes
         # that re-source conf.sh still find the embedded binary.
         if [ -n "${TESTDB_BIN:-}" ]; then
             export PATH="$TESTDB_BIN:$PATH"
             export SPIRA_PATH="$TESTDB_BIN${SPIRA_PATH:+:$SPIRA_PATH}"
+            tl_config SPIRA_PATH="$SPIRA_PATH"
         fi
         return 0
     fi
@@ -239,11 +246,15 @@ testdb_up() {            # testdb_up <tag>
         if [ -n "$TESTDB_BIN" ]; then
             export PATH="$TESTDB_BIN:$PATH"
             export SPIRA_PATH="$TESTDB_BIN${SPIRA_PATH:+:$SPIRA_PATH}"
+            tl_config SPIRA_PATH="$SPIRA_PATH"
         fi
 
         # Full path: conf.sh rebuilds PATH from SPIRA_PATH + $HOME/.local/bin; a bare name
         # unreachable after that rebuild (e.g. private HOME in a parallel gate suite) fails.
         export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="${_bd_abs:-$TESTDB_BD}"
+        # Registered keys: declared via tl_config too — see the embedded-borrow branch's
+        # comment above for why the plain export alone no longer reaches a compiled binary.
+        tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
         return 0
     fi
 
@@ -271,6 +282,9 @@ testdb_up() {            # testdb_up <tag>
     # defeats conf.sh's schema-check cache, and every conf.sh source re-ran bd migrate.
     export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$(_testdb_kv TESTDB_BD "$_out")"
     [ -n "$SPIRA_BD" ] || SPIRA_BD="$TESTDB_SERVER_BD"
+    # Registered keys: declared via tl_config too, same reason as the embedded-mode
+    # branches above — a compiled binary never sees this shell's own exports for them.
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
     return 0
 }
 

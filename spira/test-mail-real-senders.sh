@@ -44,6 +44,8 @@ export SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=/nonexistent
 export SPIRA_ID_PREFIX="sp"
 export SPIRA_ASK_LABEL="needs-operator"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
+    SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 
 # A stub bd: every emitter below only needs "is there already an open ask with this
 # subject" to answer no, so a send is always attempted for real.
@@ -55,6 +57,7 @@ STUB
 chmod +x "$STUB_BD"
 export SPIRA_BD="$STUB_BD"
 export SPIRA_DB="$TMP/db"
+tl_config SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB"
 
 unread() { mail count operator 2>/dev/null; }
 
@@ -87,7 +90,11 @@ printf 'realsender|log|%s/realsender.log\n' "$SPIRA_RUN" > "$WD_WATCHERS"
 mkdir -p "$SPIRA_RUN/watchd"
 printf '[2000-01-01T00:00:00Z] FAIL planted by the real-sender test\n' > "$SPIRA_RUN/realsender.log"
 before="$(unread)"
-SPIRA_WATCHERS="$WD_WATCHERS" SPIRA_NOTIFY_AGE=1 SPIRA_ACTIONABLE='FAIL' watchd notify >/dev/null 2>&1
+# SPIRA_WATCHERS/SPIRA_NOTIFY_AGE/SPIRA_ACTIONABLE are registered keys (per Ryan
+# 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+# which no process reads them from any more.
+tl_config SPIRA_WATCHERS="$WD_WATCHERS" SPIRA_NOTIFY_AGE=1 SPIRA_ACTIONABLE='FAIL'
+watchd notify >/dev/null 2>&1
 after="$(unread)"
 is "watchd notify delivers exactly one message" "$((before + 1))" "$after"
 
@@ -116,14 +123,20 @@ ln -s "spira-20260101T000000Z" "$SKEW_RELEASES/current"   # activates the OLDER 
 SKEW_RUN="$TMP/skew-run"; mkdir -p "$SKEW_RUN"
 
 before="$(unread)"
+# SPIRA_RUN/SPIRA_RELEASES/SPIRA_MAIL/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered
+# keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread
+# SPIRA_TOML through env -i, which clears it.
+tl_config SPIRA_RUN="$SKEW_RUN" SPIRA_RELEASES="$SKEW_RELEASES" SPIRA_MAIL="$SPIRA_MAIL" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$HERE" SPIRA_REPO="$SKEW_REPO" \
-    SPIRA_RUN="$SKEW_RUN" SPIRA_RELEASES="$SKEW_RELEASES" \
-    SPIRA_MAIL="$SPIRA_MAIL" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+    SPIRA_TOML="$SPIRA_TOML" \
     skew check --escalate >/dev/null 2>&1
 after="$(unread)"
+# Restore SPIRA_RUN to the suite-wide value — the skew call above pointed it at its own
+# scratch run dir, and later sections (incident.sh, archivist) must not inherit that.
+tl_config SPIRA_RUN="$SPIRA_RUN"
 is "skew escalate delivers exactly one message" "$((before + 1))" "$after"
 
 echo
@@ -143,11 +156,12 @@ _keep_lc="${SPIRA_LC_BIN-}"; lc_mirror_bd "$TMP/sin-lc"; SIN_LC="$SPIRA_LC_BIN";
 # exports above) so the SIN message actually clears mail's lint.
 file_sin_incident() {
     local ref="$1" title="$2" payload="$3"
+    # SPIRA_BD/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # declare via tl_config, not the env prefix below, which no process reads any more.
+    tl_config SPIRA_BD="$HERE/incident-stub-bd.py" SPIRA_DB="fakedb"
     printf '%s' "$payload" | \
-        env SPIRA_BD="$HERE/incident-stub-bd.py" \
-        STUB_BD_STATE="$SIN_STATE" STUB_BD_LOG="$SIN_LOG" \
+        env STUB_BD_STATE="$SIN_STATE" STUB_BD_LOG="$SIN_LOG" \
         SPIRA_LC_BIN="$SIN_LC" \
-        SPIRA_DB="fakedb" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-sin.lock" \
         SPIRA_INCIDENT_REPO=real-sender-fixture \
@@ -205,11 +219,15 @@ STUBEOF
 chmod +x "$STUB_ARC_CLAUDE"
 
 before="$(unread)"
-SPIRA_RUN="$TMP/arc-run" SPIRA_TOKEN_PROJECTS="$TMP/arc-projects" \
+# SPIRA_RUN/SPIRA_TOKEN_PROJECTS/SPIRA_CTX_WARN/SPIRA_CTX_HIGH/SPIRA_CTX_LIMIT/
+# SPIRA_ARCHIVIST_EVERY/SPIRA_ARCHIVIST_PER_PASS/SPIRA_ARCHIVIST_TIMEOUT/SPIRA_CHAMBER/
+# SPIRA_AGENT are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
+# tl_config, not the env prefix below, which no process reads them from any more.
+tl_config SPIRA_RUN="$TMP/arc-run" SPIRA_TOKEN_PROJECTS="$TMP/arc-projects" \
     SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 SPIRA_CTX_LIMIT=1000000 \
     SPIRA_ARCHIVIST_EVERY=10 SPIRA_ARCHIVIST_PER_PASS=1 SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_CHAMBER="$TMP/arc-chamber" SPIRA_AGENT="$STUB_ARC_CLAUDE" \
-    "$ARC_SH" sweep >/dev/null 2>&1
+    SPIRA_CHAMBER="$TMP/arc-chamber" SPIRA_AGENT="$STUB_ARC_CLAUDE"
+"$ARC_SH" sweep >/dev/null 2>&1
 after="$(unread)"
 
 # THE SWEEP ITSELF WORKED: the fabricated session crossed the top band and archive()

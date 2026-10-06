@@ -136,19 +136,16 @@ chmod +x "$MOCK_BIN/spira-supervise"
 # ---------------------------------------------------------------------------
 inst() {
     > "$MOCK_LOG"
+    tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
+        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_PROD=$PROD" "SPIRA_COCKPIT=$REAL_COCKPIT"
     env -i \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_TOML=$SPIRA_TOML" \
         "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=$PROD" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
         "MOCK_LOG=$MOCK_LOG" \
         "MOCK_AEONS=${MOCK_AEONS:-}" \
         "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \

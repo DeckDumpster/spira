@@ -92,7 +92,11 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-unset SPIRA_LC_SOCKET
+# SPIRA_LC_SOCKET is registered — spira-lc resolves it straight from SPIRA_TOML (never from
+# an inherited shell env), so unsetting the shell variable would no longer steer it away from
+# the fixture's declared socket path. Point it at a path that cannot exist instead, forcing
+# the host/port connection this suite is testing.
+tl_config SPIRA_LC_SOCKET=/nonexistent/spira-lc.sock
 
 "$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?

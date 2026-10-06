@@ -79,7 +79,8 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): prove the fixture harness loads
 # before any assertion runs.
 bash -c ". \"$SPIRA_HOME/lib.sh\"" \
@@ -87,7 +88,8 @@ bash -c ". \"$SPIRA_HOME/lib.sh\"" \
 
 # THE REPO-MAP: two repos, neither the other's alias. "home" maps to the home checkout;
 # "second" maps to the second checkout. The bead will carry repo:second.
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'home   | %s | push | origin/main | |\n' "$HOME_REPO"   > "$SPIRA_REPO_MAP"
 printf 'second | %s | push | origin/main | |\n' "$SECOND_REPO" >> "$SPIRA_REPO_MAP"
 
@@ -111,7 +113,9 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
 #
 # SPIRA_AGENT IS THE INJECTION POINT: the aeon (the tree's own build, on this suite's PATH)
 # runs the shim below as its agent, so the real model can never run.
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP SPIRA_DB
+BIN="$TMP/bin"; mkdir -p "$BIN"
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP SPIRA_DB
 
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
@@ -137,12 +141,13 @@ aeon_fixture_agent "$BIN/claude"
 
 # SPIRA_HOME_REPO names the home repo in the map. Without it, lib.sh derives the home from
 # the basename of SPIRA_REPO, and that must match a key in the repo-map.
-export SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
+SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
+tl_config SPIRA_HOME_REPO="$SPIRA_HOME_REPO" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
-    SPIRA_REPO="$HOME_REPO" SPIRA_HOME_REPO=home \
+    SPIRA_REPO="$HOME_REPO" \
     aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
 
 seed() {

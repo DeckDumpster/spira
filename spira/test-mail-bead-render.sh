@@ -38,11 +38,13 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up mail-bead-render || { echo "test-mail-bead-render: could not build fixture database"; exit 1; }
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+SPIRA_ID_PREFIX="sp"
+SPIRA_RUN="$TMP/run"
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
-export SPIRA_RUN="$TMP/run"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
 
 run() { mail "$@"; }

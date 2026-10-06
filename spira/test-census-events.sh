@@ -47,6 +47,7 @@ testdb_up census-events || {
     printf 'SKIP test-census-events: server testdb not available\n' >&2
     exit 77
 }
+tl_config SPIRA_DB="$TESTDB_DIR" SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -67,7 +68,7 @@ JSONL
 }
 
 census_out() {
-    SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null
+    census --with-suppressed 2>/dev/null
 }
 
 # ======================================================================================
@@ -241,7 +242,7 @@ echo "sp-2w29g: bead_reopen appends \$SPIRA_RUN/reopen.log — the choke point t
 # reached here, and every bead_reopen call after this section relies on it.
 _rt_orig_run="$SPIRA_RUN"
 _rt_run="$(mktemp -d)"
-export SPIRA_RUN="$_rt_run"
+export SPIRA_RUN="$_rt_run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 _rt_log="$_rt_run/reopen.log"
 
 testdb_reset
@@ -276,7 +277,7 @@ _rt_logcount="$(grep -Fc 'reopen sp-h1 cause=batch-eject' "$_rt_log" 2>/dev/null
 is "reopen.log line count matches the events-table row count exactly" "$_rt_evcount" "${_rt_logcount:-0}"
 
 rm -rf "$_rt_run"
-export SPIRA_RUN="$_rt_orig_run"
+export SPIRA_RUN="$_rt_orig_run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 
 # _write_reopen writes a reopened event with a NULL new_value directly (no bump_*
 # call produces a genuinely NULL cause). Used below by the sp-aor1l case; the NULL-cause
@@ -344,7 +345,7 @@ bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p3" merge-conflict >/dev/null 2>&1
 lc_rows sp-p4:READY   # the remedy is open in lifecycle terms
 
-_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
+_fold_out="$(census_out)"
 _fold_line="$(printf '%s\n' "$_fold_out" | grep 'sp-reopen-rebase-conflict' || true)"
 want "covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict" "[suppressed" "$_fold_line"
 nowant "sp-reopen-rebase-conflict not emitted unsuppressed" "sp-reopen-rebase-conflict" \
@@ -359,7 +360,7 @@ JSONL
 bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
 lc_rows sp-q2:READY
 
-_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
+_unrel_out="$(census_out)"
 _unrel_line="$(printf '%s\n' "$_unrel_out" | grep 'sp-reopen-rebase-conflict' || true)"
 nowant "unrelated covers: does not suppress sp-reopen-rebase-conflict" "[suppressed" "$_unrel_line"
 want "sp-reopen-rebase-conflict still appears without suppression" "sp-reopen-rebase-conflict" "$_unrel_out"
@@ -473,7 +474,7 @@ bead_reopen   "sp-ev2" eviction-race "Eviction race test" >/dev/null 2>&1
 bump_requeue  "sp-ev2" eviction-race >/dev/null 2>&1
 lc_rows sp-evr:WORKING   # the remedy is being worked
 
-_evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
+_evict_sup_out="$(census_out)"
 _evict_sup_line="$(printf '%s\n' "$_evict_sup_out" | grep 'sp-reopen-eviction-race' || true)"
 want   "covers:sp-requeue-eviction-race suppresses sp-reopen-eviction-race" "[suppressed" "$_evict_sup_line"
 nowant "sp-reopen-eviction-race not emitted unsuppressed" "sp-reopen-eviction-race" \

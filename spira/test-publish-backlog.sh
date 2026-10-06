@@ -57,16 +57,12 @@ RMAP="$TMP/repo-map"
 } > "$RMAP"
 
 pb() {
+    tl_config SPIRA_HOME_REPO=fixlocal SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
+        SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_REPO_MAP="$RMAP" \
+        SPIRA_LOCAL_BACKLOG_COUNT="${BKCOUNT:-50}" SPIRA_LOCAL_BACKLOG_AGE="${BKAGE:-10800}"
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO=fixlocal \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_MAIL="$RUN/mail" \
-    SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_LOCAL_BACKLOG_COUNT="${BKCOUNT:-50}" \
-    SPIRA_LOCAL_BACKLOG_AGE="${BKAGE:-10800}" \
         bash "$SH/publish-backlog.sh" "$@" 2>&1
 }
 mail_count() { ls "$RUN/mail/concierge/new" 2>/dev/null | wc -l | tr -d ' '; }
@@ -158,19 +154,19 @@ echo
 echo "6 — watch --ticks and health"
 # ============================================================================
 rm -rf "$RUN/watchd"
-SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixlocal SPIRA_REPO="$REPO" \
-SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" SPIRA_LOCAL_BACKLOG_COUNT=1000 SPIRA_LOCAL_BACKLOG_AGE=1000000 \
+tl_config SPIRA_HOME_REPO=fixlocal SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" \
+    SPIRA_LOCAL_BACKLOG_COUNT=1000 SPIRA_LOCAL_BACKLOG_AGE=1000000
+SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
     bash "$SH/publish-backlog.sh" watch --interval 5 --ticks 1 >/dev/null 2>&1
 [ -f "$RUN/watchd/publish-backlog.health" ] && ok "6: watch writes a health file" \
     || bad "6: watch writes a health file" "missing"
-SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixlocal SPIRA_REPO="$REPO" \
-SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" \
+tl_config SPIRA_LOCAL_BACKLOG_COUNT=50 SPIRA_LOCAL_BACKLOG_AGE=10800
+SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
     bash "$SH/publish-backlog.sh" health; rc=$?
 is "6: health is ok right after a tick" "0" "$rc"
 
 rm -rf "$RUN/watchd"
-SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixlocal SPIRA_REPO="$REPO" \
-SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" \
+SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
     bash "$SH/publish-backlog.sh" health >/dev/null 2>&1; rc=$?
 is "6b: health fails when never polled" "1" "$rc"
 

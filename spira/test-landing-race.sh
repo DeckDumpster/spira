@@ -79,14 +79,14 @@ print(d[0].get("status") or "")'; }
 
 # The mailbox is drained by the sentinel in production, so each run here starts from empty —
 # otherwise every assertion after the first would be reading an earlier run's lines.
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map"
 landing() {
     rm -f "$RUN/landing.progress"
     # SPIRA_REPO_MAP EXPLICITLY, never left to the fallback chain, and nothing else inherited.
     # A pass that falls back reads whatever repositories the operator has registered and
     # counts THEIR branches, so a suite asserting about one fixture branch is quietly
     # asserting about a box (law-gates-run-in-a-clean-environment).
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 mailbox() { cat "$RUN/landing.progress" 2>/dev/null; }

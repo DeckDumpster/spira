@@ -1,18 +1,22 @@
 //! Black-box regression for two production sp-x9kbg gaps, run against the REAL compiled
 //! `target-reap` binary, never a mock:
 //!
-//! 1. `landing-pass` spawns `target-reap` by bare name (`real.rs` `ensure()`) WITHOUT
-//!    setting `SPIRA_HOME` — only `rebase_stale` does that. So the binary must resolve its
-//!    own harness home in-process (the same three rungs `queue`'s and `landing-pass`'s own
-//!    `harness_home` climb), never require the caller to have set it.
+//! 1. `target-reap` needs its own harness home (`$SPIRA_HOME`) to find `spira-lc` beside
+//!    the release. Per Ryan 2026-10-05 (one source of config, no second source improvised
+//!    from the filesystem layout), it no longer searches beside its own executable for a
+//!    `spira/` when `SPIRA_HOME` is unset — the caller (`landing-pass`, or the unit this
+//!    runs under) now sets `SPIRA_HOME` (and `SPIRA_RELEASE`) explicitly, and an unset one
+//!    is a refusal.
 //! 2. "Tip is an ancestor of the landing ref" is trivially true for a worktree JUST cut
 //!    from base — a fresh aeon claim with zero commits of its own. Landed is the lifecycle
 //!    record's LANDED (`spira-lc state`, sp-2c1n0) — a fresh claim is WORKING there — or a
 //!    freshly claimed worktree gets its target/ deleted mid-compile.
 //!
-//! Both are exercised together: one fixture, one invocation, under an `env -i`-equivalent
-//! environment (HOME + PATH only — PATH carries this binary's own directory and
-//! `/usr/bin:/bin`; SPIRA_LC_BIN pins a stub `spira-lc` — the way `landing-pass` launches it after its sweep).
+//! The functional case exercises both together: one fixture, one invocation, under an
+//! `env -i`-equivalent environment (HOME + PATH + SPIRA_HOME + SPIRA_TOML — PATH carries
+//! this binary's own directory and `/usr/bin:/bin`; SPIRA_LC_BIN pins a stub `spira-lc` —
+//! the way `landing-pass` launches it after its sweep). A second, smaller case covers the
+//! refusal when `SPIRA_HOME` is missing altogether.
 
 use std::fs;
 use std::path::Path;
@@ -37,8 +41,14 @@ fn commit(dir: &Path, file: &str, subject: &str) {
     run_git(dir, &["commit", "-q", "-m", subject]);
 }
 
+/// `$SPIRA_HOME`: the tree's own `spira/` (where `conf.d` and `lib.sh` live), exactly as
+/// the triage guide prescribes for a test that reaches a binary's top-level config loader.
+fn spira_home() -> std::path::PathBuf {
+    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira"))
+}
+
 #[test]
-fn sp_x9kbg_target_reap_under_a_bare_env_reaps_only_the_truly_landed_worktree() {
+fn sp_x9kbg_target_reap_with_spira_home_set_reaps_only_the_truly_landed_worktree() {
     let t = testkit::TempDir::new("target-reap-cli");
     let repo = t.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -87,12 +97,20 @@ fn sp_x9kbg_target_reap_under_a_bare_env_reaps_only_the_truly_landed_worktree() 
     let path = format!("{}:/usr/bin:/bin", bin_dir.display());
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
 
+    // SPIRA_RUN only feeds the optional, secondary gate-target-dir sweep here (the
+    // `--worktrees` flag already supplies the worktree root this test actually cares
+    // about) — any harmless, non-colliding path declares it so the top-level `cfg` read
+    // exercises the real one-source-of-config path rather than silently defaulting.
+    let toml = spira_config::process::fixture_toml(t.path(), &[("SPIRA_RUN", t.path().join("run").to_str().unwrap())]);
+
     let out = Command::new(bin)
         .arg("--worktrees")
         .arg(&worktrees)
         .env_clear()
         .env("HOME", &home)
         .env("PATH", &path)
+        .env("SPIRA_HOME", spira_home())
+        .env("SPIRA_TOML", &toml)
         // Pinned, so the run can never reach a real lifecycle record through a release
         // that config discovery finds on this box.
         .env("SPIRA_LC_BIN", lc_dir.join("spira-lc"))
@@ -100,7 +118,36 @@ fn sp_x9kbg_target_reap_under_a_bare_env_reaps_only_the_truly_landed_worktree() 
         .unwrap();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
 
-    assert!(out.status.success(), "target-reap under a bare env (no SPIRA_HOME) must still resolve its own harness home: {text}");
-    assert!(!landed_wt.join("target").exists(), "the truly landed worktree's target/ must go even with no SPIRA_HOME set: {text}");
+    assert!(out.status.success(), "target-reap with SPIRA_HOME/SPIRA_TOML set must resolve its own harness home: {text}");
+    assert!(!landed_wt.join("target").exists(), "the truly landed worktree's target/ must go: {text}");
     assert!(fresh_wt.join("target/aeon/x").is_file(), "a freshly cut, zero-commit worktree must NEVER be reaped: {text}");
+}
+
+/// Per Ryan 2026-10-05 (one source of config): `target-reap` no longer searches beside its
+/// own executable for a `spira/` when `SPIRA_HOME` is unset — it refuses, naming the gap,
+/// exactly like every other binary that now reads config through one door.
+#[test]
+fn target_reap_with_no_spira_home_refuses_rather_than_searching() {
+    let t = testkit::TempDir::new("target-reap-cli-bare");
+    let worktrees = t.path().join("worktrees");
+    fs::create_dir_all(&worktrees).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_target-reap");
+    let bin_dir = Path::new(bin).parent().unwrap();
+    let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+
+    let out = Command::new(bin)
+        .arg("--worktrees")
+        .arg(&worktrees)
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", &path)
+        // Deliberately no SPIRA_HOME, no SPIRA_TOML.
+        .output()
+        .unwrap();
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+
+    assert!(!out.status.success(), "a bare env (no SPIRA_HOME) must refuse, not search beside its own executable: {text}");
+    assert!(text.contains("SPIRA_HOME is not set"), "the refusal must name the gap: {text}");
 }

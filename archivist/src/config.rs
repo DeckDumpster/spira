@@ -1,8 +1,8 @@
-//! Resolve the run's configuration from a probed `SPIRA_*` environment (whatever
-//! [`crate::seam::Seam::probe`] returned). Pure: given the map, this is deterministic and
-//! table-tested without a subprocess. Defaults mirror `spira/conf.sh`'s own.
-
-use std::collections::HashMap;
+//! Resolve the run's configuration: every key below is registered in `spira/conf.d/` and
+//! read exactly once, through the one door — `spira_config::process::cfg`/`cfg_parse`,
+//! resolved from the file `$SPIRA_TOML` names. A key that fails to resolve is a refusal
+//! naming the key; this file carries no default of its own (per Ryan 2026-10-05, one
+//! source of config).
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Env {
@@ -21,64 +21,54 @@ pub struct Env {
     pub timeout_retries: u32,
 }
 
-fn get(m: &HashMap<String, String>, key: &str) -> Option<String> {
-    m.get(key).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-}
-
-fn num<T: std::str::FromStr>(m: &HashMap<String, String>, key: &str, default: T) -> T {
-    get(m, key).and_then(|s| s.parse().ok()).unwrap_or(default)
-}
-
-pub fn resolve(m: &HashMap<String, String>) -> Env {
-    Env {
-        db: get(m, "SPIRA_DB").unwrap_or_else(|| ".".into()),
-        run: get(m, "SPIRA_RUN").unwrap_or_else(|| "/tmp".into()),
-        chamber: get(m, "SPIRA_CHAMBER").unwrap_or_default(),
-        token_projects: get(m, "SPIRA_TOKEN_PROJECTS").unwrap_or_default(),
-        wiki: get(m, "SPIRA_WIKI"),
-        agent: get(m, "SPIRA_AGENT").unwrap_or_else(|| "claude".into()),
-        tz: get(m, "SPIRA_TZ").unwrap_or_else(|| "UTC".into()),
-        every: num(m, "SPIRA_ARCHIVIST_EVERY", 40),
-        idle: num(m, "SPIRA_ARCHIVIST_IDLE", 1800),
-        model: get(m, "SPIRA_ARCHIVIST_MODEL").unwrap_or_else(|| "claude-opus-5".into()),
-        timeout: num(m, "SPIRA_ARCHIVIST_TIMEOUT", 900),
-        per_pass: num(m, "SPIRA_ARCHIVIST_PER_PASS", 1),
-        timeout_retries: num(m, "SPIRA_ARCHIVIST_TIMEOUT_RETRIES", 3),
-    }
+/// The binary's config struct constructor — called once, at the top of `main`'s dispatch.
+/// `SPIRA_WIKI` is the one key whose own declared default is the empty string: empty IS
+/// the configured meaning "no wiki configured", not a fallback this crate invents, so it
+/// becomes `None` rather than `Some(String::new())`.
+pub fn resolve() -> Result<Env, String> {
+    let wiki = spira_config::process::cfg("SPIRA_WIKI")?;
+    Ok(Env {
+        db: spira_config::process::cfg("SPIRA_DB")?,
+        run: spira_config::process::cfg("SPIRA_RUN")?,
+        chamber: spira_config::process::cfg("SPIRA_CHAMBER")?,
+        token_projects: spira_config::process::cfg("SPIRA_TOKEN_PROJECTS")?,
+        wiki: if wiki.trim().is_empty() { None } else { Some(wiki) },
+        agent: spira_config::process::cfg("SPIRA_AGENT")?,
+        tz: spira_config::process::cfg("SPIRA_TZ")?,
+        every: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_EVERY")?,
+        idle: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_IDLE")?,
+        model: spira_config::process::cfg("SPIRA_ARCHIVIST_MODEL")?,
+        timeout: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_TIMEOUT")?,
+        per_pass: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_PER_PASS")?,
+        timeout_retries: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_TIMEOUT_RETRIES")?,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The only test in this binary that calls [`resolve`] — `spira_config::process::cfg`'s
+    /// resolution is a process-global `OnceLock`, computed once and never reset, so no
+    /// other test here may also drive it. `SPIRA_HOME`/`SPIRA_TOML` point at a throwaway
+    /// fixture, never the real box's.
     #[test]
-    fn defaults_match_conf_sh_when_the_probe_is_empty() {
-        let e = resolve(&HashMap::new());
-        assert_eq!(e.every, 40);
-        assert_eq!(e.idle, 1800);
-        assert_eq!(e.model, "claude-opus-5");
-        assert_eq!(e.timeout, 900);
-        assert_eq!(e.per_pass, 1);
-        assert_eq!(e.timeout_retries, 3);
-        assert_eq!(e.agent, "claude");
-        assert_eq!(e.wiki, None);
-    }
+    fn resolve_reads_every_key_through_the_one_door() {
+        let dir = testkit::TempDir::new("archivist-config");
+        let toml =
+            spira_config::process::fixture_toml(dir.path(), &[("SPIRA_ARCHIVIST_EVERY", "10"), ("SPIRA_WIKI", "/wiki")]);
+        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
+        // actually lives), never the throwaway fixture dir: `cfg()` needs both a real
+        // registry AND the fixture's declared values.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        std::env::set_var("SPIRA_HOME", &real_home);
+        std::env::set_var("SPIRA_TOML", &toml);
 
-    #[test]
-    fn probed_values_override_defaults() {
-        let mut m = HashMap::new();
-        m.insert("SPIRA_ARCHIVIST_EVERY".to_string(), "10".to_string());
-        m.insert("SPIRA_WIKI".to_string(), "/wiki".to_string());
-        let e = resolve(&m);
+        let e = resolve().expect("a complete fixture toml must resolve every key this crate needs");
         assert_eq!(e.every, 10);
         assert_eq!(e.wiki, Some("/wiki".to_string()));
-    }
+        assert_eq!(e.agent, "claude");
 
-    #[test]
-    fn a_blank_value_falls_back_to_the_default_rather_than_an_empty_string() {
-        let mut m = HashMap::new();
-        m.insert("SPIRA_ARCHIVIST_MODEL".to_string(), "".to_string());
-        let e = resolve(&m);
-        assert_eq!(e.model, "claude-opus-5");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

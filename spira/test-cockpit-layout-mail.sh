@@ -34,10 +34,11 @@ chmod +x "$ROOT/bin/health" "$TMP/bin/fakemail"
 
 layout() {   # layout <COCKPIT_MAIL> <action> [args]
     local mail="$1"; shift
+    tl_config SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_INSTANCE=fixture SPIRA_PROD="$TMP/noprod" \
+        COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=31 COCKPIT_MAIL="$mail"
     env -i SPIRA_RELEASE="$ROOT" HOME="$TMP" PATH="$ROOT/bin:$TMP/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUX_TMPDIR" \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$ROOT/cockpit" \
-        SPIRA_INSTANCE=fixture SPIRA_PROD="$TMP/noprod" \
-        COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=31 COCKPIT_MAIL="$mail" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" \
         "$ROOT/bin/layout" "$@" 2>&1
 }
 panes() { tmux list-panes -t "$1" -F '#{@cockpit}|#{pane_id}|#{pane_left}|#{pane_top}|#{pane_height}|#{window_height}' 2>/dev/null; }

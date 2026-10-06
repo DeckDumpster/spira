@@ -110,11 +110,12 @@ write_simple_shim
 # First arg is the CURL_FIXTURE body; remaining args are passed to pve.sh.
 run_pve() {
     local fixture="$1"; shift
+    tl_config SPIRA_PVE_ENV="$PVE_ENV"
     env -i \
         PATH="$SHIM_DIR:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_PVE_ENV="$PVE_ENV" \
+        SPIRA_TOML="$SPIRA_TOML" \
         CURL_LOG_PATH="$CURL_LOG" \
         CURL_FIXTURE="$fixture" \
         CURL_STATUS="${CURL_STATUS:-200}" \
@@ -156,10 +157,11 @@ fi
 # 1. Missing credentials are caught before any curl call.
 # ---------------------------------------------------------------------------
 reset_log
+tl_config SPIRA_PVE_ENV="$TMP/missing.env"
 no_env_out="$(env -i \
     PATH="$SHIM_DIR:$PATH" HOME="$TMP" \
     SPIRA_CONF="$TMP/no.conf" \
-    SPIRA_PVE_ENV="$TMP/missing.env" \
+    SPIRA_TOML="$SPIRA_TOML" \
     CURL_LOG_PATH="$CURL_LOG" \
     pve.sh status 100 2>&1)" || true
 want "missing creds: error names env file" "missing.env" "$no_env_out"
@@ -177,10 +179,11 @@ PVE_NODE=n
 PVE_API_HOST=192.0.2.1
 PVE_CACERT=/tmp/surely-absent-cert-$$
 EOF
+tl_config SPIRA_PVE_ENV="$bad_env"
 missing_cert_out="$(env -i \
     PATH="$SHIM_DIR:$PATH" HOME="$TMP" \
     SPIRA_CONF="$TMP/no.conf" \
-    SPIRA_PVE_ENV="$bad_env" \
+    SPIRA_TOML="$SPIRA_TOML" \
     CURL_LOG_PATH="$CURL_LOG" \
     pve.sh status 100 2>&1)" || true
 want "missing cacert: error mentions cacert" "cacert" "$missing_cert_out"

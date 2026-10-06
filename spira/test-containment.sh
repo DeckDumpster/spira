@@ -53,14 +53,13 @@ mkdir -p "$WS"
 # Helper: source lib.sh in an isolated subprocess with a given repo-map and instance.
 # Returns the exit status of that subprocess.
 load() {       # load <instance> <map-path>
+    tl_config SPIRA_INSTANCE="${1:-prod}" SPIRA_WORKSPACES="$WS" SPIRA_REPO_MAP="${2:-}" \
+        SPIRA_WATCHERS="$HARNESS/spira/watchers"
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_INSTANCE="${1:-prod}" \
-        SPIRA_WORKSPACES="$WS" \
-        SPIRA_REPO_MAP="${2:-}" \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1
 }
 
@@ -163,14 +162,16 @@ rc=$?
 is "prod loads map with real remote (rc=0)" "0" "$rc"
 want "prod real-remote map prints 'loaded'" "loaded" "$out"
 
-# Unset SPIRA_INSTANCE behaves identically to prod.
+# Unset SPIRA_INSTANCE behaves identically to prod: the complete fixture's own base value
+# for spira.instance is "prod" (per Ryan 2026-10-05, nothing has a default beyond what the
+# fixture declares), so clear any override an earlier `load` call left behind.
+spira-config unset spira.instance "$_TL_CONF_OVERRIDE" >/dev/null
+tl_config SPIRA_WORKSPACES="$WS" SPIRA_REPO_MAP="$MAP_OUTSIDE" SPIRA_WATCHERS="$HARNESS/spira/watchers"
 out="$(env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WORKSPACES="$WS" \
-        SPIRA_REPO_MAP="$MAP_OUTSIDE" \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1)"
 rc=$?
 is "unset SPIRA_INSTANCE behaves like prod (rc=0)" "0" "$rc"
@@ -186,14 +187,13 @@ echo "D — workspace root / passes containment for all absolute paths:"
 # becomes "/*", which correctly matches every absolute path.
 
 load_ws() {  # load_ws <workspaces> <instance> <map-path>
+    tl_config SPIRA_INSTANCE="${2:-prod}" SPIRA_WORKSPACES="$1" SPIRA_REPO_MAP="${3:-}" \
+        SPIRA_WATCHERS="$HARNESS/spira/watchers"
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_INSTANCE="${2:-prod}" \
-        SPIRA_WORKSPACES="$1" \
-        SPIRA_REPO_MAP="${3:-}" \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1
 }
 

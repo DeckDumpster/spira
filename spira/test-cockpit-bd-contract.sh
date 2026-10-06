@@ -44,13 +44,21 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
+        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci
+    # Any caller override: a registered key (spira/conf.d) goes to tl_config, same as the
+    # defaults just above; anything else (e.g. SPIRA_SOP_LEDGER, a seam, not in conf.d) stays
+    # a plain env assignment for the env -i call below.
+    local extra_env=() kv k
+    for kv in "$@"; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
+    done
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd-embedded}" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
-        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan \
-        SPIRA_CI_LABEL=awaiting-ci \
-        "$@" \
+        SPIRA_BD="${SPIRA_BD:-bd-embedded}" \
+        "${extra_env[@]}" \
         cockpit-collect probe "$sub" 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
@@ -144,8 +152,9 @@ JSONL
     # No PANEL_FIXTURE: the panel shells out to the real `bd` this run's SPIRA_PATH/SPIRA_DB
     # point at, exactly as store.rs::db()/bin() resolve it live, and --dump prints whatever
     # fetch_beads()'s parsing made of that real payload.
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH"
     out="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-        SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$PANEL_BIN" --dump 2>"$TMP/panel-dump.err")"
     title="$(printf '%s' "$out" | python3 -c '
 import json, sys

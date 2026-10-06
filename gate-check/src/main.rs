@@ -30,8 +30,31 @@ fn main() {
         argv.remove(0);
     }
     let home = home.unwrap_or_else(default_home);
-    let db = std::env::var("SPIRA_DB").ok().filter(|v| !v.is_empty());
-    let world = Real::new(home.clone(), db);
+    // ONE SOURCE: spira.toml via spira_config::process::cfg — no env fallback, no literal
+    // default (per Ryan 2026-10-05: one source of config). A key spira.toml cannot resolve
+    // is a refusal naming it, not a guessed value.
+    let db = match spira_config::process::cfg("SPIRA_DB") {
+        Ok(v) => Some(v).filter(|v| !v.is_empty()),
+        Err(e) => {
+            eprintln!("gate-check: {e}");
+            std::process::exit(1);
+        }
+    };
+    let bd = match spira_config::process::cfg("SPIRA_BD") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("gate-check: {e}");
+            std::process::exit(1);
+        }
+    };
+    let flaky_repo = match spira_config::process::cfg("SPIRA_FLAKY_GH_REPO") {
+        Ok(v) => Some(v).filter(|v| !v.is_empty()),
+        Err(e) => {
+            eprintln!("gate-check: {e}");
+            std::process::exit(1);
+        }
+    };
+    let world = Real::new(home.clone(), db, bd, flaky_repo);
     run(&world, &home);
 }
 

@@ -34,12 +34,12 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up verdict-flow || { echo "test-verdict-flow: could not build fixture database"; exit 1; }
 
-export SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
 export SPIRA_HOME="$TMP/home"
-export SPIRA_RUN="$TMP/run"
+SPIRA_RUN="$TMP/run"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="sp" SPIRA_RUN="$SPIRA_RUN"
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before
@@ -301,8 +301,8 @@ dec_bead_accept="$(awk '/^[[:space:]]*$/ { exit }
 ' "$accept_msg")"
 is "SEEN RED: decision bead is open before accept-default" "open" "$(bead_status "${dec_bead_accept:-none}")"
 
-printf 'SPIRA_MAIL_UNREAD_AGE = 4242\n' > "$TMP/accept.conf"
-accept_out="$(SPIRA_CONF="$TMP/accept.conf" bash "$HERE/../aerc/accept-default.sh" < "$accept_msg" 2>&1)"; rc=$?
+tl_config SPIRA_MAIL_UNREAD_AGE=4242
+accept_out="$(bash "$HERE/../aerc/accept-default.sh" < "$accept_msg" 2>&1)"; rc=$?
 isz "accept-default exits 0 with a config file present" "$rc"
 [ "$rc" = 0 ] || printf '    %s\n' "$accept_out"
 is "accept-default closes the decision bead (not the work bead)" "closed" "$(bead_status "${dec_bead_accept:-none}")"

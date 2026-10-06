@@ -174,6 +174,13 @@ fn main() {
     let args = parse_args(&argv);
     let id = &args.id;
     let run = spira_run();
+    // `SLAY_FINISH` reads this itself (bdq label add) — resolved here, at the top, and
+    // handed in explicitly rather than left for the seam's bash to inherit from whatever
+    // happens to be in the ambient environment (per Ryan 2026-10-05: one source of config).
+    let submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").unwrap_or_else(|e| {
+        eprintln!("slay.sh: FATAL: {e}");
+        std::process::exit(1);
+    });
     let exe = env::current_exe().ok();
     let lib_sh = exe.as_deref().and_then(spira_world::locate_home).map(|h| h.join("lib.sh"));
 
@@ -185,7 +192,7 @@ fn main() {
         .map(|(out, _)| out.trim().to_string())
         .unwrap_or_default();
     if found != *id {
-        let db = spira_config::resolve::key_for_process("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
+        let db = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
         eprintln!("slay.sh: no bead {id} in {db} — refusing to act");
         if !found.is_empty() {
             eprintln!("slay.sh: the store answered with {found} instead (prefix match)");
@@ -293,6 +300,7 @@ fn main() {
         Some(r) => ("close", r.as_str()),
         None => ("reopen", ""),
     };
+    let run_str = run.to_string_lossy().into_owned();
     let seam_fail = match lib_sh.as_deref() {
         Some(lib) => {
             let (out, ok) = seam::run(
@@ -308,6 +316,8 @@ fn main() {
                     ("SLAY_NAME", &name),
                     ("SLAY_PID", &pid),
                     ("SLAY_UNIT", &unit),
+                    ("SPIRA_RUN", &run_str),
+                    ("SPIRA_SUBMITTED_LABEL", &submitted_label),
                 ],
                 "",
             );

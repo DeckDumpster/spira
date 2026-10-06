@@ -53,6 +53,7 @@ testdb_up "test-work-container"
 # A real mailbox root and kind set, never the operator's real maildir.
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$TMP/kinds"
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS"
 mkdir -p "$SPIRA_MAIL_KINDS"
 cp -r "$HERE/mail/kinds/." "$SPIRA_MAIL_KINDS/"
 
@@ -63,6 +64,7 @@ cat > "$TMP/repo-map" <<MAP
 testrepo | $TMP | push | origin/main | | |
 MAP
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 mkdir -p "$TMP/data"
 cat > "$TMP/server.yaml" <<YAML
@@ -118,6 +120,7 @@ seed_bead() {   # seed_bead <bead-id>
 }
 
 SOCK="$TMP/spira-lc.sock"
+tl_config SPIRA_LC_SOCKET="$SOCK"
 SPIRA_LC_SOCKET="$SOCK" "$LC_BIN" serve "$SOCK" >"$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do
@@ -126,6 +129,7 @@ for _ in $(seq 1 50); do
 done
 [ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
 export SPIRA_LC_SOCKET="$SOCK"
+tl_config SPIRA_LC_SOCKET="$SOCK"
 
 # ── one real bd bead, filed through bead.sh's own contract, and its lifecycle twin ───
 BID="$(bead.sh file "aeon semantic layer container-tier fixture" --for builder --repo testrepo)"

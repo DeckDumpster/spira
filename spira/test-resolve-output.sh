@@ -48,10 +48,11 @@ mkdir -p "$DB/.beads" "$SPIRA_DB_PATH"
 run_resolve() {
   local stub="$1" id="${2:-sp-test-id}" reason="${3:-close reason}"
   local rc=0
+  # COCKPIT_DB/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+  # declare via tl_config, not the env prefix below, which no process reads any more.
+  tl_config COCKPIT_DB="$DB" SPIRA_DB="$SPIRA_DB_PATH"
   RESULT=$(
     BD_BIN="$stub" \
-    COCKPIT_DB="$DB" \
-    SPIRA_DB="$SPIRA_DB_PATH" \
     resolve "$id" "$reason" 2>&1 >/dev/null
   ) || rc=$?
   return "$rc"
@@ -110,10 +111,9 @@ BD_OK="$TMP/bin/bd-ok"
 printf '#!/usr/bin/env bash\nprintf "Closed.\\n"\nexit 0\n' > "$BD_OK"
 chmod +x "$BD_OK"
 
+# COCKPIT_DB/SPIRA_DB unchanged from run_resolve's tl_config declaration above.
 stdout_out=$(
   BD_BIN="$BD_OK" \
-  COCKPIT_DB="$DB" \
-  SPIRA_DB="$SPIRA_DB_PATH" \
   resolve sp-test-id "close reason" 2>/dev/null
 ) && rc3=0 || rc3=$?
 

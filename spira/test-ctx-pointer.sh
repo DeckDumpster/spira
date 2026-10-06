@@ -36,10 +36,11 @@ IDLE=300
 
 meter() {
     local mode="$1" at="$2"; shift 2
-    env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-        SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
+    tl_config SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
         SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
-        SPIRA_NOW="$at" SPIRA_ARCHIVIST_IDLE="$IDLE" \
+        SPIRA_ARCHIVIST_IDLE="$IDLE"
+    env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_NOW="$at" \
         bash "$CTX" "$mode" "$@" 2>/dev/null
 }
 val() { sed -n "s/^$1=//p"; }

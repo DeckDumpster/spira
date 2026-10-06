@@ -19,22 +19,20 @@ extern "C" {
 const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
-/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. Used only
-/// inside [`resolved_config`]'s own init, which must not call back into [`env_or`]/
-/// [`env_u64`] (that would recurse into `resolved_config()` while it is still being built).
+/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. `SPIRA_HOME`
+/// is the one key this crate still reads this way: it is the input that LOCATES config, not a
+/// value config produces, so [`home_dir`] cannot resolve it through [`load_cfg`].
 fn raw_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|v| !v.is_empty())
 }
 
 /// Set once, at the very top of `main`, from the `--home` argument `maechen-trigger.sh`
 /// now passes (wave 4.9, sp-k80sa — this replaces the shim's own `export
-/// SPIRA_HOME="$HERE"`). `SPIRA_HOME` is a per-copy fact `spira_config::resolve`
-/// deliberately never derives (it is the input that LOCATES config, not a value config
-/// produces), so it has to be told explicitly rather than read back out of a resolution
-/// that depends on it. Left unset, [`home_dir`] falls back to [`raw_env`]`("SPIRA_HOME")`
-/// exactly as before this bead — the one test that exercises this path
-/// (`env_u64_falls_back_to_the_registry_then_the_callers_default`) never calls `main` and
-/// so never sets this, and is deliberately left alone.
+/// SPIRA_HOME="$HERE"`). `SPIRA_HOME` is a per-copy fact `spira_config` deliberately never
+/// derives (it is the input that LOCATES config, not a value config produces), so it has to
+/// be told explicitly rather than read back out of a resolution that depends on it. Left
+/// unset, [`home_dir`] falls back to [`raw_env`]`("SPIRA_HOME")` — exercised by this crate's
+/// own tests, which never call `main` and so never set this.
 static HOME_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// `--home <path>` from argv, if this invocation carries one. `maechen-trigger.sh` always
@@ -51,10 +49,7 @@ fn parse_home_flag() -> Option<PathBuf> {
 }
 
 /// `SPIRA_HOME`: [`HOME_OVERRIDE`] (the `--home` flag) if `main` set one, else
-/// [`raw_env`]`("SPIRA_HOME")` — the same precedence [`resolved_config`] always used, kept
-/// as the fallback rather than removed so the crate's own unit test (which sets
-/// `SPIRA_HOME` via `std::env::set_var` and never calls `main`) still exercises this
-/// unchanged.
+/// [`raw_env`]`("SPIRA_HOME")`.
 fn home_dir() -> PathBuf {
     HOME_OVERRIDE
         .get()
@@ -62,56 +57,44 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(raw_env("SPIRA_HOME").unwrap_or_else(|| ".".to_string())))
 }
 
-/// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
-/// `SPIRA_*` key straight out of its own process environment, with no snapshot and no
-/// the config document load at all (wave4-decomposition.md row (b) names maechen-trigger by
-/// file, "beyond its shim": SPIRA_MAECHEN_*). Resolved once, lazily, and cached:
-/// `spira_config::resolve_for_process`, using [`home_dir`] (wave 4.9, sp-k80sa: formerly
-/// raw `SPIRA_HOME` directly) and `spira_config::resolve::derive_home_repo`. A resolution
-/// failure yields an empty [`spira_config::resolve::Resolved`] — [`env_or`]/[`env_u64`]'s
-/// own callers see exactly the behaviour this crate had before this bead, never a panic.
-fn resolved_config() -> &'static spira_config::resolve::Resolved {
-    static RESOLVED: std::sync::OnceLock<spira_config::resolve::Resolved> = std::sync::OnceLock::new();
-    RESOLVED.get_or_init(|| {
-        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-        let home = home_dir();
-        let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-        spira_config::resolve::resolve_or_say("maechen-trigger", &home, &repo, &env_map)
+/// Every `SPIRA_*` key this crate needs, besides `SPIRA_HOME` (a per-copy fact, not config —
+/// see [`home_dir`]), resolved exactly once at the top of `main` through the one door,
+/// `spira_config::process::cfg`/`cfg_parse` — the file `$SPIRA_TOML` names, never a raw
+/// `env::var` read and never a crate-local default (one source of config, per Ryan
+/// 2026-10-05). A key the file does not declare, or that fails to resolve, is a refusal
+/// naming the key, not a fallback.
+struct Cfg {
+    spira_run: PathBuf,
+    db: String,
+    bd: String,
+    repo_map: Option<PathBuf>,
+    labels: LaneLabels,
+    scope_label: String,
+    max_gap: i64,
+    landing_interval: u64,
+    max_beads: u64,
+}
+
+fn load_cfg() -> Result<Cfg, String> {
+    let repo_map = spira_config::process::cfg("SPIRA_REPO_MAP")?;
+    Ok(Cfg {
+        spira_run: PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?),
+        db: spira_config::process::cfg("SPIRA_DB")?,
+        bd: spira_config::process::cfg("SPIRA_BD")?,
+        repo_map: if repo_map.is_empty() { None } else { Some(PathBuf::from(repo_map)) },
+        labels: LaneLabels {
+            plan: spira_config::process::cfg("SPIRA_PLAN_LABEL")?,
+            incident: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
+            groomer: spira_config::process::cfg("SPIRA_GROOMER_LABEL")?,
+            maechen: spira_config::process::cfg("SPIRA_MAECHEN_LABEL")?,
+            spike: spira_config::process::cfg("SPIRA_SPIKE_LABEL")?,
+            czar: spira_config::process::cfg("SPIRA_CZAR_LABEL")?,
+        },
+        scope_label: spira_config::process::cfg("SPIRA_SCOPE_LABEL")?,
+        max_gap: spira_config::process::cfg_parse("SPIRA_MAECHEN_MAX_GAP_SECONDS")?,
+        landing_interval: spira_config::process::cfg_parse("SPIRA_MAECHEN_LANDING_INTERVAL")?,
+        max_beads: spira_config::process::cfg_parse("SPIRA_MAECHEN_MAX_BEADS")?,
     })
-}
-
-/// The environment, then `spira_config::resolve()`'s in-process answer — never the
-/// reverse, so an explicit env override still wins exactly as it did before this bead.
-fn resolved_env(key: &str) -> Option<String> {
-    raw_env(key).or_else(|| {
-        let v = resolved_config().get(key);
-        (!v.is_empty()).then(|| v.to_string())
-    })
-}
-
-fn env_or(key: &str, default: &str) -> String {
-    resolved_env(key).unwrap_or_else(|| default.to_string())
-}
-
-fn env_u64(key: &str, default: u64) -> u64 {
-    resolved_env(key).and_then(|v| v.parse().ok()).unwrap_or(default)
-}
-
-/// The six `SPIRA_*_LABEL` conf keys, resolved exactly as `run()`'s own `maechen_label`
-/// already is — `env_or`'s raw-env-then-registry precedence, never a raw `env::var` read,
-/// per law-a-binary-resolves-the-config-it-reads: three of these six are not in
-/// `spira_config::resolve::EXPORT_KEYS` (wave4-decomposition.md row (b) names this crate by
-/// file for exactly that reason), so a bare `std::env::vars()` lookup would see them in a
-/// test that exports them and miss them in production, which never does.
-fn lane_labels() -> LaneLabels {
-    LaneLabels {
-        plan: env_or("SPIRA_PLAN_LABEL", "plan"),
-        incident: env_or("SPIRA_INCIDENT_LABEL", "incident"),
-        groomer: env_or("SPIRA_GROOMER_LABEL", "groom"),
-        maechen: env_or("SPIRA_MAECHEN_LABEL", "maechen-sweep"), // literal-ok: Rust fallback mirroring conf.sh's own default when SPIRA_MAECHEN_LABEL is unset
-        spike: env_or("SPIRA_SPIKE_LABEL", "spike"),
-        czar: env_or("SPIRA_CZAR_LABEL", "czar-trigger"),
-    }
 }
 
 /// `env::args()` with the `--home <path>` pair [`parse_home_flag`] already consumed
@@ -136,12 +119,15 @@ fn main() {
     if let Some(h) = parse_home_flag() {
         let _ = HOME_OVERRIDE.set(h);
     }
-    let spira_run = PathBuf::from(env_or("SPIRA_RUN", "."));
+    let cfg = match load_cfg() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("maechen-trigger: {e}");
+            std::process::exit(1);
+        }
+    };
     let spira_home = home_dir();
-    let db = env_or("SPIRA_DB", ".");
-    let bd = env_or("SPIRA_BD", "bd");
-    let repo_map = env::var("SPIRA_REPO_MAP").ok().filter(|v| !v.is_empty()).map(PathBuf::from);
-    let world = Real::new(spira_home, spira_run.clone(), db, bd, repo_map, lane_labels());
+    let world = Real::new(spira_home, cfg.spira_run.clone(), cfg.db.clone(), cfg.bd.clone(), cfg.repo_map.clone(), cfg.labels.clone());
 
     // THE THREE LIB.SH SHIM DOORS (wave 4.35, row V) — none of them touches the sweep's own
     // lock file below; `groom-trigger.sh` calling `lane-admitted` must never contend with, or
@@ -177,7 +163,7 @@ fn main() {
     // tick rather than risking two overlapping list-then-create dedup checks (sp-uq55c,
     // sp-io5e). The lock file is leaked deliberately (never closed): closing it here would
     // release it before the process exits, and the kernel reclaims it at process exit anyway.
-    let lock_path = spira_run.join("maechen-trigger.lock");
+    let lock_path = cfg.spira_run.join("maechen-trigger.lock");
     match OpenOptions::new().create(true).write(true).open(&lock_path) {
         Ok(lock_file) => {
             if unsafe { flock(lock_file.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
@@ -192,17 +178,16 @@ fn main() {
         }
     }
 
-    if !run(&world) {
+    if !run(&world, &cfg) {
         std::process::exit(1);
     }
 }
 
 /// Returns `false` only on a filing failure (bash exit 1); every other path — dedup skip,
 /// lane skip, no-trigger — is success (bash exit 0).
-fn run(world: &dyn World) -> bool {
-    let scope_label = env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
-    let maechen_label = env_or("SPIRA_MAECHEN_LABEL", "maechen-sweep"); // literal-ok: Rust fallback mirroring conf.sh's own default when SPIRA_MAECHEN_LABEL is unset
-    let labels = engine::trigger_labels(&scope_label, &maechen_label);
+fn run(world: &dyn World, cfg: &Cfg) -> bool {
+    let maechen_label = &cfg.labels.maechen;
+    let labels = engine::trigger_labels(&cfg.scope_label, maechen_label);
 
     // DEDUP — at most one open-or-in-progress trigger bead at a time.
     let open_count = world.open_trigger_count(&labels);
@@ -214,7 +199,7 @@ fn run(world: &dyn World) -> bool {
     }
 
     // LANE CHECK — skip when no repository admits the maechen lane.
-    if !world.lane_admitted(&maechen_label) {
+    if !world.lane_admitted(maechen_label) {
         world.log(&format!("no repository admits lane {maechen_label} — skipping trigger"));
         return true;
     }
@@ -224,7 +209,7 @@ fn run(world: &dyn World) -> bool {
     let now_ts = world.now();
     let elapsed = now_ts - lastpass_ts;
 
-    let max_gap = env_u64("SPIRA_MAECHEN_MAX_GAP_SECONDS", 10_800) as i64;
+    let max_gap = cfg.max_gap;
     let time_fired = engine::time_trigger(elapsed, max_gap);
     if time_fired {
         world.log(&format!("time trigger: {elapsed}s elapsed since last pass (threshold: {max_gap}s)"));
@@ -249,7 +234,7 @@ fn run(world: &dyn World) -> bool {
         landing_count += count_landings(world, &path, watermark_ts);
     }
 
-    let landing_interval = env_u64("SPIRA_MAECHEN_LANDING_INTERVAL", 25);
+    let landing_interval = cfg.landing_interval;
     let landing_fired = engine::landing_trigger(landing_count, landing_interval);
     if landing_fired {
         world.log(&format!(
@@ -274,11 +259,11 @@ fn run(world: &dyn World) -> bool {
     }
 
     let reason_text = engine::reason_text(&reason, elapsed, landing_count, ic_rows.len());
-    let max_beads = env_u64("SPIRA_MAECHEN_MAX_BEADS", 3);
+    let max_beads = cfg.max_beads;
     let ic_rows_text = if ic_fired { Some(ic_rows.join("\n")) } else { None };
     let description = engine::description(max_beads, &reason_text, lastpass_ts, watermark_ts, ic_rows_text.as_deref());
 
-    let sop_ledger_labels = format!("{labels},delivers:note:{}/maechen.log", env_or("SPIRA_RUN", "."));
+    let sop_ledger_labels = format!("{labels},delivers:note:{}/maechen.log", cfg.spira_run.display());
     let title = format!("Maechen pass — {reason_text}");
     match world.create_bead(&title, &sop_ledger_labels, &description) {
         Ok(()) => {
@@ -318,30 +303,24 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    /// Wave 4.8: `env_or`/`env_u64` now fall back to `spira_config::resolve()` between
-    /// the raw environment and the caller's own default. This is the ONLY test in this
-    /// binary that calls them (so the `OnceLock` inside `resolved_config`, which computes
-    /// once per process and never resets, cannot collide with another test's fixture).
-    /// SPIRA_HOME/SPIRA_TOML point at a throwaway fixture (never the real box's).
+    /// `load_cfg` resolves every registered key this crate needs through the one door,
+    /// `spira_config::process::cfg`/`cfg_parse`. This is the ONLY test in this binary that
+    /// calls it (the `OnceLock` inside `spira_config::process::config` resolves once per
+    /// process and never resets, so it must not collide with another test's fixture).
+    /// SPIRA_HOME/SPIRA_TOML point at a throwaway fixture, never the real box's.
     #[test]
-    fn env_u64_falls_back_to_the_registry_then_the_callers_default() {
-        let dir = testkit::TempDir::new("maechen-trigger-env");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_MAECHEN_MAX_BEADS"),
-            "TYPE=u32\nGROUP=maechen\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_MAECHEN_MAX_BEADS:=3}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        env::set_var("SPIRA_HOME", &home);
-        env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-        env::remove_var("SPIRA_MAECHEN_MAX_BEADS");
+    fn load_cfg_resolves_every_key_through_the_one_door() {
+        let dir = testkit::TempDir::new("maechen-trigger-cfg");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_MAECHEN_MAX_BEADS", "7")]);
+        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
+        // lives), never the throwaway fixture dir.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        env::set_var("SPIRA_HOME", &real_home);
+        env::set_var("SPIRA_TOML", &toml);
 
-        assert_eq!(env_u64("SPIRA_MAECHEN_MAX_BEADS", 1), 3, "a registry default must reach env_u64 without an env override");
-        assert_eq!(env_or("SPIRA_NO_SUCH_KEY_AT_ALL_EVER", "fallback"), "fallback");
+        let cfg = load_cfg().expect("a complete fixture toml must resolve every key this crate needs");
+        assert_eq!(cfg.max_beads, 7, "the fixture's override must reach load_cfg");
 
-        env::set_var("SPIRA_MAECHEN_MAX_BEADS", "99");
-        assert_eq!(env_u64("SPIRA_MAECHEN_MAX_BEADS", 1), 99, "an explicit env override still wins over the registry");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

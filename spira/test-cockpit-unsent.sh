@@ -174,12 +174,12 @@ mkdir -p "$RUN/queue/alpha"
 # Run cockpit-collect probe unsent — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 unsent() {    # unsent <fixture-file>
+    tl_config SPIRA_HOME_REPO=alpha SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_QUEUE_DIR="$RUN/queue"
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-        SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-        SPIRA_QUEUE_DIR="$RUN/queue" \
+        SPIRA_REPO="$ALPHA" \
         SPIRA_BDJSON_FIXTURE="$1" \
         "${LC_ENV[@]}" \
         cockpit-collect probe unsent 2>/dev/null

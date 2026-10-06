@@ -123,13 +123,14 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 
 inst() {
     > "$SCTL_LOG"
+    # SPIRA_PATH/SPIRA_RUN/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_PROD/
+    # SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # declare via tl_config, not the env prefix below, which no process reads any more.
+    tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_WATCHERS="$WATCHERS" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent
     SCTL_LOG="$SCTL_LOG" \
-    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
+    PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" \
-    SPIRA_WATCHERS="$WATCHERS" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     units-install "$_INST" "$@" 2>&1
 }

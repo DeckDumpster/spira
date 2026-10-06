@@ -37,18 +37,21 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 echo
 echo "positive control (a) — conf.sh refuses an unknown key:"
 # ==========================================================================
-# Plant an unknown key and verify conf.sh warns about it. If this fails, the
-# round-trip validation below is untestable — it would pass even if configure.sh
-# wrote garbage (law-absence-needs-a-positive-control).
-_pc_conf="$TMP/pc-bad.conf"
-printf 'SPIRA_NONEXISTENT_KEY_ZZZZZ = value\n' > "$_pc_conf"
-_pc_warn="$(SPIRA_CONF="$_pc_conf" SPIRA_DB=/tmp/pc-nodb-$$ \
-    bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
-if printf '%s\n' "$_pc_warn" | grep -q 'unknown key'; then
-    ok "conf.sh warns about an unknown key in the config file"
+# Plant an unknown key in a spira.toml and verify spira-config refuses it. If this fails,
+# the round-trip validation below is untestable — it would pass even if configure.sh wrote
+# garbage (law-absence-needs-a-positive-control).
+# conf.sh no longer reads a legacy spira.conf at all — SPIRA_TOML is the one source of
+# config (per Ryan 2026-10-05) — so the positive control now plants the bad key directly in
+# a toml file and asks the same `spira-config validate` the round-trip check below uses,
+# rather than sourcing conf.sh against a SPIRA_CONF-style file nothing reads any more.
+_pc_conf="$TMP/pc-bad.toml"
+printf '[spira]\nnonexistent_key_zzzzz = "value"\n' > "$_pc_conf"
+_pc_warn="$(spira-config validate "$_pc_conf" 2>&1)"; _pc_rc=$?
+if [ "$_pc_rc" -ne 0 ] && printf '%s\n' "$_pc_warn" | grep -qi 'unknown'; then
+    ok "spira-config validate refuses an unknown key in the config file"
 else
     bad "positive control (a)" \
-        "conf.sh did not warn about SPIRA_NONEXISTENT_KEY_ZZZZZ — round-trip test would be vacuous"
+        "spira-config validate did not refuse nonexistent_key_zzzzz — round-trip test would be vacuous: $_pc_warn"
 fi
 
 # ==========================================================================
@@ -83,6 +86,7 @@ run_configure() {
         PATH="$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         CONFIGURE_OUT="$OUT" \
         CONFIGURE_PROD="$FAKE_PROD" \
         CONFIGURE_MAX_AEONS="2" \
@@ -156,7 +160,7 @@ else
 fi
 
 # Resolution through conf.sh reads the values back.
-_rt_prod="$(env -i PATH="$PATH" HOME="$FAKE_HOME" SPIRA_TOML="$OUT" SPIRA_CONF=/nonexistent \
+_rt_prod="$(env -i PATH="$PATH" HOME="$FAKE_HOME" SPIRA_TOML="$_TL_CONF_BASE:$OUT" SPIRA_CONF=/nonexistent \
     bash -c ". '$HERE/conf.sh' 2>/dev/null; printf %s \"\$SPIRA_PROD\"")"
 is "conf.sh resolves SPIRA_PROD from the generated toml" "$FAKE_PROD" "$_rt_prod"
 
@@ -196,6 +200,7 @@ run_configure2() {
         PATH="$PATH" \
         HOME="$FAKE_HOME2" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         CONFIGURE_OUT="$OUT2" \
         CONFIGURE_PROD="$FAKE_PROD" \
         CONFIGURE_MAX_AEONS="2" \
@@ -227,6 +232,7 @@ _preserve_out="$(env -i \
     PATH="$PATH" \
     HOME="$FAKE_HOME3" \
     SPIRA_CONF=/nonexistent \
+    SPIRA_TOML="$SPIRA_TOML" \
     CONFIGURE_OUT="$OUT3" \
     CONFIGURE_PROD="$FAKE_PROD" \
     CONFIGURE_MAX_AEONS="2" \

@@ -46,7 +46,10 @@ BRIEF="$HERE/chamber/maechen.md"
 SPIRA_CONFIG_DIR="$(command -v spira-config >/dev/null 2>&1 && dirname "$(command -v spira-config)" || true)"
 
 run_conf() {
+    # env -i clears SPIRA_TOML; conf.sh refuses outright without it (per Ryan 2026-10-05,
+    # ONE SOURCE OF CONFIG), so thread testlib's own hermetic fixture through.
     env -i HOME="$T" PATH="${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_CONF="$NONE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HERE/conf.sh' && $1" 2>/dev/null
 }
 
@@ -94,6 +97,7 @@ echo "spira_fayths — maechen appears in the persona roster"
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$NONE"
 export SPIRA_RUN="$T"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 . "$HERE/lib.sh"
 roster="$(spira_fayths)"
 want "maechen appears in spira_fayths" "maechen" "$roster"

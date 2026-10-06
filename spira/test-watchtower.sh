@@ -100,11 +100,12 @@ chmod +x "$SYSTEMCTL_CLEAN"
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
+        SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         "$@" watchtower --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
@@ -175,7 +176,8 @@ echo "the strand ledger is reported by class, not by size:"
 ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
+    tl_config SPIRA_RUN="$TMP/run"
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         cockpit-collect probe strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
@@ -232,7 +234,8 @@ is   "while the ledger size is still known" "2" "$(key "$k" SP_STRANDS)"
 k="$(ledger 'not json at all')"
 is "an unparsable ledger renders ?" "?" "$(key "$k" SP_STRAND_GHOST)"
 rm -f "$TMP/run/strands.json"
-k="$(env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
+tl_config SPIRA_RUN="$TMP/run"
+k="$(env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         cockpit-collect probe strands 2>/dev/null)"
 is "a missing ledger renders ?"     "?" "$(key "$k" SP_STRAND_GHOST)"
 
@@ -301,12 +304,13 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         "$TMP/incident-called" > "$mock"
     chmod +x "$mock"
     rm -f "$TMP/incident-called" "$TMP/ops-prompt"
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_MOOT_SH="$MOCK_MOOT" \
-        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
+        SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         "$@" watchtower 2>/dev/null
 }
 
@@ -431,8 +435,9 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "$2" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-subjects" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
@@ -448,8 +453,9 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
     printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_SIN_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-sinexempt" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
@@ -464,8 +470,9 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "${SPIRA_INCIDENT_REF:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-refs" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
@@ -478,8 +485,9 @@ wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted esc
     printf '#!/usr/bin/env bash\n[ "${SPIRA_INCIDENT_CAUSE:-}" = unadopted-refs ] && cat >> "%s" || cat > /dev/null\n' \
         "$TMP/inc-unadopted-body" > "$mock"
     chmod +x "$mock"
+    tl_config SPIRA_RUN="$TMP/run"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" SPIRA_MOOT_SH="$MOCK_MOOT" \
@@ -951,6 +959,7 @@ echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:
 # fixture pins FAYTH_LABELS to a literal (never the shipped default) and avoids this
 # suite depending on the real builder.fayth's own label composition.
 IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
+tl_config SPIRA_FAYTHS=builder
 cp "$HERE/ready-bucket.py" "$IWR_HOME/"
 cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
@@ -988,7 +997,7 @@ iwr_ready_empty="$TMP/iwr-ready-empty.txt"
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 want "5 idles + ready work fires the idle-while-ready escalation" "IDLE-WHILE-READY:" "$subjects"
 want "it names the fayth" "builder" "$subjects"
@@ -998,7 +1007,7 @@ want "it names the fayth" "builder" "$subjects"
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_empty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_empty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "an empty ready set does not fire the escalation despite 5 idles" "IDLE-WHILE-READY:" "$subjects"
 
@@ -1011,7 +1020,7 @@ for i in 2 3 4 5; do
     printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
 done
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "a mix of idle and a real claim in the last N does not fire the escalation" "IDLE-WHILE-READY:" "$subjects"
 
@@ -1021,7 +1030,7 @@ nowant "a mix of idle and a real claim in the last N does not fire the escalatio
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
-wt_refs_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
+wt_refs_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 want "the dedup ref names the fayth" "idle-while-ready:builder" "$refs"
 

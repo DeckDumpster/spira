@@ -51,10 +51,10 @@ run_now() {
     # now_keys needs (law-gates-run-in-a-clean-environment).
     # BD_TIMEOUT=1: bdjson calls fail fast against a nonexistent database. The default of
     # 180s per call would stall 3 aeons × 2 calls = 6 minutes of waiting for nothing.
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$TMP/no-map"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" BD_TIMEOUT=1 \
+        SPIRA_DB="$TMP/nodb" BD_TIMEOUT=1 \
         "$@" \
         cockpit-collect probe now 2>/dev/null
 }
@@ -218,8 +218,9 @@ for line in sys.stdin.read().splitlines():
 
 pane() {
     # SPIRA_RUN="$PD" so health.sh reads $PD/cockpit.env (which snap() writes).
-    env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" SPIRA_RUN="$PD" \
+    tl_config SPIRA_RUN="$PD"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" \
         SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
         "$PANE" once "${1:-0}" "${2:-0}" 2>/dev/null \
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'

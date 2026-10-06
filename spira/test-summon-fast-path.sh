@@ -57,10 +57,13 @@ trap _fastpath_cleanup EXIT
 trap '_fastpath_cleanup; trap - INT; kill -INT $$' INT
 trap '_fastpath_cleanup; trap - TERM; kill -TERM $$' TERM
 mkdir -p "$T/run" "$T/chamber" "$T/bin"
-export SPIRA_RUN="$T/run"
+# lib.sh sources conf.sh, which resolves every registered key straight from SPIRA_TOML
+# (inherited here — this is the main suite shell, not under env -i), so these are declared
+# through tl_config rather than export, or conf.sh's own resolve would overwrite them right
+# back to the fixture's values the moment lib.sh is sourced below.
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
-export SPIRA_DB="$T/no-db"
 
 # `summon_argv` (section E) is a `sentinel --summon-argv` shim now (wave 4.27, family G,
 # sp-gzmd2) — a real subprocess with SPIRA_HOME=$T, which needs a working $T/lib.sh to
@@ -285,14 +288,13 @@ chmod +x "$LCBIN/spira-lc"
 run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
     local run="$1"; shift
     mkdir -p "$run"
+    tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$DSTUBS/counting-bd" \
+        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL="" SPIRA_MAX_AEONS=2
     env -i \
-        PATH="$PATH" HOME="$HOME" \
-        SPIRA_HOME="$DSTUBS" PATH="$LCBIN:$DSTUBS:$PATH" \
-        SPIRA_RUN="$run" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$DSTUBS/counting-bd" \
+        PATH="$LCBIN:$DSTUBS:$PATH" HOME="$HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$DSTUBS" \
         SPIRA_SUMMON="$DSTUBS/mock-summon" \
-        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=2 \
         "$@" \
         sentinel --summon-only 2>&1
 }

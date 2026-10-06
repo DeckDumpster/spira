@@ -38,9 +38,10 @@ chmod +x "$STUB_BD"
 # Runs in this shell, not a command substitution: a subshell's exit status cannot be
 # read back through a variable once the subshell that set it has exited.
 run_bead_file() {   # run_bead_file <repo> -> writes combined output to $TMP/out, returns bead.sh's exit
-    env -i PATH="$PATH" HOME="$TMP" \
+    tl_config SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB_BD"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
+        BD_TIMEOUT=10 \
         bead.sh file "guard test" --kind event --repo "$1" > "$TMP/out" 2>&1
 }
 

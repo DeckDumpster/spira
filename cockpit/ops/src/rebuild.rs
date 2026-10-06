@@ -43,6 +43,9 @@ pub struct Rebuild {
     pub sessions: Vec<String>,
     pub concierge: PathBuf,
     pub force: bool,
+    /// Whether a mail pane should exist, from `COCKPIT_MAIL` — resolved once here rather
+    /// than re-read where `verify` checks for the pane.
+    pub mail_wanted: bool,
 }
 
 /// Does the pane's process tree carry `--append-system-prompt`, or is it a client of the
@@ -338,8 +341,7 @@ impl Rebuild {
             brain_panes.iter().any(|l| l.is_empty()),
         );
         chk(&mut fail, &mut out, "a pane is tagged health", brain_panes.iter().any(|l| l == "health"));
-        let mail_wanted = std::env::var("COCKPIT_MAIL").ok().filter(|s| !s.is_empty()).is_some();
-        if mail_wanted {
+        if self.mail_wanted {
             chk(&mut fail, &mut out, "brain:0 has a mail pane", brain_panes.iter().any(|l| l == "mail"));
         }
         let brain_win = self.tmux.list_windows("=brain", "#{window_id}").into_iter().next();
@@ -466,18 +468,16 @@ pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
             view = cock.join("remote/cockpit-remote");
         }
     }
-    let cwd = std::env::var("COCKPIT_CWD")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("SPIRA_REPO").ok())
-        .unwrap_or_default();
-    let sessions: Vec<String> = std::env::var("COCKPIT_SESSIONS")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "brain hunk chat".to_string())
+    // COCKPIT_CWD's own toml default already composes `${SPIRA_WIKI:-$SPIRA_REPO}`
+    // (spira/conf.d), so the resolved value carries that fallback — no second one here.
+    let cwd = spira_config::process::cfg("COCKPIT_CWD").unwrap_or_default();
+    // COCKPIT_SESSIONS' own toml default is "brain hunk chat" — no Rust-side literal needed.
+    let sessions: Vec<String> = spira_config::process::cfg("COCKPIT_SESSIONS")
+        .unwrap_or_default()
         .split_whitespace()
         .map(|s| s.to_string())
         .collect();
+    let mail_wanted = spira_config::process::cfg("COCKPIT_MAIL").ok().filter(|s| !s.is_empty()).is_some();
     let concierge = std::env::var("COCKPIT_CONCIERGE")
         .ok()
         .filter(|s| !s.is_empty())
@@ -494,6 +494,7 @@ pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
         sessions,
         concierge,
         force,
+        mail_wanted,
     }
 }
 

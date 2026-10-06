@@ -50,6 +50,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 mkdir -p "$TMP/run"
+# SPIRA_RUN is registered and fixed for the whole suite; declared once here so every
+# `strand check` invocation below (plain env-prefixed, no env -i) picks it up via
+# SPIRA_TOML instead of the no-longer-read environment copy.
+tl_config SPIRA_RUN="$TMP/run"
 
 # A starved partition — one row in strand-classify.py's output format.
 # kind=starved id=- disp=escalate → hits the escalation path in cmd_check.
@@ -77,7 +81,6 @@ chmod +x "$TMP/strand-home/mail"
 # strand check environment: SPIRA_RUN controls STATE path; SPIRA_HOME points to the
 # mail stub; SPIRA_STRAND_GRACE=0 disables the 15-minute grace window.
 CHECK_ENV=(
-    SPIRA_RUN="$TMP/run"
     SPIRA_STRAND_GRACE=0
     SPIRA_LABELS=-
     SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH"
@@ -124,7 +127,7 @@ cat >/dev/null
 STUB
 chmod +x "$BARRIER_HOME/mail"
 
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
+env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
     strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
 
@@ -188,7 +191,7 @@ printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: 
     > "$TMP/fixture-info.tsv"
 
 MAIL_SENT="$TMP/mail-sent-info"
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH" \
+env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH" \
     strand check --from "$TMP/fixture-info.tsv" >/dev/null 2>&1
 n_info="$(cat "$COUNT_FILE")"
 is "info row: mail not called (count unchanged)" "1" "$n_info"
@@ -213,7 +216,7 @@ cat >> "$ARGS_A"
 STUB
 chmod +x "$TMP/home-a/mail"
 
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" PATH="$TMP/home-a:$PATH" \
+env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" PATH="$TMP/home-a:$PATH" \
     strand check --from "$TMP/fixture-partition.tsv" >/dev/null 2>&1
 
 args_a="$(cat "$ARGS_A" 2>/dev/null || true)"

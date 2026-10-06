@@ -52,16 +52,14 @@ _units() {
         done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
         path="$shadow"
     fi
+    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run"
     env -i \
         PATH="$path" \
         HOME="$HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
-        SPIRA_INSTANCE=prod \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
         units-install --list-templates 2>"$TMP/notes" \
         | awk '
             /^UNITS / { units = units " " $2 }

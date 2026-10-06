@@ -28,7 +28,10 @@ impl Real {
     /// the detectors moved there (wave 4.29, sp-8ofmt) and are reached in-process instead
     /// of through the `lib.sh` seam.
     fn strand_cfg(&self) -> &strand::config::Config {
-        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
+        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
+            eprintln!("maechen-trigger: {e}");
+            std::process::exit(1)
+        }))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave

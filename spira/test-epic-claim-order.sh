@@ -47,6 +47,7 @@ export PATH="$TMP/lc-mirror:$PATH" SPIRA_LC_BIN
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -171,9 +172,12 @@ printf '%s\n' "\$*" >> "$CALL_LOG"
 exec "$REAL_BD" "\$@"
 STUB
 chmod +x "$BIN_BD/bd-count"
-ready_json="$(SPIRA_BD="$BIN_BD/bd-count" bdjson ready --limit 0 --exclude-type epic,event -u --label plan)"
+# SPIRA_BD is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
+# tl_config, not the env prefixes below, which no process reads it from any more.
+tl_config SPIRA_BD="$BIN_BD/bd-count"
+ready_json="$(bdjson ready --limit 0 --exclude-type epic,event -u --label plan)"
 : > "$CALL_LOG"
-SPIRA_BD="$BIN_BD/bd-count" epic_parent_lookup "$ready_json" >/dev/null
+epic_parent_lookup "$ready_json" >/dev/null
 prio_calls="$(grep -c '^-C .*list --id ' "$CALL_LOG" 2>/dev/null || echo 0)"
 is "exactly one 'bd list --id ...' call resolves every epic's own priority (5 beads, 2 epics)" \
     "1" "$prio_calls"
@@ -280,6 +284,7 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$AEON_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
 aeon_fixture_agent "$BIN/claude"
 cat > "$BIN/claude" <<'SHIM'
@@ -299,7 +304,10 @@ chmod +x "$BIN/claude"
 # lc_aeon_mirror) ahead of the suite's read-only lc_mirror_bd. It logs every applied claim
 # in $SPIRA_RUN/lc-claims.log, and reads the shim's bd close as the builder's submit.
 lc_aeon_mirror "$TMP/lc-aeon"
-( PATH="$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
+# SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
+tl_config SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP"
+( PATH="$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" \
   SPIRA_CONF="$TMP/no-such2.conf" \
   aeon --home "$AEON_HOME" builder > "$TMP/aeon-out" 2>&1 )
 
@@ -351,7 +359,10 @@ STUB
 chmod +x "$BIN2/spira-claim"
 
 AEON_RUN2="$TMP/aeonrun2"; mkdir -p "$AEON_RUN2"
-( PATH="$BIN2:$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
+# SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
+tl_config SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP"
+( PATH="$BIN2:$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" \
   SPIRA_CONF="$TMP/no-such3.conf" \
   aeon --home "$AEON_HOME" builder > "$TMP/aeon-out2" 2>&1 )
 t8_rc=$?

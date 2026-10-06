@@ -75,8 +75,9 @@ printf '#!/bin/sh\n: stub\n'      > "$COCKPIT/layout.sh"
 printf '#!/bin/sh\n: stub\n'      > "$COCKPIT/moot-sweep.sh"
 printf '#!/bin/sh\n: stub\n'      > "$COCKPIT/verify-asks.sh"
 chmod +x "$COCKPIT/watch-answers.sh" "$COCKPIT/layout.sh" "$COCKPIT/moot-sweep.sh" "$COCKPIT/verify-asks.sh"
-CONF="$TMP/spira.conf"
-printf 'SPIRA_ID_PREFIX = sp\nSPIRA_COCKPIT = %s\nSPIRA_RUN = %s\n' "$COCKPIT" "$RUN" > "$CONF"
+CONF="$TMP/spira.conf"   # unread now (conf.sh no longer reads a legacy spira.conf); kept as a stable name below
+: > "$CONF"
+tl_config SPIRA_ID_PREFIX=sp SPIRA_COCKPIT="$COCKPIT" SPIRA_RUN="$RUN"
 
 # A SECOND HARNESS COPY, so "the unit's ExecStart" can be told apart from "this harness's
 # watchd binary" — a box carrying a stale install points at exactly this, and it is the only
@@ -201,7 +202,8 @@ fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UN
 # outright instead of being missed.
 runpass() {
     : > "$ACT"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="${WR_MAN:-$MAN}" \
+    tl_config SPIRA_WATCHERS="${WR_MAN:-$MAN}"
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
         \
         WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" SHIM="$SHIM" \
         SYSTEMCTL_RC="${SYSTEMCTL_RC:-0}" RESTART_RC="${RESTART_RC:-0}" \
@@ -486,7 +488,8 @@ printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
 # to log the pid it would signal rather than sending a real signal.
 runreap() {
     : > "$REAP_ACT"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
+    tl_config SPIRA_WATCHERS="$MAN"
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
         \
         WR_PROC_ROOT="$FAKEPROC" WR_REAP_ACT="$REAP_ACT" \
         bash -c '
@@ -563,9 +566,10 @@ reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/watch-answers.sh"; : > "$
 entry_deadline=$((SECONDS + 60))
 while :; do
     : > "$ACT"
-    out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
+    tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
+    out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
           \
-          SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
+          WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
           WR_PROC_ROOT="$EMPTYPROC" \
           bash "$CLONE/spira/watch-refresh.sh" 2>&1)"; rc=$?
     case "$(acted)" in *"restart spira-watch-answers-prod.service"*) break ;; esac
@@ -575,9 +579,10 @@ done
 is "it runs"                       "0" "$rc"
 has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
 hasnt "and no raw manifest line leaked onto this process's own stdout" "$out" "|daemon|"
-out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
+tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
+out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
       \
-      SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
+      WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \
       bash "$CLONE/spira/watch-refresh.sh" --nonsense 2>&1)"; rc=$?
 is "an argument it does not know is refused" "2" "$rc"

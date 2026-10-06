@@ -20,14 +20,23 @@ fn bdq(bd_body: &str, lc_body: &str, args: &[&str]) -> Run {
     let log = d.join("lc.log");
     let bd = script(d, "bd", bd_body);
     let lc = script(d, "lc", &format!("echo \"$@\" >> {}\n{lc_body}", log.display()));
+    // SPIRA_DB/SPIRA_BD/SPIRA_ASK_LABEL are registered config keys — `bdq` now reads them
+    // through `cfg`/`$SPIRA_TOML`, not the process environment, so this fixture drives them
+    // through a `spira.toml` instead of setting them directly (per Ryan 2026-10-05: one
+    // source of config). Each call here execs a fresh `bdq` process, so there is no shared
+    // `cfg` cache across these tests to worry about. SPIRA_LC_BIN/SPIRA_BDQ_CONN_RETRIES
+    // are NOT registered keys (bare env knobs, same as in production), so they still go
+    // straight on the child's environment.
+    let db_dir = d.to_string_lossy().into_owned();
+    let toml = spira_config::process::fixture_toml(d, &[("SPIRA_DB", &db_dir), ("SPIRA_BD", &bd), ("SPIRA_ASK_LABEL", "ask-pin")]);
+    let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
     let out = Command::new(env!("CARGO_BIN_EXE_bdq"))
         .args(args)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
-        .env("SPIRA_DB", d)
-        .env("SPIRA_BD", &bd)
+        .env("SPIRA_TOML", &toml)
+        .env("SPIRA_HOME", &home)
         .env("SPIRA_LC_BIN", &lc)
-        .env("SPIRA_ASK_LABEL", "ask-pin")
         .env("SPIRA_BDQ_CONN_RETRIES", "1")
         .output()
         .unwrap();

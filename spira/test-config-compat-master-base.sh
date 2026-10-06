@@ -120,10 +120,10 @@ B_TIP="$(git -C "$B_REPO" rev-parse spira/sp-mbase)"
 git -C "$B_REPO" worktree remove -f "$B_RUN/worktree/sp-mbase"
 lcfix_seed sp-mbase CERTIFIED "$B_TIP"
 
-out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
-    SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$B_SH/forge-fixture.sh" PATH="$B_SH:$PATH" \
+tl_config SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$B_SH/repo-map" SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
+    SPIRA_FORGE="$B_SH/forge-fixture.sh"
+out="$(SPIRA_HOME="$B_SH" PATH="$B_SH:$PATH" \
         batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
@@ -205,10 +205,10 @@ V_LC_VERSION="$(spira-lc show-batch vtest-1 2>/dev/null | python3 -c 'import jso
 { printf 'batch_id=vtest-1\n'; printf 'version=%s\n' "$V_LC_VERSION"; } >> "$V_QUEUEDIR/$V_REPONAME/open"
 printf 'green\nhead-sha: %s\n' "$V_BATCH_HEAD" > "$V_FORGE_STATUS_FILE"
 
-out="$(SPIRA_HOME="$V_SH" SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$V_SH/repo-map" \
-    SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 SPIRA_QUEUE_CI_IDLE_SEC=600 \
-    SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh" PATH="$V_SH:$PATH" \
+tl_config SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$V_SH/repo-map" SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 \
+    SPIRA_QUEUE_CI_IDLE_SEC=600 SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh"
+out="$(SPIRA_HOME="$V_SH" PATH="$V_SH:$PATH" \
         queue verdict "$V_REPONAME" 2>&1)"
 
 is   "verdict: remote MASTER fast-forwards to the batch head" \
@@ -251,8 +251,8 @@ git -C "$L_RUN/worktree/sp-lbase" add -A
 git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
 lc_bead SUBMITTED sp-lbase "$(git -C "$L_RUN/worktree/sp-lbase" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 
-out="$(SPIRA_HOME="$L_SH" SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$L_REPO" \
-    SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist" PATH="$L_SH:$PATH" \
+tl_config SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist"
+out="$(SPIRA_HOME="$L_SH" SPIRA_REPO="$L_REPO" PATH="$L_SH:$PATH" \
         landing-pass land 2>&1)"
 
 want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"

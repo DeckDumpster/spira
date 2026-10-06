@@ -156,27 +156,28 @@ run_install() {
     done
     unset _a in_env
     > "$MOCK_LOG"
+    # SPIRA_PATH/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_RUN/SPIRA_PROD/
+    # SPIRA_RELEASES/SPIRA_COCKPIT/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which
+    # clears it. Anything passed after "--" (e.g. SPIRA_DB=...) is also a registered-key
+    # override here, so it goes to tl_config too rather than into env -i's list.
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" \
+        SPIRA_RELEASES="$FAKE_RELEASES" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd"
+    [ "${#extra_env[@]}" -gt 0 ] && tl_config "${extra_env[@]}"
     env -i \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$FAKE_RUN" \
         "SPIRA_HOME=$SPIRA_DIR" \
-        "SPIRA_PROD=$SPIRA_DIR" \
-        "SPIRA_RELEASES=$FAKE_RELEASES" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$COCKPIT_DIR" \
         "MOCK_LOG=$MOCK_LOG" \
         "DOCTOR_FAIL_FLAG=$DOCTOR_FAIL_FLAG" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "${extra_env[@]+"${extra_env[@]}"}" \
+        SPIRA_TOML="$SPIRA_TOML" \
         spira-install "${install_args[@]+"${install_args[@]}"}" 2>&1
 }
 

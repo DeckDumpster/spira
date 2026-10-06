@@ -55,9 +55,11 @@ mod tests {
     use super::*;
 
     // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the
-    // same hazard): the one test below that resolves config takes this lock, and pins
-    // SPIRA_TOML to a nonexistent path, so it never depends on a real operator
-    // config document on the machine running this suite.
+    // same hazard): the one test below that resolves config takes this lock. Per Ryan
+    // 2026-10-05 (one source of config), an unresolvable `SPIRA_TOML` is now a flat refusal
+    // rather than a fall-through to conf.d's own generated defaults, so this test declares
+    // its value through a real `fixture_toml` document instead of pointing `SPIRA_TOML` at a
+    // nonexistent file and hand-writing a one-off `conf.d/SPIRA_COCKPIT`.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
@@ -72,15 +74,13 @@ mod tests {
         std::env::remove_var("SPIRA_MAX_AEONS");
 
         let dir = testkit::TempDir::new("cockpit-ops-conf");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_COCKPIT"),
-            "TYPE=string\nGROUP=cockpit\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_COCKPIT:=/resolved/cockpit}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_RELEASE", dir.path());
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        // `self_source` derives `home` as `$SPIRA_RELEASE/spira` — point SPIRA_RELEASE at
+        // this tree's release root so `home` lands on the REAL spira/ dir (the registry
+        // `resolve_for_process` validates registered keys against), not a fabricated one.
+        let release_root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        std::env::set_var("SPIRA_RELEASE", release_root);
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_COCKPIT", "/resolved/cockpit")]);
+        std::env::set_var("SPIRA_TOML", &toml);
         // conf.sh's own convention is ${VAR:-default}; a caller override must survive.
         std::env::set_var("COCKPIT_RIGHT_PCT", "50");
 

@@ -1,19 +1,28 @@
 //! The one place `watchd` shells into `conf.sh` — the same "seam" pattern `gate` and
 //! `queue-watch` already use for `lib.sh` (DESIGN.md "Non-goals": conf.sh/lib.sh stay bash
-//! until the config/store-core rewrite group). Everything else in this crate is native Rust
-//! reading the key=value pairs this one call captured.
+//! until the config/store-core rewrite group) — but ONLY for `SPIRA_HOME`/`SPIRA_REPO`/
+//! `SPIRA_CONF_FILE`, none of which is a registered `spira/conf.d` key. Every other value
+//! this module needs (`CONFIG_VARS`) is registered, and comes instead from
+//! `spira_config::process::cfg` (per Ryan 2026-10-05: one source of config) — merged into the
+//! same `kv` map the seam fills, so everything downstream still just reads `kv`/`Context`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Every value `watchd` needs that `conf.sh` computes (a default, a derived path, or a
-/// `command -v` resolution) rather than merely passing an ambient environment variable
-/// through unchanged.
-const VARS: &[&str] = &[
+/// `SPIRA_HOME`/`SPIRA_REPO`/`SPIRA_CONF_FILE` — the only three names this crate still
+/// takes off the `conf.sh` shell seam: none of the three has a `spira/conf.d` entry
+/// (`SPIRA_CONF_FILE` names the OLD bash `spira.conf`, not `$SPIRA_TOML`), so none of them
+/// is a `spira_config::process::cfg` key.
+const VARS: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_CONF_FILE"];
+
+/// Every other name `watchd` used to take off the same seam, but which IS a registered
+/// `spira/conf.d` key — read instead via `spira_config::process::cfg` (per Ryan 2026-10-05:
+/// one source of config), the same per-process `$SPIRA_TOML` resolution every other binary
+/// now goes through, merged into the same `kv` map `VARS` fills so every downstream `take`
+/// below is unchanged.
+const CONFIG_VARS: &[&str] = &[
     "SPIRA_RUN",
-    "SPIRA_HOME",
-    "SPIRA_REPO",
     "SPIRA_COCKPIT",
     "SPIRA_DB",
     "SPIRA_WORKSPACES",
@@ -23,7 +32,6 @@ const VARS: &[&str] = &[
     "SPIRA_VIEW_SESSION",
     "SPIRA_WATCHERS",
     "SPIRA_WATCHERS_OVERLAY",
-    "SPIRA_CONF_FILE",
     "SPIRA_ACTIONABLE",
     "SPIRA_HEALTH_TIMEOUT",
     "SPIRA_NOTIFY_AGE",
@@ -98,6 +106,13 @@ pub fn load(home: &Path) -> Result<Context, String> {
             kv.insert(k.to_string(), v.to_string());
         }
     }
+    // ONE SOURCE (per Ryan 2026-10-05): every `CONFIG_VARS` name is registered, so it comes
+    // from `spira_config::process::cfg`, never the `conf.sh` seam above — a key that does not
+    // resolve is a refusal naming it, not a value this map quietly lacks.
+    for name in CONFIG_VARS {
+        let v = spira_config::process::cfg(name)?;
+        kv.insert((*name).to_string(), v);
+    }
     // NON-DESTRUCTIVE: `SPIRA_RUN` and `SPIRA_DB` are both a `WATCHD_KEYS` placeholder AND
     // a named `Context` field below. A `.remove()` here (as the `take` closure does for the
     // fields that are ONLY a placeholder) would empty both before `run`/`db` ever got a
@@ -122,7 +137,12 @@ pub fn load(home: &Path) -> Result<Context, String> {
         db: take("SPIRA_DB"),
         placeholders,
         systemctl: std::env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
-        instance: spira_config::resolve::resolve_instance(&std::env::vars().collect(), home)?,
+        // SPIRA_INSTANCE is a registered key too (just not in CONFIG_VARS above, since it
+        // is not part of the conf.sh seam's own VARS/CONFIG_VARS split) — the same one
+        // door, never the explicit-`home`-parameter `resolve_instance` call this used to
+        // make (per Ryan 2026-10-05: one source of config — `cfg()`'s own SPIRA_HOME-env
+        // resolution is the one to trust, not a second, caller-supplied `home`).
+        instance: spira_config::process::cfg("SPIRA_INSTANCE")?,
         now: read_now(),
     })
 }
@@ -266,12 +286,31 @@ mod tests {
     #[test]
     fn load_does_not_let_the_placeholder_map_consume_a_field_the_context_also_needs() {
         let d = testkit::TempDir::new("watchd-context");
-        std::fs::write(
-            d.join("conf.sh"),
-            "SPIRA_RUN=/fixture/run\nSPIRA_DB=/fixture/db\nSPIRA_WATCHERS=/fixture/watchers\n",
-        )
-        .unwrap();
-        let _env = testkit::env(&[("SPIRA_INSTANCE", Some("fixture"))]);
+        // The seam above still sources `conf.sh` — but only `SPIRA_HOME`/`SPIRA_REPO`/
+        // `SPIRA_CONF_FILE` come from it now; `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_WATCHERS` are
+        // `CONFIG_VARS` (registered), so they come from `spira.toml` below instead. This is
+        // the one test in this binary allowed to drive `spira_config::process::cfg` live
+        // (its resolution is cached once per *process*, in a `OnceLock` — a second such test
+        // pinning a different `spira.toml` would just see this one's answer).
+        std::fs::write(d.join("conf.sh"), "true\n").unwrap();
+        // SPIRA_INSTANCE is also resolved through `cfg()` now (no `resolve_instance`
+        // env-override rung survives — per Ryan 2026-10-05, no `resolve_*` helper reads a
+        // key from the environment any more), so it has to be DECLARED in the fixture
+        // toml, not set as a bare env var.
+        let toml = spira_config::process::fixture_toml(
+            d.path(),
+            &[
+                ("SPIRA_RUN", "/fixture/run"),
+                ("SPIRA_DB", "/fixture/db"),
+                ("SPIRA_WATCHERS", "/fixture/watchers"),
+                ("SPIRA_INSTANCE", "fixture"),
+            ],
+        );
+        // `cfg()`'s own SPIRA_HOME must be the checkout's real spira/ (where conf.d — the
+        // key registry — lives); `d` above is only the bash seam's own home argument to
+        // `load`, a separate, unrelated directory.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
         let ctx = load(&d).expect("the seam to source this trivial conf.sh");
         assert_eq!(ctx.instance, "fixture");
         assert_eq!(ctx.run, "/fixture/run", "SPIRA_RUN is also a WATCHD_KEYS placeholder");

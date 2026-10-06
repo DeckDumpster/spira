@@ -41,8 +41,10 @@ echo "T1: argument parsing — before testdb/bd is ever touched, no store"
 # would fail with a store error instead of the usage message asserted for.
 T1TMP="$(mktemp -d)"; trap 'rm -rf "$T1TMP"' EXIT INT TERM
 slay_noargv() {   # slay_noargv <args...> -> stdout+stderr, with SLAY_RC set
+    tl_config SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store"
     SLAY_OUT="$(env -i PATH="$PATH" HOME="$T1TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$T1TMP/no.conf" SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store" \
+        SPIRA_CONF="$T1TMP/no.conf" \
+        SPIRA_TOML="$SPIRA_TOML" \
         slay "$@" 2>&1)"
     SLAY_RC=$?
 }
@@ -141,10 +143,10 @@ wantrc "spira-lc schema applies cleanly" 0 $?
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_REPO="$REPO"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$TMP/repo-map"
 printf '# fixture — empty\n' > "$TMP/repo-map"
 
 git init -q --bare -b main "$REMOTE"

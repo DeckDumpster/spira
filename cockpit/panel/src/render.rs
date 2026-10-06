@@ -551,6 +551,10 @@ pub struct Frame<'a> {
     pub now: i64,
     pub w: usize,
     pub h: usize,
+    /// The operator's actor name (`SPIRA_OPERATOR_ACTOR`, resolved once in `main` into
+    /// `App.cfg`), for the turn marker: `●` fires when the thread's last author matches
+    /// this exactly.
+    pub operator_actor: &'a str,
 }
 
 /// The selected item's content, in reading order, with no chrome and no trailing blanks.
@@ -836,7 +840,7 @@ pub fn frame(f: &Frame) -> Vec<String> {
         // away by itself says the one thing about this tab that must never be false. `d` also
         // does different things to the two — it lifts a silence and refuses a cleared one —
         // so the row has to say which it is before the key is pressed.
-        let op = crate::model::operator_actor();
+        let op = f.operator_actor;
         let turn = match (f.view, it.thread.last()) {
             (View::Alerts, _) if f.dismissed && crate::model::silenced(it, f.now) => "z",
             (View::Alerts, _) if f.dismissed => "✓",
@@ -1092,7 +1096,12 @@ fn footer(f: &Frame, pos: usize, total: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{operator_actor, Item};
+    use crate::model::Item;
+
+    /// The operator actor name `a_frame` hands to `Frame::operator_actor` — fixture threads
+    /// use the same literal so the turn marker's comparison lines up, same as `store.rs`'s
+    /// own `op_cfg`.
+    const OPERATOR: &str = "operator";
 
     fn item(title: &str, body: &str) -> Item {
         Item {
@@ -1165,6 +1174,7 @@ mod tests {
             now: NOW,
             w,
             h,
+            operator_actor: "operator",
         }
     }
 
@@ -1542,7 +1552,7 @@ three")]);
         let mut it = item("a title", "THE-ASK first paragraph\n\nTHE-ASK second paragraph");
         it.lead = "do X".into();
         it.thread = vec![
-            (operator_actor(), "2026-09-05T15:00:00Z".into(), "OLDEST reply".into()),
+            (OPERATOR.to_string(), "2026-09-05T15:00:00Z".into(), "OLDEST reply".into()),
             ("claude".into(), "2026-09-05T16:00:00Z".into(), "NEWEST reply".into()),
         ];
         it
@@ -1797,15 +1807,15 @@ three")]);
     /// A `●` says the ball is with the operator. On a record that claim is false, and it is the
     /// single most direct way a pane can ask for a reply it does not want.
     ///
-    /// THE AUTHOR COMES FROM `operator_actor()`, NOT A LITERAL. The marker fires when the last
-    /// author IS the operator, and who that is comes from the environment — so a test that
-    /// hardcoded the default asserted the marker's PRESENCE only on a machine with the variable
-    /// unset, and failed on the very installation the panel runs on
-    /// (law-gates-run-in-a-clean-environment).
+    /// THE AUTHOR COMES FROM `Frame::operator_actor`, NOT A HARDCODED NAME. The marker fires
+    /// when the last author matches `f.operator_actor` exactly, which `main` resolves once
+    /// from config (`SPIRA_OPERATOR_ACTOR`) — so this fixture uses the same `OPERATOR`
+    /// constant `a_frame` hands to `Frame`, rather than asserting about whatever one
+    /// installation's config happens to say (law-gates-run-in-a-clean-environment).
     #[test]
     fn an_fyi_row_carries_no_turn_marker() {
         let mut it = insight("a finding", "a body");
-        it.thread = vec![(operator_actor(), "2026-09-05T15:00:00Z".into(), "hm".into())];
+        it.thread = vec![(OPERATOR.to_string(), "2026-09-05T15:00:00Z".into(), "hm".into())];
         let items = Ok(vec![it.clone()]);
         let rows = text(&frame(&fyi_frame(&items, false)));
         assert!(!rows[1].contains('●'), "no ball on an FYI: {:?}", rows[1]);
@@ -1821,7 +1831,7 @@ three")]);
     #[test]
     fn the_reader_names_an_insights_body_why_it_matters() {
         let mut it = insight("a finding", "a body");
-        it.thread = vec![(operator_actor(), "2026-09-05T15:00:00Z".into(), "hm".into())];
+        it.thread = vec![(OPERATOR.to_string(), "2026-09-05T15:00:00Z".into(), "hm".into())];
         let (lines, _) = reader(&it, View::Insights, NOW, 0, 107, 19);
         let joined = text(&lines).join("\n");
         assert!(joined.contains("why it matters"), "{joined}");

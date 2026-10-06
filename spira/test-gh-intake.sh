@@ -141,13 +141,15 @@ REPOMAP="$T/repo-map"
 printf 'widgets | %s\n' "$REPOCHECKOUT" > "$REPOMAP"
 
 run_intake() {
-    env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
-        BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
-        SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_MAIL_BIN="$T/bin_mail.sh" \
-        SPIRA_HOME="$T/spira-home" SPIRA_REPO_MAP="$REPOMAP" \
+    tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
         SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="widgets" \
-        SPIRA_GH_INTAKE_API="$API" SPIRA_GH_INTAKE_PRIORITY="2" \
-        SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan" \
+        SPIRA_GH_INTAKE_PRIORITY="2" SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan"
+    env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
+        SPIRA_MAIL_BIN="$T/bin_mail.sh" \
+        SPIRA_HOME="$T/spira-home" \
+        SPIRA_GH_INTAKE_API="$API" \
         GITHUB_TOKEN="canary-token-must-never-be-sent" \
         "$BIN" "$@" 2>&1
 }
@@ -188,10 +190,12 @@ fi
 
 echo
 echo "4. an unresolvable bead repo is refused, not silently skipped"
+tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
+    SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo"
 out="$(env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
-    SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_MAIL_BIN="$T/bin_mail.sh" \
-    SPIRA_HOME="$T/spira-home" SPIRA_REPO_MAP="$REPOMAP" \
-    SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_MAIL_BIN="$T/bin_mail.sh" \
+    SPIRA_HOME="$T/spira-home" \
     SPIRA_GH_INTAKE_API="$API" "$BIN" 2>&1)"; rc=$?
 is "exits 1" "1" "$rc"
 want "names the unresolved repo" "no-such-repo" "$out"

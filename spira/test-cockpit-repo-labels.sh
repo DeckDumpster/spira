@@ -45,13 +45,17 @@ printf 'validrepo | /opt/valid | push | origin/main | | \n' > "$MAP"
 RUN="$TMP/run"; mkdir -p "$RUN"
 run_repo_labels() {    # run_repo_labels <fixture-file> [KEY=val ...]
     local fixture="$1"; shift
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS/SPIRA_ASK_LABEL are registered keys
+    # (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, re-declaring the
+    # baseline every call so a later call with no override goes back to it; any extra
+    # KEY=val in "$@" is itself a registered-key override here, so it goes to tl_config too.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" \
+        SPIRA_FAYTHS=t SPIRA_ASK_LABEL=needs-ryan
+    [ "$#" -gt 0 ] && tl_config "$@"
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BDJSON_FIXTURE="$fixture" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-        SPIRA_ASK_LABEL=needs-ryan \
-        "$@" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe repo_labels 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }

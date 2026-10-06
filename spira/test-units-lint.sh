@@ -76,9 +76,10 @@ printf 'test-units-lint.sh\n'
 # three. SPIRA_HOME = $CLONE/spira (this suite's own clone, never the real checkout, per
 # the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
 # SPIRA_HOME is exactly what the comment below this block is testing).
-rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    SPIRA_HOME="$CLONE/spira" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD= \
-    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" units-install --render 2>"$TMP/render.err")"
+tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD="" \
+    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential"
+rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$CONF" \
+    SPIRA_HOME="$CLONE/spira" units-install --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
 # Rust binary elsewhere in UNITS, not rendered here) — informational, not a render failure.
@@ -140,7 +141,7 @@ paths_are_configured "spira-watch@ (alpha)" "$watch_unit"
 # staleness is noticed doubles the wait the threshold was set to allow (UC-operator-channel-28).
 notify_tmr="$(block spira-notify-prod.timer)"
 period="$(sed -n 's/^OnUnitActiveSec=\([0-9]*\)min$/\1/p' <<< "$notify_tmr")"
-default_age="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent" \
+default_age="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/nonexistent" \
     bash -c ". '$CLONE/spira/conf.sh'; printf '%s' \"\$SPIRA_NOTIFY_AGE\"")"
 is "the notify timer states a period in minutes" "yes" "$([ -n "$period" ] && echo yes || echo no)"
 is "the threshold has a default"                 "yes" "$([ -n "$default_age" ] && echo yes || echo no)"
@@ -178,9 +179,10 @@ printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s
 # reaches it. Left to the conf file alone, @SPIRA_PROD_ROOT@ fell back to dirname(SPIRA_HOME)
 # — this container's own real checkout root, not PRODROOT — so ExecStart pointed at this
 # box's /workspace/bin/sentinel (not yet built in this pass) instead of PRODROOT/bin's stub.
-env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" SPIRA_WATCHERS="$MAN" \
+tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" \
+    SPIRA_PROD="$PRODROOT/spira"
+env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/install.conf" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_PROD="$PRODROOT/spira" \
     units-install > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"

@@ -19,11 +19,19 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use crate::db::Conn;
 
 pub fn run(args: &[String]) -> i32 {
-    let socket_path = args
-        .first()
-        .cloned()
-        .or_else(|| std::env::var("SPIRA_LC_SOCKET").ok())
-        .unwrap_or_else(|| "/run/spira-lc/sock".to_string());
+    // An explicit argv[0] (the launching unit's own ExecStart) wins outright; otherwise the
+    // one source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
+    // this process's own environment, and no literal fallback.
+    let socket_path = match args.first().cloned() {
+        Some(p) => p,
+        None => match spira_config::process::cfg("SPIRA_LC_SOCKET") {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("spira-lc serve: {e}");
+                return 2;
+            }
+        },
+    };
 
     let conn = match Conn::from_env() {
         Ok(c) => c,

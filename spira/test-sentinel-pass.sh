@@ -110,19 +110,16 @@ echo "DB unreadable — no fixture needed, a failing SPIRA_BD shim fails fast (U
 FAILING_BD="$TMP/failing-bd"
 printf '#!/bin/sh\nexit 1\n' > "$FAILING_BD"; chmod +x "$FAILING_BD"
 _run_unreadable="$TMP/run-unreadable"; mkdir -p "$_run_unreadable"
+tl_config SPIRA_RUN="$_run_unreadable" SPIRA_DB="$TMP/irrelevant-db" SPIRA_BD="$FAILING_BD" \
+    SPIRA_FAYTHS="" SPIRA_NOTIFY="$STUBS/mock-notify"
 out_unreadable="$(env -i \
-    PATH="$PATH" HOME="$HOME" \
-    SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
-    SPIRA_RUN="$_run_unreadable" \
-    SPIRA_DB="$TMP/irrelevant-db" \
-    SPIRA_BD="$FAILING_BD" \
-    SPIRA_FAYTHS="" \
+    PATH="$STUBS:$PATH" HOME="$HOME" \
+    SPIRA_HOME="$STUBS" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_LAND_STALE=999999 \
     SPIRA_AUDIT_STALE=999999 \
     SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
     SPIRA_LAUNCH="$STUBS/mock-launch" \
-    SPIRA_NOTIFY="$STUBS/mock-notify" \
-    PATH="$STUBS:$PATH" \
     sentinel 2>&1)"
 rc=$?
 is   "exits 1 when bd cannot reach the database"  "1" "$rc"
@@ -167,24 +164,21 @@ run_pass() {
     local run="$1" arg="$2"; shift 2
     mkdir -p "$run"
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
+    tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_PATH="$SPIRA_PATH" \
+        SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= \
+        SPIRA_MAX_AEONS=3
     env -i \
-        PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
-        SPIRA_RUN="$run" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
-        SPIRA_PATH="$SPIRA_PATH" \
+        PATH="$STUBS:$PATH" HOME="$TMP/home" \
+        SPIRA_HOME="$STUBS" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_SKIP_RECLAIM=1 \
         SPIRA_LAND_STALE=999999 \
         SPIRA_AUDIT_STALE=999999 \
         SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
         SPIRA_LAUNCH="$STUBS/mock-launch" \
         SPIRA_SUMMON="$STUBS/mock-summon" \
-        SPIRA_NOTIFY="$STUBS/mock-notify" \
         SUMMON_LOG="$SUMMON_LOG" \
         SENDING_LOG="$SENDING_LOG" \
-        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=3 \
-        PATH="$STUBS:$PATH" \
         "$@" \
         sentinel "${sarg[@]}" 2>&1
 }

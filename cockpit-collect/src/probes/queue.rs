@@ -4,7 +4,7 @@
 //! (`queue_certified_list`) stay `lib.sh`'s own — this bead does not own or re-derive them
 //! (wave 4, not this one).
 
-use super::{push, Kv};
+use super::{push, Cfg, Kv};
 use crate::io;
 use crate::quoting::epoch_to_age;
 use serde_json::Value;
@@ -13,10 +13,9 @@ use std::collections::HashSet;
 // The one definition of "a bead an aeon can take" lives in `spira-claim`: the express-lane
 // count below asks its `ready-count` rather than keeping a bd ready query of its own.
 
-pub fn queue_keys() -> Kv {
+pub fn queue_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let run = io::run_dir();
-    let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
+    let qdir = std::path::PathBuf::from(&cfg.queue_dir);
     let now = io::now();
 
     let funnel = match (super::lc::list(Some("CERTIFIED")), super::lc::list(Some("SUBMITTED")), super::lc::list(Some("REWORK"))) {
@@ -89,9 +88,9 @@ pub fn queue_keys() -> Kv {
         push(&mut out, "SP_FUNNEL_CERT_AGE", epoch_to_age(cert_ep, now));
     }
 
-    let express_label = std::env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".to_string());
+    let express_label = cfg.express_label.as_str();
     // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
-    let enr = io::run_tool("spira-claim", &["ready-count", &express_label], None)
+    let enr = io::run_tool("spira-claim", &["ready-count", express_label], None)
         .and_then(|s| s.trim().parse::<usize>().ok())
         .unwrap_or(0);
     push(&mut out, "SP_EXPRESS_N", enr.to_string());
@@ -151,7 +150,7 @@ pub fn queue_keys() -> Kv {
     let home = io::home_dir();
     let mut next_n = 0usize;
     let mut next_total = 0usize;
-    let next_max: i64 = std::env::var("SPIRA_QUEUE_BATCH_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let next_max: i64 = cfg.queue_batch_max;
     let batch_set: HashSet<&str> = batch_member_ids.iter().map(String::as_str).collect();
     {
         let reg = io::repo_registry();
@@ -249,9 +248,12 @@ mod tests {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = testkit::TempDir::new("cc-queue-missing");
         let _env = crate::test_support::set_run(run.path());
-        std::env::set_var("SPIRA_QUEUE_DIR", run.path().join("queue"));
         std::env::set_var("SPIRA_LC_BIN", run.path().join("no-such-spira-lc"));
-        let kv = queue_keys();
+        let cfg = Cfg {
+            queue_dir: run.path().join("queue").to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let kv = queue_keys(&cfg);
         let get = |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("SP_QUEUE_DEPTH"), Some("?".to_string()));
     }

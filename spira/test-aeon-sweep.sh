@@ -52,8 +52,8 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 # Custom fayth: uses the test-label partition; no SOP_REQUIRED so the closing rule
@@ -74,7 +74,7 @@ printf 'work {{BEAD_ID}} on {{BRANCH}}\n{{PARK}}\n' \
 command -v aeon >/dev/null 2>&1 \
     || { printf 'test-aeon-sweep: aeon is not on PATH — refusing to run the real model\n' >&2; exit 1; }
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+BIN="$TMP/bin"; mkdir -p "$BIN"; SPIRA_AGENT="$BIN/claude"; export TMP; tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
 # `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
 # lifecycle terms, ahead of the tree's spira-lc on PATH.

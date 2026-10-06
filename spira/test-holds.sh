@@ -38,6 +38,7 @@ testdb_up holds || {
 
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such-conf"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 
 REPO="$TMP/repo"
 git init -q "$REPO"
@@ -69,6 +70,7 @@ git -C "$REPO" checkout -q "$BASE_BR"
 FIXTURE_REPOS="$TMP/fixture-repos"
 printf 'fixture | %s | queue | | |\n' "$REPO" > "$FIXTURE_REPOS"
 export "SPIRA_REPO_""MAP=$FIXTURE_REPOS"
+tl_config SPIRA_REPO_MAP="$FIXTURE_REPOS"
 
 testdb_reset
 testdb_seed <<JSONL
@@ -104,13 +106,20 @@ exec "$REAL_BD" "\$@"
 EOF
 chmod +x "$STUB_BD"
 
-unk_out="$(SPIRA_BD="$STUB_BD" holds.sh --repo fixture spira/batch.sh 2>/dev/null)"
+# SPIRA_BD is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
+# tl_config, not the env prefix below, which no process reads it from any more. T3 below
+# claims through a real aeon, so the override must go back to testdb_up's own SPIRA_BD
+# once this case is done.
+_ORIG_SPIRA_BD="$SPIRA_BD"
+tl_config SPIRA_BD="$STUB_BD"
+unk_out="$(holds.sh --repo fixture spira/batch.sh 2>/dev/null)"
 unk_rc=$?
 if [ "$unk_rc" -ne 0 ]; then ok "holds.sh exits non-zero when bd is unreadable"
 else bad "holds.sh exits non-zero when bd is unreadable" "got exit 0"; fi
 # Exit 0 with empty stdout means "checked, found nothing"; this run's exit code is the ONLY
 # thing telling it apart from that — its (also empty) stdout looks identical either way.
 unset unk_out
+tl_config SPIRA_BD="$_ORIG_SPIRA_BD"
 
 # ===========================================================================================
 echo
@@ -134,6 +143,7 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n<!-- task -->\n{{BEAD}}\n{{P
     > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$SPIRA_AGENT"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"

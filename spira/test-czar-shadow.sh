@@ -70,23 +70,26 @@ echo "czar + shadow → queue.sh eject refused; act and non-czar unaffected"
 TQ="$(mktemp -d)"; mkdir -p "$TQ/run"
 
 # SEEN RED: czar in shadow — queue.sh eject refused with czar-fence message.
+tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb"
 out="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
-       SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+       SPIRA_CONF=/nonexistent \
        SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out" == *"czar-fence"* && "$out" == *"shadow"* ]] \
     && ok "czar eject in shadow: fence fires inside queue.sh" \
     || bad "czar eject in shadow: expected czar-fence shadow message, got: $out"
 
 # SEEN GREEN: czar in act — no shadow refusal (may fail for other reasons; that is expected).
-out2="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock SPIRA_CZAR_STAGE_DEADLOCK=act \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" SPIRA_CZAR_STAGE_DEADLOCK=act
+out2="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
+        SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out2" != *"czar-fence"*shadow* ]] \
     && ok "czar eject in act: no shadow refusal" \
     || bad "czar eject in act: unexpected shadow refusal: $out2"
 
 # NON-CZAR: unaffected — no czar-fence message regardless of queue outcome.
-out3="$(SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb"
+out3="$(SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out3" != *"czar-fence"* ]] \
     && ok "non-czar eject: fence not triggered" \

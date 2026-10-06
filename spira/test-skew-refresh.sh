@@ -76,14 +76,16 @@ reset_repo
 
 run_skew_cmd() {
     local run_dir="$1"; shift
+    # SPIRA_RUN/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
+    # through env -i, which clears it.
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
+        SPIRA_TOML="$SPIRA_TOML" \
         skew "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
@@ -193,15 +195,16 @@ reset_repo
 
 run_skew_release() {
     local run_dir="$1"; shift
+    # SPIRA_RUN/SPIRA_RELEASES/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered keys (per
+    # Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
+    # through env -i, which clears it.
+    tl_config SPIRA_RUN="$run_dir" SPIRA_RELEASES="$RELEASES" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_RELEASES="$RELEASES" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
+        SPIRA_TOML="$SPIRA_TOML" \
         skew "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
@@ -290,17 +293,17 @@ cat > "$QSH/repo-map" <<MAP
 qfixture | $QREPO | queue | |
 MAP
 
+# SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are
+# registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and
+# thread SPIRA_TOML through env -i, which clears it.
+tl_config SPIRA_RUN="$QRUN" SPIRA_DB="$TMP/qland-no-db" SPIRA_HOME_REPO=qfixture \
+    SPIRA_REPO_MAP="$QSH/repo-map" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 q_out="$(env -i PATH="$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$QSH" PATH="$QSH:$PATH" \
-    SPIRA_RUN="$QRUN" \
-    SPIRA_DB="$TMP/qland-no-db" \
     SPIRA_REPO="$QREPO" \
-    SPIRA_HOME_REPO=qfixture \
-    SPIRA_REPO_MAP="$QSH/repo-map" \
-    SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" \
+    SPIRA_TOML="$SPIRA_TOML" \
     landing-pass land 2>&1)"
 
 QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
@@ -351,30 +354,31 @@ ln -s spira-bootstrap "$LRELEASES/current"   # production runs a release, not a 
 printf '#!/bin/sh\nexit 0\n' > "$TMP/mock-sc"; chmod +x "$TMP/mock-sc"
 
 run_lq() {
+    # SPIRA_HOME_REPO/SPIRA_RUN/SPIRA_QUEUE_DIR/SPIRA_REPO_MAP/SPIRA_RELEASES/SPIRA_DB are
+    # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config
+    # and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_HOME_REPO=lfixq SPIRA_RUN="$LRUN" SPIRA_QUEUE_DIR="$LQDIR" \
+        SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES" SPIRA_DB="$TMP/local-no-db"
     env -i $(lcfix_env) PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
-        SPIRA_HOME_REPO=lfixq \
         SPIRA_REPO="$LREPO" \
-        SPIRA_RUN="$LRUN" \
-        SPIRA_QUEUE_DIR="$LQDIR" \
-        SPIRA_REPO_MAP="$LRMAP" \
-        SPIRA_RELEASES="$LRELEASES" \
         SPIRA_SYSTEMCTL="$TMP/mock-sc" \
-        SPIRA_DB="$TMP/local-no-db" \
         SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" queue "$@" 2>&1
 }
 run_lskew() {
+    # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_RELEASES are registered keys (per Ryan 2026-10-05,
+    # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_RUN="$LRUN" SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
         SPIRA_REPO="$LREPO" \
-        SPIRA_RUN="$LRUN" \
-        SPIRA_REPO_MAP="$LRMAP" \
-        SPIRA_RELEASES="$LRELEASES" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$LSH/skew" "$@" 2>&1
 }
 lround() {  # lround <branch> <file> <content> -> commit on local/main's tip, print the head sha

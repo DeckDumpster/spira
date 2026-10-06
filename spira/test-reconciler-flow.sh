@@ -64,13 +64,14 @@ command -v reconciler-flow >/dev/null 2>&1 || { echo "test-reconciler-flow: reco
 
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
+# SPIRA_DUCKDB_BIN/SPIRA_MAIL_SH/SPIRA_RECONCILER_FLOW_STATE/ALERTED/STATUS_LOG are not
+# registered config keys (confirmed in reconciler-flow/src/main.rs's own Config::from_env,
+# which comments each one so) — they stay plain env reads, never tl_config.
 export SPIRA_DUCKDB_BIN="duckdb"
-export SPIRA_BD="${TESTDB_BD:-bd-embedded}"
-export SPIRA_FLOW_WINDOW_HOURS="0.5"
-export SPIRA_FLOW_BASELINE_HOURS="24"
-export SPIRA_FLOW_GRACE_SECS="2"   # short so the suite need not sleep for a real 30m window
 export SPIRA_DESIRED_DIR="$T/desired"
-export SPIRA_SCOPE_LABEL=""
+tl_config SPIRA_BD="${TESTDB_BD:-bd-embedded}" SPIRA_FLOW_WINDOW_HOURS="0.5" \
+    SPIRA_FLOW_BASELINE_HOURS="24" SPIRA_FLOW_GRACE_SECS="2" \
+    SPIRA_DESIRED_DIR="$SPIRA_DESIRED_DIR" SPIRA_SCOPE_LABEL="" SPIRA_RUN="$SPIRA_RUN"
 mkdir -p "$SPIRA_RUN"
 # The backlog is the work beads the lifecycle machine has not finished (sp-mve9i), not bd's
 # open ones; this world's machine mirrors the fixture store (open READY, closed LANDED).
@@ -284,7 +285,8 @@ emit_landed rcf-base-2 7000
 emit_landed rcf-recent 300
 emit_waiting rcf-c1 60
 write_flow_doc 3.0 999999
-SPIRA_FLOW_BASELINE_HOURS=2 run_pass
+tl_config SPIRA_FLOW_BASELINE_HOURS=2
+run_pass
 is "a configured floor fires even when the baseline ratio alone would not" gap "$(status_of flow:velocity:queue status)"
 
 # ============================================================================
@@ -397,10 +399,11 @@ echo "    short gap grace (SPIRA_FLOW_GRACE_SECS=2, this suite's default) alone 
 echo "    confirm an unobservable invariant against its own, longer grace"
 # ============================================================================
 reset_env
-SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999 run_pass
+tl_config SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999
+run_pass
 is "unobservable, first pass, inside its own long grace" unobservable "$(status_of flow:velocity:queue status)"
 advance 3
-SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999 run_pass
+run_pass
 is "still unobservable past the gap's own 2s grace" unobservable "$(status_of flow:velocity:queue status)"
 is "not confirmed — inside its own (999s) grace" False "$(status_of flow:velocity:queue is_gap)"
 is "no concierge alert while inside the unobservable grace" "0" "$(mail_count_for flow:velocity:queue)"
@@ -411,19 +414,21 @@ echo "11. Unobservable past its own grace period alerts the Concierge exactly on
 echo "    through the same deduplicated path a gap uses (sp-fufyb) — not once per pass"
 # ============================================================================
 reset_env
-SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
+tl_config SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2
+run_pass
 is "unobservable, first pass, inside grace" unobservable "$(status_of flow:velocity:queue status)"
 is "no alert yet" "0" "$(mail_count_for flow:velocity:queue)"
 advance 3
-SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
+run_pass
 is "confirmed past its own grace" True "$(status_of flow:velocity:queue is_gap)"
 is "exactly one alert fired for the first confirmed pass" "1" "$(mail_count_for flow:velocity:queue)"
 want "the alert names the invariant" "flow:velocity:queue" "$(cat "$MAIL_LOG")"
 
 echo "the same unresolved streak does not alert again on the next pass"
-SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
+run_pass
 is "still unobservable" unobservable "$(status_of flow:velocity:queue status)"
 is "no additional alert for the same streak" "1" "$(mail_count_for flow:velocity:queue)"
+spira-config unset spira.flow_unobservable_grace_secs "$_TL_CONF_OVERRIDE" >/dev/null
 
 # ============================================================================
 echo
@@ -478,33 +483,38 @@ echo "13. Sentinel overrun: a pass's own wall time (its sentinel-phase rows summ
 echo "    the configured timer period is a gap; the most recent pass is the one that counts"
 # ============================================================================
 reset_env
-SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+tl_config SPIRA_FLOW_SENTINEL_PERIOD_SECS=100
+run_pass
 is "no sentinel-phase rows yet -> unobservable" unobservable "$(status_of flow:sentinel-overrun status)"
 
 reset_env
 emit_sentinel_phase pass-1 CHECK1 60 90
 emit_sentinel_phase pass-1 CHECK2 60 30   # pass-1 total: 120s, under 2x100=200
-SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+tl_config SPIRA_FLOW_SENTINEL_PERIOD_SECS=100
+run_pass
 is "a pass under twice the period is satisfied" satisfied "$(status_of flow:sentinel-overrun status)"
 
 reset_env
 emit_sentinel_phase pass-old CHECK1 500 3600   # an old pass, badly overrun, but stale
 emit_sentinel_phase pass-new CHECK1 60 30      # the most recent pass: fine
-SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+tl_config SPIRA_FLOW_SENTINEL_PERIOD_SECS=100
+run_pass
 is "an old overrunning pass does not matter once a newer pass is fine" satisfied "$(status_of flow:sentinel-overrun status)"
 
 reset_env
 emit_sentinel_phase pass-2 CHECK1 150 90
 emit_sentinel_phase pass-2 CHECK2 150 30   # pass-2 total: 300s, over 2x100=200 — positive control
-SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+tl_config SPIRA_FLOW_SENTINEL_PERIOD_SECS=100
+run_pass
 is "a pass past twice the period is a gap" gap "$(status_of flow:sentinel-overrun status)"
 is "but not yet confirmed — inside its grace period" False "$(status_of flow:sentinel-overrun is_gap)"
 advance 3
-SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+run_pass
 is "the gap is confirmed on the next pass past grace" True "$(status_of flow:sentinel-overrun is_gap)"
 is "exactly one alert fired" "1" "$(mail_count_for flow:sentinel-overrun)"
-SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+run_pass
 is "the same unresolved streak does not alert again" "1" "$(mail_count_for flow:sentinel-overrun)"
+spira-config unset spira.flow_sentinel_period_secs "$_TL_CONF_OVERRIDE" >/dev/null
 
 # ============================================================================
 echo
@@ -512,7 +522,8 @@ echo "14. Rework: reopens per landed bead over its own (6h default, pinned here 
 echo "    above 1.0, is a gap — but report-only until 24h of bead-stage history exist"
 # ============================================================================
 reset_env
-SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+tl_config SPIRA_FLOW_REWORK_WINDOW_HOURS=3
+run_pass
 is "no bead-stage rows yet -> unobservable" unobservable "$(status_of flow:rework status)"
 
 reset_env
@@ -521,7 +532,8 @@ for h in 1 6 12 18 24 30; do emit_bead_stage "rcf-warm-$h" LANDED $((h*3600)) "$
 emit_bead_stage rcf-r1 REWORK 3600 100
 emit_bead_stage rcf-l1 LANDED 3000 101
 emit_bead_stage rcf-l2 LANDED 1800 102
-SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+tl_config SPIRA_FLOW_REWORK_WINDOW_HOURS=3
+run_pass
 is "warm history, a healthy ratio, is satisfied" satisfied "$(status_of flow:rework status)"
 
 reset_env
@@ -531,12 +543,13 @@ emit_bead_stage rcf-r2 REWORK 3600 200
 emit_bead_stage rcf-r3 REWORK 3000 201
 emit_bead_stage rcf-r4 REWORK 2400 202
 emit_bead_stage rcf-l3 LANDED 1800 203
-SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+tl_config SPIRA_FLOW_REWORK_WINDOW_HOURS=3
+run_pass
 is "warm history, ratio over threshold, is a gap" gap "$(status_of flow:rework status)"
 is "but not yet confirmed — inside its grace period" False "$(status_of flow:rework is_gap)"
 is "no alert while inside grace" "0" "$(mail_count_for flow:rework)"
 advance 3
-SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+run_pass
 is "the gap is confirmed on the next pass past grace" True "$(status_of flow:rework is_gap)"
 is "exactly one alert fired" "1" "$(mail_count_for flow:rework)"
 
@@ -545,13 +558,15 @@ reset_env
 emit_bead_stage rcf-cold-1 LANDED 7200 1
 emit_bead_stage rcf-r5 REWORK 3600 2
 emit_bead_stage rcf-r6 REWORK 3000 3
-SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+tl_config SPIRA_FLOW_REWORK_WINDOW_HOURS=3
+run_pass
 is "still recorded as a gap even before the warm-up ends (report-only, not hidden)" gap "$(status_of flow:rework status)"
 is "no alert before 24h of history exist, even with a ratio this far over" "0" "$(mail_count_for flow:rework)"
 advance 3
-SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+run_pass
 is "confirmed past its gap grace, but still report-only" True "$(status_of flow:rework is_gap)"
 is "still no alert — report-only until 24h of history exist" "0" "$(mail_count_for flow:rework)"
+spira-config unset spira.flow_rework_window_hours "$_TL_CONF_OVERRIDE" >/dev/null
 
 # ============================================================================
 echo

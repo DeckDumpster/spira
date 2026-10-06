@@ -44,9 +44,10 @@ git -C "$TMP/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m b
 RMAP="$TMP/repo-map"
 
 run() {
-    env -i $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 SPIRA_FORGE="$TMP/spira/forge-fake.sh" \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
+        SPIRA_FORGE="$TMP/spira/forge-fake.sh"
+    env -i SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
+        SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
 }
 

@@ -42,8 +42,9 @@ chmod +x "$PD/bin/mock-systemctl"
 # $PD/home/.local/share/spira/run.
 pane_at() {
     local run="$1" rows="$2"
-    env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$PD/no.conf" SPIRA_REPO="$PD/repo" SPIRA_RUN="$run" \
+    tl_config SPIRA_RUN="$run"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$PD/no.conf" SPIRA_REPO="$PD/repo" \
         SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
         "$PANE" once "$rows" 0 2>/dev/null \
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'

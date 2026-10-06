@@ -134,29 +134,30 @@ chmod +x "$FAKE_CLAUDE"
 
 # ---- helpers ----------------------------------------------------------------
 run_review() {
+    # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_ID_PREFIX/SPIRA_DB/SPIRA_BD/SPIRA_AGENT/
+    # SPIRA_REVIEWER_VERDICTS/SPIRA_REVIEWER_MODEL/SPIRA_REVIEWER_TIMEOUT are registered
+    # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread
+    # SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_AGENT="$FAKE_CLAUDE" \
+        SPIRA_REVIEWER_VERDICTS="$VERDICTS" SPIRA_REVIEWER_MODEL=claude-test-model \
+        SPIRA_REVIEWER_TIMEOUT=30
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$SH" \
-        SPIRA_ID_PREFIX=sp \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
-        SPIRA_AGENT="$FAKE_CLAUDE" \
-        SPIRA_REVIEWER_VERDICTS="$VERDICTS" \
-        SPIRA_REVIEWER_MODEL=claude-test-model \
-        SPIRA_REVIEWER_TIMEOUT=30 \
         FAKE_REVIEW_VERDICT="${FAKE_REVIEW_VERDICT:-ship}" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/review.sh" "$@" 2>&1
 }
 
 run_release() {
+    # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_ID_PREFIX are registered keys (per Ryan 2026-10-05,
+    # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$SH" \
-        SPIRA_ID_PREFIX=sp \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/release.sh" "$@" 2>&1
 }
 
@@ -224,11 +225,12 @@ want "block: findings > 0"     "findings: 1"     "$(cat "$vfile2" 2>/dev/null)"
 
 # A finding bead must have been filed in the database.
 db_count() {
+    # SPIRA_DB/SPIRA_BD/SPIRA_ID_PREFIX are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_ID_PREFIX=sp
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
-        SPIRA_ID_PREFIX=sp \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c '. '"$SH/lib.sh"'; bdjson list --status open --label review-finding --limit 0 2>/dev/null | python3 -c "
 import json,sys
 try:
@@ -243,11 +245,10 @@ bead_count="$(db_count)"
     || bad "block: finding bead filed" "got count=$bead_count, want >=1"
 
 # The bead title must name the finding.
+# SPIRA_DB/SPIRA_BD/SPIRA_ID_PREFIX unchanged from db_count's tl_config declaration above.
 bead_titles="$(env -i PATH="$PATH" HOME="$HOME" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="$SPIRA_BD" \
-    SPIRA_ID_PREFIX=sp \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. '"$SH/lib.sh"'; bdjson list --status open --label review-finding --limit 0 2>/dev/null | python3 -c "
 import json,sys
 try:

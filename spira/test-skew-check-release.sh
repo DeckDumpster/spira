@@ -103,18 +103,28 @@ run_skew() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
 
+    # A registered key passed in "$@" is declared through tl_config instead of forwarded
+    # literally — the compiled `skew` binary resolves fresh from SPIRA_TOML, never from this
+    # process's environment — and dropped from what reaches env -i.
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
+
     # Use the test-specific RELEASES set up by reset_releases, not a new isolated copy.
     # This allows test blocks to control what scenario skew sees.
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
-        "${@}" \
+        "${extra[@]+"${extra[@]}"}" \
         skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
@@ -206,16 +216,23 @@ run_skew_noart() {
     # Copy the template to the per-run releases directory (including hidden directories like .tags)
     (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
 
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$releases_dir"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
+
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$NO_GIT_REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$releases_dir" \
-        "${@}" \
+        "${extra[@]+"${extra[@]}"}" \
         skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
@@ -276,18 +293,25 @@ run_skew_artifact() {
     # before calling this, so it must read $RELEASES — not a fresh copy of the bare template,
     # which has no `current` and made every artifact case exit 3 ("no release is activated").
     # sp-fghps made the same change to run_skew and missed this one.
+    tl_config SPIRA_GH="$MOCK_BIN/gh" SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" \
+        SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" SPIRA_GH_INTAKE_REPO="" \
+        SPIRA_RELEASE_REPO=""
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
 
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$ARTIFACT_REPO" \
-        SPIRA_GH="$MOCK_BIN/gh" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
-        "${@}" \
+        "${extra[@]+"${extra[@]}"}" \
         skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
@@ -439,16 +463,23 @@ mkdir -p "$RELEASES_CK"   # no current symlink — checkout mode
 
 run_skew_checkout() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES_CK"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$CLONE_CK" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES_CK" \
-        "${@}" \
+        "${extra[@]+"${extra[@]}"}" \
         skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }

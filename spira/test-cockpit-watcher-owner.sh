@@ -195,6 +195,8 @@ UF="$WDIR/view.unhealthy"
 # Backdate so age > SPIRA_NOTIFY_AGE=0 immediately.
 printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$UF"
 
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$RUN" SPIRA_INSTANCE=test \
+    SPIRA_WATCHERS="$MAN" SPIRA_MAIL="$MAIL" SPIRA_NOTIFY_AGE=0 SPIRA_ACTIONABLE=WAKEME
 run_notify() {
     rm -rf "$MAIL"; mkdir -p "$MAIL"
     rm -f "$WDIR/notify-health.escalated"
@@ -203,15 +205,9 @@ run_notify() {
     env -i \
         HOME="$TMP/home" \
         PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \
-        SPIRA_PATH="$MOCK_BIN" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$RUN" \
-        SPIRA_INSTANCE=test \
-        SPIRA_WATCHERS="$MAN" \
-        SPIRA_MAIL="$MAIL" \
         SPIRA_HOME="$FAKE_HOME" \
-        SPIRA_NOTIFY_AGE=0 \
-        SPIRA_ACTIONABLE=WAKEME \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$WATCHD" notify 2>/dev/null || true
 }
 

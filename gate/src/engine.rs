@@ -217,7 +217,7 @@ impl<'w, W: World> Trial<'w, W> {
         }
         self.s.home_dir = ctx.var("HOME").to_string();
         self.s.release = ctx.var(spira_config::RELEASE_ENV).to_string();
-        self.s.timeout = ctx.var_or("SPIRA_GATE_TIMEOUT", "2700").to_string();
+        self.s.timeout = ctx.var("SPIRA_GATE_TIMEOUT").to_string();
         let repo = PathBuf::from(repo);
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
@@ -427,7 +427,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
 
         // THE VERDICT CACHE.
-        let suites_mode = ctx.var_or("SPIRA_GATE_SUITES", "on").to_string();
+        let suites_mode = ctx.var("SPIRA_GATE_SUITES").to_string();
         // A bead's certification never runs suites-blind: with suites off it still runs the
         // budgeted suites covering what the bead touched, whatever the composition.
         let covered = suites_mode == "off" && !self.s.bead.is_empty();
@@ -454,7 +454,7 @@ impl<'w, W: World> Trial<'w, W> {
         if !self.s.key.is_empty() {
             if let Some(entry) = w.read(&verdict_dir.join(&self.s.key)) {
                 if let Some((when, by)) =
-                    key::cache_fresh(&entry, ctx.var_or("SPIRA_VERDICT_TTL", "0"), w.now())
+                    key::cache_fresh(&entry, ctx.var("SPIRA_VERDICT_TTL"), w.now())
                 {
                     self.s.pass_suites = key::cached_suites(&entry);
                     let hit = v(PASS, "cached", format!(
@@ -468,7 +468,7 @@ impl<'w, W: World> Trial<'w, W> {
             }
         }
 
-        let timeout = ctx.var_or("SPIRA_GATE_TIMEOUT", "2700").to_string();
+        let timeout = ctx.var("SPIRA_GATE_TIMEOUT").to_string();
         let lock_wait: u64 = key::digits(ctx.var("SPIRA_GATE_LOCK_WAIT"))
             .unwrap_or_else(|| key::digits(&timeout).unwrap_or(2700) * 4);
 
@@ -700,7 +700,7 @@ impl<'w, W: World> Trial<'w, W> {
                 ),
                 e("SPIRA_BATCH_MAXPAR", ctx.var("SPIRA_BATCH_MAXPAR")),
                 e("SPIRA_VERDICT_REPEAT_CONSIDERED", repeat),
-                e("SPIRA_GATE_BUDGET", ctx.var_or("SPIRA_GATE_BUDGET", "300")),
+                e("SPIRA_GATE_BUDGET", ctx.var("SPIRA_GATE_BUDGET")),
                 e("SPIRA_RUN", &self.s.run),
                 // The runner's budget split and warm path (testenv DESIGN.md §11): the
                 // operator's knobs reach the trial they tune; unset = the runner's defaults.
@@ -851,13 +851,13 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(NOVERDICT, "queue", format!(
                     "gate: {name}'s suites trial waited {}s for a testenv slot and gave up inside its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: this is the host's queue, not a fault in the branch.\ngate: command: {cmd}\n{out}",
                     parse::queue_secs(&out),
-                    ctx.var_or("SPIRA_GATE_BUDGET", "300")));
+                    ctx.var("SPIRA_GATE_BUDGET")));
             }
             if let Some(r) = parse::testenv_fault_reason(&out).filter(|r| r.starts_with("deadline-")) {
                 let phase = &r["deadline-".len()..];
                 return v(NOVERDICT, "budget", format!(
                     "gate: {name}'s suites trial did not fit its budget — phase `{phase}` was cut at its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: command: {cmd}\n{out}",
-                    ctx.var_or("SPIRA_GATE_BUDGET", "300")));
+                    ctx.var("SPIRA_GATE_BUDGET")));
             }
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s own gate reported a harness fault (exit {NOVERDICT}) — container or install failed.\ngate: command: {cmd}\n{out}"));

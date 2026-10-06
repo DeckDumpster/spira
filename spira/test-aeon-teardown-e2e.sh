@@ -281,7 +281,7 @@ SHIM
 chmod +x "$FA_BIN/claude"
 
 fa_reset; fa_seed sp-pd-1
-export SPIRA_REPO_MAP="$PSD_REPO_MAP"
+tl_config SPIRA_REPO_MAP="$PSD_REPO_MAP"
 fa_run_aeon >/dev/null
 want "error message is logged (not swallowed)"    "land ref cannot be resolved" "$(fa_out)"
 want "ledger status is pre-session"               "status=pre-session"          "$(fa_ledger_line sp-pd-1)"
@@ -303,7 +303,7 @@ is   "two pre-session entries in the ledger" "2" "$_count"
 # this row proves.
 
 # RESTORE the shared repo-map — every row after this one uses FA_REPO again.
-export SPIRA_REPO_MAP="$FA_REPO_MAP"
+tl_config SPIRA_REPO_MAP="$FA_REPO_MAP"
 
 # ==========================================================================================
 echo
@@ -449,11 +449,11 @@ trap '[ -n "$OW_SERVE_PID" ] && kill "$OW_SERVE_PID" >/dev/null 2>&1; lcfix_down
 PATH="${PATH//"$FA_TMP/lcm:"/}"; export PATH
 lcfix_up || bail "could not build a lifecycle fixture"
 OW_SOCK="$FA_TMP/lc.sock"
-SPIRA_LC_SOCKET="$OW_SOCK" spira-lc serve "$OW_SOCK" > "$FA_TMP/serve.log" 2>&1 &
+tl_config SPIRA_LC_SOCKET="$OW_SOCK"
+spira-lc serve "$OW_SOCK" > "$FA_TMP/serve.log" 2>&1 &
 OW_SERVE_PID=$!
 for _ in $(seq 1 50); do [ -S "$OW_SOCK" ] && break; sleep 0.1; done
 [ -S "$OW_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$FA_TMP/serve.log")"
-export SPIRA_LC_SOCKET="$OW_SOCK"
 aeon_fixture_agent "$FA_BIN/claude"   # re-capture PATH: the model reaches `work`, not the stand-in
 
 cat > "$FA_BIN/claude" <<'SHIM'
@@ -531,7 +531,8 @@ ow_mail2="$(grep -l '^Subject: rotate the fixture deploy key' "$SPIRA_MAIL"/oper
 is   "the classed question reached the operator" "yes" "$([ -n "$ow_mail2" ] && echo yes || echo no)"
 ow_ask="$([ -n "$ow_mail2" ] && hdr_of "$ow_mail2" X-Spira-Bead)"
 want "its ask bead carries the work bead's label" "work-bead:sp-ow2" "$(fa_labels "$ow_ask")"
-COCKPIT_DB="$SPIRA_DB" resolve "$ow_ask" "moot: the fixture's key never needed rotating" > "$FA_TMP/resolve.out" 2>&1
+tl_config COCKPIT_DB="$SPIRA_DB"
+resolve "$ow_ask" "moot: the fixture's key never needed rotating" > "$FA_TMP/resolve.out" 2>&1
 is   "resolve closed the ask bead" "0" "$?"
 want "resolve says it withdrew the hold" "withdrew the ask hold on sp-ow2" "$(cat "$FA_TMP/resolve.out")"
 is   "the row: READY with no hold" "READY -" "$(ow_row sp-ow2)"

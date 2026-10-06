@@ -85,19 +85,16 @@ RUN="$TMP/elsewhere/run"; mkdir -p "$RUN/watchd"
 MANIFEST="$TMP/elsewhere/watchers"
 MAIL_DIR="$TMP/elsewhere/mail"
 mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierge/tmp"
-CONF="$TMP/spira.conf"
-cat > "$CONF" <<EOF
-SPIRA_ID_PREFIX = sp
 # THE FIXTURE DECLARES ITSELF IN FORCE. The hook refuses to print from a harness that is not
 # the one systemd runs, so a clone that left SPIRA_PROD at its derived default would be silent
 # here and every assertion below would pass on an empty string.
-SPIRA_PROD = $CLONE/spira
-SPIRA_RUN = $RUN
-SPIRA_WATCHERS = $MANIFEST
-SPIRA_CLIENT_SETTINGS = $TMP/elsewhere/settings.json
-SPIRA_MAIL = $MAIL_DIR
-SPIRA_MAIL_SESSION_MAILBOX = concierge
-EOF
+#
+# conf.sh no longer reads a legacy spira.conf at all (per Ryan 2026-10-05, the
+# one-source-of-config law — "no legacy spira.conf, no conversion"), so these are declared
+# through tl_config/SPIRA_TOML instead of a hand-written $TMP/spira.conf.
+tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$CLONE/spira" SPIRA_RUN="$RUN" \
+    SPIRA_WATCHERS="$MANIFEST" SPIRA_CLIENT_SETTINGS="$TMP/elsewhere/settings.json" \
+    SPIRA_MAIL="$MAIL_DIR" SPIRA_MAIL_SESSION_MAILBOX=concierge
 
 cat > "$MANIFEST" <<'EOF'
 answers|daemon|/bin/sleep 3600
@@ -116,10 +113,24 @@ PY
 
 # hook <event> <source> [env...] — run the hook exactly as the client does: the payload on
 # stdin, in a minimal environment that cannot reach the operator's configuration.
+#
+# A registered key passed in [env...] (SPIRA_WATCHERS, SPIRA_RUN, SPIRA_VIEW) is declared
+# through tl_config instead — session.sh's conf.sh resolves these from SPIRA_TOML only, never
+# from this process's environment — and dropped from what is forwarded to env -i; everything
+# else (SPIRA_AEON, SPIRA_CONCIERGE, a PATH override) is forwarded exactly as before.
 hook() {
     local ev="$1" src="$2"; shift 2
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_WATCHERS=*|SPIRA_RUN=*|SPIRA_VIEW=*) tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
+        "${extra[@]+"${extra[@]}"}" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
@@ -186,7 +197,8 @@ is "and prints nothing at all" "" "$out3"
 echo
 echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
-    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 \
+    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
         bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
@@ -288,6 +300,11 @@ ohook() { hook SessionStart startup SPIRA_RUN="$ORUN" SPIRA_WATCHERS="$OMANIFEST
 oout="$(ohook SPIRA_VIEW=/bin/true)"
 has "a configured optional row is a watcher like any other" "$oout" "view"
 
+# Reset SPIRA_VIEW back to "not configured" — tl_config persists, unlike the old per-call
+# env prefix, so the positive control's /bin/true above would otherwise leak into this
+# negative control. Any path that cannot resolve to a real executable represents "not
+# configured" here; the complete fixture's own declared default doesn't exist in this sandbox.
+tl_config SPIRA_VIEW=/nonexistent/cockpit-remote
 offout="$(ohook)"
 has  "an unconfigured one is still named in the table"  "$offout" "view"
 hasnt "no Monitor latch is emitted for it"              "$offout" "tail view"

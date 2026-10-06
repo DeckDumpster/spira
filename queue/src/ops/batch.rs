@@ -155,7 +155,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         body.push_str(&format!(" Reason: {reason}"));
     }
     body.push_str(&format!("\nSurvivors returned to CERTIFIED: {surv}"));
-    w.lib.notify(&c.r.name, &format!("{id} ejected (queue.sh eject)"), &body);
+    w.lib.notify(&c.s.mailbox, &c.r.name, &format!("{id} ejected (queue.sh eject)"), &body);
     w.out(format!("queue.sh eject: ejected {id} from {} batch", c.r.name));
     OK
 }
@@ -280,7 +280,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
         &format!("abandoned PR {pr} for {} (actor={actor})", c.r.name),
         &format!("members={audit} reason={reason_clean}"),
     );
-    w.lib.notify(&c.r.name, "batch abandoned (queue.sh abandon)", &format!("PR {pr} abandoned by {actor}. Reason: {reason_clean}\nMembers: {audit}"));
+    w.lib.notify(&c.s.mailbox, &c.r.name, "batch abandoned (queue.sh abandon)", &format!("PR {pr} abandoned by {actor}. Reason: {reason_clean}\nMembers: {audit}"));
     w.out(format!("queue.sh abandon: PR {pr} closed, batch abandoned for {}", c.r.name));
     OK
 }
@@ -349,7 +349,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             acc.push_str(&format!("{i} {t} {e}\n"));
             acc
         });
-        cands = w.lib.sort_rows(&path, &base_sha, &prio, &rows);
+        cands = w.lib.sort_rows(&c.s.express_label, &path, &base_sha, &prio, &rows);
     }
 
     // Admission: the member's lifecycle row, read fresh, is still CERTIFIED — waiting for a
@@ -381,7 +381,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             continue;
         }
         let subject = w.lib.land_subject(&id);
-        if w.git.merge_no_ff(&wt, &subject, &tip) {
+        if w.git.merge_no_ff(&wt, &subject, &tip, &c.s.git_name, &c.s.git_email) {
             members.push(Member { id, tip });
         } else {
             w.git.merge_abort(&wt);

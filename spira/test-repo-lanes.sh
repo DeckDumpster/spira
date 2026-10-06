@@ -29,17 +29,12 @@ mkdir -p "$T/run"
 # A MINIMAL ENVIRONMENT with non-default label values where possible, so assertions against
 # defaults are not trivially satisfied by literals in the code
 # (law-gates-run-in-a-clean-environment).
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
-export SPIRA_DB="$T/no-db"
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db"
 # Non-default label values to prove mode expansion reads conf vars, not literals.
-export SPIRA_PLAN_LABEL="plan"
-export SPIRA_INCIDENT_LABEL="incident"
-export SPIRA_GROOMER_LABEL="groom"
-export SPIRA_MAECHEN_LABEL="maechen-sweep"
-export SPIRA_SPIKE_LABEL="spike"
-export SPIRA_CZAR_LABEL="czar-trigger"
+tl_config SPIRA_PLAN_LABEL="plan" SPIRA_INCIDENT_LABEL="incident" SPIRA_GROOMER_LABEL="groom" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SPIKE_LABEL="spike" SPIRA_CZAR_LABEL="czar-trigger"
 
 # A throwaway repo-map. SPIRA_REPO_MAP is set per section.
 MAP="$T/repo-map"
@@ -51,7 +46,7 @@ echo
 echo "criterion 1 — six-column row (no lanes column) admits all lanes"
 # ==========================================================================================
 printf 'alpha | /tmp/alpha | push | origin/main | | true\n' > "$MAP"
-export SPIRA_REPO_MAP="$MAP"
+tl_config SPIRA_REPO_MAP="$MAP"
 
 # POSITIVE CONTROL: the row IS found (repo_field returns something for it).
 is "six-col: path column resolves" "/tmp/alpha" "$(repo_field alpha path)"

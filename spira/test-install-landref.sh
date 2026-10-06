@@ -142,17 +142,16 @@ inst() {
         shift
     done
     [ "${1:-}" = "--" ] && shift
+    tl_config SPIRA_REPO_MAP=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i \
+        SPIRA_TOML="$SPIRA_TOML" \
         "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \
-        SPIRA_REPO_MAP=/nonexistent \
         "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_RUN=$TMP/run" \
         "SPIRA_DB=$TMP/db" \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
         "SPIRA_INSTALL_FORCE=$force" \
         units-install "$@" 2>&1
 }

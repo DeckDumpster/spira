@@ -83,12 +83,12 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 # The logger dir goes first on PATH (conf.sh keeps the caller's PATH first).
 inst() {
     > "$SCTL_LOG"
+    tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" \
+        SPIRA_REPO_MAP=/nonexistent SPIRA_WATCHERS="${SPIRA_WATCHERS:-}"
     SCTL_LOG="$SCTL_LOG" \
-    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
+    PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     "$@" \
     units-install test 2>&1
@@ -103,10 +103,11 @@ WATCHERS="$TMP/watchers"
 printf '# empty\n' > "$WATCHERS"
 
 # Seed DEST via --render so unit files exist before the full install compares.
-rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
-    SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
+tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
+    SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_WATCHERS="$WATCHERS"
+rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
     units-install test --render 2>&1)"
 render_rc=$?
 if [ "$render_rc" != 0 ]; then
@@ -163,10 +164,11 @@ echo "WATCHER INSTALL — manifest row installs spira-watch-testview-test.servic
 
 printf 'testview|daemon|/bin/true\n' > "$WATCHERS"
 
-wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
-    SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
+tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
+    SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_WATCHERS="$WATCHERS"
+wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
     units-install test --render 2>&1)"
 current_unit=""
 while IFS= read -r line; do

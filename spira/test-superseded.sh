@@ -60,18 +60,16 @@ import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
 
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
+    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
         landing-pass land 2>&1
 }
 
 sending() {
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
         command sending 2>&1
 }
 
@@ -240,8 +238,7 @@ seed
 superseded_branch sp-drysup conflict.txt "dry run test"
 advance_base conflict.txt "base content for dry run"
 git -C "$REPO" fetch -q origin
-out="$(SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
+out="$(SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
     command sending --dry-run 2>&1)"
 want "dry-run names the superseded branch" "WOULD  sp-drysup" "$out"
 want "and mentions the reason"             "superseded" "$out"

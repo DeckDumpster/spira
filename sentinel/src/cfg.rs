@@ -1,5 +1,8 @@
-//! Configuration: the context probe's answer (DESIGN.md §6, S0) turned into typed values.
-//! conf.sh resolves every key through spira-config; this module never reads spira.toml.
+//! Configuration: the context probe's answer (DESIGN.md §6, S0) turned into typed values,
+//! plus every REGISTERED key (`spira/conf.d/`) `Cfg` needs (`Declared`, resolved from
+//! `$SPIRA_TOML` via `spira_config::process::cfg`/`cfg_parse` — one source of config, per
+//! Ryan 2026-10-05). `Cfg::from_context` itself never calls `cfg()`; it only combines a
+//! `Context` (identity/non-registered knobs) with an already-resolved `Declared`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -162,6 +165,133 @@ impl Context {
     }
 }
 
+/// Every REGISTERED config key (`spira/conf.d/`) `Cfg` needs, resolved by the caller —
+/// `Declared::resolve` (production: `spira_config::process::cfg`/`cfg_parse`, called once
+/// by main.rs) or a literal test fixture (`Declared::test_default`, `#[cfg(test)]` below).
+/// `Cfg::from_context` only ever reads these off `Declared`, never off `Context` and never
+/// off `cfg()` itself — THE ONE DOOR to config is the caller's business, not pure
+/// construction logic's, so `from_context`'s own tests stay independent of
+/// `spira_config::process::cfg`'s process-wide, once-per-process cache (one source of
+/// config, per Ryan 2026-10-05).
+#[derive(Debug, Clone)]
+pub struct Declared {
+    pub run: PathBuf,
+    pub db: String,
+    pub bd: String,
+    pub scope: String,
+    pub ask: String,
+    pub no_loop: String,
+    pub incident_label: String,
+    pub queue_wait: String,
+    pub open_children: String,
+    pub submitted: String,
+    pub work_types: Vec<String>,
+    pub reclaim_grace: i64,
+    pub c5_max_file: u32,
+    pub c5_max_resolve: u32,
+    pub land_maxsec: String,
+    pub max_aeons: Option<i64>,
+    pub max_live_aeons: Option<i64>,
+    pub lanes_max_live: Option<i64>,
+    pub queue_throttle_override: String,
+    pub express_label: String,
+    pub summon_lock_wait: u64,
+    /// `SPIRA_LANES`, for CHECK 7's own log line (summon.rs) — display only.
+    pub lanes: String,
+    /// Forwarded verbatim to every spawned aeon's `--setenv` (dispatch.rs/summon.rs).
+    pub repo_map: String,
+    /// Forwarded verbatim; empty means "the system gh" (dispatch.rs).
+    pub gh: String,
+    /// Forwarded verbatim (dispatch.rs's `--setenv`); sentinel itself never parses it.
+    pub batch_maxpar: String,
+}
+
+impl Declared {
+    /// THE ONE DOOR, for every registered key `Cfg` needs: `spira_config::process::cfg`/
+    /// `cfg_parse`, resolved from `$SPIRA_TOML`. No default, no fallback — a key that does
+    /// not resolve is a refusal naming it, propagated to the caller (main.rs) rather than
+    /// guessed at.
+    pub fn resolve() -> Result<Declared, String> {
+        let opt_i64 = |k: &str| -> Result<Option<i64>, String> {
+            let v = spira_config::process::cfg(k)?;
+            if v.trim().is_empty() {
+                Ok(None)
+            } else {
+                v.trim()
+                    .parse::<i64>()
+                    .map(Some)
+                    .map_err(|e| format!("{k} = {v:?} in spira.toml does not parse: {e}"))
+            }
+        };
+        Ok(Declared {
+            run: PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?),
+            db: spira_config::process::cfg("SPIRA_DB")?,
+            bd: spira_config::process::cfg("SPIRA_BD")?,
+            scope: spira_config::process::cfg("SPIRA_SCOPE_LABEL")?,
+            ask: spira_config::process::cfg("SPIRA_ASK_LABEL")?,
+            no_loop: spira_config::process::cfg("SPIRA_NO_LOOP_LABEL")?,
+            incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
+            queue_wait: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
+            open_children: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
+            submitted: spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?,
+            work_types: spira_config::process::cfg("SPIRA_WORK_CLOSE_TYPES")?
+                .split_whitespace()
+                .map(str::to_string)
+                .collect(),
+            reclaim_grace: spira_config::process::cfg_parse::<i64>("SPIRA_RECLAIM_GRACE_SECS")?,
+            c5_max_file: spira_config::process::cfg_parse::<u32>("SPIRA_CHECK5_MAX_FILE")?,
+            c5_max_resolve: spira_config::process::cfg_parse::<u32>("SPIRA_CHECK5_MAX_RESOLVE")?,
+            land_maxsec: spira_config::process::cfg("SPIRA_LAND_MAXSEC")?,
+            max_aeons: opt_i64("SPIRA_MAX_AEONS")?,
+            max_live_aeons: opt_i64("SPIRA_MAX_LIVE_AEONS")?,
+            lanes_max_live: opt_i64("SPIRA_LANES_MAX_LIVE")?,
+            queue_throttle_override: spira_config::process::cfg("SPIRA_QUEUE_THROTTLE_OVERRIDE")?,
+            express_label: spira_config::process::cfg("SPIRA_EXPRESS_LABEL")?,
+            summon_lock_wait: spira_config::process::cfg_parse::<u64>("SPIRA_SUMMON_LOCK_WAIT")?,
+            lanes: spira_config::process::cfg("SPIRA_LANES")?,
+            repo_map: spira_config::process::cfg("SPIRA_REPO_MAP")?,
+            gh: spira_config::process::cfg("SPIRA_GH")?,
+            batch_maxpar: spira_config::process::cfg("SPIRA_BATCH_MAXPAR")?,
+        })
+    }
+}
+
+#[cfg(test)]
+impl Declared {
+    /// Test-only literal fixture — NEVER calls `cfg()`, so building one never touches
+    /// `spira_config::process::cfg`'s process-wide cache. A test overrides just the
+    /// field(s) it cares about: `Declared { scope: "x".into(), ..Declared::test_default() }`.
+    pub fn test_default() -> Declared {
+        Declared {
+            run: PathBuf::from("/tmp"),
+            db: String::new(),
+            bd: "bd".into(),
+            scope: String::new(),
+            ask: String::new(),
+            no_loop: String::new(),
+            incident_label: "incident".into(),
+            queue_wait: String::new(),
+            open_children: String::new(),
+            submitted: String::new(),
+            work_types: vec!["task".into(), "bug".into(), "feature".into()],
+            reclaim_grace: 10800,
+            c5_max_file: 5,
+            c5_max_resolve: 50,
+            land_maxsec: "5400".into(),
+            max_aeons: None,
+            max_live_aeons: None,
+            lanes_max_live: None,
+            queue_throttle_override: String::new(),
+            express_label: "express".into(),
+            summon_lock_wait: 30,
+            lanes: "ops groomer qa maechen czar warden".into(),
+            repo_map: String::new(),
+            gh: String::new(),
+            batch_maxpar: String::new(),
+        }
+    }
+}
+
 /// Every knob the sentinel reads, with sentinel.sh's defaults.
 #[derive(Debug, Clone)]
 pub struct Cfg {
@@ -256,50 +386,52 @@ pub struct Cfg {
     pub lane_round_robin: PathBuf,
     /// `$SPIRA_RUN/summon.lock`: the one lock every `ck7_summon_pass` caller serializes on.
     pub summon_lock: PathBuf,
+    /// `SPIRA_LANES` as declared — summon.rs's own CHECK 7 lane log line. From `Declared`,
+    /// never read ad hoc off `Context` (that used to default to "none" when unset; the key
+    /// itself always resolves now — `spira/conf.d/SPIRA_LANES` declares the default).
+    pub lanes_declared: String,
     /// For the systemd-run --setenv lists: the raw values, "" when unset.
     pub raw: BTreeMap<String, String>,
 }
 
 impl Cfg {
-    pub fn from_context(c: &Context, home: &Path) -> Cfg {
+    /// `d` carries every REGISTERED key's declared value (`Declared::resolve` in
+    /// production, a literal fixture in tests — never read here). Everything else below
+    /// is genuinely NOT config: per-invocation identity (`SPIRA_HOME`, `SPIRA_REPO`...),
+    /// knobs with no `spira/conf.d/` entry yet, or sentinel.sh's own bash-shaped defaults
+    /// for those — left exactly as they were; migrating them is a separate, later pass.
+    pub fn from_context(c: &Context, home: &Path, d: Declared) -> Cfg {
         let s = |k: &str| c.get(k).map(str::to_string).unwrap_or_default();
-        // `${X:-d}`: empty means default.
-        let or = |k: &str, d: &str| c.get(k).filter(|v| !v.is_empty()).unwrap_or(d).to_string();
-        let num = |k: &str, d: i64| c.get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d);
-        // `[ -n "${X:-}" ]`: empty or unset is None, never a parsed zero.
-        let opt_num = |k: &str| c.get(k).filter(|v| !v.is_empty()).and_then(|v| v.trim().parse::<i64>().ok());
-        let run = PathBuf::from(or("SPIRA_RUN", "/tmp"));
+        // `${X:-d}`: empty means default. NOT used below for anything `d` already carries.
+        let or = |k: &str, dflt: &str| c.get(k).filter(|v| !v.is_empty()).unwrap_or(dflt).to_string();
+        let num = |k: &str, dflt: i64| c.get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(dflt);
+        let run = d.run.clone();
         let home = c
             .get("SPIRA_HOME")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.to_path_buf());
-        let dir = |k: &str, d: &str| {
+        let dir = |k: &str, dflt: &str| {
             c.get(k)
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
-                .unwrap_or_else(|| run.join(d))
+                .unwrap_or_else(|| run.join(dflt))
         };
         let mut raw = BTreeMap::new();
-        for k in [
-            "PATH",
-            "SPIRA_RELEASE",
-            "HOME",
-            "SPIRA_HOME",
-            "SPIRA_RUN",
-            "SPIRA_DB",
-            "SPIRA_REPO",
-            "SPIRA_REPO_MAP",
-            "SPIRA_BD",
-            "SPIRA_GH",
-            "SPIRA_ASK_LABEL",
-            "SPIRA_SCOPE_LABEL",
-            "SPIRA_WORK_CLOSE_TYPES",
-            "SPIRA_BATCH_MAXPAR",
-            "SPIRA_SKIP_RECLAIM",
-        ] {
+        // Genuinely non-config identity/passthrough — still read off Context, unchanged.
+        for k in ["PATH", "SPIRA_RELEASE", "HOME", "SPIRA_HOME", "SPIRA_REPO", "SPIRA_SKIP_RECLAIM"] {
             raw.insert(k.to_string(), s(k));
         }
+        // Registered keys forwarded to a spawned aeon's `--setenv`: from `d`, not Context.
+        raw.insert("SPIRA_RUN".into(), run.to_string_lossy().into_owned());
+        raw.insert("SPIRA_DB".into(), d.db.clone());
+        raw.insert("SPIRA_REPO_MAP".into(), d.repo_map.clone());
+        raw.insert("SPIRA_BD".into(), d.bd.clone());
+        raw.insert("SPIRA_GH".into(), d.gh.clone());
+        raw.insert("SPIRA_ASK_LABEL".into(), d.ask.clone());
+        raw.insert("SPIRA_SCOPE_LABEL".into(), d.scope.clone());
+        raw.insert("SPIRA_WORK_CLOSE_TYPES".into(), d.work_types.join(" "));
+        raw.insert("SPIRA_BATCH_MAXPAR".into(), d.batch_maxpar.clone());
         let home_repo = c
             .get("SPIRA_HOME_REPO_RESOLVED")
             .filter(|v| !v.is_empty())
@@ -316,8 +448,8 @@ impl Cfg {
             });
         Cfg {
             run: run.clone(),
-            db: s("SPIRA_DB"),
-            bd: or("SPIRA_BD", "bd"),
+            db: d.db,
+            bd: d.bd,
             bd_timeout: num("BD_TIMEOUT", 180).max(0) as u64,
             bd_tries: num("SPIRA_BDQ_CONN_RETRIES", 2).max(1) as u32,
             bd_fixture: c
@@ -325,24 +457,21 @@ impl Cfg {
                 .filter(|v| !v.is_empty())
                 .map(str::to_string),
             land_escalate_every: num("SPIRA_LAND_ESCALATE_EVERY", 3600).max(0),
-            scope: s("SPIRA_SCOPE_LABEL"),
-            ask: s("SPIRA_ASK_LABEL"),
-            no_loop: s("SPIRA_NO_LOOP_LABEL"),
-            incident_label: or("SPIRA_INCIDENT_LABEL", "incident"),
-            queue_wait: s("SPIRA_QUEUE_WAIT_LABEL"),
-            open_children: s("SPIRA_OPEN_CHILDREN_LABEL"),
-            submitted: s("SPIRA_SUBMITTED_LABEL"),
-            work_types: or("SPIRA_WORK_CLOSE_TYPES", "task bug feature")
-                .split_whitespace()
-                .map(str::to_string)
-                .collect(),
+            scope: d.scope,
+            ask: d.ask,
+            no_loop: d.no_loop,
+            incident_label: d.incident_label,
+            queue_wait: d.queue_wait,
+            open_children: d.open_children,
+            submitted: d.submitted,
+            work_types: d.work_types,
             poison_at: num("SPIRA_POISON_AT", 3).max(0) as u32,
             requeue_at: num("SPIRA_REQUEUE_AT", 5).max(0) as u32,
             reclaim_at: num("SPIRA_RECLAIM_AT", 5).max(0) as u32,
-            reclaim_grace: num("SPIRA_RECLAIM_GRACE_SECS", 10800),
+            reclaim_grace: d.reclaim_grace,
             inference_every: num("SPIRA_INFERENCE_EVERY", 3600),
-            c5_max_file: num("SPIRA_CHECK5_MAX_FILE", 5).max(0) as u32,
-            c5_max_resolve: num("SPIRA_CHECK5_MAX_RESOLVE", 50).max(0) as u32,
+            c5_max_file: d.c5_max_file,
+            c5_max_resolve: d.c5_max_resolve,
             c5_budget: num("SPIRA_CHECK5_BUDGET_SECS", 60),
             audit_unit: or("SPIRA_AUDIT_UNIT", "spira-audit"),
             audit_maxsec: or("SPIRA_AUDIT_MAXSEC", "1800"),
@@ -353,7 +482,7 @@ impl Cfg {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| run.join("audit.progress")),
             land_unit: or("SPIRA_LAND_UNIT", "spira-landing"),
-            land_maxsec: or("SPIRA_LAND_MAXSEC", "3600"),
+            land_maxsec: d.land_maxsec,
             land_stale: num("SPIRA_LAND_STALE", 1800),
             launch: or("SPIRA_LAUNCH", "systemd-run"),
             systemctl: or("SPIRA_SYSTEMCTL", "systemctl"),
@@ -383,20 +512,21 @@ impl Cfg {
             // literal-ok: conf.sh's default before sp-i2m7y retired the key
             capacity_pause: dir("SPIRA_CAPACITY_PAUSE", "capacity-pause"),
             drain_ttl: num("SPIRA_DRAIN_TTL", 1800),
-            max_aeons: opt_num("SPIRA_MAX_AEONS"),
-            max_live_aeons: opt_num("SPIRA_MAX_LIVE_AEONS"),
-            lanes_max_live: opt_num("SPIRA_LANES_MAX_LIVE"),
-            queue_throttle_override: s("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
+            max_aeons: d.max_aeons,
+            max_live_aeons: d.max_live_aeons,
+            lanes_max_live: d.lanes_max_live,
+            queue_throttle_override: d.queue_throttle_override,
             throttle_stamp: c
                 .get("SPIRA_THROTTLE_STAMP")
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| run.join("queue-throttled")),
-            express_label: or("SPIRA_EXPRESS_LABEL", "express"),
+            express_label: d.express_label,
             pass_budget_secs: num("SPIRA_SENTINEL_PASS_BUDGET_SECS", 90),
-            summon_lock_wait: num("SPIRA_SUMMON_LOCK_WAIT", 30).max(0) as u64,
+            summon_lock_wait: d.summon_lock_wait,
             lane_round_robin: run.join("lane-round-robin"),
             summon_lock: run.join("summon.lock"),
+            lanes_declared: d.lanes,
             raw,
             home,
         }
@@ -500,28 +630,38 @@ pub mod tests {
     }
 
     #[test]
-    fn defaults_are_sentinel_sh_defaults() {
-        let c = Context::parse(&probe_bytes(
-            &[("SPIRA_RUN", "/r"), ("SPIRA_SCOPE_LABEL", "")],
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-        ))
-        .unwrap();
-        let k = Cfg::from_context(&c, Path::new("/h"));
+    fn non_registered_fields_keep_sentinel_sh_defaults() {
+        // Only identity/non-registered fields are under test here; registered fields
+        // (scope, work_types, land_maxsec, ...) come from `Declared`, exercised by
+        // `declared_fields_pass_through_unchanged` below instead.
+        let c = Context::parse(&probe_bytes(&[], &[], &[], &[], &[], None)).unwrap();
+        let d = Declared { run: PathBuf::from("/r"), ..Declared::test_default() };
+        let k = Cfg::from_context(&c, Path::new("/h"), d);
         assert_eq!((k.poison_at, k.requeue_at, k.reclaim_at), (3, 5, 5));
-        assert_eq!(k.work_types, vec!["task", "bug", "feature"]);
         assert_eq!(k.audit_unit, "spira-audit");
-        assert_eq!(k.land_maxsec, "3600");
         assert_eq!(k.audit_mailbox, PathBuf::from("/r/audit.progress"));
         assert_eq!(k.poison_asked, PathBuf::from("/r/poison-asked"));
-        assert_eq!(k.plan_labels(), vec!["plan"]);
         assert_eq!(k.home, PathBuf::from("/h"));
         assert_eq!(k.home_repo, "h");
         assert_eq!(k.incident_sh, PathBuf::from("incident.sh"));
         assert_eq!((k.lc_bin.as_str(), k.claim_bin.as_str(), k.strand_bin.as_str(), k.landing_bin.as_str(), k.tsd_bin.as_str(), k.sending_bin.as_str()), ("spira-lc", "spira-claim", "strand", "landing-pass", "tsd-write", "sending"));
         assert_eq!(k.pass_target, 60);
+    }
+
+    #[test]
+    fn declared_fields_pass_through_unchanged() {
+        // Registered keys: `Cfg::from_context` must take `Declared`'s values as given,
+        // with no Rust-side default or fallback of its own (one source of config).
+        let c = Context::parse(&probe_bytes(&[], &[], &[], &[], &[], None)).unwrap();
+        let k = Cfg::from_context(&c, Path::new("/h"), Declared::test_default());
+        assert_eq!(k.work_types, vec!["task", "bug", "feature"]);
+        assert_eq!(k.land_maxsec, "5400");
+        assert_eq!(k.plan_labels(), vec!["plan"]);
+        assert_eq!(k.lanes_declared, "ops groomer qa maechen czar warden");
+        assert_eq!(k.reclaim_grace, 10800);
+        assert_eq!((k.c5_max_file, k.c5_max_resolve), (5, 50));
+        assert_eq!(k.summon_lock_wait, 30);
+        assert_eq!((k.max_aeons, k.max_live_aeons, k.lanes_max_live), (None, None, None));
+        assert_eq!(k.raw.get("SPIRA_ASK_LABEL").map(String::as_str), Some(""));
     }
 }

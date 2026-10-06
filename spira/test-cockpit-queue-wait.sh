@@ -50,15 +50,15 @@ lc_mirror_bd "$TMP/lc"
 # first on PATH.
 run_core() {
     local bd_path="$1" wait_label="${2:-spira-queue-waiting}"
-    env -i PATH="$TMP/lc:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
+    tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_QUEUE_WAIT_LABEL="$wait_label" \
-        SPIRA_BD="$bd_path" \
+        SPIRA_BD="$bd_path"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$TMP/lc:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_DB="$TMP/nodb" \
         cockpit-collect probe core 2>/dev/null
 }
 

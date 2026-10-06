@@ -4,8 +4,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Strips the leading UTC timestamp token the same way the bash's `${line#* }` did: up to
@@ -37,71 +36,22 @@ fn dedup_key(body: &str) -> String {
     oldest_re.replace_all(&step1, "oldest Ns").into_owned()
 }
 
-/// Where THIS BINARY's own `conf.sh` lives — found by searching upward from the binary's
-/// own directory for an ancestor whose `spira/conf.sh` exists. Same approach as `watchd`'s
-/// `home_dir`, for the same two reasons: never `$SPIRA_HOME` (a caller's own config input,
-/// which a fixture may point elsewhere for reasons that have nothing to do with where this
-/// binary's own conf.sh lives — the bash's `inbox-triage.sh` never read it either, only its
-/// own `BASH_SOURCE[0]`), and never a fixed parent count (a release's
-/// `<release>/bin/inbox-triage` and a testenv/aeon-profile build's
-/// `<checkout>/target/aeon/inbox-triage` put `spira/` a different number of levels up).
-fn home_dir() -> PathBuf {
-    std::env::current_exe().ok().and_then(|p| find_spira_dir(&p, |d| d.join("conf.sh").is_file())).unwrap_or_else(|| PathBuf::from("spira"))
-}
-
-fn find_spira_dir(exe: &Path, exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    let mut dir = exe.parent()?;
-    loop {
-        let candidate = dir.join("spira");
-        if exists(&candidate) {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-}
-
-const SCRIPT: &str = r#"set -uo pipefail
-HERE="$1"; shift
-. "$HERE/conf.sh" >/dev/null 2>&1 || exit 97
-for v in "$@"; do printf '%s=%s\0' "$v" "${!v-}"; done
-exit 0
-"#;
-
 struct Config {
     inbox: String,
     dedup: u64,
 }
 
-fn load_config(home: &Path) -> Result<Config, String> {
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(SCRIPT)
-        .arg("inbox-triage-context")
-        .arg(home)
-        .args(["SPIRA_CONCIERGE_INBOX", "SPIRA_CONCIERGE_INBOX_DEDUP"])
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
-        // bin/+spira/ on the CHILD's PATH, never only inherited — a bare shell with no
-        // launcher (`env -i HOME=$HOME PATH=/usr/bin:/bin … bin/inbox-triage`, exactly how
-        // the SessionStart compact hook arms this Monitor) otherwise leaves `command -v
-        // spira-config` unresolved inside conf.sh and this seam dies at "exit 97" before it
-        // reads a single config value.
-        .envs(spira_config::release_env::child_path_env_for_process())
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|e| format!("cannot run bash: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("inbox-triage: conf.sh could not be sourced from {} (exit {})", home.display(), out.status.code().unwrap_or(-1)));
-    }
-    let mut kv: HashMap<String, String> = HashMap::new();
-    for rec in String::from_utf8_lossy(&out.stdout).split('\0') {
-        if let Some((k, v)) = rec.split_once('=') {
-            kv.insert(k.to_string(), v.to_string());
-        }
-    }
+/// `SPIRA_CONCIERGE_INBOX`/`SPIRA_CONCIERGE_INBOX_DEDUP` are registered keys
+/// (`spira/conf.d`) — the one source of config (per Ryan 2026-10-05), read through
+/// `spira_config::process::cfg`/`cfg_parse` (resolved from `$SPIRA_TOML`, a plain file
+/// parse — no bash child, so the "exit 97, conf.sh could not be sourced under a bare
+/// shell" scar this crate used to carry cannot recur: there is no longer a subprocess for
+/// a stripped `PATH` to break). A key that fails to resolve is a refusal naming it, never
+/// a default.
+fn load_config() -> Result<Config, String> {
     Ok(Config {
-        inbox: kv.remove("SPIRA_CONCIERGE_INBOX").unwrap_or_default(),
-        dedup: kv.remove("SPIRA_CONCIERGE_INBOX_DEDUP").and_then(|s| s.parse().ok()).unwrap_or(600),
+        inbox: spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?,
+        dedup: spira_config::process::cfg_parse("SPIRA_CONCIERGE_INBOX_DEDUP")?,
     })
 }
 
@@ -110,10 +60,10 @@ fn now_secs() -> u64 {
 }
 
 fn main() {
-    let cfg = match load_config(&home_dir()) {
+    let cfg = match load_config() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("inbox-triage: {e}");
             std::process::exit(1);
         }
     };
@@ -185,32 +135,6 @@ fn read_new_lines(file: &mut File, offset: u64) -> std::io::Result<(u64, Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
-
-    fn has(dirs: &[&str]) -> impl Fn(&Path) -> bool {
-        let set: HashSet<PathBuf> = dirs.iter().map(PathBuf::from).collect();
-        move |p: &Path| set.contains(p)
-    }
-
-    #[test]
-    fn a_release_layout_finds_spira_one_level_above_bin() {
-        let exe = Path::new("/opt/spira/spira-releases/abc123/bin/inbox-triage");
-        let exists = has(&["/opt/spira/spira-releases/abc123/spira"]);
-        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/opt/spira/spira-releases/abc123/spira")));
-    }
-
-    #[test]
-    fn a_testenv_aeon_profile_build_finds_spira_two_levels_above_target_aeon() {
-        let exe = Path::new("/workspace/target/aeon/inbox-triage");
-        let exists = has(&["/workspace/spira"]);
-        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/workspace/spira")));
-    }
-
-    #[test]
-    fn no_ancestor_with_a_spira_dir_is_none() {
-        let exe = Path::new("/a/b/c/inbox-triage");
-        assert_eq!(find_spira_dir(exe, |_| false), None);
-    }
 
     #[test]
     fn strips_the_leading_timestamp_token() {

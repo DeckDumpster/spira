@@ -35,26 +35,24 @@ BASE_PATH="$PATH"
 # Run just the reachable_keys probe against a given mock bd binary.
 run_reachable() {
     local bd_path="$1"
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+        SPIRA_FAYTHS=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_SCOPE_LABEL=spira SPIRA_BD="$bd_path"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
-        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SCOPE_LABEL=spira \
-        SPIRA_BD="$bd_path" \
         cockpit-collect probe reachable 2>/dev/null
 }
 
 # Like run_reachable but passes SPIRA_SCOPE_LABEL so the scope filter is active.
 run_reachable_scoped() {
     local bd_path="$1" scope="$2"
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+        SPIRA_FAYTHS=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_SCOPE_LABEL="$scope" SPIRA_BD="$bd_path"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
-        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SCOPE_LABEL="$scope" \
-        SPIRA_BD="$bd_path" \
         cockpit-collect probe reachable 2>/dev/null
 }
 
@@ -184,7 +182,8 @@ touch "$BUDGET"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_out="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
+tl_config SPIRA_RUN="$TMP"
+pane_out="$(health once 2>/dev/null)"
 echo "--- pane NEXT row (screenshot) ---"
 printf '%s\n' "$pane_out" | grep -i 'NEXT\|ready\|reachable' || true
 echo "---"
@@ -212,7 +211,8 @@ echo "health.sh: K=0 → no stranded clause"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_no_strand="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
+tl_config SPIRA_RUN="$TMP"
+pane_no_strand="$(health once 2>/dev/null)"
 want   "reachable still shown when K=0" "reachable"  "$pane_no_strand"
 nowant "stranded absent when K=0"       "stranded"   "$pane_no_strand"
 
@@ -235,7 +235,8 @@ echo "health.sh: SP_REACHABLE=? renders ? not 0"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_q="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
+tl_config SPIRA_RUN="$TMP"
+pane_q="$(health once 2>/dev/null)"
 want   "? reachable appears in pane" "? reachable" "$pane_q"
 nowant "0 reachable must not appear" "0 reachable" "$pane_q"
 
@@ -288,7 +289,8 @@ is "SP_STRANDED=1 with ask+insight exclusion" "1" \
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_ask="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
+tl_config SPIRA_RUN="$TMP"
+pane_ask="$(health once 2>/dev/null)"
 echo "--- NEXT pane screenshot (ask/insight excluded) ---"
 printf '%s\n' "$pane_ask" | grep -i 'NEXT\|ready\|reachable\|stranded' || true
 echo "---"

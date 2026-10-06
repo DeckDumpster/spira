@@ -66,11 +66,12 @@ TEST_EMAIL="db-ucsl@test.invalid"
 
 export SPIRA_HOME="$HERE"
 export SPIRA_REPO="$REPO"
-export SPIRA_RUN="$RUN"
-export SPIRA_DB="$TMP/nodb"
-export SPIRA_GIT_NAME="$TEST_NAME"
-export SPIRA_GIT_EMAIL="$TEST_EMAIL"
-export SPIRA_REPO_MAP="$TMP/no-map"
+# lib.sh sources conf.sh, and conf.sh resolves every registered key straight from
+# SPIRA_TOML (inherited here — this is the main suite shell, not under env -i), so these
+# have to be declared through tl_config or conf.sh's own resolve would overwrite them
+# right back to the fixture's values the moment lib.sh is sourced below.
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_GIT_NAME="$TEST_NAME" \
+    SPIRA_GIT_EMAIL="$TEST_EMAIL" SPIRA_REPO_MAP="$TMP/no-map"
 export HOME="$EMPTYHOME"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL 2>/dev/null || true
 
@@ -89,7 +90,9 @@ is  "rebased commit carries configured committer" "$TEST_NAME <$TEST_EMAIL>" "$c
 # Leave a clean, explicit environment for the classification cases below — SPIRA_GIT_NAME
 # and SPIRA_GIT_EMAIL are pinned above to prove THIS section's fix; leaking them onward
 # would leave the next section asserting against an environment nothing here declared.
-unset SPIRA_GIT_NAME SPIRA_GIT_EMAIL
+# tl_config persists for the rest of the suite (unlike the old plain `unset`), so the
+# fixture's own declared identity is restored explicitly rather than left un-set.
+tl_config SPIRA_GIT_NAME=spira SPIRA_GIT_EMAIL=spira@spira.invalid
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 cat > "$TMP/repo-map" <<MAP
@@ -116,10 +119,14 @@ drop_branch() {
 # rebase failure reopened for all four. Asserted directly, because the pass can only be
 # steered into two of these and a guard reading a value nothing pins is a guard on a comment.
 # --------------------------------------------------------------------------------------
+# classify()/classify_ext() do NOT run under env -i — they inherit this suite's SPIRA_TOML,
+# so lib.sh's own sourcing of conf.sh resolves every registered key straight from it and
+# would silently overwrite a plain env prefix the instant lib.sh loads. Declared through
+# tl_config once, instead, since the three values below are constant for every call here.
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/repo-map"
 echo
 classify() {
-    SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO="$REPO" \
-    SPIRA_REPO_MAP="$TMP/repo-map" \
+    SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     bash -c '. "$1/lib.sh" >/dev/null 2>&1
              if rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1
              then printf clean; else printf "%s" "${REBASE_FAILURE:-unset}"; fi' \
@@ -143,8 +150,7 @@ drop_branch sp-kindclash
 # so it needs a name that is not "conflict". The fix sets REBASE_FAILURE=rebase-refused and
 # captures git's first stderr line in REBASE_REFUSED_REASON.
 classify_ext() {
-    SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO="$REPO" \
-    SPIRA_REPO_MAP="$TMP/repo-map" \
+    SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     bash -c '. "$1/lib.sh" >/dev/null 2>&1
              rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1
              printf "%s|%s|%s" \
@@ -184,12 +190,17 @@ drop_branch sp-kindconflicts
 rebase_id_classify() {
     local _home; _home="$(mktemp -d)"
     local _out
+    # rebase_branch (lib.sh) execs the compiled `rebase-stale` binary, which resolves its
+    # own config fresh from SPIRA_TOML like any other Spira binary — it never sees this
+    # shell's bash variables, so SPIRA_GIT_NAME/EMAIL (the whole point of this case) have
+    # to be declared via tl_config, with SPIRA_TOML threaded through env -i to reach it.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$_home/nodb" SPIRA_REPO_MAP="$TMP/repo-map" \
+        SPIRA_GIT_NAME=testharness SPIRA_GIT_EMAIL=testharness@test.invalid
     _out="$(env -i \
         HOME="$_home" \
         PATH="$PATH" \
-        SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$_home/nodb" \
-        SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
-        SPIRA_GIT_NAME=testharness SPIRA_GIT_EMAIL=testharness@test.invalid \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
         bash -c '. "$1/lib.sh" >/dev/null 2>&1
                  rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1; _rc=$?
                  _cn="$(git -C "$4" log -1 --format=%cn "$2" 2>/dev/null)"

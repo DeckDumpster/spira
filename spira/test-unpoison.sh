@@ -67,7 +67,7 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
 lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"; mkdir -p "$SPIRA_RUN"
 # The machine is seeded and asserted on below (spira-claim/DESIGN.md §8.7).
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LCPORT"

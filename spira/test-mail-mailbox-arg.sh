@@ -23,10 +23,12 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_ID_PREFIX="sp"
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX"
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
 mkdir -p "$SPIRA_MAIL_KINDS"
 
 run() { mail "$@"; }

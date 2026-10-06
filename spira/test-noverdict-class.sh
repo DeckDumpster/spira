@@ -56,6 +56,7 @@ printf '[]\n' > "$BD_FIXTURE"
 export PATH="$SH:$PATH"
 export SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db.json" \
        SPIRA_BDJSON_FIXTURE="$BD_FIXTURE" BEADS_NO_AUTO_IMPORT=1
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db.json"
 
 noverdict() {   # noverdict <id> <branch> <repo> <reason> <outcome> <gate-output>
     printf '%s' "$6" | landing-pass noverdict "$1" "$2" "$3" "$4" "$5"

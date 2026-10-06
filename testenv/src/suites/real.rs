@@ -570,8 +570,9 @@ mod tests {
         sh(&r, &["add", "-A"]);
         sh(&r, &["commit", "-q", "-m", "base"]);
         fs::write(r.join("dirty.txt"), "untracked").unwrap();
-        let s = Settings::load(&crate::settings::Source { env: &|_: &str| None, config: None }, &r);
-        let real = Real::new(&s, &|_: &str| None);
+        // A literal, not `Settings::load` + `Real::new`: this test only exercises the git
+        // plumbing methods, none of which read any `Real` field.
+        let real = Real { suite_dir: r.to_path_buf(), incident: None, mail: None, path: String::new() };
         let base = real.commit_of(&r, "main").unwrap();
         assert!(real.tree_has(&r, &base, "spira/test-a.sh"));
         assert!(!real.tree_has(&r, &base, "spira/test-z.sh"));
@@ -602,9 +603,10 @@ mod tests {
     fn host_check_reads_one_number_and_renders_absence_as_none() {
         let d = tmp("hc");
         fs::create_dir_all(d.join("spira")).unwrap();
-        let s = Settings::load(&crate::settings::Source { env: &|_: &str| None, config: None }, &d);
         let on_path = d.join("spira").display().to_string();
-        let real = Real::new(&s, &|k: &str| (k == "PATH").then(|| on_path.clone()));
+        // A literal: `count` only reads `path`, which `Real::new` would derive from PATH the
+        // same way this builds it directly.
+        let real = Real { suite_dir: d.join("spira"), incident: None, mail: None, path: on_path };
         assert_eq!(real.count("--count-undeclared"), None, "absent script");
         let hc = d.join("spira/host-check.sh");
         // Written by testkit (no ETXTBSY race, testkit/DESIGN.md), then made NOT executable for

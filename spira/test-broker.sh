@@ -72,17 +72,16 @@ GH_LOG="$T/gh.log"
 
 SPIRA_RUN="$T/run"
 mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_BD="true"
 
 base_env() {
     env -i \
         PATH="$BROKER_DIR:$HERE:/usr/local/bin:/usr/bin:/bin" \
         HOME="$T/home" \
         SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$SPIRA_RUN" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_BROKER_GH="$GH_STUB" \
         SPIRA_BROKER_GH_LOG="$GH_LOG" \
-        SPIRA_BD="true" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@"
 }
 
@@ -105,7 +104,8 @@ is "submit exits 0" "0" "$?"
     || bad "submit writes the intent to inbox/" "no such file"
 
 > "$GH_LOG"
-base_env SPIRA_CZAR_STAGE_DEADLOCK=act broker execute >/dev/null 2>&1
+tl_config SPIRA_CZAR_STAGE_DEADLOCK=act
+base_env broker execute >/dev/null 2>&1
 
 refused_line="$(grep "$intent_id" "$audit" 2>/dev/null || echo "")"
 want "builder+czar-only verb is REFUSED end to end" '"REFUSED"' "$refused_line"
@@ -124,7 +124,8 @@ act_id="$(base_env \
     SPIRA_AEON=czar-1 \
     broker submit run-rerun test-repo/777 \
         --reason "act rerun" --bead sp-act --class deadlock 2>&1)"
-base_env SPIRA_CZAR_STAGE_DEADLOCK=act broker execute >/dev/null 2>&1
+tl_config SPIRA_CZAR_STAGE_DEADLOCK=act
+base_env broker execute >/dev/null 2>&1
 
 act_line="$(grep "$act_id" "$audit" 2>/dev/null || echo "")"
 want "czar+act run-rerun → DONE end to end" '"DONE"' "$act_line"

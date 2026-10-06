@@ -63,6 +63,7 @@
 //!
 //! Reading lives in `store`; this module only defines the vocabulary and the writes.
 
+use crate::store::Cfg;
 use std::process::Command;
 
 /// The actor name this session writes comments under.
@@ -72,16 +73,6 @@ use std::process::Command;
 /// announced the agent's own comment back to it as an operator reply, and the pane could not have
 /// shown whether a thread was waiting on them or on me.
 pub const ME: &str = "claude";
-
-/// The actor name the OPERATOR's own comments are recorded under, from `SPIRA_OPERATOR_ACTOR`.
-///
-/// The pane and the agent both write into the same thread, so the two have to be tellable
-/// apart or the turn marker claims it is the operator's move on a reply the agent just wrote.
-/// A literal here would be one installation's name, and every other installation would see
-/// its own replies as somebody else's.
-pub fn operator_actor() -> String {
-    std::env::var("SPIRA_OPERATOR_ACTOR").unwrap_or_else(|_| "operator".to_string())
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
@@ -284,17 +275,17 @@ pub struct Item {
     pub labels: Vec<String>,
 }
 
-fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
-    run_as(cmd, args, None)
+fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<(), String> {
+    run_as(cmd, args, None, cfg)
 }
 
 /// `actor` sets BEADS_ACTOR, which is the name a comment is recorded under.
-fn run_as(cmd: &str, args: &[&str], actor: Option<&str>) -> Result<(), String> {
+fn run_as(cmd: &str, args: &[&str], actor: Option<&str>, cfg: &Cfg) -> Result<(), String> {
     // Absolute path: tmux's global PATH has no ~/.local/bin, so a respawned pane cannot
     // find `bd` by name. See store::bin.
-    let mut c = Command::new(crate::store::bin(cmd));
+    let mut c = Command::new(crate::store::bin(cmd, cfg));
     c.args(args);
-    c.env("PATH", crate::store::child_path());
+    c.env("PATH", crate::store::child_path(cfg));
     if let Some(a) = actor {
         c.env("BEADS_ACTOR", a);
     }
@@ -339,22 +330,23 @@ fn run_as(cmd: &str, args: &[&str], actor: Option<&str>) -> Result<(), String> {
 /// And should the close fail anyway, the typed text is written to the bead as a comment
 /// before the error is returned. Whatever else goes wrong, the answer survives in the one
 /// place the next reader will look.
-fn close_decision(db: &str, item: &Item, reason: &str) -> Result<(), String> {
-    let actor = operator_actor();
+fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), String> {
+    let actor = &cfg.operator_actor;
     let id = &item.id;
     let e = match run_as(
         "bd",
         &["-C", db, "close", id, "--reason", reason, "--force"],
-        Some(&actor),
+        Some(actor),
+        cfg,
     ) {
         Ok(()) => {
-            lift_work_holds(db, item, &actor);
-            notify_or_log(db, item, "verdict", reason, &actor);
+            lift_work_holds(db, item, actor, cfg);
+            notify_or_log(db, item, "verdict", reason, actor, cfg);
             return Ok(());
         }
         Err(e) => e,
     };
-    match run_as("bd", &["-C", db, "comments", "add", id, reason], Some(&actor)) {
+    match run_as("bd", &["-C", db, "comments", "add", id, reason], Some(actor), cfg) {
         Ok(()) => Err(format!("{e} — still open; your answer is kept as a comment")),
         Err(_) => Err(format!("{e} — AND THE ANSWER WAS NOT SAVED: {reason}")),
     }
@@ -372,13 +364,13 @@ pub fn work_beads(item: &Item) -> Vec<&str> {
 /// <ask-bead-id>`: the ask bead is the record the answer lives on. Exit 1 (no row) and 3
 /// (no ask hold — an answer to a question that held nothing) are not failures; anything
 /// else is written to the ask bead, like a failed mail, rather than swallowed.
-fn lift_work_holds(db: &str, item: &Item, actor: &str) {
+fn lift_work_holds(db: &str, item: &Item, actor: &str, cfg: &Cfg) {
     for w in work_beads(item) {
         let out = Command::new("timeout")
             .arg("5")
-            .arg(crate::store::bin("spira-lc"))
+            .arg(crate::store::bin("spira-lc", cfg))
             .args(["reply", w, &item.id, actor])
-            .env("PATH", crate::store::child_path())
+            .env("PATH", crate::store::child_path(cfg))
             .stdin(std::process::Stdio::null())
             .output();
         let failed = match out {
@@ -387,19 +379,19 @@ fn lift_work_holds(db: &str, item: &Item, actor: &str) {
             Err(e) => Some(e.to_string()),
         };
         if let Some(e) = failed {
-            let _ = run_as("bd", &["-C", db, "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor));
+            let _ = run_as("bd", &["-C", db, "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor), cfg);
         }
     }
 }
 
 /// Run a command for its exit status, feeding it stdin — the seam `mail sendmail` needs,
 /// since a message is a body on stdin and every other command here only ever needs argv.
-fn run_piped(cmd: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
+fn run_piped(cmd: &str, args: &[&str], stdin_body: &str, cfg: &Cfg) -> Result<(), String> {
     use std::io::Write;
     use std::process::Stdio;
     let mut c = Command::new(cmd);
     c.args(args)
-        .env("PATH", crate::store::child_path())
+        .env("PATH", crate::store::child_path(cfg))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -429,20 +421,20 @@ fn run_piped(cmd: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
 /// reply-closes-a-tracking-bead leg never engages here — this is pure delivery, replacing
 /// the bd-scanning readers that used to notice this write after the fact
 /// (law-answers-need-a-delivery-path).
-fn notify_concierge(id: &str, subject: &str, from: &str, body: &str) -> Result<(), String> {
+fn notify_concierge(id: &str, subject: &str, from: &str, body: &str, cfg: &Cfg) -> Result<(), String> {
     // mail by name (sp-gypjk): the release's bin/ is on the launcher's PATH, which
     // child_path() hands on.
     let msg = format!("From: {from} <{from}@spira>\nSubject: {subject}\nX-Spira-Bead: {id}\n\n{body}\n");
-    run_piped("mail", &["sendmail"], &msg)
+    run_piped("mail", &["sendmail"], &msg, cfg)
 }
 
 /// Forward an answer to the concierge, and if the mail itself fails to send, say so on the
 /// bead rather than let a lost mail be indistinguishable from a lost answer. The bead is the
 /// source of truth — it is already closed or commented by the time this runs — so a failed
 /// send here is a paging failure, not a data-loss one, and is recorded rather than retried.
-fn notify_or_log(db: &str, item: &Item, verb: &str, text: &str, actor: &str) {
+fn notify_or_log(db: &str, item: &Item, verb: &str, text: &str, actor: &str, cfg: &Cfg) {
     let subject = format!("{verb} on {}: {}", item.id, item.title);
-    if let Err(e) = notify_concierge(&item.id, &subject, actor, text) {
+    if let Err(e) = notify_concierge(&item.id, &subject, actor, text, cfg) {
         let _ = run_as(
             "bd",
             &[
@@ -454,6 +446,7 @@ fn notify_or_log(db: &str, item: &Item, verb: &str, text: &str, actor: &str) {
                 &format!("[mail to concierge failed: {e}]"),
             ],
             Some(actor),
+            cfg,
         );
     }
 }
@@ -463,17 +456,16 @@ fn notify_or_log(db: &str, item: &Item, verb: &str, text: &str, actor: &str) {
 /// `dismissed` is the history toggle: in the history the same key restores all. Only valid
 /// for record views (Insights, Notifications) — closing every decision at once would discard
 /// verdicts, and there is no undo.
-pub fn act_all(view: View, ids: &[String], dismissed: bool) -> Result<(), String> {
+pub fn act_all(view: View, ids: &[String], dismissed: bool, cfg: &Cfg) -> Result<(), String> {
     match view {
         View::Insights | View::Notifications if !ids.is_empty() => {
-            let db = crate::store::db();
             let flag = if dismissed { "--remove-label" } else { "--add-label" };
-            let mut args: Vec<&str> = vec!["-C", &db, "update"];
+            let mut args: Vec<&str> = vec!["-C", &cfg.db, "update"];
             for id in ids {
                 args.push(id.as_str());
             }
             args.extend(&[flag, ARCHIVED]);
-            run("bd", &args)
+            run("bd", &args, cfg)
         }
         View::Insights | View::Notifications => Ok(()),
         _ => Err("bulk clear is only for record views".into()),
@@ -505,8 +497,9 @@ pub fn act(
     dismissed: bool,
     what: Act,
     now: i64,
+    cfg: &Cfg,
 ) -> Result<(), String> {
-    let db = crate::store::db();
+    let db = &cfg.db;
     match (view, what) {
         // CLOSED AS THE OPERATOR, for the same reason a comment is. beads records the
         // closing actor in its audit events and nowhere else -- the issue row has no
@@ -516,17 +509,18 @@ pub fn act(
         // as an answer the operator never gave. A session that acts on that is acting
         // on its own echo, and it is silent because the text reads exactly like a
         // real verdict.
-        (View::Decisions, _) => close_decision(&db, item, reason),
+        (View::Decisions, _) => close_decision(db, item, reason, cfg),
         (View::Insights | View::Notifications, _) => run(
             "bd",
             &[
                 "-C",
-                &db,
+                db,
                 "update",
                 &item.id,
                 if dismissed { "--remove-label" } else { "--add-label" },
                 ARCHIVED,
             ],
+            cfg,
         ),
 
         // SILENCING WRITES A DEADLINE, NOT A FLAG. `silent-until:<ISO>` expires by being read,
@@ -535,14 +529,14 @@ pub fn act(
         // `silence_label` would return whichever `bd` happened to list first.
         (View::Alerts, Act::Silence) => {
             if let Some(old) = silence_label(item) {
-                run("bd", &["-C", &db, "update", &item.id, "--remove-label", old])?;
+                run("bd", &["-C", db, "update", &item.id, "--remove-label", old], cfg)?;
             }
             let until = format!(
                 "{}{}",
                 alert::SILENT,
                 crate::render::iso(now + alert::SILENCE_SECS)
             );
-            run("bd", &["-C", &db, "update", &item.id, "--add-label", &until])
+            run("bd", &["-C", db, "update", &item.id, "--add-label", &until], cfg)
         }
 
         // `d` IN THE HISTORY LIFTS A SILENCE — and a CLEARED alert has none to lift. Saying so
@@ -550,7 +544,7 @@ pub fn act(
         // side by side, and a key that appears to work on the wrong one teaches the operator that the
         // footer is decoration. Same defect `verb` exists to prevent, one layer along.
         (View::Alerts, Act::Primary) if dismissed => match silence_label(item) {
-            Some(old) => run("bd", &["-C", &db, "update", &item.id, "--remove-label", old]),
+            Some(old) => run("bd", &["-C", db, "update", &item.id, "--remove-label", old], cfg),
             None => Err("this one has cleared — a record, with no silence to lift".into()),
         },
 
@@ -564,7 +558,8 @@ pub fn act(
             }
             run(
                 "bd",
-                &["-C", &db, "update", &item.id, "--add-label", alert::ACKED],
+                &["-C", db, "update", &item.id, "--add-label", alert::ACKED],
+                cfg,
             )
         }
     }
@@ -582,15 +577,14 @@ pub fn act(
 ///
 /// `why` is the training signal, not required — an empty string is fine: the `p` prompt
 /// says so, so pressing ⏎ immediately records `premise-rejected` with no trailing text.
-pub fn reject_premise(item: &Item, why: &str) -> Result<(), String> {
-    let db = crate::store::db();
-    run("bd", &["-C", &db, "update", &item.id, "--add-label", PREMISE_REJECTED])?;
+pub fn reject_premise(item: &Item, why: &str, cfg: &Cfg) -> Result<(), String> {
+    run("bd", &["-C", &cfg.db, "update", &item.id, "--add-label", PREMISE_REJECTED], cfg)?;
     let reason = if why.trim().is_empty() {
         PREMISE_REJECTED.to_string()
     } else {
         format!("{PREMISE_REJECTED}: {}", why.trim())
     };
-    close_decision(&db, item, &reason)
+    close_decision(&cfg.db, item, &reason, cfg)
 }
 
 // ── promotion: an insight becomes a statute ────────────────────────────────────────────
@@ -689,9 +683,9 @@ fn rule_sh() -> Result<String, String> {
 ///
 /// Three lines, because that is what the refusal is, collapsed to one row because the footer
 /// is one row.
-fn run_verbose(cmd: &str, args: &[&str]) -> Result<(), String> {
+fn run_verbose(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<(), String> {
     let mut c = Command::new(cmd);
-    c.args(args).env("PATH", crate::store::child_path());
+    c.args(args).env("PATH", crate::store::child_path(cfg));
     match c.output() {
         Err(e) => Err(format!("{cmd}: {e}")),
         Ok(o) if !o.status.success() => {
@@ -730,16 +724,15 @@ fn run_verbose(cmd: &str, args: &[&str]) -> Result<(), String> {
 /// The two writes are ordered and NOT atomic, so the failure between them is reported for
 /// what it is. A statute that exists with no citation on its case is a real state, and
 /// saying "failed" without saying that would send Ryan to re-enact a law already in force.
-pub fn enact(item: &Item, slug: &str, text: &str) -> Result<(), String> {
+pub fn enact(item: &Item, slug: &str, text: &str, cfg: &Cfg) -> Result<(), String> {
     let rule = rule_sh()?;
-    run_verbose(&rule, &["enact", slug, text])?;
+    run_verbose(&rule, &["enact", slug, text], cfg)?;
     let key = format!("{ENACTED}law-{}", slug.trim_start_matches("law-"));
-    let db = crate::store::db();
     run(
         "bd",
         &[
             "-C",
-            &db,
+            &cfg.db,
             "update",
             &item.id,
             "--add-label",
@@ -747,6 +740,7 @@ pub fn enact(item: &Item, slug: &str, text: &str) -> Result<(), String> {
             "--add-label",
             ARCHIVED,
         ],
+        cfg,
     )
     .map_err(|e| format!("enacted law-{slug} but could not label {}: {e}", item.id))
 }
@@ -802,22 +796,21 @@ pub fn suit_slug(item: &Item) -> Option<String> {
 ///
 /// A slug is required on the bead. A suit without `statute:law-<slug>` cannot be acted on;
 /// the error names the problem so the operator knows what to fix.
-pub fn suit_verdict(item: &Item, verdict: &str) -> Result<(), String> {
+pub fn suit_verdict(item: &Item, verdict: &str, cfg: &Cfg) -> Result<(), String> {
     let v = verdict.trim();
     // The first whitespace-delimited token is the verb; the rest is the new text for amend.
     let first = v.split_whitespace().next().unwrap_or("").to_lowercase();
-    let db = crate::store::db();
     match first.as_str() {
         "uphold" => {
             // Uphold: statute unchanged; just close.
-            close_decision(&db, item, "uphold")?;
+            close_decision(&cfg.db, item, "uphold", cfg)?;
         }
         "retire" => {
             let slug = suit_slug(item)
                 .ok_or_else(|| "no statute:law-<slug> label on this bead".to_string())?;
             let rule = rule_sh()?;
-            run_verbose(&rule, &["retire", &slug])?;
-            close_decision(&db, item, &format!("retire: law-{slug} retired"))?;
+            run_verbose(&rule, &["retire", &slug], cfg)?;
+            close_decision(&cfg.db, item, &format!("retire: law-{slug} retired"), cfg)?;
         }
         "amend" => {
             // "amend: <new text>" — colon is optional, everything after the verb is the text.
@@ -830,8 +823,8 @@ pub fn suit_verdict(item: &Item, verdict: &str) -> Result<(), String> {
             let slug = suit_slug(item)
                 .ok_or_else(|| "no statute:law-<slug> label on this bead".to_string())?;
             let rule = rule_sh()?;
-            run_verbose(&rule, &["enact", &slug, rest])?;
-            close_decision(&db, item, &format!("amend: law-{slug} amended"))?;
+            run_verbose(&rule, &["enact", &slug, rest], cfg)?;
+            close_decision(&cfg.db, item, &format!("amend: law-{slug} amended"), cfg)?;
         }
         _ => {
             return Err(format!(
@@ -862,7 +855,7 @@ pub fn is_ask_law(item: &Item) -> bool {
 /// Two writes, ordered: enact first, close second. A statute that exists with no close
 /// is a real state — the bead stays open and the operator can retry with an amendment.
 /// A close that exists without a statute would be wrong in the other direction.
-pub fn enact_law(item: &Item, input: &str) -> Result<(), String> {
+pub fn enact_law(item: &Item, input: &str, cfg: &Cfg) -> Result<(), String> {
     let raw = if input.trim().is_empty() {
         &item.title
     } else {
@@ -870,11 +863,10 @@ pub fn enact_law(item: &Item, input: &str) -> Result<(), String> {
     };
     let (slug, text) = parse_enact(raw)?;
     let rule = rule_sh()?;
-    run_verbose(&rule, &["enact", &slug, &text])?;
+    run_verbose(&rule, &["enact", &slug, &text], cfg)?;
     // Close the bead now that the statute is in force.
-    let db = crate::store::db();
     let evidence = format!("enacted law-{} from panel", slug.trim_start_matches("law-"));
-    close_decision(&db, item, &evidence)
+    close_decision(&cfg.db, item, &evidence, cfg)
         .map_err(|e| format!("enacted law-{slug} but could not close {}: {e}", item.id))
 }
 
@@ -882,19 +874,18 @@ pub fn enact_law(item: &Item, input: &str) -> Result<(), String> {
 ///
 /// The close reason carries "declined" so it is distinct from a verdict — a law bead
 /// closed this way was read and rejected, not accepted.
-pub fn decline_law(item: &Item, why: &str) -> Result<(), String> {
-    let db = crate::store::db();
+pub fn decline_law(item: &Item, why: &str, cfg: &Cfg) -> Result<(), String> {
     let reason = if why.trim().is_empty() {
         "declined".to_string()
     } else {
         format!("declined: {}", why.trim())
     };
-    close_decision(&db, item, &reason)
+    close_decision(&cfg.db, item, &reason, cfg)
 }
 
 /// A comment is never a completion. Replying used to mark things done, which once recorded
 /// the operator's clarifying question as the evidence that the work was finished.
-pub fn comment(view: View, item: &Item, text: &str) -> Result<(), String> {
+pub fn comment(view: View, item: &Item, text: &str, cfg: &Cfg) -> Result<(), String> {
     match view {
         View::Notifications => Err("notifications take no comment — d marks it read".into()),
         // An alert DOES take a comment. There is nothing to decide, but "known, chasing it"
@@ -905,14 +896,14 @@ pub fn comment(view: View, item: &Item, text: &str) -> Result<(), String> {
         // also wrote under, and not the git identity. The pane and the agent must be
         // tellable apart, or a reply of the agent's reads as an answer.
         _ => {
-            let db = crate::store::db();
-            let actor = operator_actor();
+            let actor = &cfg.operator_actor;
             run_as(
                 "bd",
-                &["-C", &db, "comments", "add", &item.id, text],
-                Some(&actor),
+                &["-C", &cfg.db, "comments", "add", &item.id, text],
+                Some(actor),
+                cfg,
             )?;
-            notify_or_log(&db, item, "comment", text, &actor);
+            notify_or_log(&cfg.db, item, "comment", text, actor, cfg);
             Ok(())
         }
     }
@@ -1221,17 +1212,17 @@ mod tests {
     // PANEL WRITE PATHS (gap #3, docs/test-plan/cockpit-observability.md): close_decision,
     // comment and run_as are the pane's only bead-state-changing calls, and none of them had
     // ever run against anything but the real `bd`. crate::test_support::StubBd records every
-    // invocation's argv and BEADS_ACTOR on SPIRA_PATH, the same seam `bin()` already resolves
-    // through.
+    // invocation's argv and BEADS_ACTOR against a `Cfg` pointing at its own stub directory,
+    // the same seam `bin()` already resolves through.
     // =========================================================================================
 
     #[test]
     fn close_decision_success_closes_with_force_as_the_operator() {
         let stub = crate::test_support::StubBd::new()
             .mail()
-            .env("SPIRA_OPERATOR_ACTOR", "optest");
+            .operator_actor("optest");
         let item = an_alert(&["overseer"]);
-        let r = close_decision("/fake/db", &item, "raise the pool to 32");
+        let r = close_decision("/fake/db", &item, "raise the pool to 32", &stub.cfg());
         assert!(r.is_ok(), "{r:?}");
         let log = stub.argv_log();
         want(&log, "close sp-a1");
@@ -1247,9 +1238,9 @@ mod tests {
     fn close_decision_success_mails_the_concierge() {
         let stub = crate::test_support::StubBd::new()
             .mail()
-            .env("SPIRA_OPERATOR_ACTOR", "optest");
+            .operator_actor("optest");
         let item = an_alert(&["overseer"]);
-        let r = close_decision("/fake/db", &item, "raise the pool to 32");
+        let r = close_decision("/fake/db", &item, "raise the pool to 32", &stub.cfg());
         assert!(r.is_ok(), "{r:?}");
         want(&stub.argv_log(), "MAIL: sendmail");
         let msg = stub.mail_inbox();
@@ -1265,9 +1256,9 @@ mod tests {
     /// `spira-lc reply <work-bead> <ask-bead>` for the bead the ask is about.
     #[test]
     fn a_verdict_on_an_ask_about_a_work_bead_lifts_its_ask_hold() {
-        let stub = crate::test_support::StubBd::new().mail().lc().env("SPIRA_OPERATOR_ACTOR", "optest");
+        let stub = crate::test_support::StubBd::new().mail().lc().operator_actor("optest");
         let item = work_item(&["ask-question", "overseer", "work-bead:sp-w1"]);
-        assert!(close_decision("/fake/db", &item, "yes, go").is_ok());
+        assert!(close_decision("/fake/db", &item, "yes, go", &stub.cfg()).is_ok());
         let log = stub.argv_log();
         want(&log, "LC: reply sp-w1 sp-x optest");
         assert!(log.find("close sp-x").unwrap() < log.find("LC: reply").unwrap(), "the close is the verdict; the lift follows it: {log}");
@@ -1278,15 +1269,15 @@ mod tests {
     #[test]
     fn a_verdict_lifts_only_what_its_labels_name_and_records_a_failed_lift() {
         let stub = crate::test_support::StubBd::new().mail().lc();
-        assert!(close_decision("/fake/db", &work_item(&["ask-question"]), "ok").is_ok());
+        assert!(close_decision("/fake/db", &work_item(&["ask-question"]), "ok", &stub.cfg()).is_ok());
         assert!(!stub.argv_log().contains("LC:"), "{}", stub.argv_log());
         drop(stub);
         let stub = crate::test_support::StubBd::new().mail().lc().env("LC_RC", "3");
-        assert!(close_decision("/fake/db", &work_item(&["ask-question", "work-bead:sp-w1"]), "ok").is_ok());
+        assert!(close_decision("/fake/db", &work_item(&["ask-question", "work-bead:sp-w1"]), "ok", &stub.cfg()).is_ok());
         assert!(!stub.argv_log().contains("not lifted"), "{}", stub.argv_log());
         drop(stub);
         let stub = crate::test_support::StubBd::new().mail().lc().env("LC_RC", "2");
-        assert!(close_decision("/fake/db", &work_item(&["ask-question", "work-bead:sp-w1"]), "ok").is_ok());
+        assert!(close_decision("/fake/db", &work_item(&["ask-question", "work-bead:sp-w1"]), "ok", &stub.cfg()).is_ok());
         want(&stub.argv_log(), "ask hold on sp-w1 not lifted");
     }
 
@@ -1296,11 +1287,11 @@ mod tests {
     fn close_decision_success_survives_a_failed_mail() {
         let stub = crate::test_support::StubBd::new()
             .mail()
-            .env("SPIRA_OPERATOR_ACTOR", "optest")
+            .operator_actor("optest")
             .env("MAIL_RC", "1")
             .env("MAIL_ERR", "mail: disk full");
         let item = an_alert(&["overseer"]);
-        let r = close_decision("/fake/db", &item, "raise the pool to 32");
+        let r = close_decision("/fake/db", &item, "raise the pool to 32", &stub.cfg());
         assert!(r.is_ok(), "a failed mail must not undo a successful close: {r:?}");
         want(&stub.argv_log(), "comments add sp-a1 [mail to concierge failed");
         want(&stub.argv_log(), "mail: disk full");
@@ -1316,7 +1307,7 @@ mod tests {
             .env("BD_CLOSE_RC", "1")
             .env("BD_CLOSE_ERR", "cannot close blocked issue: sp-x1 is blocked by [sp-x0]");
         let item = an_item("sp-x1");
-        let r = close_decision("/fake/db", &item, "my answer");
+        let r = close_decision("/fake/db", &item, "my answer", &stub.cfg());
         let e = r.expect_err("close should have failed");
         want(&e, "cannot close blocked issue");
         want(&e, "still open; your answer is kept as a comment");
@@ -1327,13 +1318,13 @@ mod tests {
     /// answer text — it is the last place the operator's typed verdict can be recovered from.
     #[test]
     fn close_decision_double_failure_says_the_answer_was_not_saved() {
-        let _stub = crate::test_support::StubBd::new()
+        let stub = crate::test_support::StubBd::new()
             .env("BD_CLOSE_RC", "1")
             .env("BD_CLOSE_ERR", "cannot close blocked issue")
             .env("BD_COMMENTS_RC", "1")
             .env("BD_COMMENTS_ERR", "database is locked");
         let item = an_item("sp-x1");
-        let r = close_decision("/fake/db", &item, "my important answer");
+        let r = close_decision("/fake/db", &item, "my important answer", &stub.cfg());
         let e = r.expect_err("close should have failed");
         want(&e, "AND THE ANSWER WAS NOT SAVED");
         want(&e, "my important answer");
@@ -1343,7 +1334,7 @@ mod tests {
     fn comment_on_notifications_refuses_without_touching_bd() {
         let stub = crate::test_support::StubBd::new();
         let item = an_alert(&["alert"]);
-        let r = comment(View::Notifications, &item, "text");
+        let r = comment(View::Notifications, &item, "text", &stub.cfg());
         assert!(r.is_err());
         assert_eq!(stub.argv_log(), "", "must not shell to bd at all");
     }
@@ -1352,10 +1343,10 @@ mod tests {
     fn comment_on_other_views_adds_a_bd_comment_as_the_operator() {
         let stub = crate::test_support::StubBd::new()
             .mail()
-            .env("SPIRA_DB", "/fake/db")
-            .env("SPIRA_OPERATOR_ACTOR", "optest");
+            .db("/fake/db")
+            .operator_actor("optest");
         let item = an_alert(&["alert"]);
-        let r = comment(View::Alerts, &item, "known, chasing it");
+        let r = comment(View::Alerts, &item, "known, chasing it", &stub.cfg());
         assert!(r.is_ok(), "{r:?}");
         let log = stub.argv_log();
         want(&log, "comments add sp-a1 known, chasing it");
@@ -1369,10 +1360,10 @@ mod tests {
     fn comment_on_other_views_mails_the_concierge() {
         let stub = crate::test_support::StubBd::new()
             .mail()
-            .env("SPIRA_DB", "/fake/db")
-            .env("SPIRA_OPERATOR_ACTOR", "optest");
+            .db("/fake/db")
+            .operator_actor("optest");
         let item = an_alert(&["alert"]);
-        let r = comment(View::Alerts, &item, "known, chasing it");
+        let r = comment(View::Alerts, &item, "known, chasing it", &stub.cfg());
         assert!(r.is_ok(), "{r:?}");
         want(&stub.argv_log(), "MAIL: sendmail");
         let msg = stub.mail_inbox();
@@ -1388,12 +1379,12 @@ mod tests {
     fn comment_survives_a_failed_mail() {
         let stub = crate::test_support::StubBd::new()
             .mail()
-            .env("SPIRA_DB", "/fake/db")
-            .env("SPIRA_OPERATOR_ACTOR", "optest")
+            .db("/fake/db")
+            .operator_actor("optest")
             .env("MAIL_RC", "1")
             .env("MAIL_ERR", "mail: disk full");
         let item = an_alert(&["alert"]);
-        let r = comment(View::Alerts, &item, "known, chasing it");
+        let r = comment(View::Alerts, &item, "known, chasing it", &stub.cfg());
         assert!(r.is_ok(), "a failed mail must not undo a saved comment: {r:?}");
         want(&stub.argv_log(), "comments add sp-a1 [mail to concierge failed");
         want(&stub.argv_log(), "mail: disk full");
@@ -1407,9 +1398,9 @@ mod tests {
     fn enact_writes_the_statute_before_citing_it_on_the_insight() {
         let stub = crate::test_support::StubBd::new()
             .rule()
-            .env("SPIRA_DB", "/fake/db");
+            .db("/fake/db");
         let item = an_alert(&["insight"]);
-        let r = enact(&item, "law-foo", "a new statute");
+        let r = enact(&item, "law-foo", "a new statute", &stub.cfg());
         assert!(r.is_ok(), "{r:?}");
         let log = stub.argv_log();
         want(&log, "RULE: enact law-foo a new statute");
@@ -1431,7 +1422,7 @@ mod tests {
             .env("RULE_RC", "1")
             .env("RULE_ERR", "refused: over 130 words");
         let item = an_alert(&["insight"]);
-        let r = enact(&item, "law-foo", "a new statute");
+        let r = enact(&item, "law-foo", "a new statute", &stub.cfg());
         let e = r.expect_err("a refused rule.sh must fail enact");
         want(&e, "refused: over 130 words");
         let log = stub.argv_log();

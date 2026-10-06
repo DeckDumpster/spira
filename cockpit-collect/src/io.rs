@@ -21,23 +21,28 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// lib.sh (`lib_call`'s own `home` parameter) would have that child's nested conf.sh
 /// silently keep the parent's stale value instead of deriving its own from the file it
 /// was just pointed at). [`SPIRA_MAX_AEONS`] joins this set for a narrower reason: it is
-/// host policy, never exported by conf.sh itself (`law-gates-run-in-a-clean-environment`'s
-/// own scar is `SPIRA_FAYTHS` leaking into a test's own sentinel the same way).
+/// host policy that must never leak to a child's environment either.
 ///
-/// Anything this crate still needs from this set is read through [`Boot`]/[`boot_repo_registry_inputs`]/
-/// [`max_aeons`], never `std::env::var`.
+/// This set is about the EXPORT side only (this process's own `std::env`, and so every
+/// child it spawns) — it has no bearing on reading a value in-process. `SPIRA_MAX_AEONS`
+/// and `SPIRA_REPO_MAP` are both ordinary keys in `resolve()`'s own `values` map
+/// (`resolve::set!` writes every key there; only the typed shell/export side omits this
+/// set), so [`max_aeons`] and `repo_label_keys` read them straight through
+/// `spira_config::process::cfg`, the one door, like any other registered key.
+///
+/// Anything this crate still needs from this set for the CHILD-PROCESS registry bridge is
+/// read through [`Boot`]/[`repo_registry`] instead, never `std::env::var`.
 const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
 
-/// [`bootstrap_config`]'s own answer, cached in-process (never in `std::env`) for the two
-/// call sites that still need a [`NEVER_EXPORTED`] value: [`repo_registry`] and
-/// [`max_aeons`]. Unset outside `main()` — every unit test that exercises those two
-/// functions directly (never calling `bootstrap_config` first) falls back to reading this
-/// process's own environment exactly as it did before this bead, so no test needed
-/// rewiring for a hazard that only matters once this binary starts spawning children.
+/// [`bootstrap_config`]'s own answer, cached in-process (never in `std::env`) for the one
+/// call site that still needs a [`NEVER_EXPORTED`] value for a CHILD process:
+/// [`repo_registry`]. Unset outside `main()` — a unit test that exercises that function
+/// directly (never calling `bootstrap_config` first) falls back to reading this process's
+/// own environment exactly as it did before this bead, so no test needed rewiring for a
+/// hazard that only matters once this binary starts spawning children.
 struct Boot {
     repo_registry_env: BTreeMap<String, String>,
     repo_map_text: Option<String>,
-    max_aeons: String,
 }
 
 static BOOT: OnceLock<Boot> = OnceLock::new();
@@ -115,19 +120,11 @@ pub fn bootstrap_config() {
             (!p.is_empty()).then(|| p.to_string())
         })
         .and_then(|p| std::fs::read_to_string(p).ok());
-    // SPIRA_MAX_AEONS is never a key `resolve()` itself computes (unlike SPIRA_REPO_MAP,
-    // which IS one of its hand-written keys, just withheld from EXPORT_KEYS) — it is host
-    // policy read in-process, straight off this process's own environment, exactly like
-    // `home_repo_default`/`repo` above. `resolved.get("SPIRA_MAX_AEONS")` always answered
-    // "" (the key is simply absent from `values`), so the task-pool ceiling this cached for
-    // [`max_aeons`] — and therefore `slots_keys`' `SP_SLOTS_CEILING` — was silently 0
-    // whenever `bootstrap_config` ran, regardless of what the operator actually set.
-    let max_aeons = env_map.get("SPIRA_MAX_AEONS").cloned().unwrap_or_default();
     if let Some(r) = &resolved {
         repo_registry_env.insert("SPIRA_HOME_REPO".into(), r.get("SPIRA_HOME_REPO").to_string());
         repo_registry_env.insert("SPIRA_REPO_MAP".into(), r.get("SPIRA_REPO_MAP").to_string());
     }
-    let _ = BOOT.set(Boot { repo_registry_env, repo_map_text: map_text, max_aeons });
+    let _ = BOOT.set(Boot { repo_registry_env, repo_map_text: map_text });
 
     let Some(resolved) = resolved else { return };
     for (k, v) in importable(&resolved, &env_map) {
@@ -174,14 +171,11 @@ pub fn repo_registry() -> spira_config::repos::Registry {
     }
 }
 
-/// `SPIRA_MAX_AEONS`, from [`Boot`] when [`bootstrap_config`] has run, else this process's
-/// own environment (unit tests of [`crate::probes::slots_keys`] never call
-/// `bootstrap_config`; see [`BOOT`]'s own doc).
+/// `SPIRA_MAX_AEONS`, the one door: it is an ordinary key in `resolve()`'s own `values`
+/// (never exported to a CHILD process — see [`NEVER_EXPORTED`] — but that is a separate
+/// concern from reading it here, in-process).
 pub fn max_aeons() -> String {
-    match BOOT.get() {
-        Some(b) => b.max_aeons.clone(),
-        None => std::env::var("SPIRA_MAX_AEONS").unwrap_or_default(),
-    }
+    spira_config::process::cfg("SPIRA_MAX_AEONS").unwrap_or_default()
 }
 
 pub fn run_dir() -> PathBuf {
@@ -203,11 +197,15 @@ fn env_or(key: &str, default: &str) -> String {
 /// enough to matter:
 ///   - `SPIRA_BDJSON_FIXTURE` set -> `bdsim.py <fixture> <args>` (the test seam every
 ///     `test-cockpit-*.sh` suite drives; inherited from this process's own environment so a
-///     suite that exports it before calling this binary needs no other change).
+///     suite that exports it before calling this binary needs no other change — not a
+///     registered config key, so this stays a raw env read).
 ///   - otherwise: refuse with no output when `SPIRA_DB` is empty (never fall through to bd's
 ///     own auto-discovery — sp-agdzk/sp-25b7s), then
-///     `timeout ${BD_TIMEOUT:-180} ${SPIRA_BD:-bd} -C $SPIRA_DB <args>`, retried up to
-///     `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains "invalid connection".
+///     `timeout ${BD_TIMEOUT:-180} $SPIRA_BD -C $SPIRA_DB <args>` (`SPIRA_DB`/`SPIRA_BD`
+///     through the one door, `spira_config::process::cfg` — no default: an unresolvable
+///     config is the same refusal as an empty `SPIRA_DB`, never a silent `bd` on `PATH`),
+///     retried up to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains
+///     "invalid connection".
 /// Returns `None` on any failure (non-zero exit, refusal, spawn error) — the caller renders
 /// `?`, never 0.
 pub fn bdq(args: &[&str]) -> Option<String> {
@@ -226,8 +224,8 @@ pub fn bdq(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let db = std::env::var("SPIRA_DB").ok().filter(|v| !v.is_empty())?;
-    let bd_bin = env_or("SPIRA_BD", "bd");
+    let db = spira_config::process::cfg("SPIRA_DB").ok().filter(|v| !v.is_empty())?;
+    let bd_bin = spira_config::process::cfg("SPIRA_BD").ok()?;
     let timeout_s = env_or("BD_TIMEOUT", "180");
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
 
@@ -616,18 +614,12 @@ mod tests {
         }
         assert!(reg.map_present(), "repo_registry() did not pick up the live SPIRA_REPO_MAP");
     }
-
-    #[test]
-    fn max_aeons_falls_back_to_live_env_when_boot_never_ran() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        assert!(BOOT.get().is_none());
-        let saved = std::env::var("SPIRA_MAX_AEONS").ok();
-        std::env::set_var("SPIRA_MAX_AEONS", "7");
-        let got = max_aeons();
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_MAX_AEONS", v),
-            None => std::env::remove_var("SPIRA_MAX_AEONS"),
-        }
-        assert_eq!(got, "7");
-    }
+    // max_aeons_falls_back_to_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
+    // source of config): it asserted that a bare `SPIRA_MAX_AEONS` env override reaches
+    // `max_aeons()` without any `SPIRA_TOML` — exactly the behaviour the one-door law
+    // removes. `max_aeons()` is now a one-line call through `spira_config::process::cfg`,
+    // whose own resolution/caching is spira-config's tested responsibility; there is no
+    // crate-local fallback logic left here to pin with a unit test, and `cfg`'s per-process
+    // cache makes a fixture-driven unit test of this one-liner order-dependent rather than
+    // meaningful (see the triage guide: only a fresh-binary test may vary config per case).
 }

@@ -48,6 +48,7 @@ export SPIRA_HOME="$HERE"
 export SPIRA_DB="$TMP/no-db"
 MAP="$TMP/repo-map"
 export SPIRA_REPO_MAP="$MAP"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 . "$HERE/lib.sh"
 
@@ -181,9 +182,12 @@ chmod +x "$GITSHIM/git"
 # conf.sh rebuilds PATH from SPIRA_PATH (plus a fixed tail) rather than inheriting the
 # caller's — a plain PATH= prefix here would be overwritten before landing.sh's first git
 # call, and the shim would silently stop seeing anything.
-out="$(PATH="$GITSHIM:$PATH" SPIRA_PATH="$GITSHIM" SPIRA_HOME="$E_SH" SPIRA_RUN="$E_RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="$E_SH/bd-stub.sh" SPIRA_REPO="$TMP/no-such-home-repo" \
-    SPIRA_REPO_MAP="$E_SH/repo-map" \
+# SPIRA_PATH/SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP are registered keys (per Ryan
+# 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+# which no process reads them from any more.
+tl_config SPIRA_PATH="$GITSHIM" SPIRA_RUN="$E_RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="$E_SH/bd-stub.sh" SPIRA_REPO_MAP="$E_SH/repo-map"
+out="$(PATH="$GITSHIM:$PATH" SPIRA_HOME="$E_SH" SPIRA_REPO="$TMP/no-such-home-repo" \
         PATH="$E_SH:$PATH" landing-pass land 2>&1)"
 
 if grep -Eq 'fetch[^0-9a-zA-Z_.-].* local$' "$GIT_LOG"; then

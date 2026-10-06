@@ -68,8 +68,8 @@ STUB
 chmod +x "$BIN/systemctl"
 
 export SPIRA_SYSTEMCTL="$BIN/systemctl"
-export SPIRA_INSTANCE=prod
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_INSTANCE=prod SPIRA_RUN="$SPIRA_RUN"
 
 # ---------------------------------------------------------------------------
 # 1. POSITIVE CONTROL: old exclusion pattern lets instance-qualified names through.

@@ -58,9 +58,8 @@ stub gh 'exit 1'
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$REPONAME" "$REPO" push main '' '' > "$SH/repo-map"
 
 in_fixture() {
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map"
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
         "$@"
 }
 
@@ -78,9 +77,8 @@ chmod +x "$SH/spira-lc"
 lc_socket_mirror "$TMP/lcsock"
 
 sending() {
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map"
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
         command sending --no-fetch 2>&1
 }
 

@@ -24,6 +24,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 gate_fixture_init "$TMP"
 BR=spira/sp-w1
 gate_fixture_branch "$BR"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" SPIRA_VERDICT_TTL=0
 
 echo "test-gate-wait.sh — sp-tcarr"
 
@@ -37,14 +38,14 @@ run_killed() {
     printf 'repo | %s | push | origin/main |  | rm -f %s; : > %s; sleep 30\n' \
         "$REPO" "$mark" "$mark" > "$MAP"
     (
-        export HOMEDIR SPIRA_CONF_NONE REPO RUN SPIRA_DB_NONE MAP GATELOG VDIR SH BR pidfile TOOLS
+        export HOMEDIR SPIRA_CONF_NONE REPO RUN SPIRA_DB_NONE MAP GATELOG VDIR SH BR pidfile TOOLS SPIRA_TOML
         setsid bash -c '
             echo "$$" > "$pidfile"
             exec env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
                 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-                SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-                SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \
-                SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICT_TTL=0 \
+                SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" \
+                SPIRA_GATE_LOG="$GATELOG" \
+                SPIRA_TOML="$SPIRA_TOML" \
                 bash "$SH/gate.sh" "$BR" repo
         '
     ) >"$out" 2>&1 &

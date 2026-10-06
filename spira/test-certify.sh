@@ -100,10 +100,10 @@ write_map
 
 landing() {
     rm -f "$RUN/landing.progress" "$GATE_COUNT" "$QUEUE_LOG"
-    SPIRA_GATE_WORKER=0 SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" PATH="$TMP/stubbin:$SH:$PATH" \
+    tl_config SPIRA_GATE_WORKER=0 SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map"
+    SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_REPO="$REPO" PATH="$TMP/stubbin:$SH:$PATH" \
         landing-pass land 2>&1
 }
 

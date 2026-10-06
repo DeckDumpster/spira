@@ -61,11 +61,10 @@ printf '#!/bin/sh\nexit 0\n' > "$MOCK_SC" && chmod +x "$MOCK_SC"
 # unit tests): SPIRA_DB/SPIRA_CONF point at nothing so nothing here can read the operator's
 # real store or config. release install-tarball needs no SPIRA_CONF or SPIRA_HOME (its
 # roots come from SPIRA_RELEASES/SPIRA_RUN directly), unlike activate.sh's lib.sh sourcing.
+tl_config SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_INSTANCE=prod
 env -i \
     "PATH=$PATH" "HOME=$HOME" \
-    "SPIRA_RUN=$RUN_DIR" \
-    "SPIRA_RELEASES=$RELEASES" \
-    "SPIRA_INSTANCE=prod" \
+    "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_SYSTEMCTL=$MOCK_SC" \
     release install-tarball "$TARBALL" >&2
 wantrc "release install-tarball exits 0" 0 "$?"

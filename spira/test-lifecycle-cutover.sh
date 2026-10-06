@@ -423,8 +423,9 @@ want "the settle summary meters both cascaded members" '"base_withdrawn":2' "$ou
 # commands queue.sh's _lc_cut_batch/_lc_eject_member/_lc_abandon_batch issued (create-bead
 # per member then cut; show-batch for the CAS state/version, then abandon-batch or
 # eject-member) against this suite's already-running server.
-export SPIRA_RUN="$TMP/queue-shell-run"
+SPIRA_RUN="$TMP/queue-shell-run"
 mkdir -p "$SPIRA_RUN/landstate" "$SPIRA_RUN/queue/fixture-repo"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 _lc_cut_batch() {   # _lc_cut_batch <batch-id> <repo> <head> <base> <actor> <id:tip>...
     local batch_id="$1" repo="$2" head="$3" base="$4" actor="$5" _m csv=""; shift 5
     for _m in "$@"; do lc create-bead "${_m%%:*}" >/dev/null 2>&1 || true; csv="${csv:+$csv,}$_m"; done

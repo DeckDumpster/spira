@@ -92,12 +92,14 @@ for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "
 # ACTIVE_WAIT=0: the mock systemctl never reports active, so the end-state wait would burn its ceiling per run.
 inst() {
     : > "$LOG"; rm -f "$BD_TRIES"; rm -f "$DEST"/*.service "$DEST"/*.timer 2>/dev/null
-    env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_PATH="$MOCK_BIN" \
-        SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA= SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
-        SPIRA_RUN="$RUN_DIR" SPIRA_HOME="$HERE" SPIRA_PROD="$PROD" SPIRA_REPO="$FAKE_REPO" \
-        SPIRA_COCKPIT="$REAL_COCKPIT" \
-        SPIRA_INSTANCE=prod MOCK_INST=prod CALL_LOG="$LOG" BD_TRIES="$BD_TRIES" \
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
+        SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA="" SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
+        SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" \
+        SPIRA_INSTANCE=prod
+    env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$FAKE_REPO" \
+        MOCK_INST=prod CALL_LOG="$LOG" BD_TRIES="$BD_TRIES" \
         BD_ANSWER_AFTER="${BD_ANSWER_AFTER:-0}" \
         SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 SPIRA_INSTALL_ACTIVE_WAIT=0 \
         units-install 2>&1

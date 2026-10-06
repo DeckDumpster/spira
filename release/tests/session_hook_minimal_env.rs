@@ -137,7 +137,21 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     let conf = tmp.path().join("spira.conf");
     std::fs::write(&conf, format!("SPIRA_ID_PREFIX = sp\nSPIRA_PROD = {}\nSPIRA_RUN = {}\nSPIRA_WATCHERS = {}\n", release_root.join("spira").display(), run_dir.display(), manifest.display())).unwrap();
 
-    let hook_cmd = format!("SPIRA_CONF={} {}", conf.display(), paths.hook_command());
+    // session.sh itself is still driven by the legacy SPIRA_CONF override above, but it
+    // shells out to the real `watchd` binary (sp-48f6g), which — now migrated to the one
+    // source of config (per Ryan 2026-10-05) — refuses with "conf.sh could not be sourced"
+    // unless `$SPIRA_TOML` also resolves. `run` is set to match the SPIRA_CONF fixture's own
+    // `SPIRA_RUN` above, so watchd's view of the run directory agrees with session.sh's.
+    let toml = spira_config::process::fixture_toml(tmp.path(), &[("SPIRA_RUN", &run_dir.display().to_string())]);
+    // `spira_config::resolve::locate_home` no longer walks up from the exe's own location
+    // (per Ryan 2026-10-05: named, never searched for) — it needs SPIRA_HOME outright or
+    // SPIRA_RELEASE (every real unit's own shape, release/src/units.rs's `release_values`).
+    // `hook_command()` already carries `SPIRA_RELEASE=<release_root>`, which should derive
+    // the same place, but watchd is handed SPIRA_HOME directly here too, named outright
+    // rather than relying on that derivation chain reaching it unbroken through session.sh.
+    let home_dir = release_root.join("spira").display().to_string();
+
+    let hook_cmd = format!("SPIRA_CONF={} SPIRA_TOML={} SPIRA_HOME={} {}", conf.display(), toml.display(), home_dir, paths.hook_command());
     let (rc, out) = run_under_minimal_env_as(&home, &hook_cmd, "{\"hook_event_name\":\"SessionStart\",\"source\":\"startup\"}");
     assert_eq!(rc, 0, "session.sh must exit 0 through its registered command under a minimal env; got rc={rc}, output:\n{out}");
     assert!(!out.trim().is_empty(), "session.sh produced no output at all, with a real watcher row in its manifest");

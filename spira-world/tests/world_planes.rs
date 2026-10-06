@@ -62,19 +62,20 @@ fn detectors_are_observability_and_the_loop_is_work() {
 
 struct Fixture {
     tmp: testkit::TempDir,
+    toml: PathBuf,
 }
 
 impl Fixture {
     fn new(name: &str) -> Fixture {
         let tmp = testkit::TempDir::new(name);
-        std::fs::create_dir_all(tmp.join("home/.config/spira")).unwrap();
-        std::fs::create_dir_all(tmp.join("harness-home/conf.d")).unwrap();
+        std::fs::create_dir_all(tmp.join("home")).unwrap();
         std::fs::create_dir_all(tmp.join("run")).unwrap();
-        std::fs::write(
-            tmp.join("home/.config/spira").join(spira_config::FILE_NAME),
-            format!("[spira]\nrun = {:?}\ninstance = \"prod\"\n", tmp.join("run").display().to_string()),
-        )
-        .unwrap();
+        // SPIRA_TOML, not the old XDG `$HOME/.config/spira/spira.toml` auto-discovery (per
+        // Ryan 2026-10-05: one source of config — the launcher sets it explicitly, never
+        // guessed). A complete fixture (every registered key declared), not a hand-rolled
+        // partial one, with SPIRA_RUN pinned into this fixture's own tmp dir — SPIRA_INSTANCE
+        // stays the fixture's own default, "prod", for which containment is a no-op.
+        let toml = spira_config::process::fixture_toml(tmp.path(), &[("SPIRA_RUN", &tmp.join("run").display().to_string())]);
         let stub = tmp.join("systemctl");
         testkit::write_exe(
             &stub,
@@ -100,18 +101,23 @@ esac
 exit 0
 "#,
         );
-        Fixture { tmp }
+        Fixture { tmp, toml }
     }
 
     fn world(&self, args: &[&str]) -> (String, Vec<String>) {
         let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_world")).parent().unwrap().to_path_buf();
         let calls = self.tmp.join("calls");
         let _ = std::fs::remove_file(&calls);
+        // SPIRA_HOME is the checkout's own spira/ (where conf.d — the key registry —
+        // lives), not a synthetic empty one: `cfg()` refuses a key with no conf.d/<KEY>
+        // entry, and the old "an existing-but-empty conf.d is fine" tolerance is gone.
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let out = Command::new("env")
             .arg("-i")
             .arg(format!("HOME={}", self.tmp.join("home").display()))
             .arg(format!("PATH={}:/usr/bin:/bin", bin_dir.display()))
-            .arg(format!("SPIRA_HOME={}", self.tmp.join("harness-home").display()))
+            .arg(format!("SPIRA_HOME={}", real_home.display()))
+            .arg(format!("SPIRA_TOML={}", self.toml.display()))
             .arg(format!("SPIRA_SYSTEMCTL={}", self.tmp.join("systemctl").display()))
             .arg(format!("UNIT_DIR={}", unit_dir().display()))
             .arg(format!("CALLS={}", calls.display()))

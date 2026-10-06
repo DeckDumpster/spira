@@ -34,14 +34,15 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up dismiss-sweep || { echo "test-mail-dismiss-sweep: could not build fixture database"; exit 1; }
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_INDEX="$TMP/nonstandard-index-path/log"   # non-default: catches a hardcoded path
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_INDEX="$TMP/nonstandard-index-path/log"   # non-default: catches a hardcoded path
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
 export SPIRA_HOME="$TMP/home"
-export SPIRA_RUN="$TMP/run"
-export SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
+SPIRA_RUN="$TMP/run"
+SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_INDEX="$SPIRA_MAIL_INDEX" SPIRA_ID_PREFIX="sp" \
+    SPIRA_RUN="$SPIRA_RUN" SPIRA_OPERATOR_ACTOR="$SPIRA_OPERATOR_ACTOR"
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before

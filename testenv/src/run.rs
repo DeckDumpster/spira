@@ -12,7 +12,7 @@ use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
 use crate::runtime::{cancelled, ContainerRuntime, RC_DEADLINE};
 use crate::schedule::{self, Job, MaxparInputs};
 use crate::selection;
-use crate::settings::{Settings, Source};
+use crate::settings::Settings;
 use crate::skipgate::{self, SkipGate};
 use crate::suite::{SuiteHeaders, SuiteState, SuiteStates};
 use crate::timing::{self, RoundPhaseRow, SuiteTimingRow};
@@ -164,6 +164,11 @@ pub struct Deps<'a> {
     pub harness: Harness,
     pub env: &'a dyn Fn(&str) -> Option<String>,
     pub config: Option<&'a SpiraToml>,
+    /// Loaded once at the true top level (`main`), per Ryan 2026-10-05: one source of
+    /// config. Pure logic (`run`, `report`, `warm_refill`, `warm_sweep`, ...) reads this
+    /// field, never the environment or `spira_config::process::cfg` directly — which is
+    /// what lets a test drive it per-case with a plain struct literal.
+    pub settings: Settings,
     pub stdin: &'a dyn Fn() -> String,
     /// Every stdout line (logs, per-suite lines, helper output, the VERDICT).
     pub out: &'a (dyn Fn(&str) + Sync),
@@ -208,16 +213,8 @@ pub fn execute(inv: Invocation, deps: &Deps) -> i32 {
     }
 }
 
-fn settings(deps: &Deps) -> Settings {
-    let src = Source {
-        env: deps.env,
-        config: deps.config,
-    };
-    Settings::load(&src, &deps.harness.root, now_epoch())
-}
-
 fn report(n: usize, deps: &Deps) -> i32 {
-    let s = settings(deps);
+    let s = deps.settings.clone();
     let text =
         fs::read_to_string(tsd::family_path(&s.run, timing::SUITE_TIMING)).unwrap_or_default();
     let meds = timing::suite_medians(&text, n.max(1));
@@ -617,7 +614,7 @@ impl Drop for RefillOnDrop<'_> {
 }
 
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
-    let s = settings(deps);
+    let s = deps.settings.clone();
     // sp-tj8k3: a given-but-bad SPIRA_BATCH_MAXPAR (zero, negative, not a number) refuses by
     // name before any work starts — it is never silently folded into "unset" (the
     // scheduler's own bounded default) or, worse, read as "unlimited".
@@ -1948,7 +1945,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
 /// sweeps the trials no longer run inline, boot the slot's spare and record it. Detached from
 /// the trial that spawned it; a failure only means the next trial boots cold.
 pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
-    let s = settings(deps);
+    let s = deps.settings.clone();
     let (_, lock_path, _) = warm::paths(&s.run, i);
     let end = Instant::now() + Duration::from_secs(s.warm_boot_timeout);
     let lock = loop {
@@ -2023,7 +2020,7 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
 /// `testenv warm sweep`: both orphan sweeps, detached from the gate trial that spawned it
 /// (D12). One sweeper at a time: a sweep already running is this one's work done.
 pub fn warm_sweep(deps: &Deps) -> i32 {
-    let s = settings(deps);
+    let s = deps.settings.clone();
     let Some(_lock) = worktree::try_lock(&s.run.join("testenv-sweep.lock")) else {
         return 0;
     };

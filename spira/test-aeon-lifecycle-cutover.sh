@@ -134,14 +134,14 @@ want "spira-lc list carries a stacked row's real stack_depth, not the column-mis
 want "spira-lc list carries the stacked row's own stack map" 'sp-lc-below' "$stacked_row"
 
 SOCK="$TMP/spira-lc.sock"
-SPIRA_LC_SOCKET="$SOCK" spira-lc serve "$SOCK" >"$TMP/serve.log" 2>&1 &
+tl_config SPIRA_LC_SOCKET="$SOCK"
+spira-lc serve "$SOCK" >"$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do
     [ -S "$SOCK" ] && break
     sleep 0.1
 done
 [ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
-export SPIRA_LC_SOCKET="$SOCK"
 
 seed_bead() {   # seed_bead <bead-id> <state> [holder] [lease_until]
     local holder_sql="NULL" lease_sql="NULL"
@@ -243,9 +243,10 @@ export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$FREPO" > "$SPIRA_REPO_MAP"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
@@ -255,7 +256,8 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP
+tl_config SPIRA_AGENT="$BIN/claude"
 command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 
