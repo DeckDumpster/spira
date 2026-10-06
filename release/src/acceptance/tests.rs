@@ -712,7 +712,7 @@ fn a_scratch_setup_without_all_land_modes_fails_the_scratch_setup_check() {
 #[test]
 fn record_without_a_notes_repo_is_a_usage_error() {
     let a = s(&["t", "--scratch-repo", "/nonexistent", "--record"]);
-    std::env::remove_var("SPIRA_NOTES_REPO");
+    let _env = testkit::env(&[("SPIRA_NOTES_REPO", None)]);
     assert_eq!(main(&a), 2);
 }
 

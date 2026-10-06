@@ -1138,29 +1138,20 @@ mod tests {
     /// belongs now).
     #[test]
     fn merge_resolved_config_fills_retired_vars_without_overriding_the_bash_dump() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let saved_toml = std::env::var("SPIRA_TOML").ok();
-        let saved_home = std::env::var("SPIRA_HOME").ok();
         let dir = testkit::TempDir::new("gate-real-merge");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_GATE_TIMEOUT", "1234")]);
         // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
         // lives), never the throwaway fixture dir.
         let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        std::env::set_var("SPIRA_HOME", &real_home);
-        std::env::set_var("SPIRA_TOML", &toml);
+        let _g = testkit::env(&[
+            ("SPIRA_HOME", Some(real_home.to_str().unwrap())),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+        ]);
 
         let mut kv = std::collections::HashMap::new();
         kv.insert("SPIRA_GATE_BEAD".to_string(), "sp-xyz".to_string());
         let result = super::merge_resolved_config(&mut kv);
 
-        match saved_toml {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-        match saved_home {
-            Some(v) => std::env::set_var("SPIRA_HOME", v),
-            None => std::env::remove_var("SPIRA_HOME"),
-        }
         let _ = std::fs::remove_dir_all(&dir);
 
         result.unwrap();

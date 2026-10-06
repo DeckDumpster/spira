@@ -245,10 +245,9 @@ mod tests {
 
     #[test]
     fn unreachable_lifecycle_store_renders_question_marks() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = testkit::TempDir::new("cc-queue-missing");
-        let _env = crate::test_support::set_run(run.path());
-        std::env::set_var("SPIRA_LC_BIN", run.path().join("no-such-spira-lc"));
+        let no_lc = run.path().join("no-such-spira-lc");
+        let _env = crate::test_support::set_run_with(run.path(), &[("SPIRA_LC_BIN", no_lc.to_str())]);
         let cfg = Cfg {
             queue_dir: run.path().join("queue").to_string_lossy().into_owned(),
             ..Default::default()

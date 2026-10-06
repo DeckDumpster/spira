@@ -1294,58 +1294,46 @@ mod tests {
     /// never a literal path a caller could mistake for a real answer.
     #[test]
     fn resolve_run_dir_refuses_named_on_a_malformed_toml() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
         let ws = testkit::TempDir::new("spira-config-resolve-run-dir-bad-toml");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
         let toml_path = ws.join("spira.toml");
         std::fs::write(&toml_path, "this is not [valid toml").unwrap();
-        std::env::set_var("HOME", "/h");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
-        std::env::set_var("SPIRA_TOML", toml_path.to_str().unwrap());
+        let no_xdg = ws.join("no-such-xdg");
+        let guard = testkit::env(&[
+            ("SPIRA_CONF", None),
+            ("SPIRA_REPO", None),
+            ("HOME", Some("/h")),
+            ("XDG_CONFIG_HOME", no_xdg.to_str()),
+            ("SPIRA_TOML", toml_path.to_str()),
+        ]);
 
         let e = env(&[("HOME", "/h")]);
         let got = resolve_run_dir(&e, &home);
-
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
+        drop(guard);
         let err = got.expect_err("a malformed spira.toml must refuse, not guess /tmp/spira");
         assert!(err.contains("cannot resolve spira.run"), "{err}");
     }
 
 
     fn run_dir_under_instance(instance: &str, run: impl Fn(&Path) -> String) -> (Result<PathBuf, String>, String) {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
-        for n in names {
-            std::env::remove_var(n);
-        }
         let ws = testkit::TempDir::new("spira-config-resolve-run-dir-confined");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        std::env::set_var("HOME", "/h");
-        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+        let no_xdg = ws.join("no-such-xdg");
+        let guard = testkit::env(&[
+            ("SPIRA_TOML", None),
+            ("SPIRA_CONF", None),
+            ("SPIRA_REPO", None),
+            ("HOME", Some("/h")),
+            ("XDG_CONFIG_HOME", no_xdg.to_str()),
+        ]);
         let value = run(ws.path());
         let declared = env(&[("SPIRA_INSTANCE", instance), ("SPIRA_RUN", &value), ("SPIRA_WORKSPACES", ws.path().to_str().unwrap())]);
         let toml = crate::fixture_toml_file(ws.path(), &declared);
         let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
         let got = resolve_run_dir(&e, &home);
-        for (n, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(n, v),
-                None => std::env::remove_var(n),
-            }
-        }
+        drop(guard);
         (got, value)
     }
 

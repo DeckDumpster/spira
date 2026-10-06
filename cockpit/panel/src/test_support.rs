@@ -54,7 +54,8 @@ exit "${{LC_RC:-0}}"
 pub struct StubBd {
     dir: testkit::TempDir,
     log: std::path::PathBuf,
-    set_vars: Vec<String>,
+    env_edits: Vec<(String, String)>,
+    env_guard: Option<testkit::EnvGuard>,
     mail_inbox: Option<std::path::PathBuf>,
     /// `Cfg::db`, settable with `.db(...)`. Empty by default — most tests pass a db path
     /// straight into the function under test (e.g. `close_decision("/fake/db", …)`) and never
@@ -115,7 +116,8 @@ exit "$rc"
         Self {
             dir,
             log,
-            set_vars: Vec::new(),
+            env_edits: Vec::new(),
+            env_guard: None,
             mail_inbox: None,
             db: String::new(),
             operator_actor: "operator".to_string(),
@@ -128,8 +130,13 @@ exit "$rc"
     /// registered config key) — never for `SPIRA_DB`/`SPIRA_OPERATOR_ACTOR`, which are
     /// `Cfg` fields now; use `.db(...)`/`.operator_actor(...)` for those.
     pub fn env(mut self, k: &str, v: &str) -> Self {
-        std::env::set_var(k, v);
-        self.set_vars.push(k.to_string());
+        // The testkit lock is not reentrant: release the guard (restoring) before retaking
+        // it with every edit made so far.
+        self.env_guard = None;
+        self.env_edits.push((k.to_string(), v.to_string()));
+        let edits: Vec<(&str, Option<&str>)> =
+            self.env_edits.iter().map(|(k, v)| (k.as_str(), Some(v.as_str()))).collect();
+        self.env_guard = Some(testkit::env(&edits));
         self
     }
 
@@ -178,9 +185,7 @@ exit "$rc"
                 log = self.log
             ),
         );
-        std::env::set_var("SPIRA_RULE", &script);
-        self.set_vars.push("SPIRA_RULE".to_string());
-        self
+        self.env("SPIRA_RULE", script.to_str().expect("utf-8 stub path"))
     }
 
     /// Also installs a `mail` stub beside the `bd` one — on the stub dir `Cfg::extra_path`
@@ -227,13 +232,5 @@ exit "$rc"
 
     pub fn argv_log(&self) -> String {
         std::fs::read_to_string(&self.log).unwrap_or_default()
-    }
-}
-
-impl Drop for StubBd {
-    fn drop(&mut self) {
-        for k in &self.set_vars {
-            std::env::remove_var(k);
-        }
     }
 }

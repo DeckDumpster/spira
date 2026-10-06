@@ -128,12 +128,6 @@ pub fn instance_suffix() -> Result<String, String> {
 mod tests {
     use super::*;
 
-    /// Serializes this crate's own env-mutating tests against each other — `cargo test`
-    /// runs them on separate threads by default, and `std::env::set_var` is process-global
-    /// (the same hazard `spira_config`'s own `ENV_LOCK` exists for, `pub(crate)` there so
-    /// this crate needs its own).
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// sp-ivfu3: the old contract was "defaults to the literal /tmp/spira when SPIRA_RUN is
     /// unset" — exactly the bug (a bare shell silently read/wrote the wrong run directory).
     /// `spira_config::resolve::resolve_run_dir` itself has since dropped the "derive an XDG
@@ -143,29 +137,25 @@ mod tests {
     /// never a guess, and never that `/tmp/spira` literal.
     #[test]
     fn spira_run_resolves_the_declared_value_never_a_guessed_default() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_RUN", "SPIRA_HOME", "SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, env::var(n).ok())).collect();
-        for n in names {
-            env::remove_var(n);
-        }
         let dir = testkit::TempDir::new("spira-world-run-declared");
         // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
         // lives); the complete fixture's own baked `run`/`workspaces`/`instance` are already
         // mutually consistent (run nests under workspaces), so no override is needed here.
         let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let toml = spira_config::process::fixture_toml(dir.path(), &[]);
-        env::set_var("SPIRA_HOME", &real_home);
-        env::set_var("SPIRA_TOML", &toml);
+        let guard = testkit::env(&[
+            ("SPIRA_RUN", None),
+            ("SPIRA_CONF", None),
+            ("SPIRA_REPO", None),
+            ("XDG_CONFIG_HOME", None),
+            ("HOME", None),
+            ("SPIRA_HOME", real_home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+        ]);
 
         let got = spira_run();
+        drop(guard);
 
-        for (n, v) in saved {
-            match v {
-                Some(v) => env::set_var(n, v),
-                None => env::remove_var(n),
-            }
-        }
         let got = got.unwrap();
         assert_ne!(got, PathBuf::from("/tmp/spira"));
         assert_eq!(got, PathBuf::from("/fixture/userhome/spira/run"), "the complete fixture's own declared spira.run");
@@ -173,26 +163,22 @@ mod tests {
 
     #[test]
     fn instance_suffix_reaches_the_declared_instance() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_INSTANCE", "SPIRA_HOME", "SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, env::var(n).ok())).collect();
-        for n in names {
-            env::remove_var(n);
-        }
         let dir = testkit::TempDir::new("spira-world-instance-declared");
         let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let toml = spira_config::process::fixture_toml(dir.path(), &[]);
-        env::set_var("SPIRA_HOME", &real_home);
-        env::set_var("SPIRA_TOML", &toml);
+        let guard = testkit::env(&[
+            ("SPIRA_INSTANCE", None),
+            ("SPIRA_CONF", None),
+            ("SPIRA_REPO", None),
+            ("XDG_CONFIG_HOME", None),
+            ("HOME", None),
+            ("SPIRA_HOME", real_home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+        ]);
 
         let got = instance_suffix();
+        drop(guard);
 
-        for (n, v) in saved {
-            match v {
-                Some(v) => env::set_var(n, v),
-                None => env::remove_var(n),
-            }
-        }
         assert_eq!(got.unwrap(), "-prod", "the complete fixture's own declared spira.instance, suffixed");
     }
 }

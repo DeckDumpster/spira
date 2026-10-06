@@ -1392,10 +1392,9 @@ fn the_context_answer_parses_into_settings_and_rows() {
     fs::write(&map, "spira | /h | queue.local\nother |\n").unwrap();
     // Declared config (the one source): the registry reads the map and home repo from the
     // SPIRA_TOML it resolves, never from the environment.
-    let prev_toml = std::env::var("SPIRA_TOML").ok();
     let cfgdir = testkit::TempDir::new("lp-registry-cfg");
     let toml = spira_config::process::fixture_toml(cfgdir.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
-    std::env::set_var("SPIRA_TOML", &toml);
+    let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
 
     let ans = "run=/r\0db=/db\0land_maxsec=3600\0gate_reserve=2700\0";
     // The home is the checkout's own spira/ (conf.d, the key registry, lives there).
@@ -1403,10 +1402,7 @@ fn the_context_answer_parses_into_settings_and_rows() {
     let (s, repos) = crate::real::parse_context(ans, &real_home).unwrap();
     let no_map = crate::real::parse_context("db=x\0", &real_home);
 
-    match prev_toml {
-        Some(v) => std::env::set_var("SPIRA_TOML", v),
-        None => std::env::remove_var("SPIRA_TOML"),
-    }
+    drop(env);
 
     assert_eq!((s.run.as_path(), s.land_maxsec, s.gate_reserve), (Path::new("/r"), 3600, 2700));
     assert_eq!(s.home_repo, "spira");

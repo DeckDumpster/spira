@@ -70,7 +70,6 @@ pub fn locate(explicit: Option<PathBuf>) -> LocateOutcome {
 mod tests {
     use super::*;
 
-    // ENV VARS ARE PROCESS-GLOBAL: every test takes crate::ENV_LOCK for its whole body.
     static SCRATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn scratch_dir(tag: &str) -> testkit::TempDir {
@@ -79,26 +78,11 @@ mod tests {
     }
 
     fn with_env<R>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_TOML", "SPIRA_CONF", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, env::var(n).ok())).collect();
-        for n in names {
-            env::remove_var(n);
-        }
-        for (k, v) in vars {
-            match v {
-                Some(v) => env::set_var(k, v),
-                None => env::remove_var(k),
-            }
-        }
-        let r = f();
-        for (k, v) in saved {
-            match v {
-                Some(v) => env::set_var(k, v),
-                None => env::remove_var(k),
-            }
-        }
-        r
+        let mut edits: Vec<(&str, Option<&str>)> =
+            ["SPIRA_TOML", "SPIRA_CONF", "XDG_CONFIG_HOME", "HOME"].iter().map(|n| (*n, None)).collect();
+        edits.extend_from_slice(vars);
+        let _env = testkit::env(&edits);
+        f()
     }
 
     #[test]

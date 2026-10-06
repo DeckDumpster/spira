@@ -3,32 +3,3 @@
 #
 # SHRINK-ONLY. A line leaves when its file moves to testkit::env; nothing is ever added
 # for a NEW env edit.
-batcher-cut/src/main.rs
-broker/src/main.rs
-cockpit-collect/src/probes/queue.rs
-cockpit-collect/src/probes/unsent.rs
-cockpit-collect/src/supervisor.rs
-cockpit/ops/src/conf.rs
-cockpit/panel/src/test_support.rs
-czar-pass/src/main.rs
-doctor/src/real.rs
-forge/src/real.rs
-gate/src/real.rs
-gate/src/tests.rs
-incident/src/main.rs
-landing-pass/src/main.rs
-landing-pass/src/seam.rs
-landing-pass/src/tests.rs
-maechen-trigger/src/main.rs
-queue/src/real.rs
-release/src/acceptance/tests.rs
-release/src/tests.rs
-sccache-dav/tests/store.rs
-sentinel/src/tests.rs
-spira-config/src/chamber.rs
-spira-config/src/lib.rs
-spira-config/src/locate.rs
-spira-config/src/resolve.rs
-spira-world/src/lib.rs
-watchtower/src/main.rs
-watchtower/src/seams.rs

@@ -726,13 +726,12 @@ mod tests {
 
     #[test]
     fn missing_run_dir_renders_unsent_zero_not_refusal() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         // With no repos configured, spira_repos resolves to nothing and the branch scan
         // loop never runs; SP_UNSENT must still read 0, not ?, matching "an empty readable
         // store yields a numeric 0" (UC-cockpit-observability-08).
         let run = testkit::TempDir::new("cc-unsent-empty");
-        let _env = crate::test_support::set_run(run.path());
-        std::env::set_var("SPIRA_REPO_MAP", run.path().join("no-map"));
+        let no_map = run.path().join("no-map");
+        let _env = crate::test_support::set_run_with(run.path(), &[("SPIRA_REPO_MAP", no_map.to_str())]);
         let mut out = Kv::new();
         branch_backlog_section(&mut out, &Cfg::default());
         let get = |k: &str| out.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());

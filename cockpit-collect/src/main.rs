@@ -22,11 +22,18 @@ pub(crate) mod test_support {
     /// Ryan 2026-10-05 (one source of config), `resolve_run_dir` no longer takes a bare
     /// `SPIRA_RUN` environment override — the value must come from the one file.
     pub fn set_run(run: &std::path::Path) -> testkit::EnvGuard {
+        set_run_with(run, &[])
+    }
+
+    /// [`set_run`] plus further edits under the same guard (the environment lock is not reentrant).
+    pub fn set_run_with(run: &std::path::Path, extra: &[(&str, Option<&str>)]) -> testkit::EnvGuard {
         let toml = spira_config::process::fixture_toml(run, &[("SPIRA_RUN", run.to_str().unwrap())]);
-        testkit::env(&[
+        let mut edits: Vec<(&str, Option<&str>)> = vec![
             ("SPIRA_HOME", Some(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira"))),
             ("SPIRA_TOML", Some(toml.to_str().unwrap())),
-        ])
+        ];
+        edits.extend_from_slice(extra);
+        testkit::env(&edits)
     }
 }
 

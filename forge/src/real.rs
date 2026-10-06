@@ -110,8 +110,7 @@ mod tests {
         let dir = testkit::TempDir::new("forge-real-env");
         let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_GH", "")]);
-        std::env::set_var("SPIRA_HOME", &real_home);
-        std::env::set_var("SPIRA_TOML", &toml);
+        let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
 
         assert_eq!(spira_gh(), Ok("gh".to_string()), "an empty declared SPIRA_GH means the system gh");
 

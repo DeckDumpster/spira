@@ -703,7 +703,6 @@ mod tests {
     /// pure argv test above cannot (that one does not spawn anything).
     #[test]
     fn two_consecutive_scheduled_runs_produce_an_advancing_sp_at() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = TempDir::new("cc-advancing-sp-at");
         let mut cfg = cfg(&run);
         let self_exe = run.path().join("fake-self");
@@ -718,7 +717,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 "#,
         );
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
-        std::env::set_var("FRAG_DIR", &cfg.frag_dir);
+        let _env = testkit::env(&[("FRAG_DIR", cfg.frag_dir.to_str())]);
         cfg.self_exe = self_exe;
 
         let probes = [Probe { name: "now", interval_s: 5, timeout_s: 30, subcommand: "now" }];
@@ -751,7 +750,6 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         let snap2 = std::fs::read_to_string(&cfg.snap).unwrap();
         let at2 = snap2.lines().find_map(|l| l.strip_prefix("SP_AT=")).expect("SP_AT present after second run");
 
-        std::env::remove_var("FRAG_DIR");
         assert_ne!(at1, at2, "SP_AT must advance between two scheduled runs, not freeze");
     }
 
@@ -1001,16 +999,11 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn may_write_refuses_bare_and_allows_forced() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        // Both assertions live in one test function: `SPIRA_COCKPIT_FORCE`/`INVOCATION_ID`
-        // are process-global, and cargo runs tests in parallel threads, so a separate test
-        // per case raced the other's env mutation (observed flake: this file's own CI run).
-        std::env::remove_var("SPIRA_COCKPIT_FORCE");
-        std::env::remove_var("INVOCATION_ID");
+        let env = testkit::env(&[("SPIRA_COCKPIT_FORCE", None), ("INVOCATION_ID", None)]);
         assert!(!may_write(None));
+        drop(env);
 
-        std::env::set_var("SPIRA_COCKPIT_FORCE", "1");
+        let _env = testkit::env(&[("SPIRA_COCKPIT_FORCE", Some("1")), ("INVOCATION_ID", None)]);
         assert!(may_write(None));
-        std::env::remove_var("SPIRA_COCKPIT_FORCE");
     }
 }

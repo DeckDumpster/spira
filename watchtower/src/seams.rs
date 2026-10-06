@@ -149,9 +149,13 @@ mod tests {
     #[test]
     fn repo_root_is_none_when_lib_sh_is_missing() {
         let d = testkit::TempDir::new("watchtower-repo-root-missing");
-        std::env::set_var("SPIRA_TOML", d.join("no-such-config.toml"));
-        std::env::set_var("HOME", d.path());
-        std::env::set_var("XDG_CONFIG_HOME", d.join("no-such-xdg"));
+        let toml = d.join("no-such-config.toml");
+        let xdg = d.join("no-such-xdg");
+        let _g = testkit::env(&[
+            ("SPIRA_TOML", toml.to_str()),
+            ("HOME", d.to_str()),
+            ("XDG_CONFIG_HOME", xdg.to_str()),
+        ]);
         assert_eq!(registry("/does/not/exist").root("spira"), None);
     }
 
@@ -159,14 +163,6 @@ mod tests {
     /// them by bare name on PATH, so the fixture is a fake PATH entry, not a sourceable
     /// bash library — `world.sh timer-priority` and `ctrl.sh suspended` are the only
     /// contract this function depends on.
-    fn with_fake_path<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
-        let saved = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{saved}", dir.display()));
-        let r = f();
-        std::env::set_var("PATH", saved);
-        r
-    }
-
     #[test]
     fn timer_priority_and_suspended_reads_the_fixture_shape() {
         let d = testkit::TempDir::new("wt-seams-timers");
@@ -178,7 +174,9 @@ mod tests {
             d.join("ctrl.sh"),
             "#!/usr/bin/env bash\nprintf 'spira-watchtower\\tbecause\\n'\n",
         );
-        let t = with_fake_path(&d, || timer_priority_and_suspended("unused")).unwrap();
+        let path = format!("{}:/usr/bin:/bin", d.display());
+        let _g = testkit::env(&[("PATH", Some(&path))]);
+        let t = timer_priority_and_suspended("unused").unwrap();
         assert_eq!(t.priority, vec!["spira-sentinel", "spira-watchtower"]);
         assert!(t.suspended.contains("spira-watchtower"));
         assert!(!t.suspended.contains("spira-sentinel"));
@@ -189,11 +187,9 @@ mod tests {
         let d = testkit::TempDir::new("wt-seams-timers-missing");
         // A confined PATH (never the inherited one) — this box's own release may well
         // have a real world.sh/ctrl.sh on it, which would defeat "missing" entirely.
-        let saved = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:/usr/bin:/bin", d.display()));
-        let r = timer_priority_and_suspended("unused");
-        std::env::set_var("PATH", saved);
-        assert!(r.is_none());
+        let path = format!("{}:/usr/bin:/bin", d.display());
+        let _g = testkit::env(&[("PATH", Some(&path))]);
+        assert!(timer_priority_and_suspended("unused").is_none());
     }
 
     #[test]

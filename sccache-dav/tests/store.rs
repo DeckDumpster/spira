@@ -171,20 +171,14 @@ fn config_from_env_refuses_a_wildcard_bind_and_missing_vars() {
         (Some("0.0.0.0:9431"), Some("/tmp/x"), None),
         (Some("192.168.1.56:9431"), None, None),
     ] {
-        // SAFETY: tests run single-threaded for env vars via a lock would be the normal
-        // concern, but this crate's tests never run this check concurrently with another
-        // that reads these same three variables.
-        for (k, v) in [("SCCACHE_DAV_ADDR", addr), ("SCCACHE_DAV_ROOT", root), ("SCCACHE_DAV_TOKEN", token)] {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
+        let _env = testkit::env(&[("SCCACHE_DAV_ADDR", addr), ("SCCACHE_DAV_ROOT", root), ("SCCACHE_DAV_TOKEN", token)]);
         assert!(sccache_dav::config_from_env().is_err(), "{addr:?} {root:?}");
     }
-    std::env::set_var("SCCACHE_DAV_ADDR", "192.168.1.56:9431");
-    std::env::set_var("SCCACHE_DAV_ROOT", "/tmp/sccache-dav-store");
-    std::env::remove_var("SCCACHE_DAV_TOKEN");
+    let _env = testkit::env(&[
+        ("SCCACHE_DAV_ADDR", Some("192.168.1.56:9431")),
+        ("SCCACHE_DAV_ROOT", Some("/tmp/sccache-dav-store")),
+        ("SCCACHE_DAV_TOKEN", None),
+    ]);
     let cfg = sccache_dav::config_from_env().expect("a valid config");
     assert_eq!(cfg.addr, "192.168.1.56:9431");
     assert!(cfg.token.is_none());

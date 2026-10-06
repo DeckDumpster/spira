@@ -995,7 +995,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     /// pair is safe to vary per test; [`PROCESS_CFG_DECLARE`] still has to ride along in
     /// case this fixture is the one that ends up seeding `process::cfg`'s cache.
     fn with_repo_map<R>(map: &Path, home_repo: Option<&str>, f: impl FnOnce() -> R) -> R {
-        let prev_toml = std::env::var("SPIRA_TOML").ok();
         let dir = map.parent().expect("map path has a parent directory");
         let mut declare: Vec<(&str, &str)> = PROCESS_CFG_DECLARE.to_vec();
         declare.push(("SPIRA_REPO_MAP", map.to_str().expect("map path is UTF-8")));
@@ -1003,14 +1002,8 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
             declare.push(("SPIRA_HOME_REPO", h));
         }
         let toml = spira_config::process::fixture_toml(dir, &declare);
-        std::env::set_var("SPIRA_HOME", REAL_SPIRA_HOME);
-        std::env::set_var("SPIRA_TOML", &toml);
-        let out = f();
-        match prev_toml {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-        out
+        let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        f()
     }
 
     /// `context()` reads SPIRA_CERTIFY_SUITES/SPIRA_GIT_NAME/SPIRA_GIT_EMAIL/
@@ -1022,17 +1015,16 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     /// has none, so `SPIRA_HOME` must be this tree's own `spira/` (where `conf.d` actually
     /// lives), not `fixture_dir`. See [`PROCESS_CFG_DECLARE`] for why every caller here
     /// declares the SAME values.
-    fn declare_test_spira_toml(fixture_dir: &Path) {
+    fn declare_test_spira_toml(fixture_dir: &Path) -> testkit::EnvGuard {
         let toml = spira_config::process::fixture_toml(fixture_dir, PROCESS_CFG_DECLARE);
-        std::env::set_var("SPIRA_HOME", REAL_SPIRA_HOME);
-        std::env::set_var("SPIRA_TOML", toml);
+        testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))])
     }
 
     #[test]
     fn context_seam_carries_the_verdict_thresholds_with_the_per_repo_override() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
-        declare_test_spira_toml(&home);
+        let _env = declare_test_spira_toml(&home);
         let lib_sh = fs::read_to_string(home.join("lib.sh")).unwrap();
         fs::write(
             home.join("lib.sh"),
@@ -1080,7 +1072,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     fn context_seam_round_trips_through_bash() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
-        declare_test_spira_toml(&home);
         let lib = RealLib { home: home.to_path_buf() };
 
         // spira_home_repo/repo_root/repo_land/repo_field (family U) and spira_landref/
@@ -1168,18 +1159,13 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let _serial = crate::testutil::serial();
         let home = stub_home();
         let lib = RealLib { home: home.to_path_buf() };
-        let prev_toml = std::env::var("SPIRA_TOML").ok();
         let toml = spira_config::process::fixture_toml(
             &home,
             &[("SPIRA_REPO_MAP", home.join("no-such-map").to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
         );
-        std::env::set_var("SPIRA_HOME", REAL_SPIRA_HOME);
-        std::env::set_var("SPIRA_TOML", toml);
+        let env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
         let names = lib.repos();
-        match prev_toml {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
+        drop(env);
         assert_eq!(names.unwrap(), vec!["spira".to_string()]);
     }
 
@@ -1271,7 +1257,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
         p.push(&old_path);
-        std::env::set_var("PATH", &p);
+        let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
 
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
@@ -1297,7 +1283,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         assert_eq!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
         assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
 
-        std::env::set_var("PATH", &old_path);
     }
 
     #[test]
@@ -1322,29 +1307,24 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
         p.push(&old_path);
-        std::env::set_var("PATH", &p);
+        let path = p.to_str().unwrap().to_string();
+        let env = testkit::env(&[("PATH", Some(&path)), ("SPIRA_GH_APP_ID", None), ("SPIRA_GH_APP_INSTALLATION_ID", None)]);
 
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
 
-        std::env::remove_var("SPIRA_GH_APP_ID");
-        std::env::remove_var("SPIRA_GH_APP_INSTALLATION_ID");
         assert!(lib.push(Path::new("/repo"), "origin", "main"));
         let plain = fs::read_to_string(&args_file).unwrap();
         assert!(!plain.contains("credential.helper"), "{plain}");
         assert!(plain.contains("push"), "{plain}");
 
         fs::remove_file(&args_file).ok();
-        std::env::set_var("SPIRA_GH_APP_ID", "1");
-        std::env::set_var("SPIRA_GH_APP_INSTALLATION_ID", "2");
+        drop(env);
+        let _env = testkit::env(&[("PATH", Some(&path)), ("SPIRA_GH_APP_ID", Some("1")), ("SPIRA_GH_APP_INSTALLATION_ID", Some("2"))]);
         assert!(lib.push(Path::new("/repo"), "origin", "main"));
         let with_creds = fs::read_to_string(&args_file).unwrap();
         assert!(with_creds.contains("credential.helper"), "{with_creds}");
         assert!(with_creds.contains("insteadOf=git@github.com:"), "{with_creds}");
-
-        std::env::remove_var("SPIRA_GH_APP_ID");
-        std::env::remove_var("SPIRA_GH_APP_INSTALLATION_ID");
-        std::env::set_var("PATH", &old_path);
     }
 
     #[test]
@@ -1356,8 +1336,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // source of config) reads `spira.run` from the resolved $SPIRA_TOML — setting
         // SPIRA_RUN itself is no longer an override, so the fixture toml must declare it.
         let toml = spira_config::process::fixture_toml(run.path(), &[("SPIRA_RUN", run.path().to_str().unwrap())]);
-        std::env::set_var("SPIRA_HOME", REAL_SPIRA_HOME);
-        std::env::set_var("SPIRA_TOML", &toml);
+        let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
         let bindir = crate::testutil::tmpdir("cancel-bin");
         let forge = bindir.join("forge-fake.sh");
         testkit::write_exe(
@@ -1375,7 +1354,6 @@ esac
         let log = fs::read_to_string(run.join("landing.log")).unwrap();
         assert!(log.contains("RUN_CANCEL ") && log.contains("run=101"), "{log}");
         assert!(log.contains("RUN_CANCEL_FAILED") && log.contains("run=202"), "{log}");
-        std::env::remove_var("SPIRA_TOML");
     }
 
     #[test]
@@ -1389,7 +1367,7 @@ esac
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
         p.push(&old_path);
-        std::env::set_var("PATH", &p);
+        let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
 
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
@@ -1398,7 +1376,6 @@ esac
         assert!(seen.contains("send concierge"), "{seen}");
         assert!(seen.contains("Merge queue: fixq test subject"), "{seen}");
 
-        std::env::set_var("PATH", &old_path);
     }
 
     // ---------------------------------------------------------------------------- sp-uwhx0
@@ -1427,7 +1404,7 @@ esac
         let _serial = crate::testutil::serial();
         let run = crate::testutil::tmpdir("bc-run");
         fs::create_dir_all(run.join("worktree")).unwrap();
-        std::env::set_var("SPIRA_RUN", run.path());
+        let _env = testkit::env(&[("SPIRA_RUN", Some(run.path().to_str().unwrap()))]);
         let repo = crate::testutil::tmpdir("bc-repo");
         git(&repo, &["init", "-q"]);
         git(&repo, &["config", "user.email", "a@b.c"]);
@@ -1464,7 +1441,6 @@ esac
 
         // The scratch worktree it used is cleaned up either way.
         assert!(!run.join("worktree").read_dir().unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with(".batch-ck-")));
-        std::env::remove_var("SPIRA_RUN");
     }
 
     #[test]
@@ -1517,7 +1493,7 @@ esac
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
         p.push(&old_path);
-        std::env::set_var("PATH", &p);
+        let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
         let (rc, out) = lib.pf_gate("spira/queue/1", "spira", "1700000000", 10);
@@ -1545,7 +1521,6 @@ esac
             Command::new("kill").arg("-0").arg(gc).status().map(|s| !s.success()).unwrap_or(true),
             "the whole process group must be killed, grandchild included — pid {gc} still alive"
         );
-        std::env::set_var("PATH", &old_path);
     }
 }
 

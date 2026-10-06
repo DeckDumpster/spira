@@ -500,7 +500,6 @@ mod from_env_tests {
     use super::*;
 
     fn with_env<R>(pairs: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
-        let _l = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _g = testkit::env(pairs);
         f()
     }

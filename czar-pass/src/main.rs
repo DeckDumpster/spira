@@ -1380,13 +1380,7 @@ fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    // Serialises the tests below that touch the real process environment (SPIRA_HOME,
-    // SPIRA_TOML, SPIRA_CZAR_LABEL, ...) — same pattern as release's `ENV_LOCK`
-    // (release/src/tests.rs).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     // Wave 4.8: merge_resolved_env() must reach a registry key `Config::from_env` never
     // hardcoded a default for (SPIRA_CZAR_LABEL's conf.d default, "czar-trigger", is the
@@ -1395,13 +1389,6 @@ mod tests {
     // a NEVER_EXPORTED key into this process's own environment.
     #[test]
     fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_home = env::var_os("SPIRA_HOME");
-        let saved_label = env::var_os("SPIRA_CZAR_LABEL");
-        let saved_max_aeons = env::var_os("SPIRA_MAX_AEONS");
-        let saved_toml = env::var_os("SPIRA_TOML");
-        env::remove_var("SPIRA_CZAR_LABEL");
-        env::remove_var("SPIRA_MAX_AEONS");
         let dir = testkit::TempDir::new("czar-pass-merge-env");
         let home = dir.join("spira");
         fs::create_dir_all(home.join("conf.d")).unwrap();
@@ -1410,7 +1397,6 @@ mod tests {
             "TYPE=string\nGROUP=czar\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CZAR_LABEL:=czar-trigger}\"\nSPIRA_CONF_DEFAULT_EOF\n",
         )
         .unwrap();
-        env::set_var("SPIRA_HOME", &home);
         // merge_resolved_env() calls resolve_for_process on THIS process's own
         // environment (it has no env parameter of its own to hand a synthetic one to),
         // so SPIRA_TOML has to be real and ambient here too (per Ryan 2026-10-05: one
@@ -1418,29 +1404,19 @@ mod tests {
         // The complete fixture's own czar_label ("czar-trigger") already matches what
         // this synthetic conf.d declares as its default, so no override is needed.
         let toml = spira_config::process::fixture_toml(&dir, &[]);
-        env::set_var("SPIRA_TOML", &toml);
+        let _g = testkit::env(&[
+            ("SPIRA_CZAR_LABEL", None),
+            ("SPIRA_MAX_AEONS", None),
+            ("SPIRA_HOME", home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+        ]);
 
         merge_resolved_env();
 
         let got_label = env::var("SPIRA_CZAR_LABEL").ok();
         let got_max_aeons = env::var_os("SPIRA_MAX_AEONS");
 
-        match saved_home {
-            Some(v) => env::set_var("SPIRA_HOME", v),
-            None => env::remove_var("SPIRA_HOME"),
-        }
-        match saved_label {
-            Some(v) => env::set_var("SPIRA_CZAR_LABEL", v),
-            None => env::remove_var("SPIRA_CZAR_LABEL"),
-        }
-        match saved_max_aeons {
-            Some(v) => env::set_var("SPIRA_MAX_AEONS", v),
-            None => env::remove_var("SPIRA_MAX_AEONS"),
-        }
-        match saved_toml {
-            Some(v) => env::set_var("SPIRA_TOML", v),
-            None => env::remove_var("SPIRA_TOML"),
-        }
+        drop(_g);
 
         assert_eq!(got_label, Some("czar-trigger".to_string()), "a registry default must reach the real environment");
         assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
@@ -1458,27 +1434,17 @@ mod tests {
     // below, passing values directly instead of through the environment.
     #[test]
     fn config_from_env_resolves_forge_sh_through_cfg() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_toml = env::var_os("SPIRA_TOML");
-        let saved_home = env::var_os("SPIRA_HOME");
         let dir = testkit::TempDir::new("czar-pass-config-from-env");
         let toml = spira_config::process::fixture_toml(&dir, &[]);
-        env::set_var("SPIRA_TOML", &toml);
         // The real, checked-in spira/conf.d (this crate's own repo layout: `czar-pass/`
         // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate
         // every key `Config::from_env` asks for.
-        env::set_var("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira"));
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+        let g = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str())]);
 
         let cfg = Config::from_env();
+        drop(g);
 
-        match saved_toml {
-            Some(v) => env::set_var("SPIRA_TOML", v),
-            None => env::remove_var("SPIRA_TOML"),
-        }
-        match saved_home {
-            Some(v) => env::set_var("SPIRA_HOME", v),
-            None => env::remove_var("SPIRA_HOME"),
-        }
         assert_eq!(cfg.forge_sh, "forge", "Config::from_env must resolve SPIRA_FORGE through cfg(), not an inline default");
         let _ = fs::remove_dir_all(&dir);
     }

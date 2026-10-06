@@ -509,16 +509,14 @@ mod tests {
     /// so a second test with a different fixture could not observe a different answer.
     #[test]
     fn getenv_falls_back_to_the_callers_default_with_no_registry_fallback() {
-        std::env::set_var("SPIRA_TOML", "/no/such/spira-toml-for-this-test");
-        std::env::remove_var("SPIRA_DISK_WARN_PCT");
+        let g = testkit::env(&[("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", None)]);
 
         assert_eq!(getenv_i64("SPIRA_DISK_WARN_PCT", 90), 90, "no registry fallback for an unregistered key: the caller's own default must win");
         assert_eq!(getenv("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None, "an unresolved key still falls through to None");
 
-        std::env::set_var("SPIRA_DISK_WARN_PCT", "99");
+        drop(g);
+        let _g = testkit::env(&[("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", Some("99"))]);
         assert_eq!(getenv_i64("SPIRA_DISK_WARN_PCT", 90), 99, "an explicit env override still wins over the registry");
-        std::env::remove_var("SPIRA_DISK_WARN_PCT");
-        std::env::remove_var("SPIRA_TOML");
     }
 
     #[test]
