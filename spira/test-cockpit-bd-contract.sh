@@ -44,7 +44,15 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
+    # SPIRA_CHAMBER: the complete fixture declares a /fixture/home path that does not exist
+    # here, which now wins over chamber_dir's own home-derived fallback (spira-config's
+    # chamber.rs resolves it from the one source, never a derived default) — fayth_get then
+    # finds no builder.fayth there and silently returns "" for FAYTH_LABELS, so the SP_READY
+    # partition map stays empty and every ready count renders "?". Point it at the real
+    # chamber this suite's own SPIRA_HOME ($HERE) carries (one source of config, per Ryan
+    # 2026-10-05).
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
+        SPIRA_CHAMBER="$HERE/chamber" \
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="${SPIRA_BD:-bd-embedded}"
     # Any caller override: a registered key (spira/conf.d) goes to tl_config, same as the
@@ -156,7 +164,13 @@ JSONL
     # No PANEL_FIXTURE: the panel shells out to the real `bd` this run's SPIRA_PATH/SPIRA_DB
     # point at, exactly as store.rs::db()/bin() resolve it live, and --dump prints whatever
     # fetch_beads()'s parsing made of that real payload.
-    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH"
+    # store.rs::Cfg::load reads COCKPIT_DB, never SPIRA_DB directly — conf.d's own
+    # `: "${COCKPIT_DB:=$SPIRA_DB}"` default only fires when the toml leaves cockpit_db
+    # undeclared, and the complete fixture declares it explicitly
+    # ("/fixture/home/spira/db", nonexistent here), so it wins over the derivation and the
+    # panel queried an empty database. Declare cockpit_db itself (one source of config, per
+    # Ryan 2026-10-05).
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH" COCKPIT_DB="$SPIRA_DB"
     out="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         "$PANEL_BIN" --dump 2>"$TMP/panel-dump.err")"
