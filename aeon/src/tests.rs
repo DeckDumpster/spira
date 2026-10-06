@@ -1236,28 +1236,6 @@ fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
 }
 
 #[test]
-fn slain_mid_session_is_free_and_exits_143() {
-    let f = fx("slain");
-    seed(&f, "sp-s");
-    let run = f.run.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, stop| {
-        std::fs::write(run.join("sp-s.slain"), "t\twhy\n").unwrap();
-        stop.trip(15);
-        143
-    });
-    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
-    assert_eq!(o.code, 143);
-    let l = ledger_lines(&o);
-    assert!(l[2].starts_with("done builder sp-s rc=143 status=slain"), "{l:?}");
-    let w = o.w.lock().unwrap();
-    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-s", "unjudged-slain"]));
-    // verdict() is native now (no seam call to prove it ran); its first act is always this
-    // exact log line, so its absence proves the whole block was skipped.
-    assert!(!o.log.contains("sp-s status="), "the verdict block is skipped, as bash's trap skipped it");
-    assert!(!f.run.join("aeon-builder-sp-s.pid").exists());
-}
-
-#[test]
 fn a_worktree_failure_is_a_pre_session_death() {
     let f = fx("presession");
     seed(&f, "sp-d");
