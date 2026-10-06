@@ -429,6 +429,11 @@ hasnt "actionable filter: the unmapped repo's RED is dropped"            "$out9"
 hasnt "actionable filter: OPENED is not actionable"                      "$out9" "OPENED"
 hasnt "actionable filter: GREEN is not actionable (it lands itself)"     "$out9" "GREEN"
 
+# SPIRA_ACTIONABLE RESTORED (pattern 10): tl_config persists for the rest of the suite, and
+# none of run()/runb()/run_gone() below mention this key, so the override above would
+# otherwise go on filtering every later pr-notify.sh call too.
+tl_config SPIRA_ACTIONABLE=
+
 echo "10. the mailed log is marked delivered, so watchd notify has no unread stream to escalate"
 mkdir -p "$RUN/watchd"
 printf 'a\nb\n' > "$RUN/watchd/pr-notify.log"
