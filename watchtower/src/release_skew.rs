@@ -13,7 +13,7 @@ pub struct Cfg {
 }
 
 /// Live-unit count per release, from `systemctl show -p Id -p Environment` blocks.
-pub fn count_by_release(show: &str) -> BTreeMap<String, usize> {
+pub fn count_by_release(show: &str, resolve: impl Fn(&str) -> Option<String>) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for block in show.split("\n\n") {
         let release = block
@@ -22,8 +22,10 @@ pub fn count_by_release(show: &str) -> BTreeMap<String, usize> {
             .flat_map(|l| l.split_whitespace())
             .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="));
         if let Some(r) = release {
-            let resolved = std::fs::canonicalize(r).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| r.to_string());
-            let sha = resolved.trim_end_matches('/').rsplit('/').next().unwrap_or(&resolved);
+            let r = r.trim_end_matches('/');
+            let resolved = resolve(r);
+            let r = resolved.as_deref().unwrap_or(r).trim_end_matches('/');
+            let sha = r.rsplit('/').next().unwrap_or(r);
             *counts.entry(sha.to_string()).or_insert(0) += 1;
         }
     }
@@ -57,7 +59,9 @@ pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &st
         log("watchtower: release-skew-check skipped — systemctl show failed");
         return;
     };
-    let counts = count_by_release(&String::from_utf8_lossy(&out.stdout));
+    let counts = count_by_release(&String::from_utf8_lossy(&out.stdout), |p| {
+        std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned())
+    });
     let stamp = run_dir.join("release-skew.since");
     let since = std::fs::read_to_string(&stamp).ok().and_then(|s| s.trim().parse().ok());
     match decide(counts.len(), since, now, cfg.max_secs) {
@@ -95,9 +99,18 @@ mod tests {
 
     #[test]
     fn counts_live_units_by_release_and_ignores_units_without_one() {
-        let c = count_by_release(SHOW);
+        let c = count_by_release(SHOW, |_| None);
         assert_eq!((c.get("aaa"), c.get("bbb"), c.len()), (Some(&1), Some(&2), 2));
-        assert!(count_by_release("Id=x\nEnvironment=FOO=1\n").is_empty());
+        assert!(count_by_release("Id=x\nEnvironment=FOO=1\n", |_| None).is_empty());
+    }
+
+    #[test]
+    fn a_current_symlink_and_its_sha_path_are_one_release() {
+        let show = "Id=a\nEnvironment=SPIRA_RELEASE=/r/current\n\nId=b\nEnvironment=SPIRA_RELEASE=/r/abc123\n";
+        let resolve = |p: &str| (p == "/r/current").then(|| "/r/abc123".to_string());
+        let c = count_by_release(show, resolve);
+        assert_eq!((c.get("abc123"), c.len()), (Some(&2), 1));
+        assert_eq!(count_by_release(show, |_| None).len(), 2);
     }
 
     #[test]
@@ -109,7 +122,7 @@ mod tests {
             "Id=a.service\nEnvironment=SPIRA_RELEASE={0}/current\n\nId=b.service\nEnvironment=SPIRA_RELEASE={0}/abc123\n",
             d.display()
         );
-        let c = count_by_release(&show);
+        let c = count_by_release(&show, |p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()));
         assert_eq!((c.get("abc123"), c.len()), (Some(&2), 1));
     }
 
