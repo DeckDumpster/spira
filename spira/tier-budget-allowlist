@@ -228,7 +228,6 @@ test-install-bootstrap-release.sh	T1	7.5
 test-install-conf-seed.sh	T1	61.0
 test-install-conflicts.sh	T1	9.0
 test-install-dolt-breaker.sh	T1	13.0
-test-install-dolt-mode.sh	T1	7.0
 test-install-dolt-port-wait.sh	T1	1.5
 test-install-hooks-artifact.sh	T1	9.0
 test-install-instance.sh	T1	62.5
