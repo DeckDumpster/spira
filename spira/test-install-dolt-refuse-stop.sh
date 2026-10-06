@@ -143,9 +143,15 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$MOCK_BIN/tmux"; chmod +x "$MOCK_BIN/t
 for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$b"; chmod +x "$MOCK_BIN/$b"; done
 
 : > "$LOG"
+# SPIRA_MAIL_READERS="": this suite is about dolt-beads.service's restart dispatch, not
+# mail — the fixture's declared reader points units-install's own ensure_reader_mailboxes()
+# at a shared "/fixture/home/.../mail" tree this suite's sandboxed SPIRA_RUN never touches,
+# which has intermittently refused mkdir with EACCES under concurrent runs (same fix as
+# test-install-unit-prune.sh); declaring no readers means install never calls `mail ensure`.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
     SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA= SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
-    SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=prod
+    SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=prod \
+    SPIRA_MAIL_READERS=
 # SPIRA_DOLT_DATA also as plain env: `units-install` (unlike `spira-install`, which bridges
 # a handful of registered keys from SPIRA_TOML into its own process env before this same
 # manifest check) reads install::bootstrap::manifest_from_env's dolt_data_set straight off
