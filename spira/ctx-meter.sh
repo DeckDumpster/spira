@@ -42,7 +42,7 @@ set -uo pipefail
 # The thresholds are configuration, not constants, because they are a fact about the plan and
 # the model rather than about this box. Sourced rather than defaulted inline so that the pane
 # and the status line cannot drift apart.
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh" || { echo "ctx-meter: config refused; no status" >&2; exit 1; }
 
 MODE="${1:-line}"
 IN=""
