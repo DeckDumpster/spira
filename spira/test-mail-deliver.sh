@@ -182,8 +182,13 @@ BASE_ENV=(
 # SPIRA_RUN — mail's own repeat-check would otherwise silently swallow every one after the
 # first, which is correct anti-spam behaviour in production and exactly wrong for a test
 # proving each condition escalates on its own.
+# SPIRA_MAIL_MUTE=0: the complete fixture declares mail_mute = true, which delivers to
+# "cur" (already-seen) rather than "new" (mail_deliver, sp-9hwim) — every asks()/grep check
+# below reads "$MAIL/operator/new", so this suite declares its own unmuted intent (one
+# source of config, per Ryan 2026-10-05), persisting for every later section too (sections
+# 4-8 want the same unmuted behaviour).
 tl_config SPIRA_RUN="$RUN" SPIRA_INSTANCE=test SPIRA_WATCHERS="$MAN" SPIRA_MAIL="$MAIL" \
-    SPIRA_NOTIFY_AGE=0 SPIRA_ACTIONABLE=WAKEME SPIRA_MAIL_REPEAT_WINDOW=0
+    SPIRA_NOTIFY_AGE=0 SPIRA_ACTIONABLE=WAKEME SPIRA_MAIL_REPEAT_WINDOW=0 SPIRA_MAIL_MUTE=0
 
 run_notify() {
     # Extra args split: SPIRA_* overrides (SPIRA_MAIL_READERS, SPIRA_MAIL_UNREAD_AGE) are
