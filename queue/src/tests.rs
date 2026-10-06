@@ -1586,36 +1586,37 @@ fn land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so(
 }
 
 #[test]
-fn land_local_build_failure_leaves_current_alone_keeps_the_landing_and_reports_a_deploy_fault() {
+fn land_local_build_or_verify_failure_refuses_and_leaves_the_ref_where_it_was() {
+    for (sub, calls) in [("build", 1), ("verify", 2)] {
+        let mut t = T::new(LandMode::QueueLocal);
+        t.submitted(&["sp-a", "sp-b"]);
+        let wts = harness_world(&mut t);
+        release_in_force(&t);
+        t.scripts.release_rc.borrow_mut().insert(sub.into(), (1, format!("release: {sub} said no\n")));
+        assert_eq!(land_harness(&t, &wts), 1, "{sub}");
+        let e = t.err();
+        assert!(e.contains(&format!("release h1 failed to build or verify: release {sub} exited 1: release: {sub} said no")), "{e}");
+        assert!(e.contains("refused, local/main left at b0"), "{e}");
+        assert_eq!(release_argv(&t).len(), calls, "{sub}");
+        assert_eq!(t.landed_ref().as_deref(), Some("b0"), "{sub}: the ref never moved");
+        assert!(!t.lib.has("bead_close sp-a h1") && t.git.get("refs/archive/rounds/1").is_none(), "{sub}");
+    }
+}
+
+#[test]
+fn land_local_activate_failure_is_a_deploy_fault_and_keeps_the_landing() {
     let mut t = T::new(LandMode::QueueLocal);
     t.submitted(&["sp-a", "sp-b"]);
     let wts = harness_world(&mut t);
     release_in_force(&t);
-    t.scripts.release_rc.borrow_mut().insert("build".into(), (1, "release: the workspace declares queue but the build did not produce it\n".into()));
+    t.scripts.release_rc.borrow_mut().insert("activate".into(), (1, "release: activate said no\n".into()));
     assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     let e = t.err();
-    assert!(e.contains("LAND DEPLOY FAILED for h1: release build exited 1: release: the workspace declares queue"), "{e}");
+    assert!(e.contains("LAND DEPLOY FAILED for h1: release activate exited 1: release: activate said no"), "{e}");
     assert!(e.contains("current is untouched (still ") && e.contains("/r1)"), "names what current still is: {e}");
-    assert!(e.contains("local/main is at h1 and the landing stays recorded"), "{e}");
-    assert_eq!(release_argv(&t).len(), 1, "no verify or activate after a failed build");
-    assert_eq!(t.landed_ref().as_deref(), Some("h1"), "never reverted");
+    assert_eq!(release_argv(&t).len(), 3);
+    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lib.has("bead_close sp-a h1"));
-    assert_eq!(t.git.get("refs/archive/rounds/1").as_deref(), Some("h1"));
-}
-
-#[test]
-fn land_local_verify_or_activate_failure_is_a_deploy_fault_too() {
-    for (sub, calls) in [("verify", 2), ("activate", 3)] {
-        let mut t = T::new(LandMode::QueueLocal);
-        let wts = harness_world(&mut t);
-        release_in_force(&t);
-        t.scripts.release_rc.borrow_mut().insert(sub.into(), (1, format!("release: {sub} said no\n")));
-        assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT, "{sub}");
-        assert!(t.err().contains(&format!("LAND DEPLOY FAILED for h1: release {sub} exited 1: release: {sub} said no")), "{}", t.err());
-        assert_eq!(release_argv(&t).len(), calls, "{sub}");
-        assert_eq!(t.landed_ref().as_deref(), Some("h1"));
-        assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\""));
-    }
 }
 
 #[test]
@@ -1639,8 +1640,9 @@ fn land_local_answer_for_another_commit_is_a_fault() {
     let wts = harness_world(&mut t);
     release_in_force(&t);
     *t.scripts.build_answers.borrow_mut() = Some("h0".into());
-    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
+    assert_eq!(land_harness(&t, &wts), 1);
     assert!(t.err().contains("release build answered \"h0\" for h1 — not the landed commit"), "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
     assert_eq!(release_argv(&t).len(), 1);
 }
 

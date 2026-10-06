@@ -1704,6 +1704,30 @@ fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edi
 }
 
 #[test]
+fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_files_alone() {
+    let probe = "#!/bin/sh\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";
+    let mut g = delta_git("[added]\n\"spira.new_key\" = 300\n");
+    g.extra.push(("spira/pre-activate.sh".into(), probe.into(), true));
+    let w = World::with_git(g);
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, A, &["old_key"], &[]);
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let with = VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, B, &with).unwrap();
+    assert!(!p.iter().any(|l| l.contains("pre-activate")), "{p:?}");
+    assert_eq!(cfg_text(&w), before, "verify applies nothing");
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 300"));
+
+    let nodelta = World::with_git(FakeGit { extra: vec![("spira/pre-activate.sh".into(), probe.into(), true)], ..Default::default() });
+    nodelta.build(A).unwrap();
+    let p = verify::verify(&nodelta.cfg, A, &with).unwrap().join("\n");
+    assert!(p.contains("new_key is not declared"), "control: without the delta the probe fails: {p}");
+}
+
+#[test]
 fn config_delta_that_leaves_a_required_key_unset_refuses_naming_it_and_changes_nothing() {
     let w = World::with_git(delta_git("[added]\n\"spira.other\" = 1\n"));
     let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";

@@ -356,25 +356,24 @@ is     "8: the bead is closed"                closed "$(field sp-lrel8 status)"
 
 # ============================================================================
 echo
-echo "9 — a failed build leaves current alone, keeps the landing, exits non-zero"
+echo "9 — a failed build refuses the landing: current and local/main stay where they were"
 # ============================================================================
 ln -s "$HEAD1" "$RELEASES/current"
 seed sp-lrel9
 HEAD9="$(mk_round round-9 nine.txt v9)"
 lcfix_seed sp-lrel9 CERTIFIED "$HEAD9"
 mk_bins "$HEAD9" not-the-declared-binary otherbin   # the round built something, not fakebin
+BEFORE9="$(localmain)"
 
 out="$(run_q land-local fixq --head "$HEAD9" --members "sp-lrel9:$HEAD9" --worktree "$(bins_wt "$HEAD9")")"; rc=$?
-[ "$rc" -eq 3 ] && ok "9: exit 3 on a deploy fault, distinct from a refusal" \
-    || bad "9: exit 3 on a deploy fault, distinct from a refusal" "got rc=$rc out=$out"
-want "9: reports a deploy fault naming the commit" "LAND DEPLOY FAILED for $HEAD9: release build exited" "$out"
-want "9: says current is untouched"         "current is untouched (still $HEAD1)" "$out"
+[ "$rc" -eq 1 ] && ok "9: exit 1 — a refusal, not a deploy fault" \
+    || bad "9: exit 1 — a refusal, not a deploy fault" "got rc=$rc out=$out"
+want "9: names the failed build and the untouched ref" "failed to build or verify: release build exited" "$out"
 is   "9: current is still the previous release" "$HEAD1" "$(current_name)"
 [ ! -e "$RELEASES/$HEAD9" ] && ok "9: nothing is named by the failed sha" \
     || bad "9: nothing is named by the failed sha" "$RELEASES/$HEAD9 exists"
-is   "9: local/main is at the landed head (never reverted)" "$HEAD9" "$(localmain)"
-is   "9: the landing stays recorded — the bead is closed" closed "$(field sp-lrel9 status)"
-is   "9: the lifecycle row is LANDED"    LANDED "$(lcfix_state sp-lrel9)"
+is   "9: local/main did not move" "$BEFORE9" "$(localmain)"
+is   "9: the bead is not closed" open "$(field sp-lrel9 status)"
 
 # ============================================================================
 echo

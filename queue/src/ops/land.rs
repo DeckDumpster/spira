@@ -201,6 +201,22 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         None
     };
 
+    // The release is built and verified before the ref moves: a release that cannot verify
+    // never lands, so "landed" does not outrun "in force".
+    let verified = match &plan {
+        Some(p) => match super::deploy::build_and_verify(w, p, &head) {
+            Ok(sha) => Some(sha),
+            Err(why) => {
+                if let Some(pin) = &pin {
+                    let _ = fs::remove_file(pin);
+                }
+                w.err(format!("queue.sh land-local: release {head} failed to build or verify: {why}; refused, {base} left at {base_sha}"));
+                return FAIL;
+            }
+        },
+        None => None,
+    };
+
     // A CAS, never a plain write.
     let base_ref = format!("refs/heads/{base}");
     if !w.git.update_ref(&path, &base_ref, &head, Some(&base_sha)) {
@@ -229,7 +245,10 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     let lc_faults = ms.iter().filter(|m| !lc_deliver(w, &path, &head, m)).count();
     // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
     // ref or the records: it leaves `current` where it was and makes the exit non-zero.
-    let outcome = plan.as_ref().map(|p| super::deploy::run(w, p, &head));
+    let outcome = plan.as_ref().zip(verified.as_deref()).map(|(p, sha)| match super::deploy::activate(w, p, sha) {
+        Ok(()) => super::deploy::Outcome::Activated(sha.to_string()),
+        Err(why) => super::deploy::Outcome::Fault(why),
+    });
     if let Some(pin) = &pin {
         let _ = fs::remove_file(pin);
     }
