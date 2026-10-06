@@ -653,3 +653,12 @@ stderr, the queue-side action proceeds (the machine's own state is the record of
 | `to-forge`, `to-local` (D5) | probe; in delivery = open batch record, BATCHED landstate, or IN_DELIVERY row of this repo; a failed read refuses |
 | `submit`, `protect`, `stats`, `flush`, `step`, `claim`, `release`, `land-local`, `publish`, `rollback-local` | none. queue emits no `stack`, `land` or `settle` events: those belong to batcher-cut (`stack`/`land` of a round) and verdict (`settle`) |
 
+## Suite-state branches
+
+Lifecycle governs beads (`lifecycle/DESIGN.md`). A suite-state branch (`spira/suite-state`'s
+edits, `$SPIRA_SUITE_STATE_FILE`) is not a bead, so it is the one thing the queue certifies
+on its own record rather than a lifecycle row. This is a specific written exception, not a
+precedent: any other branch needs a bead and a row, and a suite-state edit that is filed as a
+change bead (`spira/<bead>`, sp-lck63) is an ordinary bead branch and takes the lifecycle
+route. The exception is not extended to other bead-less branches, and a guard finding on it
+is cleared as `lifecycle-guard/DESIGN.md` "Clearing a finding" says.
