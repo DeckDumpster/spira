@@ -587,7 +587,21 @@ impl<'w, W: World> Trial<'w, W> {
                 named.push_str(&s);
             }
         }
-        let mut re = compose::reentry(&named, |s| w.exists(&tree.join("spira").join(s)));
+        let mut re = compose::reentry(&named, |s| {
+            w.exists(&tree.join("spira").join(s)) && w.ls_tree_has(&repo, &rev, &format!("spira/{s}"))
+        });
+        let (deleted, absent): (Vec<String>, Vec<String>) =
+            re.gone.iter().cloned().partition(|s| w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}")));
+        for s in &deleted {
+            w.eprint(&format!("gate: re-entry: {s} deleted by this branch — the deletion answers it"));
+        }
+        if !absent.is_empty() {
+            self.s.suite = absent[0].clone();
+            return v(NOVERDICT, "reentry-missing", format!(
+                "gate: re-entry names suites that exist on neither the base nor this branch: {}\ngate: a deletion by the branch answers a named suite; a suite that never existed (a typo, a stale name) is refused, not dropped.",
+                absent.join(" ")));
+        }
+        re.gone = deleted;
         let allowlist = std::fs::read_to_string(tree.join("spira/skip-allowlist.tsv")).unwrap_or_default();
         let (kept, declared_skips) = compose::drop_declared_skips(&re.required, &allowlist);
         if !declared_skips.is_empty() {

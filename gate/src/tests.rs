@@ -397,7 +397,7 @@ impl World for Fake {
             && path != "spira/missing.sh"
             && !path
                 .strip_prefix("spira/")
-                .is_some_and(|s| self.base_lacks.borrow().contains(s))
+                .is_some_and(|s| rev == BASE && self.base_lacks.borrow().contains(s))
     }
     fn bash_n(&self, content: &[u8]) -> Result<(), String> {
         if self.bash_n_bad.borrow().contains(content) {
@@ -2331,6 +2331,41 @@ fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
     assert!(f
         .stderr()
         .contains("(not suite names, ignored: ../evil.sh)"));
+}
+
+#[test]
+fn a_branch_that_deletes_a_named_suite_is_answered_by_the_deletion() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.files.borrow_mut().insert(
+        PathBuf::from(format!("{RUN}/ejected/sp-a")),
+        "test-del.sh\n".into(),
+    );
+    f.files
+        .borrow_mut()
+        .insert(PathBuf::from(format!("{GATE_TREE}/spira/test-del.sh")), "#!".into());
+    f.gone.borrow_mut().insert(format!("{MERGE_SHA}:spira/test-del.sh"));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.cmds.borrow().len(), 3, "no re-entry phase: {:?}", f.cmds.borrow());
+    assert!(meter(&f).contains("compose=unit phases="));
+    assert!(f
+        .stderr()
+        .contains("re-entry: test-del.sh deleted by this branch — the deletion answers it"));
+}
+
+#[test]
+fn a_named_suite_on_neither_the_base_nor_the_branch_still_refuses() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.files.borrow_mut().insert(
+        PathBuf::from(format!("{RUN}/ejected/sp-a")),
+        "test-typo.sh\n".into(),
+    );
+    f.gone.borrow_mut().insert(format!("{BASE}:spira/test-typo.sh"));
+    f.gone.borrow_mut().insert(format!("{MERGE_SHA}:spira/test-typo.sh"));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=reentry-missing"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("test-typo.sh"));
 }
 
 #[test]

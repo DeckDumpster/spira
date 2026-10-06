@@ -29,6 +29,9 @@ testdb_require test-reopen-queue-eject
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 gate_fixture_init "$TMP"
 BR=spira/sp-ej1
+mkdir -p "$REPO/spira"; printf '#!/bin/bash\n' > "$REPO/spira/test-other.sh"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base: the suite the sidecar names"
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 gate_fixture_branch "$BR"
 
 # HOST MAILBOX SENTINEL (sp-rya9d): models whatever SPIRA_MAIL an outer process (an aeon

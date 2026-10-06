@@ -43,7 +43,8 @@ cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 git init -q -b main "$REPO"
-git -C "$REPO" commit -q --allow-empty -m base
+mkdir -p "$REPO/spira"; printf '#!/bin/bash\n' > "$REPO/spira/test-x.sh"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
 git -C "$REPO" branch spira/sp-wsx main
 
 # The repo's own gate command: never runs a real suite, only reports what it was handed —
