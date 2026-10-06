@@ -232,6 +232,12 @@ is "spira_task_fayths excludes the FAYTH_LANE fayth"     "worker"   "$task"
 nowant "the lane fayth does not appear in task fayths"   "guardian" "$task"
 nowant "the task fayth does not appear in lane fayths"   "worker"   "$lane"
 
+# tl_config's SPIRA_FAYTHS persists in the override file (no per-call scoping) until
+# something changes it again — every later section in this file that relies on the
+# fixture's own default roster (builder/ops/groomer etc.) via a plain `export SPIRA_FAYTHS`
+# would otherwise keep seeing "worker guardian" here (round 6).
+spira-config unset spira.fayths "$_TL_CONF_OVERRIDE" >/dev/null
+
 # POSITIVE CONTROL: both functions return something, so absence above is the exclusion
 # working and not both functions returning empty.
 is "there is at least one lane fayth"  "1" "$([ -n "$lane" ] && echo 1 || echo 0)"
