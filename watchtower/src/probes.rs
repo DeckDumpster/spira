@@ -48,7 +48,7 @@ pub fn units_off_current(show: &str, current: &str) -> Vec<(String, String)> {
             .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="));
         if let (Some(id), Some(r)) = (id, release) {
             let sha = sha_of(r);
-            if sha != current {
+            if sha != "current" && sha != current {
                 out.push((id.to_string(), sha.to_string()));
             }
         }
@@ -386,6 +386,12 @@ mod tests {
         let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/x\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-c-prod.service\nEnvironment=\n";
         assert_eq!(units_off_current(show, "bbb"), vec![("spira-a-prod.service".to_string(), "aaa".to_string())]);
         assert!(units_off_current(show, "aaa").iter().any(|(u, _)| u == "spira-b-prod.service"));
+    }
+
+    #[test]
+    fn units_rendering_the_current_symlink_are_current() {
+        let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/current/\n\nId=spira-c-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa\n";
+        assert_eq!(units_off_current(show, "bbb"), vec![("spira-c-prod.service".to_string(), "aaa".to_string())]);
     }
 
     fn run(state: &str, inv: &str) -> Run {
