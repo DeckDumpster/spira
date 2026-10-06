@@ -14,6 +14,7 @@ fn sh(dir: &Path, prog: &str, args: &[&str]) -> String {
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t.invalid")
         .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t.invalid")
+        .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z").env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z")
         .output()
         .unwrap();
     assert!(o.status.success(), "{prog} {args:?}: {}", String::from_utf8_lossy(&o.stderr));
