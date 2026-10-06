@@ -233,6 +233,8 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 export SPIRA_AGENT="$BIN/claude"
+# Registered: aeon reads the agent from config, so the shim is declared in this suite's layer.
+spira-config set spira.agent "$BIN/claude" "$TOML" >/dev/null || { echo "cannot declare spira.agent" >&2; exit 1; }
 
 aeon() { command aeon --home "$SH" "$@" 2>/dev/null; }
 
