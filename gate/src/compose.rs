@@ -21,6 +21,9 @@ pub struct Member {
     pub dir: String,
     /// Names of the workspace members it depends on (normal, dev or build).
     pub deps: Vec<String>,
+    /// The subset of `deps` that goes into its binaries (normal or build, not dev): the
+    /// source closure of a gate tool (toolkey.rs).
+    pub build_deps: Vec<String>,
 }
 
 /// What one changed path is, for composition.
@@ -237,7 +240,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
         .and_then(|p| p.as_array())
         .ok_or("cargo metadata: no packages")?;
     // (name, absolute dir)
-    let mut raw: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut raw: Vec<(String, String, Vec<(String, bool)>)> = Vec::new();
     for p in pkgs {
         let id = p.get("id").and_then(|x| x.as_str()).unwrap_or("");
         if !members.contains(id) {
@@ -261,8 +264,11 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
             .and_then(|d| d.as_array())
             .into_iter()
             .flatten()
-            .filter_map(|d| d.get("path").and_then(|x| x.as_str()))
-            .map(|s| s.trim_end_matches('/').to_string())
+            .filter_map(|d| {
+                let path = d.get("path").and_then(|x| x.as_str())?;
+                let dev = d.get("kind").and_then(|k| k.as_str()) == Some("dev");
+                Some((path.trim_end_matches('/').to_string(), dev))
+            })
             .collect();
         if name.is_empty() {
             return Err("cargo metadata: a member with no name".into());
@@ -279,16 +285,21 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
     let mut out: Vec<Member> = raw
         .iter()
         .map(|(n, d, deps)| {
-            let mut deps: Vec<String> = deps
-                .iter()
-                .filter_map(|dd| by_dir.get(dd).cloned())
-                .collect();
-            deps.sort();
-            deps.dedup();
+            let names = |all: bool| -> Vec<String> {
+                let mut v: Vec<String> = deps
+                    .iter()
+                    .filter(|(_, dev)| all || !dev)
+                    .filter_map(|(dd, _)| by_dir.get(dd).cloned())
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            };
             Member {
                 name: n.clone(),
                 dir: rel(d),
-                deps,
+                deps: names(true),
+                build_deps: names(false),
             }
         })
         .collect();
@@ -549,6 +560,7 @@ mod tests {
             name: name.into(),
             dir: dir.into(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
+            build_deps: deps.iter().map(|s| s.to_string()).collect(),
         }
     }
 

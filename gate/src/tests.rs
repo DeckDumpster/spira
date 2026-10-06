@@ -91,6 +91,20 @@ struct Fake {
     /// Every install_tools call: (dir, tree id). An Err to return instead, when set.
     installs: RefCell<Vec<(PathBuf, String)>>,
     install_err: RefCell<Option<String>>,
+    // ---- tools keyed by their source closure (toolkey.rs)
+    /// `<rev>:<path>` object ids rev_parse answers (absent: the default answer).
+    objects: RefCell<HashMap<String, String>>,
+    /// What tool_inputs answers (absent: Err, so nothing is published).
+    tool_inputs: RefCell<Option<Vec<String>>>,
+    /// Every install_tools_from call's source; an Err to return instead, when set.
+    installs_from: RefCell<Vec<PathBuf>>,
+    install_from_err: RefCell<Option<String>>,
+    /// Every publish_tools call: (store, name, inputs).
+    published: RefCell<Vec<(PathBuf, String, String)>>,
+    /// Every run_gate call: (command, the timeout it was given).
+    timeouts: RefCell<Vec<(String, String)>>,
+    /// The `want` every checkout was asked to prove.
+    checkout_wants: RefCell<Vec<String>>,
     // ---- build IO (sp-z61hj)
     /// What build_wrapper answers; the (path, setting) it was asked with.
     wrapper: RefCell<Result<spira_config::build::Wrapper, String>>,
@@ -226,6 +240,13 @@ impl Fake {
             drift_after_checkouts: Cell::new(0),
             installs: RefCell::new(Vec::new()),
             install_err: RefCell::new(None),
+            objects: RefCell::default(),
+            tool_inputs: RefCell::default(),
+            installs_from: RefCell::default(),
+            install_from_err: RefCell::default(),
+            published: RefCell::default(),
+            timeouts: RefCell::default(),
+            checkout_wants: RefCell::default(),
             wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("/box/.cargo/bin/sccache")))),
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
@@ -318,6 +339,9 @@ impl World for Fake {
         Some(PathBuf::from("/tmp/files"))
     }
     fn rev_parse(&self, _: &Path, rev: &str) -> Option<String> {
+        if let Some(id) = self.objects.borrow().get(rev) {
+            return Some(id.clone()).filter(|i| !i.is_empty());
+        }
         if rev == "HEAD^{tree}" {
             if let Some(d) = self.tree_drift.borrow().clone() {
                 if self.checkouts.borrow().len() > self.drift_after_checkouts.get() {
@@ -442,8 +466,9 @@ impl World for Fake {
         self.lock_free.get()
     }
     fn write_holder(&self, _: &Path) {}
-    fn checkout(&self, _: &Path, _: &Path, rev: &str, _: &str) -> Result<(), String> {
+    fn checkout(&self, _: &Path, _: &Path, rev: &str, want: &str) -> Result<(), String> {
         self.checkouts.borrow_mut().push(rev.to_string());
+        self.checkout_wants.borrow_mut().push(want.to_string());
         Ok(())
     }
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
@@ -483,10 +508,53 @@ impl World for Fake {
         }
         Ok(())
     }
+    fn install_tools_from(&self, src: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
+        if let Some(e) = self.install_from_err.borrow().clone() {
+            return Err(e);
+        }
+        self.installs_from.borrow_mut().push(src.to_path_buf());
+        self.installs.borrow_mut().push((dir.to_path_buf(), id.to_string()));
+        let mut files = self.files.borrow_mut();
+        files.insert(dir.join("TREE"), format!("{id}\n"));
+        for p in pkgs {
+            let from = files.get(&src.join(p)).cloned().unwrap_or_default();
+            files.insert(dir.join(p), from);
+        }
+        Ok(())
+    }
+    fn tool_inputs(&self, _: &Path, _: &[String]) -> Result<Vec<String>, String> {
+        self.tool_inputs.borrow().clone().ok_or_else(|| "no dep-info".to_string())
+    }
+    fn tool_entries(&self, store: &Path, base: &str) -> Vec<PathBuf> {
+        let prefix = format!("{base}-");
+        let mut v: Vec<PathBuf> = self
+            .files
+            .borrow()
+            .keys()
+            .filter(|p| p.parent() == Some(store) && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&prefix)))
+            .cloned()
+            .collect();
+        v.sort();
+        v
+    }
+    fn publish_tools(&self, from: &Path, pkgs: &[String], store: &Path, name: &str, inputs: &str, _: usize) -> Result<(), String> {
+        self.published.borrow_mut().push((store.to_path_buf(), name.to_string(), inputs.to_string()));
+        let mut files = self.files.borrow_mut();
+        let e = store.join(name);
+        files.insert(e.clone(), String::new());
+        files.insert(e.join("KEY"), format!("{name}\n"));
+        files.insert(e.join("INPUTS"), inputs.to_string());
+        for p in pkgs {
+            let b = files.get(&from.join(p)).cloned().unwrap_or_default();
+            files.insert(e.join(p), b);
+        }
+        Ok(())
+    }
     fn remove_worktree(&self, _: &Path, _: &Path) {
         self.removed_trees.set(self.removed_trees.get() + 1);
     }
-    fn run_gate(&self, tree: &Path, env: &[(String, String)], _: &str, cmd: &str) -> (i32, String) {
+    fn run_gate(&self, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
+        self.timeouts.borrow_mut().push((cmd.to_string(), timeout.to_string()));
         self.ran.borrow_mut().push(env.to_vec());
         self.cmds.borrow_mut().push(cmd.to_string());
         self.clock.set(self.clock.get() + self.phase_secs.get());
@@ -3340,4 +3408,353 @@ fn a_gate_with_no_declared_deadline_refuses() {
     f.set_var("SPIRA_GATE_DEADLINE", "");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=config"), "{}", f.verdict_line());
+}
+
+// ------------------------------------- tools keyed by their source closure (toolkey.rs)
+
+/// The merge's tree id, as the fake resolves `<MERGE_SHA>^{tree}`.
+fn want() -> String {
+    format!("tree-of-{MERGE_SHA}")
+}
+
+/// A tree that builds spira-lint, whose closure is spira-lint + spira-config (its normal
+/// dependency) — not gate, a member outside it — and whose last build read, besides the
+/// closure's own files, spira/conf.d (spira-config's build script), a registry crate and a
+/// generated file under target/.
+fn shared_fake() -> Fake {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.metadata.borrow_mut().insert(
+        MERGE_SHA.into(),
+        Ok(metadata_json(&[("spira-lint", &["spira-config"]), ("spira-config", &[]), ("gate", &["spira-config"])])),
+    );
+    for (p, id) in [("spira-lint", "t-lint-1"), ("spira-config", "t-config-1"), ("gate", "t-gate-1"), ("Cargo.lock", "b-lock-1"), ("spira/conf.d", "t-confd-1")] {
+        f.objects.borrow_mut().insert(format!("{}:{p}", want()), id.into());
+    }
+    *f.tool_inputs.borrow_mut() = Some(vec![
+        format!("{GATE_TREE}/spira-lint/src/main.rs"),
+        format!("{GATE_TREE}/spira-config/src/lib.rs"),
+        format!("{GATE_TREE}/spira-config/../spira/conf.d"),
+        "/home/u/.cargo/registry/src/regex-1/src/lib.rs".into(),
+        format!("{GATE_TREE}/target/aeon/build/spira-config-1/out/spira_section.rs"),
+        "src/parser.c".into(),
+    ]);
+    f
+}
+
+/// A second gate after `first`: the store it published survives, the gate tree's own keyed
+/// tools do not (a new branch's tree), and the trial sees `objects` changed.
+fn next_gate(first: &Fake, changed: &[(&str, &str)]) -> Fake {
+    let f = shared_fake();
+    for r in crate::toolkey::ROOT_INPUTS.iter().filter(|r| **r != "Cargo.lock") {
+        let k = format!("{}:{r}", want());
+        if let Some(v) = first.objects.borrow().get(&k) {
+            f.objects.borrow_mut().insert(k, v.clone());
+        }
+    }
+    let store = PathBuf::from(format!("{RUN}/gate-tools/spira"));
+    for (p, b) in first.files.borrow().iter() {
+        if p.starts_with(&store) {
+            f.files.borrow_mut().insert(p.clone(), b.clone());
+        }
+    }
+    for (p, id) in changed {
+        f.objects.borrow_mut().insert(format!("{}:{p}", want()), id.to_string());
+    }
+    f
+}
+
+fn built(f: &Fake) -> bool {
+    f.cmds.borrow().iter().any(|c| c.starts_with("cargo build"))
+}
+
+/// The first gate builds and publishes, recording only what the base key does not cover;
+/// a later tree whose closure is unchanged reuses those tools without a build, installed
+/// and proved under its own tree id.
+#[test]
+fn tools_with_an_unchanged_source_closure_are_reused_across_trees() {
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(built(&f));
+    let published = f.published.borrow().clone();
+    assert_eq!(published.len(), 1, "{}", f.stderr());
+    let (store, name, inputs) = &published[0];
+    assert_eq!(store, &PathBuf::from(format!("{RUN}/gate-tools/spira")));
+    // Only the build script's out-of-closure read is recorded; the closure's own files, the
+    // registry and target/ are not.
+    assert_eq!(inputs, "spira/conf.d\tt-confd-1\n");
+    assert!(name.ends_with(&format!("-{}", &crate::toolkey::entry_name("x", inputs)[2..])), "{name}");
+
+    let g = next_gate(&f, &[]);
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(!built(&g), "{:?}", g.cmds.borrow());
+    assert_eq!(g.installs_from.borrow().as_slice(), [store.join(name)]);
+    assert!(g.stderr().contains("built from the same sources"), "{}", g.stderr());
+    assert_eq!(g.env_of(0, "SPIRA_LINT_BIN"), format!("{GATE_TREE}/target/gate-tools/{}/spira-lint", want()));
+    assert!(g.published.borrow().is_empty());
+}
+
+/// A change to a file of a closure package (its tree id) or to a root input is a different
+/// base key: the tools are rebuilt from the tree, and published under the new key.
+#[test]
+fn a_change_inside_the_closure_rebuilds_the_tools() {
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    for change in [("spira-config", "t-config-2"), ("spira-lint", "t-lint-2"), ("Cargo.lock", "b-lock-2"), ("rust-toolchain.toml", "b-tc")] {
+        let g = next_gate(&f, &[change]);
+        assert_eq!(g.run(), PASS, "{}", g.stderr());
+        assert!(built(&g), "{change:?}: {:?}", g.cmds.borrow());
+        assert!(g.installs_from.borrow().is_empty(), "{change:?}");
+        let p = g.published.borrow();
+        assert_eq!(p.len(), 1, "{change:?}");
+        assert_ne!(p[0].1, f.published.borrow()[0].1, "{change:?}: published under the old key");
+    }
+}
+
+/// A change outside the closure — another member, a script — reuses the tools; a change to
+/// an input the last build recorded outside the closure (spira-config's build script reads
+/// spira/conf.d) rebuilds them.
+#[test]
+fn a_change_outside_the_closure_reuses_but_a_recorded_input_rebuilds() {
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let g = next_gate(&f, &[("gate", "t-gate-2"), ("spira/a-fence.sh", "b-fence-2")]);
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(!built(&g), "{:?}", g.cmds.borrow());
+    let g = next_gate(&f, &[("spira/conf.d", "t-confd-2")]);
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(built(&g), "{:?}", g.cmds.borrow());
+    // Both entries now sit under the same base key; the matching one is chosen.
+    assert_eq!(g.published.borrow()[0].2, "spira/conf.d\tt-confd-2\n");
+}
+
+/// An entry that does not prove itself — wrong stamp, a missing package, a manifest that
+/// does not hash to its name — is never reused; one that cannot be installed is built.
+#[test]
+fn a_shared_entry_that_does_not_prove_itself_is_built_instead() {
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let (store, name, _) = f.published.borrow()[0].clone();
+    let e = store.join(&name);
+    for spoil in ["KEY", "spira-lint", "INPUTS"] {
+        let g = next_gate(&f, &[]);
+        match spoil {
+            "KEY" => g.files.borrow_mut().insert(e.join("KEY"), "another\n".into()),
+            "INPUTS" => g.files.borrow_mut().insert(e.join("INPUTS"), "spira/conf.d\tforged\n".into()),
+            p => g.files.borrow_mut().remove(&e.join(p)),
+        };
+        assert_eq!(g.run(), PASS, "{}", g.stderr());
+        assert!(built(&g), "{spoil}: {:?}", g.cmds.borrow());
+    }
+    let g = next_gate(&f, &[]);
+    *g.install_from_err.borrow_mut() = Some("evicted".into());
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(built(&g), "{:?}", g.cmds.borrow());
+    assert!(g.stderr().contains("evicted — building them"), "{}", g.stderr());
+}
+
+/// No key, no sharing — and still a verdict: a bin package that is not a workspace member,
+/// or a closure package with no tree, builds for this tree alone; nothing is published.
+#[test]
+fn tools_that_cannot_be_keyed_are_built_for_the_tree_alone() {
+    let f = shared_fake();
+    f.metadata.borrow_mut().insert(MERGE_SHA.into(), Ok(metadata_json(&[("gate", &[])])));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(built(&f) && f.published.borrow().is_empty());
+    assert!(f.stderr().contains("spira-lint is not a workspace member"), "{}", f.stderr());
+    let f = shared_fake();
+    f.objects.borrow_mut().insert(format!("{}:spira-config", want()), String::new());
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(built(&f) && f.published.borrow().is_empty());
+    // A build whose inputs cannot be read is not published either.
+    let f = shared_fake();
+    *f.tool_inputs.borrow_mut() = None;
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.published.borrow().is_empty());
+}
+
+#[test]
+fn toolkey_reads_dep_info_build_outputs_and_paths() {
+    use crate::toolkey::*;
+    assert_eq!(
+        dep_info_paths("/t/target/aeon/x: /t/a/src/main.rs /t/a\\ b/c.rs\n\n/t/a/src/main.rs:\n"),
+        ["/t/a/src/main.rs", "/t/a b/c.rs"]
+    );
+    assert_eq!(rerun_paths("cargo:rerun-if-env-changed=CC\ncargo:rerun-if-changed=/t/x/../spira/conf.d\ncargo::rerun-if-changed=build.rs\n"), ["/t/x/../spira/conf.d", "build.rs"]);
+    let t = Path::new("/t");
+    assert_eq!(relative(t, "/t/x/../spira/conf.d").as_deref(), Some("spira/conf.d"));
+    assert_eq!(relative(t, "/t/target/aeon/out.rs"), None);
+    assert_eq!(relative(t, "/home/u/.cargo/registry/a.rs"), None);
+    assert_eq!(relative(t, "/tx/a.rs"), None);
+    assert_eq!(relative(t, "build.rs"), None, "package-relative: its own package's");
+    let dirs = vec!["spira-lint".to_string()];
+    assert!(covered("spira-lint/src/a.rs", &dirs) && covered("Cargo.lock", &dirs) && covered(".cargo/config.toml", &dirs));
+    assert!(!covered("spira-lint2/a.rs", &dirs) && !covered("spira/conf.d", &dirs));
+    assert_eq!(parse_manifest(&manifest(&[("b".into(), "2".into()), ("a".into(), "1".into())])), Some(vec![("a".into(), "1".into()), ("b".into(), "2".into())]));
+    assert_eq!(parse_manifest("no-tab\n"), None);
+    // The closure follows normal and build dependencies, never dev ones.
+    let m = |n: &str, deps: &[&str], build: &[&str]| crate::compose::Member {
+        name: n.into(),
+        dir: n.into(),
+        deps: deps.iter().map(|s| s.to_string()).collect(),
+        build_deps: build.iter().map(|s| s.to_string()).collect(),
+    };
+    let ms = [m("lint", &["cfg", "testkit"], &["cfg"]), m("cfg", &["tsd"], &["tsd"]), m("tsd", &[], &[]), m("testkit", &[], &[])];
+    let names: Vec<&str> = closure(&ms, &["lint".into()]).unwrap().iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["lint", "cfg", "tsd"]);
+    assert!(closure(&ms, &["nope".into()]).is_err());
+    // The key moves with any recipe, root or package id, and not with their order.
+    let k = base_key("r", &[("Cargo.lock".into(), "1".into())], &[("a".into(), "a".into(), "1".into()), ("b".into(), "b".into(), "1".into())]);
+    assert_eq!(k, base_key("r", &[("Cargo.lock".into(), "1".into())], &[("b".into(), "b".into(), "1".into()), ("a".into(), "a".into(), "1".into())]));
+    assert_ne!(k, base_key("r2", &[("Cargo.lock".into(), "1".into())], &[("a".into(), "a".into(), "1".into()), ("b".into(), "b".into(), "1".into())]));
+    assert_ne!(k, base_key("r", &[("Cargo.lock".into(), "2".into())], &[("a".into(), "a".into(), "1".into()), ("b".into(), "b".into(), "1".into())]));
+    assert_ne!(k, base_key("r", &[("Cargo.lock".into(), "1".into())], &[("a".into(), "a".into(), "2".into()), ("b".into(), "b".into(), "1".into())]));
+}
+
+/// The real store: an atomic publish, a second publish of the same entry is no error, and
+/// only the most recently used entries are kept.
+#[test]
+fn the_real_store_publishes_atomically_and_keeps_the_newest() {
+    use std::fs;
+    let t = testkit::TempDir::new("gate-toolstore");
+    let from = t.path().join("from");
+    fs::create_dir_all(&from).unwrap();
+    fs::write(from.join("spira-lint"), "bin").unwrap();
+    let store = t.path().join("store");
+    let pk = ["spira-lint".to_string()];
+    crate::real::publish_tools_at(&from, &pk, &store, "k-1", "a\t1\n", 2).unwrap();
+    crate::real::publish_tools_at(&from, &pk, &store, "k-1", "a\t1\n", 2).unwrap();
+    assert_eq!(fs::read_to_string(store.join("k-1/KEY")).unwrap(), "k-1\n");
+    assert_eq!(fs::read_to_string(store.join("k-1/INPUTS")).unwrap(), "a\t1\n");
+    assert_eq!(fs::read_to_string(store.join("k-1/spira-lint")).unwrap(), "bin");
+    for n in ["k-2", "j-1"] {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        crate::real::publish_tools_at(&from, &pk, &store, n, "", 2).unwrap();
+    }
+    let mut left: Vec<String> = fs::read_dir(&store).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    left.sort();
+    assert_eq!(left, ["j-1", "k-2"], "the oldest entry and every temporary are gone");
+    assert_eq!(crate::real::tool_entries_at(&store, "k"), [store.join("k-2")]);
+    // A missing binary publishes nothing.
+    assert!(crate::real::publish_tools_at(&from, &["nope".into()], &store, "k-3", "", 2).is_err());
+    assert!(!store.join("k-3").exists());
+}
+
+fn tools_timeout(f: &Fake) -> Option<u64> {
+    f.timeouts.borrow().iter().find(|(c, _)| c.starts_with("cargo build --profile aeon")).map(|(_, t)| t.parse().unwrap())
+}
+
+/// A store miss is a cold build: it is never cut at the tools cap, only by the deadline — so
+/// the first gate of a new key can finish and publish. So is a tree whose tools cannot be keyed.
+#[test]
+fn a_cold_tools_build_on_a_store_miss_is_not_capped() {
+    let cap = crate::engine::phase_cap("tools").unwrap();
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let t = tools_timeout(&f).expect("built");
+    assert!(t > cap, "a cold build was capped at {t}s");
+    assert!(t <= 300, "{t}");
+    let f = shared_fake();
+    f.metadata.borrow_mut().insert(MERGE_SHA.into(), Ok(metadata_json(&[("gate", &[])])));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(tools_timeout(&f).unwrap() > cap);
+    assert_eq!(crate::engine::phase_cap(crate::engine::TOOLS_COLD), None);
+    assert_eq!(crate::engine::phase_cap(&format!("base-{}", crate::engine::TOOLS_COLD)), None);
+    // Metered as `tools` all the same.
+    assert!(f.appended.borrow().iter().any(|l| l.contains("phases=tools:")), "{:?}", f.appended.borrow());
+}
+
+/// The reuse path keeps the cap: the build that replaces a failed store install is cut at it.
+#[test]
+fn the_tools_cap_bounds_the_reuse_path() {
+    let cap = crate::engine::phase_cap("tools").unwrap();
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let g = next_gate(&f, &[]);
+    *g.install_from_err.borrow_mut() = Some("evicted".into());
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert_eq!(tools_timeout(&g), Some(cap));
+}
+
+// ------------------------------------------------------------------- gate warm-tools
+
+fn warm(f: &Fake) -> i32 {
+    Trial::new(f, Args { home: PathBuf::from("/h"), branch: String::new(), repo: Some("spira".into()), release_bins: false }).warm(None)
+}
+
+/// A fake whose landing ref carries STEPS, with the same closure and sources as the merge
+/// `shared_fake` judges — so what warm-tools publishes for the landing ref, a gate reuses.
+fn warm_fake() -> Fake {
+    let f = shared_fake();
+    f.metadata.borrow_mut().insert(
+        BASE.into(),
+        Ok(metadata_json(&[("spira-lint", &["spira-config"]), ("spira-config", &[]), ("gate", &["spira-config"])])),
+    );
+    let objs: Vec<(String, String)> = f.objects.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in objs {
+        let p = k.split_once(':').unwrap().1;
+        f.objects.borrow_mut().insert(format!("tree-of-{BASE}:{p}"), v);
+    }
+    // Every root input reads the same in both trees (the fake's default answer names the tree).
+    for r in crate::toolkey::ROOT_INPUTS.iter().filter(|r| **r != "Cargo.lock") {
+        for t in [want(), format!("tree-of-{BASE}")] {
+            f.objects.borrow_mut().insert(format!("{t}:{r}"), format!("same-{r}"));
+        }
+    }
+    *f.tool_inputs.borrow_mut() = Some(vec![format!("{}/worktree/.gate-warm.spira/spira-config/../spira/conf.d", RUN)]);
+    f
+}
+
+/// warm-tools builds the landing ref's tools in its own tree and publishes them under the
+/// source key; a gate on a branch with the same closure then reuses them without building.
+#[test]
+fn warm_tools_publishes_what_a_gate_then_reuses() {
+    let f = warm_fake();
+    assert_eq!(warm(&f), 0, "{}", f.stderr());
+    assert_eq!(f.checkouts.borrow().as_slice(), [BASE.to_string()]);
+    // The checkout proves the commit (as a gate's does), never the tree id.
+    assert_eq!(f.checkout_wants.borrow().as_slice(), [BASE.to_string()]);
+    assert!(built(&f), "{:?}", f.cmds.borrow());
+    let p = f.published.borrow().clone();
+    assert_eq!(p.len(), 1, "{}", f.stderr());
+    assert_eq!(p[0].2, "spira/conf.d\tt-confd-1\n");
+    assert_eq!(f.released.borrow().len(), 1);
+    assert_eq!(f.removed_trees.get(), 1);
+    // Off any gate's clock: the build is not cut at the tools cap.
+    assert_eq!(tools_timeout(&f), Some(crate::engine::WARM_TIMEOUT.parse().unwrap()));
+
+    let g = next_gate(&f, &[]);
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(!built(&g), "{:?}", g.cmds.borrow());
+    assert_eq!(g.installs_from.borrow().len(), 1);
+}
+
+/// The no-op: a key the store already holds is "already warm" — nothing is built or published.
+#[test]
+fn warm_tools_is_a_no_op_when_the_key_is_present() {
+    let f = warm_fake();
+    assert_eq!(warm(&f), 0, "{}", f.stderr());
+    let g = warm_fake();
+    for (p, b) in f.files.borrow().iter() {
+        if p.starts_with(format!("{RUN}/gate-tools")) {
+            g.files.borrow_mut().insert(p.clone(), b.clone());
+        }
+    }
+    assert_eq!(warm(&g), 0, "{}", g.stderr());
+    assert!(!built(&g), "{:?}", g.cmds.borrow());
+    assert!(g.published.borrow().is_empty());
+    assert_eq!(g.removed_trees.get(), 1, "its tree is removed all the same");
+}
+
+/// It refuses, never publishes a guess: a busy lock, or tools that cannot be keyed.
+#[test]
+fn warm_tools_refuses_what_it_cannot_key_or_lock() {
+    let f = warm_fake();
+    f.lock_free.set(false);
+    assert_eq!(warm(&f), 1);
+    assert!(f.stderr().contains("another warm-tools holds"), "{}", f.stderr());
+    let f = warm_fake();
+    f.metadata.borrow_mut().insert(BASE.into(), Ok(metadata_json(&[("gate", &[])])));
+    assert_eq!(warm(&f), 1);
+    assert!(f.stderr().contains("cannot be keyed"), "{}", f.stderr());
+    assert!(!built(&f) && f.published.borrow().is_empty());
 }

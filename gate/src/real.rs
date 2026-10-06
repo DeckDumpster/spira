@@ -756,6 +756,21 @@ impl World for Real {
     fn install_tools(&self, tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
         install_tools_at(tree, pkgs, dir, tree_id)
     }
+    fn install_tools_from(&self, src: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
+        install_from(src, pkgs, dir, tree_id)?;
+        // Recently used: the store's eviction order.
+        let _ = fs::File::open(src).and_then(|d| d.set_modified(SystemTime::now()));
+        Ok(())
+    }
+    fn tool_inputs(&self, tree: &Path, pkgs: &[String]) -> Result<Vec<String>, String> {
+        tool_inputs_at(tree, pkgs)
+    }
+    fn tool_entries(&self, store: &Path, base: &str) -> Vec<PathBuf> {
+        tool_entries_at(store, base)
+    }
+    fn publish_tools(&self, from: &Path, pkgs: &[String], store: &Path, name: &str, inputs: &str, keep: usize) -> Result<(), String> {
+        publish_tools_at(from, pkgs, store, name, inputs, keep)
+    }
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
         spira_config::build::wrapper(path, Some(setting))
     }
@@ -903,6 +918,11 @@ const NOVERDICT_RC: i32 = crate::engine::NOVERDICT;
 /// [`World::install_tools`] on the filesystem (sp-g9f3t). Copies, never links: a hard link
 /// into `target/aeon` would change under the next build of a different tree.
 pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
+    install_from(&tree.join("target").join("aeon"), pkgs, dir, tree_id)
+}
+
+/// [`install_tools_at`] from any directory of built binaries (`<src>/<pkg>`).
+pub fn install_from(src_dir: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
     let parent = dir
         .parent()
         .ok_or_else(|| format!("gate: {} has no parent directory", dir.display()))?;
@@ -922,7 +942,7 @@ pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str)
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).map_err(|e| format!("gate: cannot create {}: {e}", tmp.display()))?;
     for p in pkgs {
-        let src = tree.join("target").join("aeon").join(p);
+        let src = src_dir.join(p);
         fs::copy(&src, tmp.join(p)).map_err(|e| {
             let _ = fs::remove_dir_all(&tmp);
             format!("gate: cannot install {} into {}: {e}", src.display(), tmp.display())
@@ -934,6 +954,96 @@ pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str)
             let _ = fs::remove_dir_all(&tmp);
             format!("gate: cannot stamp {} for tree {tree_id}: {e}", dir.display())
         })
+}
+
+/// [`World::tool_inputs`] on the filesystem.
+pub fn tool_inputs_at(tree: &Path, pkgs: &[String]) -> Result<Vec<String>, String> {
+    let aeon = tree.join("target").join("aeon");
+    let mut out = Vec::new();
+    for p in pkgs {
+        let d = aeon.join(format!("{p}.d"));
+        let text = fs::read_to_string(&d).map_err(|e| format!("cannot read {}: {e}", d.display()))?;
+        let deps = crate::toolkey::dep_info_paths(&text);
+        if deps.is_empty() {
+            return Err(format!("{} names no source", d.display()));
+        }
+        out.extend(deps);
+    }
+    if let Ok(rd) = fs::read_dir(aeon.join("build")) {
+        for e in rd.flatten() {
+            if let Ok(text) = fs::read_to_string(e.path().join("output")) {
+                out.extend(crate::toolkey::rerun_paths(&text));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn mtime_of(p: &Path) -> SystemTime {
+    fs::metadata(p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH)
+}
+
+/// Every entry directory of `store` (no dot-named temporaries), most recently used first.
+fn store_entries(store: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = fs::read_dir(store)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path().is_dir())
+                .map(|e| e.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort_by_key(|p| std::cmp::Reverse(mtime_of(p)));
+    v
+}
+
+/// [`World::tool_entries`] on the filesystem.
+pub fn tool_entries_at(store: &Path, base: &str) -> Vec<PathBuf> {
+    let prefix = format!("{base}-");
+    store_entries(store)
+        .into_iter()
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&prefix)))
+        .collect()
+}
+
+/// [`World::publish_tools`] on the filesystem.
+pub fn publish_tools_at(from: &Path, pkgs: &[String], store: &Path, name: &str, inputs: &str, keep: usize) -> Result<(), String> {
+    fs::create_dir_all(store).map_err(|e| format!("cannot create {}: {e}", store.display()))?;
+    let dest = store.join(name);
+    let tmp = store.join(format!(".tmp.{name}.{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    let made = (|| -> std::io::Result<()> {
+        fs::create_dir_all(&tmp)?;
+        for p in pkgs {
+            fs::copy(from.join(p), tmp.join(p))?;
+        }
+        fs::write(tmp.join(crate::toolkey::INPUTS), inputs)?;
+        fs::write(tmp.join(crate::toolkey::KEY), format!("{name}\n"))?;
+        Ok(())
+    })();
+    if let Err(e) = made {
+        let _ = fs::remove_dir_all(&tmp);
+        return Err(format!("cannot stage {}: {e}", tmp.display()));
+    }
+    if let Err(e) = fs::rename(&tmp, &dest) {
+        let _ = fs::remove_dir_all(&tmp);
+        if !dest.join(crate::toolkey::KEY).is_file() {
+            return Err(format!("cannot publish {}: {e}", dest.display()));
+        }
+    }
+    // Keep the most recently used; a temporary older than an hour is a crashed publisher's.
+    for old in store_entries(store).into_iter().skip(keep) {
+        let _ = fs::remove_dir_all(old);
+    }
+    if let Ok(rd) = fs::read_dir(store) {
+        for e in rd.flatten() {
+            let stale = SystemTime::now().duration_since(mtime_of(&e.path())).is_ok_and(|a| a > Duration::from_secs(3600));
+            if e.file_name().to_string_lossy().starts_with(".tmp.") && stale {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `date -u +%Y-%m-%dT%H:%M:%SZ` for an epoch.

@@ -14,6 +14,7 @@ pub mod ports;
 pub mod real;
 pub mod target;
 pub mod telemetry;
+pub mod toolkey;
 pub mod wait;
 
 #[cfg(test)]

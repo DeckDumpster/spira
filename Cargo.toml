@@ -104,3 +104,20 @@ opt-level = 2
 opt-level = 2
 [profile.aeon.package.tree-sitter-bash]
 opt-level = 2
+
+# spira-lint is the other whole-tree fence of every gate (gate.steps), built the same way. At
+# opt-level 0 its 33 regex-heavy rules took ~36 s of every gate's fences phase on a loaded
+# host (measured 2026-10-06); optimised, with the regex engine it spends its time in, ~8 s
+# serial (spira-lint also checks its rules concurrently now).
+[profile.aeon.package.spira-lint]
+opt-level = 2
+[profile.aeon.package.regex]
+opt-level = 2
+[profile.aeon.package.regex-automata]
+opt-level = 2
+[profile.aeon.package.regex-syntax]
+opt-level = 2
+[profile.aeon.package.aho-corasick]
+opt-level = 2
+[profile.aeon.package.memchr]
+opt-level = 2

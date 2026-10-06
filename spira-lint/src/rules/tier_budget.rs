@@ -8,7 +8,7 @@
 //! * `tier-budget-areas` ([`Areas`]): at most one T3 suite per use-case area, unless the area
 //!   ledger grandfathers more.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::rules::covers_entries::covers_of;

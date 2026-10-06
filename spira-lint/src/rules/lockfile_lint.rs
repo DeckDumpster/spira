@@ -9,7 +9,7 @@
 //! The bash fence skipped with exit 0 when it had no base, no Cargo.lock here or none at the
 //! base. Each of those is a refusal here: a fence that cannot compare has not compared.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Entry, Finding, LintError, Rule, Tree};

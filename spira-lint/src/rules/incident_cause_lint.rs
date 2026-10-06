@@ -15,7 +15,7 @@
 //! start instead, so a site near the top of a short file is not refused only for being
 //! near the top.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 
 use crate::{Entry, Finding, LintError, Rule, Tree};
 

@@ -6,7 +6,7 @@
 //! the bash fence was skipped at every gate because its caller compared `SPIRA_GATE_REPO`
 //! (the repository) with the tree it sat in (the gate's worktree), and they never matched.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::process::{Command, Stdio};

@@ -657,6 +657,47 @@ gate that cannot answer the question cannot rule it out either.)
   re-reads `TREE` and checks every package exists there; otherwise `tools-unattributed`
   exactly as above. An install that fails is the same.
 
+### Tools keyed by their source closure (2026-10-06)
+
+"Reuse only for the same tree" made every new branch rebuild every tool from an empty target
+(20-35 s idle, 100-296 s under load, of the 300 s cap), though a tool depends on far less than
+the tree. `toolkey.rs` adds a shared store, `<run>/gate-tools/<repo>/<base>-<h>`:
+
+* **Base key** (known before any build, read from tree `<want>`'s objects): the recipe (the
+  `bin` packages, the aeon profile words), the object ids of the root build inputs
+  (`Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `.cargo`), and the git tree id of each
+  workspace package in the normal+build dependency closure of the `bin` packages (cargo
+  metadata; dev dependencies are not in a binary).
+* **Recorded inputs** (known only after a build): every other in-tree file the build read —
+  cargo's dep-info for each binary plus each build script's `rerun-if-changed` (spira-config's
+  reads `spira/conf.d`) — as `INPUTS` lines `<path>\t<object id>`; `<h>` hashes them. Paths
+  outside the tree (registry crates: `Cargo.lock`) and under `target/` (generated) are not
+  recorded.
+* **Reuse:** when the tree-keyed directory is absent, the newest entry under the base key whose
+  `KEY` stamp is its own name, whose `INPUTS` hash to its name, which holds every package and
+  every one of whose recorded inputs has the same object id in `<want>`, is copied into the
+  tree-keyed directory (stamped with the tree id) — no build, no `tools` phase. Everything
+  after is unchanged: the steps read the tree-keyed directory, proved as above. An entry that
+  cannot be installed (evicted mid-copy) is built instead.
+* **Publish:** after a build, install and proof, the tools are copied to a dot-named temporary
+  in the store, `INPUTS` and `KEY` written, and renamed into place (an existing entry of the
+  same name is someone else's identical publish). The eight most recently used entries are
+  kept.
+* **The tools cap is for reuse.** sp-juboj's 40 s `tools` cap bounds the reuse path (the
+  build that replaces a failed store install). A cold build on a store miss, or of tools that
+  cannot be keyed, runs under the cap name `tools-cold` — bounded only by what is left of
+  `SPIRA_GATE_DEADLINE` — so the first gate of a new key can finish and publish it. It is
+  metered as `tools`.
+* **`gate warm-tools [--rev <rev>] [--repo <name>]`** builds and publishes the tools of
+  `<rev>` (default: the landing ref) exactly as a cold tools phase would — in its own gate
+  tree `<run>/worktree/.gate-warm.<repo>` (locked, on tmpfs, removed after), through the build
+  cache, bounded by an hour, never a gate's clock — and prints `warmed <entry>`; a key the
+  store already holds is a no-op, `already warm <entry>`. Run it after a landing that moves
+  the key, so the next gates reuse.
+* **No key, no sharing:** when any part of the base key cannot be read (no metadata, a `bin`
+  package that is not a member, a closure directory with no tree) the tools are built and kept
+  for the tree alone, as before, and the trial says why. The tree-mismatch refusal is unchanged.
+
 ### The finding (sp-g9f3t)
 
 The two 2026-09-30 base-reds (12:18Z sp-t26yx, 12:32Z sp-9thdw) were not a stale binary: the

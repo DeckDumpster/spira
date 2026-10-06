@@ -7,7 +7,7 @@
 //! a header, `# testdb-mode: server — <reason>`, anywhere in the file, with non-empty text
 //! after the em dash.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 
 use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
 
