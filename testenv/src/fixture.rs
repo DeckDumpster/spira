@@ -109,6 +109,7 @@ set_key max_aeons "$CONFIGURE_MAX_AEONS"
 set_key max_live_aeons "$CONFIGURE_MAX_LIVE_AEONS"
 set_key loom_addr "$CONFIGURE_LOOM_ADDR"
 set_key dolt_data "$CONFIGURE_DOLT_DATA"
+set_key sccache_dav_addr ""
 mv "$CONFIGURE_OUT.tmp" "$CONFIGURE_OUT"
 "#;
 
