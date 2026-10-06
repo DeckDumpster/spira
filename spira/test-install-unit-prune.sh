@@ -83,6 +83,7 @@ inst() {
     PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_RUN="$SPIRA_RUN_DIR" \
     units-install test 2>&1
 }
 
