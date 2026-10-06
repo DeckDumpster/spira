@@ -3,6 +3,7 @@ Description=Hourly lossless build-cache reclamation
 
 [Timer]
 OnBootSec=15min
+OnActiveSec=15min
 OnUnitActiveSec=1h
 AccuracySec=5min
 Persistent=true
