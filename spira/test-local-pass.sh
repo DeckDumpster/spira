@@ -20,7 +20,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 UPSTREAM="$TMP/upstream"; REPO="$TMP/repo"
 git init -q -b trunk "$UPSTREAM"
 printf 'a\n' > "$UPSTREAM/f"; git -C "$UPSTREAM" add f; git -C "$UPSTREAM" commit -qm "sp-aaa — first"
-git clone -q "$UPSTREAM" "$REPO" 2>/dev/null
+timeout 5 git clone -q "$UPSTREAM" "$REPO" 2>/dev/null
 SHA="$(git -C "$REPO" rev-parse HEAD)"
 
 SH="$TMP/spira"; mkdir -p "$SH" "$TMP/bin" "$TMP/run"
