@@ -149,7 +149,7 @@ fn ctx() -> Ctx {
         ("SPIRA_RUN", RUN),
         ("SPIRA_VERDICT_TTL", "86400"),
         ("SPIRA_CERTIFY_PAR", "2"),
-        ("HOME", "/home/u"),
+        ("HOME", "/fixture-home"),
         ("SPIRA_RELEASE", "/rel"),
         // The box's own tool tail (sp-c7b85) — cargo, for the tree builds a gate step runs.
         ("SPIRA_PATH", "/box/.cargo/bin"),
@@ -2345,7 +2345,7 @@ fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
 #[test]
 fn a_branch_that_deletes_a_named_suite_is_answered_by_the_deletion() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-del.sh\n".into(),
@@ -2365,7 +2365,7 @@ fn a_branch_that_deletes_a_named_suite_is_answered_by_the_deletion() {
 #[test]
 fn a_named_suite_on_neither_the_base_nor_the_branch_still_refuses() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-typo.sh\n".into(),
