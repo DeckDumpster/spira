@@ -253,6 +253,21 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     }
 
+    if matches!(args.first().map(String::as_str), Some("label" | "update")) {
+        match spira_config::process::cfg("SPIRA_ASK_LABEL") {
+            Ok(ask) => {
+                if let Some(msg) = bead::bdq::check_ask_label_write(args, &ask) {
+                    eprint!("{msg}");
+                    return 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("bdq: {e}");
+                return 1;
+            }
+        }
+    }
+
     // The czar fence: a live SPIRA_FAYTH=czar session with a class mutating the queue
     // (reopen always; update/close unless it is the trigger bead itself) must pass
     // czar-fence.sh first. czar-fence.sh's own exit code is NOT propagated — bdq always

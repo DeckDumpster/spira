@@ -176,7 +176,7 @@ impl<'a> Sentinel<'a> {
         if parked > 0 {
             self.log(&format!(
                 "CHECK7d: {parked} bead(s) whose recorded branch is held by another bead's worktree — parking with {}",
-                self.cfg.ask
+                self.cfg.no_loop
             ));
             self.act(&format!("parked {parked} branch-collision bead(s)"));
         }

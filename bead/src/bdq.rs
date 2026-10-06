@@ -229,6 +229,26 @@ pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
     })
 }
 
+/// `label add <ask>` and `update --add-label <ask>` skip the create-time shape check, so
+/// they are refused outright: an ask is created whole, never labelled on afterwards.
+pub fn check_ask_label_write(args: &[String], ask_label: &str) -> Option<String> {
+    if ask_label.is_empty() {
+        return None;
+    }
+    let writes = match args.first().map(String::as_str) {
+        Some("label") => args.get(1).map(String::as_str) == Some("add") && args.iter().skip(3).any(|a| a == ask_label),
+        Some("update") => args.windows(2).any(|w| matches!(w[0].as_str(), "--add-label" | "--set-labels") && w[1].split(',').any(|l| l == ask_label)),
+        _ => false,
+    };
+    if !writes {
+        return None;
+    }
+    Some(format!(
+        "spira: refusing to add {ask_label} to an existing bead — it is the operator's decision queue and an ask is created whole.\n\
+         Exit: post the decision with `work ask` (question, default, class), or label the bead overseer (and the no-loop label to stop dispatch) so the Concierge or Ops works it.\n"
+    ))
+}
+
 /// The schema-migrations-DELETE regex, shared the same way [`destructive_match`] is.
 pub fn schema_delete_match(text: &str) -> bool {
     static PATTERN: &str = r"delete[[:space:]]+from[[:space:]]+schema_migrations";
@@ -474,6 +494,18 @@ mod tests {
     }
 
     // -- check_schema_delete -----------------------------------------------------------------
+
+    #[test]
+    fn ask_label_cannot_be_added_to_an_existing_bead() {
+        let a = "needs-ryan"; // literal-ok: fixture/fallback
+        assert!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), a).unwrap().contains("Exit:"));
+        assert!(check_ask_label_write(&s(&["update", "sp-1", "--add-label", a]), a).is_some());
+        assert!(check_ask_label_write(&s(&["update", "sp-1", "--add-label", "x,needs-ryan"]), a).is_some()); // literal-ok: fixture/fallback
+        assert_eq!(check_ask_label_write(&s(&["label", "add", "sp-1", "overseer"]), a), None);
+        assert_eq!(check_ask_label_write(&s(&["label", "remove", "sp-1", a]), a), None);
+        assert_eq!(check_ask_label_write(&s(&["update", "sp-1", "--remove-label", a]), a), None);
+        assert_eq!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), ""), None);
+    }
 
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {

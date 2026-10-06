@@ -168,6 +168,9 @@ impl Conf {
     pub fn ask_label(&self) -> String {
         self.s("SPIRA_ASK_LABEL")
     }
+    pub fn no_loop_label(&self) -> String {
+        self.s("SPIRA_NO_LOOP_LABEL")
+    }
     /// No Rust-side default: `spira/conf.d/SPIRA_SUBMITTED_LABEL` already defaults this
     /// to "spira-submitted", supplied through `self.v` the same way every other
     /// registered key is (per Ryan 2026-10-05: one source of config).
