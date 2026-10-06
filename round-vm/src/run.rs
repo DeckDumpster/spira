@@ -166,6 +166,16 @@ if ! cargo build -q --profile release --workspace --config profile.release.incre
     exit 4
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
+# The round's one source of config: the tree's complete fixture, with this VM's own paths
+# declared over it. Nothing here is searched for or defaulted.
+mkdir -p "$HOME/round-run"
+cat > "$HOME/round-config.toml" <<ROUNDCFG
+[spira]
+run = "$HOME/round-run"
+releases = "$HOME/round-releases"
+home_repo = "$HOME/round-work"
+ROUNDCFG
+export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
 rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
