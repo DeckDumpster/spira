@@ -109,10 +109,7 @@ pub trait Sink {
 pub struct RealClock;
 impl Clock for RealClock {
     fn now(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
+        spira_config::vtime::now_epoch() as i64
     }
 }
 
@@ -159,6 +156,7 @@ impl Runner for RealRunner {
         if let Some(base) = &self.base_env {
             cmd.env_clear();
             cmd.envs(base.iter().map(|(k, v)| (k, v)));
+            cmd.envs(spira_config::vtime::passthrough());
         }
         cmd.envs(spec.env.iter().map(|(k, v)| (k, v)));
         cmd.stdin(if spec.stdin.is_some() {
@@ -428,5 +426,17 @@ mod tests {
         };
         let o = r.run(&Spec::new("/usr/bin/env", &[]).env("B", "2"));
         assert_eq!(o.stdout, "A=1\nB=2\n");
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use super::Clock;
+
+    #[test]
+    fn real_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now() as u64);
+        assert_eq!(got, 1_900_000_000);
     }
 }

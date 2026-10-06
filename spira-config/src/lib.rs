@@ -40,6 +40,7 @@ pub mod resolve;
 pub mod room;
 pub mod scratch;
 pub mod unit;
+pub mod vtime;
 pub mod writeback;
 
 pub use locate::LocateOutcome;

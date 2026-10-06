@@ -231,7 +231,7 @@ fn ilog(env: &Env, msg: &str) {
 }
 
 fn now_epoch() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    spira_config::vtime::now_epoch() as i64
 }
 
 /// `date -u +%Y-%m-%dT%H:%M:%SZ` — the `ilog` timestamp.

@@ -15,7 +15,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration};
 
 use batcher::core::{Member, MergeResult, PoolHistory};
 
@@ -84,7 +84,7 @@ pub struct Env {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
 fn run(cmd: &mut Command, what: &str) -> Result<String, String> {

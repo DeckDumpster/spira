@@ -31,7 +31,6 @@ use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use batcher::core::{
     adaptive_n, combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
@@ -144,7 +143,7 @@ fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
 /// `round-vm`, by name on the launcher's PATH (sp-gypjk), unless --round-vm names another.
@@ -1076,3 +1075,14 @@ mod base_conflict_handling {
     }
 }
 
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn now_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || now());
+        assert_eq!(got, 1_900_000_000);
+    }
+}

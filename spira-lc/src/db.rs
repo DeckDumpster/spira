@@ -19,7 +19,6 @@
 //! Either way exactly one transition is ever recorded as applied for a given (key, version).
 
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -67,7 +66,7 @@ pub enum DbError {
 }
 
 pub fn now_epoch() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64
+    spira_config::vtime::now_epoch() as i64
 }
 
 impl Conn {

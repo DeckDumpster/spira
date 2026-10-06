@@ -4,7 +4,6 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::decide::{status_of_lc, BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
@@ -299,7 +298,7 @@ pub struct RealClock;
 
 impl Clock for RealClock {
     fn now(&self) -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+        spira_config::vtime::now_epoch() as i64
     }
 }
 
@@ -363,5 +362,17 @@ mod tests {
     #[test]
     fn rows_from_json_empty_array_is_empty_vec() {
         assert_eq!(rows_from_json("[]\n").len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn real_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now() as u64);
+        assert_eq!(got, 1_900_000_000);
     }
 }
