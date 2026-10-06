@@ -18,6 +18,14 @@
 //!       every branch today against areas `docs/test-plan/*.toml` hasn't migrated yet.
 //!       "ok" and exit 0 when clean; each violation printed and exit 1 otherwise.
 //!
+//!   test-plan launcher-gaps --catalogue-dir DIR --suites FILE|-
+//!       one line per declared launcher (a use case with a `launcher` table) no suite covers.
+//!       Reported, exit 0.
+//!
+//!   test-plan launcher-sites --catalogue-dir DIR --root DIR
+//!       each declared launcher's site must exist under DIR and contain its needle; exit 1
+//!       naming each that does not.
+//!
 //!   test-plan matrix --catalogue-dir DIR --suites FILE|- [--timings FILE]
 //!       the derived coverage matrix as JSON, to stdout.
 //!
@@ -41,7 +49,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use test_plan::{
-    build_matrix, catalogue_json_schema, load_catalogues, matrix_json_schema, orphan_violations,
+    build_matrix, catalogue_json_schema, launcher_gaps, launcher_site_violations, load_catalogues, matrix_json_schema, orphan_violations,
     render_markdown, tier_budget_flags, unknown_uc_violations, LoadedCatalogue, MatrixDoc,
     SuiteCoverage,
 };
@@ -74,6 +82,7 @@ struct Args {
     prev_suites: Option<String>,
     timings: Option<String>,
     matrix: Option<String>,
+    root: Option<String>,
     out_json: Option<String>,
     out_md: Option<String>,
 }
@@ -85,6 +94,7 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
         prev_suites: None,
         timings: None,
         matrix: None,
+        root: None,
         out_json: None,
         out_md: None,
     };
@@ -97,6 +107,7 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
             "--prev-suites" => a.prev_suites = val.cloned(),
             "--timings" => a.timings = val.cloned(),
             "--matrix" => a.matrix = val.cloned(),
+            "--root" => a.root = val.cloned(),
             "--out-json" => a.out_json = val.cloned(),
             "--out-md" => a.out_md = val.cloned(),
             other => return Err(format!("unknown argument {other:?}")),
@@ -254,6 +265,63 @@ fn cmd_orphans(rest: &[String]) -> ExitCode {
     } else {
         println!("ok");
         ExitCode::SUCCESS
+    }
+}
+
+fn cmd_launcher_gaps(rest: &[String]) -> ExitCode {
+    let a = match parse_args(rest) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("test-plan launcher-gaps: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (Some(dir), Some(suites_spec)) = (a.catalogue_dir, a.suites) else {
+        eprintln!("usage: test-plan launcher-gaps --catalogue-dir DIR --suites FILE|-");
+        return ExitCode::FAILURE;
+    };
+    let cats = match load_or_report(&dir) {
+        Ok(c) => c,
+        Err(rc) => return rc,
+    };
+    let suites = match load_suites(&suites_spec) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("test-plan: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for g in launcher_gaps(&cats, &suites) {
+        println!("{g}");
+    }
+    ExitCode::SUCCESS
+}
+
+fn cmd_launcher_sites(rest: &[String]) -> ExitCode {
+    let a = match parse_args(rest) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("test-plan launcher-sites: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (Some(dir), Some(root)) = (a.catalogue_dir, a.root) else {
+        eprintln!("usage: test-plan launcher-sites --catalogue-dir DIR --root DIR");
+        return ExitCode::FAILURE;
+    };
+    let cats = match load_or_report(&dir) {
+        Ok(c) => c,
+        Err(rc) => return rc,
+    };
+    let bad = launcher_site_violations(&cats, Path::new(&root));
+    for v in &bad {
+        eprintln!("test-plan: {v}");
+    }
+    if bad.is_empty() {
+        println!("ok");
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -427,11 +495,13 @@ fn cmd_schema(which: Option<&str>) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: test-plan <catalogue-ids|validate|orphans|matrix|render|write-matrix|schema> ...\n\
+        "usage: test-plan <catalogue-ids|validate|orphans|launcher-gaps|launcher-sites|matrix|render|write-matrix|schema> ...\n\
          \n\
          \x20 catalogue-ids --catalogue-dir DIR\n\
          \x20 validate --catalogue-dir DIR [--suites FILE|-] [--prev-suites FILE|-]\n\
          \x20 orphans --catalogue-dir DIR --suites FILE|- --prev-suites FILE|-\n\
+         \x20 launcher-gaps --catalogue-dir DIR --suites FILE|-\n\
+         \x20 launcher-sites --catalogue-dir DIR --root DIR\n\
          \x20 matrix --catalogue-dir DIR --suites FILE|- [--timings FILE]\n\
          \x20 render [--matrix FILE|-]\n\
          \x20 write-matrix --catalogue-dir DIR --suites FILE|- [--timings FILE] --out-json PATH --out-md PATH\n\
@@ -446,6 +516,8 @@ fn main() -> ExitCode {
         Some("catalogue-ids") => cmd_catalogue_ids(&args[1..]),
         Some("validate") => cmd_validate(&args[1..]),
         Some("orphans") => cmd_orphans(&args[1..]),
+        Some("launcher-gaps") => cmd_launcher_gaps(&args[1..]),
+        Some("launcher-sites") => cmd_launcher_sites(&args[1..]),
         Some("matrix") => cmd_matrix(&args[1..]),
         Some("render") => cmd_render(&args[1..]),
         Some("write-matrix") => cmd_write_matrix(&args[1..]),

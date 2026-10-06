@@ -18,7 +18,11 @@
 #   - --orphans only: a UC whose last covering suite (at <ref>) is gone now,
 #     with no [use_case.uncovered] marker and no new cover in this commit
 #
+#   - a launcher (a use case with a `launcher` table) whose site file is gone or no longer
+#     contains its needle
+#
 # REPORTED, NOT FAILED (--gaps; exits 0 regardless of what it finds)
+#   - a launcher with no covering suite, marker or not (`launcher gap:` lines)
 #   - a UC id declared at tier T0-T3 with no suite naming it on a # covers:
 #     line and no [use_case.uncovered] marker
 # This becomes a hard failure once the area beads land their pages — see
@@ -68,7 +72,7 @@ lint_one() {
 }
 
 usage() {
-    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -110,6 +114,10 @@ case "${1:-}" in
         esac
     done < "$_cat"
     printf 'plan-lint: %d T0-T3 use case(s) with no covering suite\n' "$_gaps"
+    _suites_json="$(mktemp)"
+    bash "$HERE/suite-coverage-json.sh" > "$_suites_json" \
+        && test-plan launcher-gaps --catalogue-dir "$DOCS_DIR" --suites "$_suites_json"
+    rm -f "$_suites_json"
     exit 0
     ;;
 ""|--lint)
@@ -122,6 +130,10 @@ case "${1:-}" in
         exit 3
     fi
     bad=0
+    test-plan launcher-sites --catalogue-dir "$DOCS_DIR" --root "$ROOT" >/dev/null || {
+        test-plan launcher-sites --catalogue-dir "$DOCS_DIR" --root "$ROOT" 2>&1 >/dev/null
+        bad=1
+    }
     for f in "${suites[@]}"; do
         rel="${f#"$ROOT"/}"
         lint_one "$f" "$rel" "$_cat" || bad=1

@@ -285,3 +285,14 @@ statement = "the collector loop exits 1 and logs the count after `SPIRA_COCKPIT_
 id = "UC-cockpit-observability-50"
 tier = "T1"
 statement = "`ready.sh` loom grace pass: a loom that refuses the first probe and opens its port later is retried until it answers (pass, not FAIL); a loom that never answers is FAIL bounded by `SPIRA_LOOM_READY_GRACE`, not the default"
+
+[[use_case]]
+id = "UC-cockpit-observability-51"
+tier = "T2"
+statement = "The ops pane's start command, run as the cockpit starts it, renders once with real values — no '?' placeholders and no STOPPED banner."
+launcher = { site = "cockpit/ops/src/layout.rs", needle = "health loop" }
+
+[use_case.uncovered]
+reason = "no suite renders the pane from its own start command; a green test waits on the pane failing visibly instead of falling back to a default run root"
+date = "2026-10-06"
+bead = "sp-h3bs2g"
