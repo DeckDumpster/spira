@@ -164,6 +164,8 @@ if label_self_overlaps "spira/sp-t1" "$EVENTS"; then
 else
     ok "same-branch gates were serialised (their command windows did not overlap)"
 fi
+echo "DEBUG GATELOG1B: $(cat "$GATELOG1B" 2>/dev/null)" >&2
+echo "DEBUG EVENTS: $(cat "$EVENTS" 2>/dev/null)" >&2
 waits1b="$(grep -oE 'waited=[0-9]+s' "$GATELOG1B" 2>/dev/null \
     | sed 's/waited=//;s/s$//' | sort -n | tail -1)"
 [ "${waits1b:-0}" -gt 0 ] \
