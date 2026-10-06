@@ -45,7 +45,7 @@ run_trigger() {
         if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
     done
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
-        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_CONF="$T/none.conf" BD_LOG_PATH="$LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" BD_CREATE_FAIL="${BD_CREATE_FAIL:-}" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
@@ -74,7 +74,6 @@ echo; echo "DEDUP: an open sweep suppresses filing (positive control: filing hap
 lc_bead READY sp-x deadbeef 0
 out="$(BD_LIST_OUTPUT='[{"id":"sp-x"}]' run_trigger)"; rc=$?
 is "dedup exits 0" 0 "$rc"
-echo "DEBUGOUT=[$out]"
 lack "no second bead" "create" "$(cat "$LOG")"
 
 echo; echo "DEDUP: a sweep the machine has seen handed on no longer suppresses filing"
