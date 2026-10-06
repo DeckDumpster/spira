@@ -227,8 +227,9 @@ impl Txn {
             fs::write(&p, text).map_err(|e| format!("cannot write {}: {e}", p.display()))?;
             staged.push(p.display().to_string());
         }
-        let mut cmd = Command::new(bin);
-        cmd.arg("validate").env("SPIRA_TOML", staged.join(":"));
+        // batch-job: the new binary's config load, bounded at 60 s by timeout(1).
+        let mut cmd = Command::new("timeout");
+        cmd.arg("60").arg(bin).arg("validate").env("SPIRA_TOML", staged.join(":"));
         for (k, v) in crate::verify::pre_activate_env(cfg, rel)? {
             cmd.env(k, v);
         }
