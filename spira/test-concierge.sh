@@ -179,7 +179,6 @@ else
     bad "no-wiki brief renders" "$(cat "$TMP/err_nw")"
 fi
 
-tl_summary; exit
 echo
 echo "resume — launcher carries SPIRA_CONCIERGE=1, and the retry mechanism is in the script"
 
