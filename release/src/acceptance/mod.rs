@@ -29,6 +29,9 @@ pub const RELEASE_BINS: &[&str] = &["loom", "panel", "broker", "spira-supervise"
 /// would never be in force), whose non-default value changes nothing on an acceptance box.
 pub const OVERRIDE_KEY: &str = "SPIRA_CHECK5_MAX_FILE";
 
+/// The note line that records an upgrade waiver on the cut it was given for.
+pub const WAIVER_LINE: &str = "upgrade phases waived by operator";
+
 /// What the caller asked for (the command line), before anything is resolved.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Args {
@@ -476,7 +479,7 @@ impl Note<'_> {
             s.push_str(&format!("\naged-install from={p}: {}", self.verdict));
         }
         if self.waived {
-            s.push_str("\nupgrade phases waived by operator");
+            s.push_str(&format!("\n{WAIVER_LINE}"));
         }
         s
     }

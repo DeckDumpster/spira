@@ -191,6 +191,7 @@ struct Fake {
     land_modes: Vec<(&'static str, &'static str)>,
     fast_tier_rc: i32,
     bare_lint_rc: i32,
+    tag_notes: Vec<(&'static str, &'static str)>,
 }
 
 impl Fake {
@@ -216,6 +217,7 @@ impl Fake {
             land_modes: vec![("scratch-repo", "push"), ("scratch-q", "queue.local"), ("scratch-pr", "pr")],
             fast_tier_rc: 0,
             bare_lint_rc: 3,
+            tag_notes: Vec::new(),
         }
     }
 
@@ -345,6 +347,11 @@ impl Fake {
                 let p = self.probes.borrow();
                 ok(&p[n(from)..n(to)].iter().map(|i| format!("{i}: acceptance probe")).collect::<Vec<_>>().join("\n"))
             }
+            ("git", ["-C", _, "tag", "--list", ..]) => ok(&self.tag_notes.iter().map(|(t, _)| format!("{t}\n")).collect::<String>()),
+            ("git", ["-C", _, "notes", "--ref=acceptance", "show", r]) => match self.tag_notes.iter().find(|(t, _)| *r == format!("refs/tags/{t}")) {
+                Some((_, n)) => ok(n),
+                None => Out { rc: 1, text: "no note\n".into(), out: String::new() },
+            },
             ("git", _) => ok(""),
             ("gh", _) => ok(""),
             _ => Out { rc: 127, text: format!("fake: no answer for {}\n", c.line()), out: String::new() },
@@ -534,6 +541,37 @@ fn the_waiver_skips_upgrade_phases_and_says_so_in_the_note() {
     let text = &note.args[note.args.iter().position(|a| a == "-m").unwrap() + 1];
     assert!(text.ends_with("upgrade phases waived by operator"), "{text}");
     assert!(!text.contains("aged-install from="), "{text}");
+}
+
+const WAIVED_NOTE: &str = "PASS\nD t  3 passed, 0 failed\nupgrade phases waived by operator\n";
+
+#[test]
+fn a_waiver_is_honoured_for_its_own_cut_and_the_next_cut_is_refused_until_the_phases_run() {
+    let b = Box_::new();
+    let cut = "spira-release-spira-20260930T000000Z";
+    let prior = "spira-release-spira-20260901T000000Z";
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, "PASS\nD t  3 passed, 0 failed\naged-install from=x: PASS\n"), ("spira-release-spira-20260801T000000Z", WAIVED_NOTE)];
+    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade"])), 0, "a cut whose predecessor ran the phases may waive: {:?}", b.fails());
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade"])), 2, "the next cut may not waive again");
+    assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")), "refused before any phase");
+
+    let f = {
+        let mut f = b.fake();
+        f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+        f
+    };
+    assert_eq!(phases::run(&f, b.opts(&[])), 2, "nor may it skip the phases by naming no predecessor");
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+    let rc = phases::run(&f, with_prev(&b, &[]));
+    assert_eq!(rc, 0, "running the phases clears it: {:?}", b.fails());
+    assert!(f.log.borrow().iter().any(|c| c.prog == "deploy.sh"), "the upgrade ran");
 }
 
 #[test]
