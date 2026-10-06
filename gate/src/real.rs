@@ -775,7 +775,11 @@ impl World for Real {
         Ok(line)
     }
     fn release_target(&self, tree: &Path, keep_release: bool) {
-        crate::target::release_tree(tree, keep_release);
+        let root = crate::target::tree_root(tree);
+        let mib = crate::target::release_tree(tree, keep_release);
+        if let (Some(root), true) = (root, mib > 0) {
+            spira_config::scratch::record_peak(&spira_config::scratch::ledger_for(&root), &crate::target::composition(tree), mib);
+        }
     }
     fn reserve_scratch(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, class: &str, wait_secs: u64) -> Result<Box<dyn std::any::Any>, String> {
         use crate::target;
@@ -783,11 +787,13 @@ impl World for Real {
             return Ok(Box::new(()));
         };
         let owner = format!("gate-{}", tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+        let ledger = spira_config::scratch::ledger_for(&root);
+        let mib = spira_config::scratch::estimate_mib(&ledger, &target::composition(tree), lim.reserve_mib);
         let g = spira_config::scratch::reserve_class(
-            &spira_config::scratch::ledger_for(&root),
+            &ledger,
             &owner,
             spira_config::scratch::Class::parse(class),
-            lim.reserve_mib,
+            mib,
             0,
             std::time::Duration::from_secs(wait_secs),
             &|| target::free_mib(&root),

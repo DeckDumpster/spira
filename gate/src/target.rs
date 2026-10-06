@@ -251,6 +251,20 @@ pub fn prepare(
 
 /// Remove the tmpfs directories `tree`'s build links point at (a finished gate's output is
 /// read by nobody), sparing `release` when the caller still has to stage it. Returns MiB freed.
+/// The scratch root a tree's linked build dirs live under, read from its symlinks.
+pub fn tree_root(tree: &Path) -> Option<PathBuf> {
+    LINKED.iter().find_map(|d| {
+        let dest = fs::read_link(tree.join("target").join(d)).ok()?;
+        Some(dest.parent()?.parent()?.to_path_buf())
+    })
+}
+
+/// The composition a gate tree's name stands for: `.gate.<repo>.spira-<bead>` → `gate.<repo>`.
+pub fn composition(tree: &Path) -> String {
+    let name = tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    name.trim_start_matches('.').split('.').take(2).collect::<Vec<_>>().join(".")
+}
+
 pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
     let mut bytes = 0;
     let mut homes: Vec<PathBuf> = Vec::new();
@@ -332,6 +346,11 @@ pub fn mem_available_mib() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tree_name_reduces_to_its_composition() {
+        assert_eq!(composition(Path::new("/tmp/x/.gate.harness.spira-sp-abc")), "gate.harness");
+    }
 
     struct Scratch(testkit::TempDir, PathBuf);
     impl Scratch {
