@@ -80,7 +80,7 @@ printf 'test-units-lint.sh\n'
 # the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
 # SPIRA_HOME is exactly what the comment below this block is testing).
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD="" \
-    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential"
+    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" SPIRA_DB="$RUN/db"
 # SPIRA_LC_PASSWORD_FILE above no longer reaches units-install's render for this key: it is
 # PROCEDURAL (spira_config::resolve::lc_credential_default), computed straight from
 # XDG_CONFIG_HOME/HOME with no environment-override rung at all (one source of config, per
