@@ -471,13 +471,18 @@ pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
     // COCKPIT_CWD's own toml default already composes `${SPIRA_WIKI:-$SPIRA_REPO}`
     // (spira/conf.d), so the resolved value carries that fallback — no second one here.
     let cwd = spira_config::process::cfg("COCKPIT_CWD").unwrap_or_default();
-    // COCKPIT_SESSIONS' own toml default is "brain hunk chat" — no Rust-side literal needed.
-    let sessions: Vec<String> = spira_config::process::cfg("COCKPIT_SESSIONS")
-        .unwrap_or_default()
+    // Declared config, the one source: a key that does not resolve refuses, never an empty list.
+    let need = |key: &str| {
+        spira_config::process::cfg(key).unwrap_or_else(|e| {
+            eprintln!("rebuild: {e}");
+            std::process::exit(2)
+        })
+    };
+    let sessions: Vec<String> = need("COCKPIT_SESSIONS")
         .split_whitespace()
         .map(|s| s.to_string())
         .collect();
-    let mail_wanted = spira_config::process::cfg("COCKPIT_MAIL").ok().filter(|s| !s.is_empty()).is_some();
+    let mail_wanted = !need("COCKPIT_MAIL").is_empty();
     let concierge = std::env::var("COCKPIT_CONCIERGE")
         .ok()
         .filter(|s| !s.is_empty())

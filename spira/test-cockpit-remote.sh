@@ -124,13 +124,13 @@ if [ -f "$REBUILD_SRC" ]; then
     else
         bad "rebuild reads COCKPIT_SESSIONS" "variable not found in rebuild.rs"
     fi
-    # The env var must be read as a FALLBACK (std::env::var(...).unwrap_or_else(default)),
-    # not shadowed by an unconditional literal — the same "overridable, not hardcoded"
-    # property the bash original's `${COCKPIT_SESSIONS:-brain hunk chat}` had.
-    if grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -q 'unwrap_or_else'; then
+    # The list is DECLARED config (spira.cockpit_sessions), read through spira-config with
+    # no Rust-side literal or fallback (per Ryan 2026-10-05: one source of config).
+    if grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -q 'spira_config::process::cfg' \
+        && ! grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -qE 'unwrap_or(_else|_default)?\('; then
         ok "rebuild does not hardcode the session list"
     else
-        bad "rebuild does not hardcode the session list" "no unwrap_or_else fallback found after the COCKPIT_SESSIONS read"
+        bad "rebuild does not hardcode the session list" "the COCKPIT_SESSIONS read is not cfg() without a fallback"
     fi
 else
     bad "rebuild.rs exists" "not found at $REBUILD_SRC"
