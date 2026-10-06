@@ -25,7 +25,8 @@ echo "test-archive-no-sessions.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 arch() {   # arch <home> <SPIRA_TOKEN_PROJECTS>
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_TOKEN_PROJECTS="$2"
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_TOKEN_PROJECTS="$2" \
+        SPIRA_ARCHIVE="$TMP/archive"
     env -i PATH="$PATH" HOME="$1" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
         archive.sh sweep 2>&1
 }

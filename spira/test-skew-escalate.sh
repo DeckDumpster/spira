@@ -42,6 +42,13 @@ REPO="$TMP/repo"
 git init -q "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
+# SPIRA_HOME_REPO/SPIRA_REPO_MAP EXPLICITLY: home_repo() defaults to the fixture's own
+# "spira" and repo_root("spira") then has no map to resolve it against, so skew/src's
+# landref fails with "cannot resolve the ref repo:spira lands on" before check() ever
+# reaches escalate(). No remote is configured on $REPO, so landref's own rung 4 (the
+# checkout's current branch) resolves the base ref — the map row needs no `base` column.
+SKEWMAP="$TMP/repo-map"
+printf 'fixture | %s | push | | | true | self\n' "$REPO" > "$SKEWMAP"
 mkdir -p "$REPO/spira"
 printf '# boundary\n'        > "$REPO/spira/boundary"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/gate.sh"
@@ -84,7 +91,8 @@ ln -s "spira-${TS1}" "$RELEASES/current"
 run_skew() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+        SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -98,7 +106,8 @@ run_skew() {
 run_skew_ro() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+        SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -111,7 +120,8 @@ run_skew_ro() {
 
 run_skew_shared() {
     local run_dir="$1"; shift
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+        SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \

@@ -44,7 +44,7 @@ lc_mirror_bd "$TMP/lc"
 
 file_one() {  # file_one <ref> [VAR=val ...]
     local ref="$1"; shift
-    tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
+    tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_BD="$STUB_BD"
     # Any caller override: a registered key (e.g. SPIRA_INCIDENT_PRIORITY) goes to tl_config
     # too; anything else (the non-registered SPIRA_INCIDENT_* seams) stays a plain env
     # assignment for the env -i call below.
@@ -55,7 +55,7 @@ file_one() {  # file_one <ref> [VAR=val ...]
     done
     printf 'payload' | env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_TOML="$SPIRA_TOML" \
-        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+        STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_REF="$ref" \

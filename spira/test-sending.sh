@@ -91,6 +91,10 @@ export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 unset SPIRA_LC_SOCKET
+# SPIRA_LC_PASSWORD_FILE is registered and resolves ambiently via cfg() to the complete
+# fixture's own nonexistent path, preferred over SPIRA_LC_PASSWORD above unless cleared
+# (sfail round 3, pattern 7 — same cause as test-canary.sh).
+tl_config SPIRA_LC_PASSWORD_FILE=""
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 

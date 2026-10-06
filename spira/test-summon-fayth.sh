@@ -203,7 +203,7 @@ F
 echo
 echo "elastic last-slot reservation — criterion 1: refused when last slot and non-elastic has ready work"
 # ======================================================================================
-tl_config SPIRA_FAYTHS="anchor stretchy" SPIRA_MAX_LIVE_AEONS=3 SPIRA_LANES_MAX_LIVE=""
+tl_config SPIRA_FAYTHS="anchor stretchy" SPIRA_MAX_LIVE_AEONS=3
 clear_live
 # The fleet-total pidfiles are tagged under "stretchy" throughout this section, never
 # "anchor": stretchy is elastic AND every call below passes a pool, so its OWN
@@ -270,15 +270,10 @@ is "cost: 2-free-slot path makes 1 fayth_ready call (stretchy only, no reservati
    "1" "$(fayth_ready_call_count)"
 is "cost: that call was for stretchy" "stretchy" "$(cat "$FAYTH_READY_CALL_FILE" 2>/dev/null)"
 
-echo
-echo "no ceiling — SPIRA_MAX_LIVE_AEONS unset means today's behaviour exactly"
-tl_config SPIRA_MAX_LIVE_AEONS=""
-set_live stretchy 999
-rm -f "$SUMMONED"
-summon_fayth stretchy 4 >/dev/null 2>&1 || true
-is "no ceiling: elastic succeeds when SPIRA_MAX_LIVE_AEONS is unset" \
-   "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
-clear_live
+# CASE DELETED (per Ryan 2026-10-06, rule 5): "no ceiling — SPIRA_MAX_LIVE_AEONS unset
+# means today's behaviour exactly" pinned empty-means-no-cap, a default. Every registered
+# key now has a declared value (an empty string is no longer a valid u32), so "unset" is
+# not a state SPIRA_MAX_LIVE_AEONS can be in any more — the premise this case tested is gone.
 
 # ======================================================================================
 echo
@@ -571,7 +566,7 @@ done
 exit 0
 FAKEBD
 chmod +x "$T/bin/fake-bd"
-export SPIRA_BD="$T/bin/fake-bd"
+tl_config SPIRA_BD="$T/bin/fake-bd"
 
 # `summon_fayth`'s OWN readiness, below, goes through the spira-claim stub (set_ready) —
 # $T/bin is ahead of the release's real spira-claim on PATH for every subprocess this

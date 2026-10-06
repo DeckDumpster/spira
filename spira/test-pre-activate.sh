@@ -304,8 +304,19 @@ YAML
     REL="$TMP/rel-lc-real"; mkrel "$REL"; mkdir -p "$REL/lifecycle"
     ln -sf "$LC_BIN" "$REL/bin/spira-lc"
     cp -r "$REPO/lifecycle/migrations" "$REL/lifecycle/migrations"
-    run_lc() { out="$(lc_env SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred" \
-        HOME="$TMP/home" SPIRA_REPO="$TMP/emptyrepo" SPIRA_TOML="$TMP/no-such.toml" PATH="$TMP/binstub:$PATH" \
+    # SPIRA_LC_PASSWORD_FILE is declared config (spira/conf.d), read only from $SPIRA_TOML by
+    # the admin-migrate subprocess pre-activate.sh's lifecycle check runs — a literal env
+    # assignment on this call does nothing now, and a bare nonexistent SPIRA_TOML (as this
+    # used to pin) fails the whole resolution, which silently falls to an empty password
+    # instead of refusing (Access denied for 'spira_lc', not CannotTell). Give it a real,
+    # complete config — the same base fixture testlib.sh layers — with just this suite's
+    # service credential declared on top.
+    cat > "$TMP/svc-override.toml" <<TOMLEOF
+[spira]
+lc_password_file = "$TMP/svc.cred"
+TOMLEOF
+    run_lc() { out="$(lc_env SPIRA_LC_USER=spira_lc \
+        HOME="$TMP/home" SPIRA_REPO="$TMP/emptyrepo" SPIRA_TOML="$_TL_CONF_BASE:$TMP/svc-override.toml" PATH="$TMP/binstub:$PATH" \
         pre-activate.sh "$1" 2>&1)"; rc=$?; }
 
     run_lc "$REL"

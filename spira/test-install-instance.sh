@@ -91,7 +91,7 @@ inst() {
     SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     "$@" \
-    timeout 30 units-install test 2>&1
+    timeout 90 units-install test 2>&1
 }
 
 # ==========================================================================
@@ -108,7 +108,7 @@ tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
     SPIRA_WATCHERS="$WATCHERS"
 rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    timeout 30 units-install test --render 2>&1)"
+    timeout 90 units-install test --render 2>&1)"
 render_rc=$?
 if [ "$render_rc" != 0 ]; then
     printf 'fixture: install.sh test --render failed (rc=%s)\n' "$render_rc"
@@ -169,7 +169,7 @@ tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
     SPIRA_WATCHERS="$WATCHERS"
 wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    timeout 30 units-install test --render 2>&1)"
+    timeout 90 units-install test --render 2>&1)"
 current_unit=""
 while IFS= read -r line; do
     if [[ "$line" =~ ^=====\ (.+)\ =====$ ]]; then

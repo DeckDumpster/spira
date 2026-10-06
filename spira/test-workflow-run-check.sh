@@ -126,25 +126,20 @@ mkbead() {
 }
 
 # check <bid> <branch> [extra-env...] -> stdout, sets $rc
+# NOTE (round 3 correction): workflow-run-check.py is a plain python script that reads
+# SPIRA_BD/SPIRA_DB/SPIRA_GH_API/SPIRA_WORKFLOW_ONLY_PATHS via os.environ.get() directly —
+# it was never ported to spira_config, so these are NOT read from $SPIRA_TOML despite being
+# registered conf.d names elsewhere. tl_config (round 2's fix) was the wrong tool here: it
+# only writes the override toml, which this consumer never looks at. Pass them as literal
+# env vars, as this script has always expected.
 CHECK_OUT=""
 check() {
     local bid="$1" branch="$2"; shift 2
-    tl_config SPIRA_BD="$BD" SPIRA_DB="$SPIRA_DB" SPIRA_GH_API="$GH_API"
-    # Any extra SPIRA_* overrides a caller passes (SPIRA_WORKFLOW_ONLY_PATHS below) are
-    # registered keys — declared via tl_config rather than forwarded through env -i.
-    local -a _passthrough=()
-    local _kv
-    for _kv in "$@"; do
-        case "$_kv" in
-            SPIRA_*) tl_config "$_kv" ;;
-            *) _passthrough+=("$_kv") ;;
-        esac
-    done
     CHECK_OUT="$(env -i PATH="$PATH" HOME="$HOME" \
         BEAD_ID="$bid" \
         SPIRA_REPO="$REPO" BRANCH="$branch" BASE="origin/main" \
-        SPIRA_TOML="$SPIRA_TOML" \
-        "${_passthrough[@]}" \
+        SPIRA_BD="$BD" SPIRA_DB="$SPIRA_DB" SPIRA_GH_API="$GH_API" \
+        "$@" \
         python3 "$CHECK" 2>&1)"
 }
 

@@ -81,10 +81,13 @@ lc_mirror_bd "$T/lc"
 
 # SPIRA_SCOPE_LABEL pinned to the fixture's own scope label, so czar.fayth's FAYTH_LABELS
 # (scope + czar label) is a predicate both fixture beads could satisfy but for the czar label.
+# SPIRA_BD is declared BOTH ways: spira-claim itself resolves it via cfg() (tl_config), but
+# the spira-lc stand-in lc_mirror_bd installs is a plain bash stub reading ${SPIRA_BD:-bd}
+# straight from its own inherited env, not through config at all — it needs the real export.
 tl_config SPIRA_BD="$FAKE_BD" SPIRA_SCOPE_LABEL=spira
-czar_count="$(PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" \
+czar_count="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" \
     fayth_ready czar 2>/dev/null)"
-czar_set="$(PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" \
+czar_set="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" \
     _spira_claim fayth-ready czar --json 2>/dev/null)"
 # POSITIVE CONTROL: the fixture reaches spira-claim — exactly one bead counts.
 is     "positive control: fayth_ready czar counts exactly one bead" "1" "$czar_count"

@@ -139,8 +139,10 @@ export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 # SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
 # (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
-# exist for this suite's throwaway server. Empty it so SPIRA_LC_PASSWORD="" above is used.
-tl_config SPIRA_LC_PASSWORD_FILE=""
+# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
+# (root, no password) credential file, declared (SPIRA_LC_SOCKET already unset above).
+: > "$TMP/lc-credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential" SPIRA_LC_SOCKET=""
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 

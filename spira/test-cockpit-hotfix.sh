@@ -35,6 +35,7 @@ chmod +x "$TMP/bin/mock-systemctl"
 tl_config SPIRA_RUN="$TMP/repo/.runtime/spira"
 pane() {  # pane -> stripped rendering of a single `once` frame at SPIRA_RUN
     env -i PATH="$PATH" HOME="$TMP/home" TERM=dumb LC_ALL=C.UTF-8 \
+        SPIRA_HOME="$HERE" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP/repo" \
         SPIRA_SYSTEMCTL="$TMP/bin/mock-systemctl" \
         SPIRA_TOML="$SPIRA_TOML" \

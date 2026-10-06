@@ -64,7 +64,11 @@ trap 'fix_store; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 SPIRA_BD="$(command -v bd-embedded)"
 [ -n "$SPIRA_BD" ] || bail "bd-embedded not on PATH"
-tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD"
+# SPIRA_DB is registered too: rule.sh/concierge.sh source conf.sh, whose own
+# `resolve --sh-all` re-exports every registered key from SPIRA_TOML — overwriting the
+# plain env SPIRA_DB below with the complete fixture's bogus default unless declared the
+# same way (sfail round 3, pattern 3/7).
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$DB"
 
 bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 \
     || bail "could not seed the fixture"

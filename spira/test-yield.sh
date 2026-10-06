@@ -298,7 +298,7 @@ echo "the count has a positive control — a recorder that stopped is not a clea
 CTL="$TMP/ctl"; mkdir -p "$CTL"
 ctl() {                  # ctl -> a report over an EMPTY record, against $GATELOG
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"
-    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$BIN_DIR:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_YIELD="$CTL" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" bash "$SH/yield.sh" report
@@ -309,7 +309,7 @@ ctl() {                  # ctl -> a report over an EMPTY record, against $GATELO
 # has simply never refused anything here. That is `absent`, and it must not read the same as
 # a recorder that stopped — which is the very next case.
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"
-R="$(env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
+R="$(env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$BIN_DIR:/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
       SPIRA_REPO="$REPO" SPIRA_TOML="$SPIRA_TOML" \
       SPIRA_YIELD="$TMP/never-written" SPIRA_GATE_LOG="$GATELOG" \
       SPIRA_YIELD_WINDOW="$WINDOW" bash "$SH/yield.sh" report)"
@@ -331,7 +331,7 @@ is "and so is the gate-fault column"                  "?" "$(f "$R" YIELD_FAULT)
 is "and the unknown column"                           "?" "$(f "$R" YIELD_UNKNOWN)"
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"
 want "and the human view says which side went quiet" "THE RECORDER IS NOT RUNNING" \
-     "$(env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
+     "$(env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$BIN_DIR:/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
         SPIRA_REPO="$REPO" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_YIELD="$CTL" SPIRA_GATE_LOG="$GATELOG" SPIRA_YIELD_WINDOW="$WINDOW" \
         bash "$SH/yield.sh" show)"

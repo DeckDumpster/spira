@@ -61,7 +61,8 @@ except Exception:
 }
 
 tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
-    SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo"
+    SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
+    SPIRA_HOME_REPO="$(basename "$TMP")"
 run_gate_check() {
     # The gh stub goes first on PATH (conf.sh keeps the caller's PATH first, sp-gypjk).
     SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \

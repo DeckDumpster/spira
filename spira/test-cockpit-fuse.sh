@@ -219,8 +219,10 @@ for line in sys.stdin.read().splitlines():
 pane() {
     # SPIRA_RUN="$PD" so health.sh reads $PD/cockpit.env (which snap() writes).
     tl_config SPIRA_RUN="$PD"
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): health refuses outright
+    # without one (sfail round 3, pattern 1).
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
         "$PANE" once "${1:-0}" "${2:-0}" 2>/dev/null \
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'

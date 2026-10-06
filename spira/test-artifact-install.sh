@@ -59,12 +59,14 @@ printf '#!/bin/sh\nexit 0\n' > "$MOCK_SC" && chmod +x "$MOCK_SC"
 
 # Minimal, isolated environment (mirrors test-activate.sh's replacement, install.rs's own
 # unit tests): SPIRA_DB/SPIRA_CONF point at nothing so nothing here can read the operator's
-# real store or config. release install-tarball needs no SPIRA_CONF or SPIRA_HOME (its
-# roots come from SPIRA_RELEASES/SPIRA_RUN directly), unlike activate.sh's lib.sh sourcing.
+# real store or config. release install-tarball's roots come from SPIRA_RELEASES/SPIRA_RUN
+# directly, but locate_home (sp-v62vn) still refuses outright with neither SPIRA_HOME nor
+# SPIRA_RELEASE set at all — SPIRA_HOME is the real tree, read only to find conf.d.
 tl_config SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_INSTANCE=prod
 env -i \
     "PATH=$PATH" "HOME=$HOME" \
     "SPIRA_TOML=$SPIRA_TOML" \
+    "SPIRA_HOME=$HERE" \
     "SPIRA_SYSTEMCTL=$MOCK_SC" \
     release install-tarball "$TARBALL" >&2
 wantrc "release install-tarball exits 0" 0 "$?"

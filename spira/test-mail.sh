@@ -25,11 +25,16 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 SPIRA_MAIL="$TMP/mail"
 SPIRA_MAIL_KINDS="$TMP/kinds"
 SPIRA_ID_PREFIX="sp"
+mkdir -p "$TMP/watchd"
 # SPIRA_MAIL_MUTE=0 up front: the complete fixture's own declared default is true (every
 # key needs SOME value), which would silently mute every "lands in new/" assertion in this
 # suite, not just the mail-mute section below that tests muting on purpose.
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
-    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_MUTE=0
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_MUTE=0 \
+    SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""       # prevent reading a real spira.conf
 
 cp -r "$HERE/mail/kinds/." "$TMP/kinds/"

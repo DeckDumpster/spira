@@ -46,6 +46,10 @@ export SPIRA_ID_PREFIX="sp"
 export SPIRA_ASK_LABEL="needs-operator"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
     SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
+# round 3 fix (pattern 7): the complete fixture mutes mail by default (mail_mute=true);
+# every message this suite sends would be filed straight to cur/ (already seen) rather
+# than new/, so none of its own-sender checks would ever see anything unread.
+tl_config SPIRA_MAIL_MUTE=0
 
 # A stub bd: every emitter below only needs "is there already an open ask with this
 # subject" to answer no, so a send is always attempted for real.

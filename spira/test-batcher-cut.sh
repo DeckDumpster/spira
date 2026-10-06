@@ -300,11 +300,11 @@ cut_repo() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
         SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
         SPIRA_FORGE="$SH/forge-fixture.sh" \
-        SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-16}"
+        SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-16}" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     [ -n "${SPIRA_BATCHER_WALL_SECS:-}" ] && tl_config SPIRA_BATCHER_WALL_SECS="$SPIRA_BATCHER_WALL_SECS"
     [ -n "${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" ] && tl_config SPIRA_RELEASE_RUST_TOOLCHAIN="$SPIRA_RELEASE_RUST_TOOLCHAIN"
     PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
     STUB_FLAKE_SUITE="${STUB_FLAKE_SUITE:-}" \
     STUB_FLAKE_COUNTER_FILE="${STUB_FLAKE_COUNTER_FILE:-}" \
@@ -615,9 +615,9 @@ is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" 
 echo
 echo "E. judgement-ci: files a judgement bead for a CI-only red:"
 judge_ci() {
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR"
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     SPIRA_HOME="$SH" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         batcher judgement-ci "$REPONAME" "$@" 2>&1
 }
 
@@ -727,9 +727,9 @@ RMAP
 
 cut_other() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
-        SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 SPIRA_FORGE="$SH/forge-fixture.sh"
+        SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 SPIRA_FORGE="$SH/forge-fixture.sh" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         batcher cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
@@ -927,9 +927,8 @@ cut_local() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
         SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
-        SPIRA_RELEASES="$LRELEASES"
+        SPIRA_RELEASES="$LRELEASES" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     PATH="$SH:$PATH" SPIRA_HOME="$SH" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
         batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
 }

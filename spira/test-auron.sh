@@ -72,8 +72,11 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 printf 'brain | %s | push | origin/main | |\n' "$TMP/repo" > "$SH/repo-map"
 
 auron() {   # auron [--report] — one run against the fixture, with a chosen database
-    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER=""
-    SPIRA_HOME="$SH" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
+    # SPIRA_DB is registered and auron resolves it via cfg(), not env (confirmed in
+    # auron/src/main.rs) — the AURON_DB override must go through tl_config too, or the
+    # fallback/saturation cases silently keep using the real, reachable database.
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" SPIRA_DB="${AURON_DB:-$SPIRA_DB}"
+    SPIRA_HOME="$SH" \
     SPIRA_REPO="$TMP/repo" SPIRA_SYSTEMCTL=true \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
         command auron --home "$SH" "$@" 2>&1
@@ -388,6 +391,11 @@ grep -q 'SP_AURON_DB_SATURATED=1' "$RUN/auron.status" \
 [ -r "$RUN/auron.alerts.json" ] \
     && ok "saturation: fallback file written on timeout" \
     || bad "saturation fallback" "no fallback file on timeout"
+
+# Reset SPIRA_BD back to the real store: it stays declared in the override file (there is
+# no implicit per-call env scoping any more) until something changes it again, so every
+# bare `auron`/`auron_restart` call below would otherwise keep hitting the 124-exit stub.
+tl_config SPIRA_BD="$TESTDB_BD"
 
 echo
 echo "auron.sh — restart loop detection via stub systemctl:"

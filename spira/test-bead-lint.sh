@@ -38,8 +38,12 @@ run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from
     # SPIRA_DB/SPIRA_BD/SPIRA_NO_LOOP_LABEL/SPIRA_ASK_LABEL are registered keys (per Ryan
     # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
     # which no process reads them from any more.
+    # round 3 fix: the complete fixture declares scope_label="spira" as its base value,
+    # so the partition check would require a bare "spira" label none of this suite's
+    # fixture beads carry (they use "repo:spira", a different label). Declare the empty
+    # scope this suite has always meant.
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test"
+        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" SPIRA_SCOPE_LABEL=""
     LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_ALARM_LABEL="incident-test" \

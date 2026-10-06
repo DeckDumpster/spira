@@ -60,8 +60,10 @@ printf 'ok 0 56 - parallel diff 0\n'   > "$RESULTS/test-baz.result"
 printf 'red 0 78 fp parallel diff 1\n' > "$RESULTS/test-red.result"
 printf 'skip 0 0 - parallel diff 77\n' > "$RESULTS/test-skip.result"
 
-tl_config SPIRA_BATCH_LEDGER="$LEDGER" SPIRA_RUN="$TMP"
-bash "$GATE_TIMING" "$RESULTS" green
+# gate-timing.sh reads SPIRA_BATCH_LEDGER/SPIRA_RUN directly from its own process
+# environment (it never sources conf.sh) — not registered-key config, a plain env prefix.
+SPIRA_BATCH_LEDGER="$LEDGER" SPIRA_RUN="$TMP" \
+    bash "$GATE_TIMING" "$RESULTS" green
 
 [ -f "$LEDGER" ] && ok "A0: ledger file created" || { bad "A0: ledger file created" "not found"; }
 
@@ -96,8 +98,8 @@ mkdir -p "$RESULTS_B"
 printf 'key=run2\nbranch=b\nbase=x\n' > "$RESULTS_B/batch.meta"
 printf 'red 0 10 fp parallel diff 1\n' > "$RESULTS_B/test-only.result"
 
-tl_config SPIRA_BATCH_LEDGER="$LEDGER_B" SPIRA_RUN="$TMP"
-bash "$GATE_TIMING" "$RESULTS_B" red
+SPIRA_BATCH_LEDGER="$LEDGER_B" SPIRA_RUN="$TMP" \
+    bash "$GATE_TIMING" "$RESULTS_B" red
 
 row_b="$(cat "$LEDGER_B" 2>/dev/null)"
 is "B1: verdict field"    "red" "$(printf '%s' "$row_b" | awk -F'\t' '{print $5}')"
@@ -119,10 +121,10 @@ printf 'ok 0 5 - parallel diff 0\n'  > "$RESULTS_C1/test-a.result"
 printf 'key=r2\nbranch=b\nbase=x\n' > "$RESULTS_C2/batch.meta"
 printf 'red 0 7 fp parallel diff 1\n' > "$RESULTS_C2/test-a.result"
 
-tl_config SPIRA_BATCH_LEDGER="$LEDGER_C" SPIRA_RUN="$TMP"
-bash "$GATE_TIMING" "$RESULTS_C1" green
-tl_config SPIRA_BATCH_LEDGER="$LEDGER_C" SPIRA_RUN="$TMP"
-bash "$GATE_TIMING" "$RESULTS_C2" red
+SPIRA_BATCH_LEDGER="$LEDGER_C" SPIRA_RUN="$TMP" \
+    bash "$GATE_TIMING" "$RESULTS_C1" green
+SPIRA_BATCH_LEDGER="$LEDGER_C" SPIRA_RUN="$TMP" \
+    bash "$GATE_TIMING" "$RESULTS_C2" red
 
 n_rows="$(wc -l < "$LEDGER_C" 2>/dev/null | tr -d ' ')"
 is "C1: two rows appended" "2" "$n_rows"
@@ -155,8 +157,8 @@ RESULTS_E="$TMP/results-e"; mkdir -p "$RESULTS_E"
 printf 'key=re\nbranch=b\nbase=x\n' > "$RESULTS_E/batch.meta"
 printf 'nproc=8\nmemtotal_kb=1024\nmaxpar=8\ncpu_busy_pct=50\nsuites_wall_s=60\n' \
     > "$RESULTS_E/runner.meta"
-tl_config SPIRA_BATCH_LEDGER="$TMP/ledger-e.tsv" SPIRA_RUN="$TMP"
-bash "$GATE_TIMING" "$RESULTS_E" green \
+SPIRA_BATCH_LEDGER="$TMP/ledger-e.tsv" SPIRA_RUN="$TMP" \
+    bash "$GATE_TIMING" "$RESULTS_E" green \
     && ok "E1: exit 0 for well-formed dir" \
     || bad "E1: exit 0 for well-formed dir" "non-zero exit"
 

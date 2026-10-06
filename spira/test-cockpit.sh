@@ -30,7 +30,7 @@ BASE_PATH="$PATH"
 # Constant across every env -i invocation below unless re-declared (the ratelim "without a
 # trace" case re-points SPIRA_RUN at EMPTY_RUN further down).
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_FAYTHS=t SPIRA_COCKPIT="$TMP"
+    SPIRA_FAYTHS=builder SPIRA_COCKPIT="$TMP"
 
 # A minimal environment: no INVOCATION_ID, no real config, no inherited state.
 run_cockpit() {

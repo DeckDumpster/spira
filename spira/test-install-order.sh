@@ -92,9 +92,14 @@ for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "
 # ACTIVE_WAIT=0: the mock systemctl never reports active, so the end-state wait would burn its ceiling per run.
 inst() {
     : > "$LOG"; rm -f "$BD_TRIES"; rm -f "$DEST"/*.service "$DEST"/*.timer 2>/dev/null
+    # SPIRA_CTRL/SPIRA_WORKSPACES/SPIRA_MAIL undeclared resolve to the complete fixture's
+    # /fixture/home/... runtime paths, which install renders into unit files and may touch
+    # directly (sfail round 3, pattern 7).
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA="" SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
         SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" \
+        SPIRA_CTRL="$RUN_DIR/ctrl" SPIRA_WORKSPACES="$RUN_DIR/workspaces" \
+        SPIRA_MAIL="$RUN_DIR/mail" \
         SPIRA_INSTANCE=prod
     env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \

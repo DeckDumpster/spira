@@ -42,8 +42,13 @@ SPIRA_MAIL="$TMP/mail"
 SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 SPIRA_ID_PREFIX="sp"
 SPIRA_RUN="$TMP/run"
+mkdir -p "$TMP/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
-    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_RUN="$SPIRA_RUN"
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads

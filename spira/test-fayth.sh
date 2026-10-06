@@ -72,6 +72,10 @@ case " \$* " in *" list "*) cat "$STORE_FILE" 2>/dev/null || echo '[]' ;; *) ech
 EOF
 chmod +x "$FAKE_BD"
 export SPIRA_DB="/fake/db"
+# Declared both ways: spira-claim resolves SPIRA_BD via cfg() (tl_config), but the
+# spira-lc stand-in lc_mirror_bd installs is a plain bash stub reading ${SPIRA_BD:-bd}
+# straight from its own inherited env, never through config (sfail round 3, pattern 3/7).
+export SPIRA_BD="$FAKE_BD"
 tl_config SPIRA_BD="$FAKE_BD"
 lc_mirror_bd "$T/lc"
 export PATH="$T/lc:$PATH"

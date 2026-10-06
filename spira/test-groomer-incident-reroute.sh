@@ -65,6 +65,7 @@ run_sweep() {
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
         timeout 30 groomer sweep "$@" 2>&1
 }
 

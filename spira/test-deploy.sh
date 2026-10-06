@@ -781,8 +781,12 @@ id_prefix = "sp"
 prod = "/old/checkout/spira"
 EOF
 > "$_toml_timing_file"
+# Layered onto the suite's own complete fixture, not swapped for it outright — deploy.sh
+# needs SPIRA_RELEASES/SPIRA_DB/SPIRA_RUN etc. resolved too, and _ord_toml alone only
+# declares id_prefix/prod (sfail round 3, pattern 7: an un-layered SPIRA_TOML here would
+# leave every OTHER key pointing at the complete fixture's own /fixture/home/... paths).
 run_deploy \
-    "SPIRA_TOML=$_ord_toml" \
+    "SPIRA_TOML=$SPIRA_TOML:$_ord_toml" \
     "SPIRA_ACTIVATE_SH=$_timing_activate" \
     -- "$NEW_TAG" >/dev/null 2>&1
 _val_at_activate="$(cat "$_toml_timing_file" 2>/dev/null)"

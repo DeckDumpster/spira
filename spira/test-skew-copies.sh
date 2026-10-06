@@ -65,7 +65,8 @@ write_map() {   # write_map <name>... — a repo-map row per name, from a fixed 
     done
 }
 
-tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db SPIRA_HOME_REPO=home
+tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db SPIRA_HOME_REPO=home \
+    SPIRA_REPO_MAP="$SH/repo-map"
 run_copies() {
     env -i PATH="$SH:$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \

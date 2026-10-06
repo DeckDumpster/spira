@@ -66,12 +66,12 @@ chmod +x "$TMP/lcbin/spira-lc"
 run_sweep() {
     tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
         SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_ASK_LABEL=needs-ryan \
-        SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL=spira
+        SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike SPIRA_SCOPE_LABEL=spira \
+        SPIRA_BD="${SPIRA_BD:-bd}"
     env -i PATH="$TMP/lcbin:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
-        SPIRA_BD="${SPIRA_BD:-bd}" \
         groomer sweep "$@" 2>&1
 }
 

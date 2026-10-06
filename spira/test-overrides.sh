@@ -43,9 +43,15 @@ apply()  { printf '%s\n' "operator brief" > "\$1/brief.txt"; }
 on_landed() { : > "\$1/.landed-marker"; }
 EOF
 
+# SPIRA_REPO_MAP is registered and resolves ambiently to the complete fixture's own
+# nonexistent path otherwise (sfail round 3, pattern 7) — skew then cannot tell which
+# ref this plain push-mode repo lands on at all.
+RMAP="$TMP/repo-map"
+printf 'fixture | %s | push | origin/main | | |\n' "$REPO" > "$RMAP"
+
 run_skew_cmd() {
     local run_dir="$1"; shift
-    tl_config SPIRA_RUN="$run_dir" SPIRA_OVERRIDES="$OVDIR" \
+    tl_config SPIRA_RUN="$run_dir" SPIRA_OVERRIDES="$OVDIR" SPIRA_REPO_MAP="$RMAP" \
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" \
         HOME="$TMP/home" \

@@ -44,8 +44,11 @@ git -C "$TMP/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m b
 RMAP="$TMP/repo-map"
 
 run() {
+    # The complete fixture declares batcher_enable=0 (the operator cuts rounds); this
+    # suite is specifically about the batcher doing its own cut, so it must say so
+    # (sfail round 3, pattern 7).
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
-        SPIRA_FORGE="$TMP/spira/forge-fake.sh"
+        SPIRA_FORGE="$TMP/spira/forge-fake.sh" SPIRA_BATCHER_ENABLE=1
     env -i SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1

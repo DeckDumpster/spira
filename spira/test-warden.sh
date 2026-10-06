@@ -36,7 +36,7 @@ chmod +x "$STUB"
 lc_fix_init "$T/lc"
 
 run_trigger() {
-    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$MAP"
+    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB"
     # EXTRA_ENV: a registered key (e.g. SPIRA_WARDEN_LABEL) goes to tl_config too; anything
     # else stays a plain env assignment for the env -i call below.
     local extra_env=() kv k
@@ -46,7 +46,7 @@ run_trigger() {
     done
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" \
-        SPIRA_CONF="$T/none.conf" SPIRA_BD="$STUB" BD_LOG_PATH="$LOG" \
+        SPIRA_CONF="$T/none.conf" BD_LOG_PATH="$LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" BD_CREATE_FAIL="${BD_CREATE_FAIL:-}" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         "${extra_env[@]}" warden-trigger.sh 2>&1

@@ -66,8 +66,12 @@ inst() {
     # render StandardOutput=append:/<name>.log (sp-xp0u2).
     tl_config SPIRA_RUN="$TMP/home/run" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): the self-location-by-
+    # binary-path trick this comment block used to rely on is gone, so it must be named
+    # explicitly — the same fixture that trick used to resolve to (sfail round 3, pattern 1).
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$FIXTURE/bin:$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$FIXTURE/spira" \
         units-install "$@" 2>&1
 }
 

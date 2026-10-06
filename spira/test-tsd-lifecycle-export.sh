@@ -168,7 +168,10 @@ root_lc_sql --use-db spira_lifecycle sql -q \
     >/dev/null 2>&1
 
 RUN3="$T/run3"; mkdir -p "$RUN3"
-tl_config SPIRA_RUN="$RUN3"
+# SPIRA_LC_PASSWORD_FILE is registered and resolves ambiently via cfg() to the complete
+# fixture's own nonexistent path, which would be preferred over the explicit
+# SPIRA_LC_PASSWORD="" below (sfail round 3, pattern 7 — same cause as test-canary.sh).
+tl_config SPIRA_RUN="$RUN3" SPIRA_LC_PASSWORD_FILE=""
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
     SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
     "$EXPORT_BIN" lifecycle >"$T/export3.out" 2>&1

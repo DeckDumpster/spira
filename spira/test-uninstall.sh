@@ -72,6 +72,10 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$FIXTURE/spira/"
 ln -s "$HERE/uninstall.sh" "$FIXTURE/spira/uninstall.sh"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 printf '# empty\n' > "$FIXTURE/spira/watchers"
+# round 3 fix (pattern 7): SPIRA_WATCHERS is a registered key; undeclared, units-install
+# resolves it to the complete fixture's placeholder
+# /fixture/home/spira/spira-releases/current/spira/watchers, which does not exist.
+tl_config SPIRA_WATCHERS="$FIXTURE/spira/watchers"
 
 # NO STUB FOR `release` (sp-7jr34). owned.sh's session-hook status and uninstall.sh's own
 # removal both now call the real `release session-hook` — exactly the removal this suite

@@ -293,11 +293,15 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
     tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$DSTUBS/counting-bd" \
         SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL="" SPIRA_MAX_AEONS=2 \
         SPIRA_CHAMBER="$DSTUBS/chamber"
+    # SPIRA_DB/SPIRA_BD also passed literally: the spira-lc stub chain (lc_mirror_bd,
+    # wrapped by LCBIN's counting shim) is plain bash reading them straight from its own
+    # environment, never through spira-config (sfail round 3, pattern 8).
     env -i \
         PATH="$LCBIN:$DSTUBS:$PATH" HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$DSTUBS" \
         SPIRA_SUMMON="$DSTUBS/mock-summon" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="$DSTUBS/counting-bd" \
         "$@" \
         sentinel --summon-only 2>&1
 }

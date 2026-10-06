@@ -31,6 +31,10 @@ mkdir -p "$T/run"
 # (law-gates-run-in-a-clean-environment).
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
+# locate_home no longer searches: SPIRA_HOME IS the home, and conf.sh reads <home>/conf.d
+# for the registry — SPIRA_HOME is explicitly pinned to $T above, so it never falls back
+# to its own BASH_SOURCE location (which has one).
+ln -s "$HERE/conf.d" "$T/conf.d"
 tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db"
 # Non-default label values to prove mode expansion reads conf vars, not literals.
 tl_config SPIRA_PLAN_LABEL="plan" SPIRA_INCIDENT_LABEL="incident" SPIRA_GROOMER_LABEL="groom" \

@@ -49,6 +49,9 @@ done
 ln -s "$HERE/conf.sh"         "$SPIRA_DIR/conf.sh"
 ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
 ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
+# locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads
+# <home>/conf.d for the registry.
+ln -s "$HERE/conf.d"          "$SPIRA_DIR/conf.d"
 
 # ctrl: report every unit as suspended, so phase 4's ExecStart-is-executable check
 # (which the built Rust/Python binaries this fixture never builds would otherwise fail)

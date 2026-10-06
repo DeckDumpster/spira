@@ -62,6 +62,10 @@ FORGE
 chmod +x "$SH/forge-fixture.sh"
 
 MAIL="$RUN/mail"
+# round 3 fix (pattern 7): the complete fixture mutes mail by default (mail_mute=true);
+# the ejection notification would be filed straight to cur/ (already seen) rather than
+# new/, so concierge_unread() would never see it.
+tl_config SPIRA_MAIL_MUTE=0
 
 queue() {
     # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/SPIRA_FORGE/SPIRA_MAIL are

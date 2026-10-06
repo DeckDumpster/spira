@@ -170,17 +170,17 @@ want "close without landing reported from state"  "q closed-unlanded: PR 51 clos
 nowant "the push-mode repo is not watched"          " p watching" "$out"
 
 # --- 3. health -------------------------------------------------------------------------------
-"$BIN" health --run "$RUN" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
+timeout 30 "$BIN" health --run "$RUN" --home "$FX" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
 
 touch "$FX/lc-broken"
 blind="$(timeout 30 "$BIN" watch --ticks 2 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 want "an unreadable queue is reported blind after two failed polls"      "q blind: cannot see the queue" "$blind"
-herr="$("$BIN" health --run "$RUN" 2>&1)"; hrc=$?
+herr="$(timeout 30 "$BIN" health --run "$RUN" --home "$FX" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails after a blind poll" || bad "health fails after a blind poll (rc=$hrc)"
 want "health says why"                            "blind" "$herr"
 rm -f "$FX/lc-broken"
 
-herr="$("$BIN" health --run "$T/never" 2>&1)"; hrc=$?
+herr="$(timeout 30 "$BIN" health --run "$T/never" --home "$FX" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails when it has never polled" || bad "health fails when it has never polled (rc=$hrc)"
 want "never-polled is named"                      "never polled" "$herr"
 
@@ -190,7 +190,7 @@ IRUN="$T/idle-run"
 rout="$(timeout 30 "$BIN" watch --ticks 1 --interval 1 --run "$IRUN" --home "$FX" --config "$FX/push-only.toml" 2>&1)"; rrc=$?
 [ "$rrc" -eq 0 ] && ok "no queue-mode repository is idle, not an exit" || bad "no queue-mode repository is idle, not an exit (rc=$rrc)"
 want "idle says why"                              'idle: '"$FX"'/push-only.toml: no repository has mode = "queue"' "$rout"
-hout="$("$BIN" health --run "$IRUN" 2>&1)"; hrc=$?
+hout="$(timeout 30 "$BIN" health --run "$IRUN" --home "$FX" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "idle reads DEGRADED, not healthy" || bad "idle reads DEGRADED, not healthy (rc=$hrc)"
 want "health names the idle reason"               "idle:" "$hout"
 printf 'not = [valid\n' > "$FX/broken.toml"
@@ -215,7 +215,7 @@ wait "$appear_pid" 2>/dev/null || true
 [ "$arc" -eq 0 ] && ok "watch keeps running across the config being restored" || bad "watch keeps running across the config being restored (rc=$arc)"
 want "starts idle on the gutted config"            'idle: '"$APPEAR"': no repository has mode = "queue"' "$aout"
 want "notices the restored repo and resumes"       "watching resumed: 1 queue-mode repo(s) found" "$aout"
-hout2="$("$BIN" health --run "$ARUN" 2>&1)"; hrc2=$?
+hout2="$(timeout 30 "$BIN" health --run "$ARUN" --home "$FX" 2>&1)"; hrc2=$?
 [ "$hrc2" -eq 0 ] && ok "health is healthy again once watching resumed" || bad "health is healthy again once watching resumed (rc=$hrc2)"
 
 # --- 5. a queued job with no runner is named distinctly and gets a durable delivery path -----
@@ -263,6 +263,7 @@ body="\$(cat)"
 } >> "$FX/incidents.log"
 EOF
 chmod +x "$FX/incident.sh"
+export SPIRA_INCIDENT_SH="$FX/incident.sh"
 
 # QUEUE_WATCH_HEAD_STALL_SECS is set absurdly high so a "stall" firing here can only be the
 # queued-threshold path — proof the two are judged separately, not that the smaller number

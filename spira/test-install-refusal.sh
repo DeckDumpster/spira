@@ -20,6 +20,7 @@
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"   # tl_config and this suite's SPIRA_TOML; its own ok/bad below win
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
 pass=0; fail=0
 ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }

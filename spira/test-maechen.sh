@@ -97,7 +97,9 @@ echo "spira_fayths — maechen appears in the persona roster"
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$NONE"
 export SPIRA_RUN="$T"
-tl_config SPIRA_RUN="$SPIRA_RUN"
+# round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
+# spira_fayths cannot enumerate chamber/*.fayth at all.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
 . "$HERE/lib.sh"
 roster="$(spira_fayths)"
 want "maechen appears in spira_fayths" "maechen" "$roster"

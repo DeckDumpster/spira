@@ -251,7 +251,11 @@ git -C "$L_RUN/worktree/sp-lbase" add -A
 git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
 lc_bead SUBMITTED sp-lbase "$(git -C "$L_RUN/worktree/sp-lbase" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 
-tl_config SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist"
+# A real repo-map, not a nonexistent one: landing-pass now needs an explicit `base` to
+# resolve the ref branches land on (CHECK6) — there is no more derive-from-SPIRA_REPO-alone
+# fallback to fall back to (sfail round 3, pattern 7).
+printf '%s | %s | push | origin/master | | |\n' "$(basename "$L_REPO")" "$L_REPO" > "$L_SH/repo-map"
+tl_config SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$L_SH/repo-map"
 out="$(SPIRA_HOME="$L_SH" SPIRA_REPO="$L_REPO" PATH="$L_SH:$PATH" \
         timeout 30 landing-pass land 2>&1)"
 

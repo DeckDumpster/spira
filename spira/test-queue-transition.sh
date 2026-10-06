@@ -98,6 +98,13 @@ export SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged"
 tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_RELEASES="$RELEASES" \
     SPIRA_QUEUE_TRANSITION_POLLSEC=1 SPIRA_QUEUE_TRANSITION_MAXSEC=5
+# queue.sh's own `agrees()` (transition.rs) refuses unless the legacy repo-map row and
+# spira.toml's repo.<name>.{mode,base} already match — the complete fixture declares no
+# [repo.fixtrans] at all, reading as mode="" base="" ("already disagree"). Declare this
+# suite's own row, matching $RMAP's initial queue.local|local/main exactly; queue.sh's own
+# transitions keep it in sync afterward by writing the same (writable, last-layer) file.
+spira-config set repo.fixtrans.mode queue.local "$_TL_CONF_OVERRIDE" >/dev/null
+spira-config set repo.fixtrans.base local/main "$_TL_CONF_OVERRIDE" >/dev/null
 
 queue() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \

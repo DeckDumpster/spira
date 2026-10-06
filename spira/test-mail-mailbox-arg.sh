@@ -26,8 +26,12 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 SPIRA_MAIL="$TMP/mail"
 SPIRA_MAIL_KINDS="$TMP/kinds"
 SPIRA_ID_PREFIX="sp"
+mkdir -p "$TMP/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
-    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX"
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.

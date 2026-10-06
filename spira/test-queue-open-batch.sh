@@ -84,9 +84,8 @@ B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 openbatch() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
         SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_FORGE="$SH/forge-fixture.sh" \
-        SPIRA_PREFLIGHT_WALL_SECS=60
+        SPIRA_PREFLIGHT_WALL_SECS=60 SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     SPIRA_HOME="$SH" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         PATH="$SH:$PATH" queue open-batch "$@" 2>&1
 }
 

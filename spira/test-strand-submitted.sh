@@ -70,9 +70,9 @@ chmod +x "$TMP/mock-bd"
 lc_mirror_bd "$TMP/lc"
 
 run_report() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL="$SUBMITTED"
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL="$SUBMITTED" \
+        SPIRA_BD="$TMP/mock-bd"
     SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
-    SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_LABELS="spira,test-groom" \
         strand report 2>/dev/null
@@ -86,8 +86,9 @@ echo "case 0 — positive control: the ready set holds the bead → starved IS r
 # ======================================================================================
 # Same run, but the configured submitted label is a different one, so strand's exclude list
 # never names the bead's label, spira-claim hands the bead back, and starvation is real.
-tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL=some-other-label-entirely
-out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" SPIRA_BD="$TMP/mock-bd" \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL=some-other-label-entirely \
+    SPIRA_BD="$TMP/mock-bd"
+out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
         SPIRA_SUMMON=stub \
         SPIRA_LABELS="spira,test-groom" \
             strand report 2>/dev/null)"

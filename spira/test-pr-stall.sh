@@ -121,6 +121,7 @@ psc() {  # psc [VAR=val...]
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         GH_LOG="$TMP/gh.log" \
         GH_ALLOW_AUTO_MERGE="${GH_ALLOW_AUTO_MERGE:-false}" \

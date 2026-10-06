@@ -45,7 +45,8 @@ lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
-        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci
+        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_BD="${SPIRA_BD:-bd-embedded}"
     # Any caller override: a registered key (spira/conf.d) goes to tl_config, same as the
     # defaults just above; anything else (e.g. SPIRA_SOP_LEDGER, a seam, not in conf.d) stays
     # a plain env assignment for the env -i call below.
@@ -57,7 +58,6 @@ run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_BD="${SPIRA_BD:-bd-embedded}" \
         "${extra_env[@]}" \
         cockpit-collect probe "$sub" 2>/dev/null
 }

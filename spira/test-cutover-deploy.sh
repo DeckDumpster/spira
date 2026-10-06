@@ -108,8 +108,15 @@ printf 'demo|%s|queue|main|\n' "$GITREPO" > "$CFGHOME/repo-map"
 CONF="$CFGHOME/spira.conf"
 TOML="$CFGHOME/spira.toml"   # deliberately does not exist yet — this run must create it
 
-CRED="$TMP/credential"; printf 'adminpw-not-real' > "$CRED"
-RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
+# EMPTY, matching the throwaway dolt server's actual root password (root_sql connects with
+# -p ""): SPIRA_LC_PASSWORD_FILE is a registered key now, resolved from SPIRA_TOML alone, so
+# admin_lc's own per-call SPIRA_LC_PASSWORD="" override no longer has anything to win against
+# — cutover-deploy.sh's own fallback (`[ -z "$SPIRA_LC_PASSWORD" ] && cat "$SPIRA_LC_CRED_FILE"`)
+# always reads this file, for every connection, admin and spira_lc alike. A non-empty
+# credential here would hand root a password the server never got, and "Access denied"
+# before schema.sql ever runs.
+CRED="$TMP/credential"; : > "$CRED"
+RO_CRED="$CRED-ro"; : > "$RO_CRED"
 
 run_deploy() {
     tl_config SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
@@ -164,7 +171,7 @@ want "for lack of privilege, not a missing table" "denied" "$op_out"
 
 # POSITIVE CONTROL: the same statement succeeds as spira_lc, proving the refusal above is the
 # grant, not a broken schema or a wrong database name.
-lc_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p adminpw-not-real --no-tls --use-db spira_lifecycle "$@"; }
+lc_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "" --no-tls --use-db spira_lifecycle "$@"; }
 lc_sql sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('sp-manual', 'READY', JSON_OBJECT(), 0, 0)" >/dev/null 2>&1
 wantrc "positive control: spira_lc's own INSERT succeeds" 0 $?
 

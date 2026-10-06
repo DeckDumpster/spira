@@ -67,11 +67,16 @@ wt_co() {   # wt_co [VAR=val ...]
             *) extra+=("$_a") ;;
         esac
     done
+    # SPIRA_DB/SPIRA_BD also passed literally: the spira-lc stub (lc_mirror_bd) is a plain
+    # bash script that reads them straight from its own environment, never through
+    # spira-config — watchtower's own env -i child launch only forwards what is literally
+    # here (sfail round 3, pattern 8).
     timeout 30 env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$WTCO_HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_INCIDENT_SH="$MOCK_INC" \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
         "${extra[@]+"${extra[@]}"}" watchtower --czar-outcome-check 2>/dev/null
 }
 

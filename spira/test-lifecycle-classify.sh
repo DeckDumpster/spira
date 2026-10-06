@@ -92,11 +92,14 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-# SPIRA_LC_SOCKET is registered — spira-lc resolves it straight from SPIRA_TOML (never from
-# an inherited shell env), so unsetting the shell variable would no longer steer it away from
-# the fixture's declared socket path. Point it at a path that cannot exist instead, forcing
-# the host/port connection this suite is testing.
-tl_config SPIRA_LC_SOCKET=/nonexistent/spira-lc.sock
+# SPIRA_LC_SOCKET and SPIRA_LC_PASSWORD_FILE are registered — spira-lc resolves both
+# straight from SPIRA_TOML (never from inherited env), so unsetting/exporting the shell
+# variable directly no longer steers it. SPIRA_LC_SOCKET is pointed at a path that cannot
+# exist, forcing the host/port connection this suite is testing; SPIRA_LC_PASSWORD_FILE is
+# given a real (empty) credential file, matching the dolt server's own empty root password
+# (sfail round 3, patterns 2 and 7).
+LC_CRED_FILE="$TMP/spira-lc.credential"; : > "$LC_CRED_FILE"
+tl_config SPIRA_LC_SOCKET=/nonexistent/spira-lc.sock SPIRA_LC_PASSWORD_FILE="$LC_CRED_FILE"
 
 timeout 30 "$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?

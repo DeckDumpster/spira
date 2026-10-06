@@ -92,9 +92,13 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
+mkdir -p "$RUN/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail (the divergence alarm) appends
+# every send there (sfail round 3, pattern 7).
 tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
     SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP" SPIRA_FORGE="$SH/forge-fixture.sh" \
-    SPIRA_RELEASES="$RELEASES"
+    SPIRA_RELEASES="$RELEASES" SPIRA_CONCIERGE_INBOX="$RUN/watchd/concierge-inbox.log"
 queue() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \

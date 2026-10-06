@@ -80,7 +80,8 @@ MAP
 export SPIRA_CONF=/nonexistent-spira-conf
 export SPIRA_HOME="$SH" PATH="$SH:$PATH"
 export SPIRA_REPO="$WS/home"
-tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db SPIRA_HOME_REPO=home
+tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db SPIRA_HOME_REPO=home \
+    SPIRA_REPO_MAP="$SH/repo-map"
 
 SKEW="$SH/skew"
 

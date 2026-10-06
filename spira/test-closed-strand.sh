@@ -176,6 +176,11 @@ YAML
         "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && break
         sleep 0.2
     done
+    # round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
+    # resolves to the complete fixture's placeholder /fixture/home/.../spira-lc.credential,
+    # which does not exist. Declare this suite's own (empty-password) credential file.
+    : > "$TMP/lc-data/credential"
+    tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-data/credential"
     LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
             SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
             SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")

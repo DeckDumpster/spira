@@ -94,10 +94,9 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: not evaluated (pass budget exhausted)
 LOG
 
-tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
-    SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
@@ -115,10 +114,9 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: nothing ready in its partition
 LOG
 
-tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
-    SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
@@ -172,12 +170,12 @@ _run2="$TMP/run2"; mkdir -p "$_run2"
 # SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
 # point it at this suite's own fixture chamber explicitly.
 tl_config SPIRA_RUN="$_run2" SPIRA_DB="$TMP/no-db" SPIRA_FAYTHS="alpha beta" \
-    SPIRA_NOTIFY="$TMP/stubs2/mock-notify" SPIRA_CHAMBER="$TMP/stubs2/chamber"
+    SPIRA_NOTIFY="$TMP/stubs2/mock-notify" SPIRA_CHAMBER="$TMP/stubs2/chamber" \
+    SPIRA_BD="$TMP/mock-bd"
 out="$(env -i \
     PATH="$PATH" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_HOME="$TMP/stubs2" PATH="$TMP/stubs2:$PATH" \
-    SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_SENTINEL_PASS_BUDGET_SECS=0 \
     SPIRA_LAND_STALE=999999 \

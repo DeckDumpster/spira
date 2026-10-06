@@ -76,9 +76,13 @@ except Exception:
 }
 
 run_gate_check() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_BD="$SPIRA_BD" SPIRA_REPO_MAP="$TMP/repo-map" \
-        SPIRA_FLAKY_GH_REPO="test-org/test-repo"
-    SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_DB="$SPIRA_DB" \
+    # SPIRA_DB is registered too: gate-check.sh sources conf.sh, whose own `resolve --sh-all`
+    # re-exports every registered key from SPIRA_TOML — overwriting a plain env SPIRA_DB
+    # with the complete fixture's bogus default unless it is declared the same way (sfail
+    # round 3, pattern 3/7).
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo"
+    SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         PATH="$TMP/sbin:$PATH" \
         SPIRA_CONF="$TMP/no.conf" \
         gate-check.sh 2>/dev/null

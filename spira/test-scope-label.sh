@@ -38,7 +38,9 @@ mkdir -p "$T/run"
 # prefix below, which no process reads them from any more.
 fayth_get_with_scope() {
     local scope="$1" fayth="$2" var="$3"
-    tl_config SPIRA_RUN="$T/run" SPIRA_SCOPE_LABEL="$scope"
+    # round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without
+    # it, fayth_get cannot find chamber/builder.fayth or chamber/ops.fayth at all.
+    tl_config SPIRA_RUN="$T/run" SPIRA_SCOPE_LABEL="$scope" SPIRA_CHAMBER="$HERE/chamber"
     SPIRA_HOME="$HERE" SPIRA_CONF="$T/no-such.conf" \
         bash -c '. "$SPIRA_HOME/lib.sh" 2>/dev/null; fayth_get "$1" "$2"' \
              _ "$fayth" "$var" 2>/dev/null

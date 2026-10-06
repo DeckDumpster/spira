@@ -183,6 +183,7 @@ run_doctor() {
         PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/doctor-home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$FIXTURE/spira" \
         SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_DOLT_BIN="$TMP/dolt" \
         SPIRA_DB="$DB" \

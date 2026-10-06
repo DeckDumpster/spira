@@ -52,9 +52,10 @@ echo '[{"id":"sp-old","title":"already open"}]' > "$ASKS"
 rm -f "$TMP/run/rounds/"*; : > "$TMP/run/rounds/100.running"
 wrun() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_ROUND_MARKER_MAX_AGE=3600 \
-        SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}"
+        SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}" \
+        SPIRA_BD="$TMPBD"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \
-        SPIRA_BD="$TMPBD" FAKE_ASKS="$ASKS" \
+        FAKE_ASKS="$ASKS" \
         bash "$HERE/round-duty.sh" "$@" 2>&1
 }
 TMPBD="$TMP/fakebd"

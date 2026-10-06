@@ -68,6 +68,13 @@ git -C "$REPO" branch -D side >/dev/null 2>&1
 RMAP="$TMP/fixture-repo-list"
 printf 'lfixq | %s | queue.local | local/main | | |\n' "$REPO" > "$RMAP"
 
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): `skew` refuses outright
+# ("neither SPIRA_HOME nor SPIRA_RELEASE is set") without one, and every binary reads
+# <home>/conf.d directly (sfail round 2/3, patterns 1). A dedicated directory, not the
+# REPO git fixture's own tracked spira/ stub, which is content under test, not config.
+SKEW_HOME="$TMP/skew-home"; mkdir -p "$SKEW_HOME"
+ln -s "$HERE/conf.d" "$SKEW_HOME/conf.d"
+
 # ---------------------------------------------------------------------------
 # RELEASES: one release directory per commit, named by its sha (queue.local's own naming —
 # release build's directories are always spira-releases/<sha>, never a tagged/timestamped
@@ -131,6 +138,7 @@ run_check() {
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$SKEW_HOME" \
         SPIRA_REPO="$REPO" \
         "${@}" \
         skew check 2>&1
@@ -285,6 +293,7 @@ tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$refresh_run
 refresh_out3="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
+    SPIRA_HOME="$SKEW_HOME" \
     SPIRA_REPO="$REPO" \
     skew refresh "$REPO" 2>&1)"; refresh_rc3=$?
 is     "refresh hotfix: exits 0"              "0"                 "$refresh_rc3"

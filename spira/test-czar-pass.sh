@@ -70,7 +70,10 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 export SPIRA_HOME="$HERE"
 SPIRA_RUN="$T/run"
 SPIRA_DB="$T/db"
-tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB"
+# SPIRA_QUEUE_DIR undeclared resolves to the complete fixture's /fixture/home/.../queue —
+# every "open batch" fixture this suite writes goes under $SPIRA_RUN/queue, so czar-pass
+# has to be pointed there too (sfail round 3, pattern 7).
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
 mkdir -p "$SPIRA_RUN/queue" "$SPIRA_DB"
 
 # Stub forge.sh: returns empty by default (no CI activity)

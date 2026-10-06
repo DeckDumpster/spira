@@ -96,6 +96,12 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE EXPLICITLY, EMPTY: it is a registered key, resolved from SPIRA_TOML
+# alone now — left undeclared it falls to the complete fixture's own (nonexistent) path, and
+# every spira-lc call below refuses before ever reaching the dolt server. Empty matches
+# root's actual password (the throwaway server takes none).
+LC_CRED="$TMP/lc.credential"; : > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?

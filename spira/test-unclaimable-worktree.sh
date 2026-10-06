@@ -86,6 +86,11 @@ trap cleanup EXIT INT TERM
 
 testdb_up unclaimable_wt || { echo "test-unclaimable-worktree: could not build fixture database"; exit 1; }
 
+# detect_unclaimable_ready is now `sentinel --detect-unclaimable`, which reads bead state
+# from the lifecycle machine (`spira-lc list`), not from bd directly — with no stand-in, it
+# has no machine to ask and reports nothing (sfail round 3, pattern 8).
+lc_mirror_bd "$TMP/lc"; export SPIRA_LC_BIN
+
 # Source production lib.sh so detect_unclaimable_ready is available for case 3.
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN"
@@ -126,6 +131,7 @@ run_from_worktree() {
         -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
         SPIRA_HOME="$FAKE_WT/spira" \
         SPIRA_CONF="$TMP/no-such.conf" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
         bash -c ". \"$FAKE_WT/spira/lib.sh\"; detect_unclaimable_ready" 2>/dev/null
 }
 

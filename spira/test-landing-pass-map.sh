@@ -45,6 +45,9 @@ LPHOME="$TMP/lphome"; mkdir -p "$LPHOME"
 for f in conf.sh lib.sh suite-covers.sh; do
     ln -s "$HERE/$f" "$LPHOME/$f"
 done
+# locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads
+# <home>/conf.d for the registry.
+ln -s "$HERE/conf.d" "$LPHOME/conf.d"
 printf '# fixture watchers\n' > "$LPHOME/watchers"
 
 LPRUN="$TMP/lprun"; mkdir -p "$LPRUN"

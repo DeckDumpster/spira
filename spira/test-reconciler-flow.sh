@@ -69,7 +69,11 @@ export SPIRA_RUN="$T/run"
 # which comments each one so) — they stay plain env reads, never tl_config.
 export SPIRA_DUCKDB_BIN="duckdb"
 export SPIRA_DESIRED_DIR="$T/desired"
-tl_config SPIRA_BD="${TESTDB_BD:-bd-embedded}" SPIRA_FLOW_WINDOW_HOURS="0.5" \
+# SPIRA_BD declared both ways: reconciler-flow resolves it via cfg() (tl_config), but the
+# spira-lc stand-in lc_mirror_bd installs is a plain bash stub reading ${SPIRA_BD:-bd}
+# straight from its own inherited env, never through config (sfail round 3, pattern 3/7).
+export SPIRA_BD="${TESTDB_BD:-bd-embedded}"
+tl_config SPIRA_BD="$SPIRA_BD" SPIRA_FLOW_WINDOW_HOURS="0.5" \
     SPIRA_FLOW_BASELINE_HOURS="24" SPIRA_FLOW_GRACE_SECS="2" \
     SPIRA_DESIRED_DIR="$SPIRA_DESIRED_DIR" SPIRA_SCOPE_LABEL="" SPIRA_RUN="$SPIRA_RUN"
 mkdir -p "$SPIRA_RUN"

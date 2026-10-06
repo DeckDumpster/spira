@@ -152,7 +152,12 @@ MAILDIR="$TMP/maildir"
 n_mails() { ls "$MAILDIR/operator/new/" 2>/dev/null | wc -l | tr -d ' '; }
 mail_content() { cat "$MAILDIR/operator/new/"* 2>/dev/null; }
 
-tl_config SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR"
+mkdir -p "$SPIRA_RUN/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail (shelled out to by
+# pilgrimage.sh) appends every send there (sfail round 3, pattern 7).
+tl_config SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR" \
+    SPIRA_CONCIERGE_INBOX="$SPIRA_RUN/watchd/concierge-inbox.log"
 run() { timeout 30 pilgrimage.sh check 2>&1; }
 
 # One seed, three epics: a finished one (announce/close), one still going (silence), and

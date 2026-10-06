@@ -92,9 +92,13 @@ mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierg
 # conf.sh no longer reads a legacy spira.conf at all (per Ryan 2026-10-05, the
 # one-source-of-config law — "no legacy spira.conf, no conversion"), so these are declared
 # through tl_config/SPIRA_TOML instead of a hand-written $TMP/spira.conf.
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's own
+# /fixture/home/spira/run/watchd/concierge-inbox.log — the hook (and mail, underneath it)
+# reads/appends it directly, and that path does not exist here (sfail round 3, pattern 7).
 tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$CLONE/spira" SPIRA_RUN="$RUN" \
     SPIRA_WATCHERS="$MANIFEST" SPIRA_CLIENT_SETTINGS="$TMP/elsewhere/settings.json" \
-    SPIRA_MAIL="$MAIL_DIR" SPIRA_MAIL_SESSION_MAILBOX=concierge
+    SPIRA_MAIL="$MAIL_DIR" SPIRA_MAIL_SESSION_MAILBOX=concierge \
+    SPIRA_CONCIERGE_INBOX="$RUN/watchd/concierge-inbox.log"
 
 cat > "$MANIFEST" <<'EOF'
 answers|daemon|/bin/sleep 3600

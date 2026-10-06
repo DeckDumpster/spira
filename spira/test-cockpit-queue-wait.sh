@@ -55,8 +55,11 @@ run_core() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_QUEUE_WAIT_LABEL="$wait_label" \
         SPIRA_BD="$bd_path"
+    # SPIRA_BD also as a raw env var: the spira-lc stand-in lc_mirror_bd installs reads
+    # ${SPIRA_BD:-bd} straight from its own inherited env, never through config, and env -i
+    # would otherwise wipe it entirely (sfail round 3, pattern 3/7).
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$TMP/lc:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_BD="$bd_path" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_DB="$TMP/nodb" \
         cockpit-collect probe core 2>/dev/null

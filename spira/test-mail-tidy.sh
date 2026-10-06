@@ -37,9 +37,13 @@ SPIRA_ID_PREFIX="sp"
 SPIRA_ASK_LABEL=asks-test    # non-default: catches hardcoded literals
 SPIRA_MAIL_TIDY_FRESH=3600   # non-default: 1h window
 SPIRA_DB="$TMP/db"
+mkdir -p "$TMP/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send/tidy there,
+# and the write fails outright with no such directory (sfail round 3, pattern 7).
 tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
     SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL" SPIRA_MAIL_TIDY_FRESH="$SPIRA_MAIL_TIDY_FRESH" \
-    SPIRA_DB="$SPIRA_DB"
+    SPIRA_DB="$SPIRA_DB" SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=/nonexistent
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.

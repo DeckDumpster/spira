@@ -203,7 +203,7 @@ fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UN
 runpass() {
     : > "$ACT"
     tl_config SPIRA_WATCHERS="${WR_MAN:-$MAN}"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$CLONE/spira" \
         \
         WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" SHIM="$SHIM" \
         SYSTEMCTL_RC="${SYSTEMCTL_RC:-0}" RESTART_RC="${RESTART_RC:-0}" \
@@ -489,7 +489,7 @@ printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
 runreap() {
     : > "$REAP_ACT"
     tl_config SPIRA_WATCHERS="$MAN"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$CLONE/spira" \
         \
         WR_PROC_ROOT="$FAKEPROC" WR_REAP_ACT="$REAP_ACT" \
         bash -c '
@@ -568,7 +568,7 @@ while :; do
     : > "$ACT"
     tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
     out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
-          \
+          SPIRA_HOME="$CLONE/spira" \
           WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
           WR_PROC_ROOT="$EMPTYPROC" \
           bash "$CLONE/spira/watch-refresh.sh" 2>&1)"; rc=$?
@@ -581,7 +581,7 @@ has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.
 hasnt "and no raw manifest line leaked onto this process's own stdout" "$out" "|daemon|"
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
 out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" \
-      \
+      SPIRA_HOME="$CLONE/spira" \
       WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \
       bash "$CLONE/spira/watch-refresh.sh" --nonsense 2>&1)"; rc=$?

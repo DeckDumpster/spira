@@ -298,7 +298,7 @@ LOGWATCHERS="$TMP/logpath-watchers"
 printf 'mail-deliver|extern|mail-deliver\n' > "$LOGWATCHERS"
 tl_config SPIRA_RUN="$LOGRUN" SPIRA_WATCHERS="$LOGWATCHERS"
 expected_logfile="$(
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         "$WATCHD" status 2>/dev/null \
         | awk '$1=="mail-deliver" { print $NF }'
@@ -398,7 +398,7 @@ while [ "$(_wake_count "$ATT2")" -lt 1 ] && [ "$tries" -lt 150 ]; do
 done
 first_seen="$(_wake_count "$ATT2")"
 
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_TOML="$SPIRA_TOML" \
     mail read wakebox >/dev/null 2>&1
 
 sleep 2.5

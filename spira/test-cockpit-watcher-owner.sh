@@ -102,6 +102,9 @@ asks() { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
 # Fake SPIRA_HOME for unit-name discovery.
 # ---------------------------------------------------------------------------
 FAKE_HOME="$TMP/spira-home"; mkdir -p "$FAKE_HOME"
+# locate_home no longer searches: SPIRA_HOME IS the home, and watchd (a compiled binary,
+# never sourcing the fake conf.sh stub below) reads <home>/conf.d for the registry.
+ln -s "$HERE/conf.d" "$FAKE_HOME/conf.d"
 
 # conf.sh: provides watch_unit_name with a test-specific name.
 cat > "$FAKE_HOME/conf.sh" <<'CONFEOF'

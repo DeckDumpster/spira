@@ -40,6 +40,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 HARNESS="$TMP/harness"
 mkdir -p "$HARNESS/spira"
 ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so this fixture needs one too (sfail round 3, pattern 1).
+ln -s "$HERE/conf.d" "$HARNESS/spira/conf.d"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
@@ -73,7 +76,7 @@ conf_val() {
         esac
     done
     env -i SPIRA_TOML="$SPIRA_TOML:$override" "${env_extra[@]}" PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HARNESS/spira" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${${key}:-}\"" 2>/dev/null
     rm -f "$override"
 }
@@ -146,7 +149,7 @@ want "test SPIRA_RUN is instance-qualified"        "spira-test" "$run_test"
 
 # SPIRA_INSTANCE is exported so child processes see it without re-sourcing conf.sh.
 exported="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
-    SPIRA_CONF=/nonexistent \
+    SPIRA_CONF=/nonexistent SPIRA_HOME="$HARNESS/spira" \
     bash -c ". '$HARNESS/spira/conf.sh'; env | grep '^SPIRA_INSTANCE='" 2>/dev/null)"
 want "SPIRA_INSTANCE is exported" "SPIRA_INSTANCE=" "$exported"
 
@@ -225,8 +228,9 @@ WTEST_WT="$TMP/wtest-worktree-xyzzy"   # name that must NOT appear as SPIRA_HOME
 git -C "$WTEST_MAIN" worktree add -q "$WTEST_WT" -b wt-branch
 mkdir -p "$WTEST_WT/spira"
 ln -sf "$HERE/conf.sh" "$WTEST_WT/spira/conf.sh"
+ln -sf "$HERE/conf.d" "$WTEST_WT/spira/conf.d"
 wt_got="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
-    SPIRA_CONF=/nonexistent \
+    SPIRA_CONF=/nonexistent SPIRA_HOME="$WTEST_WT/spira" \
     bash -c ". '$WTEST_WT/spira/conf.sh'; printf '%s' \"\${SPIRA_HOME_REPO:-}\"" 2>/dev/null)"
 is    "worktree: SPIRA_HOME_REPO equals main repo name" "wtest-main-repo" "$wt_got"
 isne  "worktree: SPIRA_HOME_REPO is not the worktree dir name" "wtest-worktree-xyzzy" "$wt_got"

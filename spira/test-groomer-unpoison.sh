@@ -63,11 +63,10 @@ STUB
 chmod +x "$STUB_CLAIM"
 
 run_groomer() {
-    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUN"
+    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUN" SPIRA_BD="$STUB_BD"
     env -i HOME="$T" PATH="$STUB_DIR:$PATH" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         CLAIM_LOG_PATH="$CLAIM_LOG" \
         groomer "$@" 2>&1

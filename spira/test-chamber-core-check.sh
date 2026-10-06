@@ -23,18 +23,18 @@ printf 'FAYTH_NAME=x\nFAYTH_STATUTE_CORE="law-chamber-core-a, law-chamber-core-b
 printf 'FAYTH_NAME=y\n' > "$TMP/good/y.fayth"
 printf 'FAYTH_NAME=z\nFAYTH_STATUTE_CORE="law-chamber-core-a,law-retired-and-renamed"\n' > "$TMP/bad/z.fayth"
 
-tl_config SPIRA_DB="$SPIRA_DB"
-out="$("$CHECK" "$TMP/good" 2>&1)"; rc=$?
+# chamber-core-check.sh reads SPIRA_DB directly from its own process environment
+# (DB="${SPIRA_DB:?...}") — it never sources conf.sh, so this is a plain env prefix, not
+# registered-key config.
+out="$(SPIRA_DB="$SPIRA_DB" "$CHECK" "$TMP/good" 2>&1)"; rc=$?
 is "every declared slug resolving passes" 0 "$rc"
 
-tl_config SPIRA_DB="$SPIRA_DB"
-out="$("$CHECK" "$TMP/bad" 2>&1)"; rc=$?
+out="$(SPIRA_DB="$SPIRA_DB" "$CHECK" "$TMP/bad" 2>&1)"; rc=$?
 is   "an unresolvable slug fails"        1 "$rc"
 want "and names it"                      "law-retired-and-renamed" "$out"
 case "$out" in *"names law-chamber-core-a,"*) bad "a resolvable slug is not reported" "$out" ;; *) ok "a resolvable slug is not reported" ;; esac
 
-tl_config SPIRA_DB="$TMP/nowhere"
-out="$("$CHECK" "$TMP/good" 2>&1)"; rc=$?
+out="$(SPIRA_DB="$TMP/nowhere" "$CHECK" "$TMP/good" 2>&1)"; rc=$?
 is "an unreadable store is refused, not passed" 2 "$rc"
 
 # THE SHIPPED SEEDS COVER EVERY CHAMBER'S CORE, not just the builder's (sp-crr3n widens

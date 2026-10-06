@@ -35,14 +35,15 @@ DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 . "$HERE/conf.sh"
 export PATH="$PATH:$(dirname "$DOLT_BIN")"
 unset SPIRA_LC_SOCKET
-# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
-# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
-# exist for this suite's throwaway server. Empty it so SPIRA_LC_PASSWORD="" (root, no
-# password) below is actually used.
-tl_config SPIRA_LC_PASSWORD_FILE=""
 
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
+# (root, no password) credential file, declared, and no socket.
+: > "$TMP/credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/credential" SPIRA_LC_SOCKET=""
 PORT=$((SPIRA_LC_TESTDB_PORT + (RANDOM % 500)))
 SERVER_PID=""
 cleanup() {

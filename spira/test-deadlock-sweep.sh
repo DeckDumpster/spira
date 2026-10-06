@@ -85,6 +85,11 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
+# resolves to the complete fixture's placeholder /fixture/home/.../spira-lc.credential,
+# which does not exist. Declare this suite's own (empty-password) credential file.
+: > "$LC_TMP/credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_TMP/credential"
 spira-lc admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 # mkpoison <id> — a fresh READY row, then a real Hold{Poison} event through `spira-lc hold`, the

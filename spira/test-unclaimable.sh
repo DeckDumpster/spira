@@ -285,6 +285,7 @@ chmod +x "$TMP/mock-incident13.sh"
 
 _save_home_repo="${SPIRA_HOME_REPO:-}"
 export SPIRA_HOME_REPO="fixture-home-repo"
+tl_config SPIRA_HOME_REPO="fixture-home-repo"
 SPIRA_INCIDENT_SH="$TMP/mock-incident13.sh" file_unclaimable_incidents \
     "UNCLAIMABLE sp-unc13a — spira with no matching partition"
 export SPIRA_HOME_REPO="$_save_home_repo"

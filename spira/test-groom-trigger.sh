@@ -104,11 +104,10 @@ FIVE_OPEN='[{"bead_id":"x1","state":"READY"},{"bead_id":"x2","state":"WORKING"},
 # BD_LIST_OUTPUT feeds the dedup's bd list response. SPIRA_RUN=$T/run gives tests a writable, predictable lastpass dir.
 run_trigger() {
     mkdir -p "$T/run"
-    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP"
+    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$STUB_BD"
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
@@ -166,11 +165,10 @@ esac
 STUB
 chmod +x "$FAIL_BD"
 : > "$BD_LOG"
-tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP"
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$FAIL_BD"
 out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$FAIL_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
         BD_LIST_OUTPUT="[]" \
@@ -188,12 +186,11 @@ echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_GROOMER_LABEL are used"
 : > "$BD_LOG"
 BD_LIST_OUTPUT="[]"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
-    SPIRA_SCOPE_LABEL="myproject" SPIRA_GROOMER_LABEL="hygiene"
+    SPIRA_SCOPE_LABEL="myproject" SPIRA_GROOMER_LABEL="hygiene" SPIRA_BD="$STUB_BD"
 out="$(BD_LIST_OUTPUT="[]" \
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
     groom-trigger.sh 2>&1)"; rc=$?
@@ -217,11 +214,10 @@ echo "EMPTY SCOPE: SPIRA_SCOPE_LABEL='' produces only the groomer label (no lead
 # nothing or everything. Verify no leading comma appears in the bd create call.
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
-    SPIRA_SCOPE_LABEL="" SPIRA_GROOMER_LABEL="groom"
+    SPIRA_SCOPE_LABEL="" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
 out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
     groom-trigger.sh 2>&1)"; rc=$?
@@ -241,11 +237,10 @@ printf 'home-tg | /tmp/home-tg | push | origin/main | | | consume\n' > "$CONSUME
 printf 'plan-only | /tmp/plan-only | push | origin/main | | | consume\n' >> "$CONSUME_MAP"
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$CONSUME_MAP" \
-    SPIRA_HOME_REPO="home-tg" SPIRA_GROOMER_LABEL="groom"
+    SPIRA_HOME_REPO="home-tg" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
 out_ng="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
     groom-trigger.sh 2>&1)"; rc_ng=$?
@@ -256,11 +251,10 @@ want   "no-groom-map: logs skipping trigger"  "skipping trigger" "$out_ng"
 # POSITIVE CONTROL: develop mode admits groom — trigger must fire.
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
-    SPIRA_HOME_REPO="spira" SPIRA_GROOMER_LABEL="groom"
+    SPIRA_HOME_REPO="spira" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
 out_gp="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
@@ -298,11 +292,10 @@ echo "SHORT-CIRCUIT: custom SPIRA_GROOM_THRESHOLD respected"
 # Two unfinished rows (score=2; the SUBMITTED one is past the builder) with threshold=2 must fire; with threshold=3 must not.
 TWO_OPEN='[{"bead_id":"y1","state":"READY"},{"bead_id":"y2","state":"WORKING"},{"bead_id":"y3","state":"SUBMITTED"}]'
 : > "$BD_LOG"
-tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_GROOM_THRESHOLD="2"
+tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_GROOM_THRESHOLD="2" SPIRA_BD="$STUB_BD"
 out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$TWO_OPEN" \
@@ -310,11 +303,10 @@ out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/u
 is   "threshold=2, score=2: exits 0"        0        "$rc_t2"
 want "threshold=2, score=2: create called"  "create" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
-tl_config SPIRA_GROOM_THRESHOLD="3"
+tl_config SPIRA_GROOM_THRESHOLD="3" SPIRA_BD="$STUB_BD"
 out_t3="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$TWO_OPEN" \

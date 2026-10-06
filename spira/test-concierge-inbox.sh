@@ -60,7 +60,10 @@ echo "the inbox-keeper watchd row — a harness watchd row, not an operator over
 want "spira/watchers carries an inbox-keeper daemon row" \
     "inbox-keeper|daemon|inbox-keeper.sh" "$(cat "$HERE/watchers")"
 MAN="$TMP/elsewhere/manifest-check"
-tl_config SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay"
+# SPIRA_WATCHERS is registered too and resolves from the complete fixture's own bogus
+# default when undeclared (sfail round 3, pattern 7) — watchd never derives it from
+# SPIRA_HOME any more.
+tl_config SPIRA_WATCHERS="$HERE/watchers" SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay"
 watchd manifest \
     > "$MAN" 2>"$TMP/elsewhere/manifest.err"; rc=$?
 is   "the shipped manifest, alone, still parses" "0" "$rc"

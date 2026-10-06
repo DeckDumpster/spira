@@ -94,10 +94,12 @@ notes_of() { B show "$1" 2>/dev/null; }
 
 landing() {
     rm -f "$RUN/landing.progress"
-    tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    # SPIRA_DB is registered too — landing-pass resolves it via cfg(), not the plain env
+    # prefix below (sfail round 3, pattern 3/7).
+    tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_DB="$SPIRA_DB" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
         SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
-    SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 

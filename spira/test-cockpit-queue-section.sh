@@ -180,11 +180,10 @@ for line in sys.stdin:
 } > "$RUN/cockpit.env"
 
 REAL_BD="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null)"
-tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_BD="${REAL_BD:-bd}"
 pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
-    SPIRA_BD="${REAL_BD:-bd}" \
     "$PANE" once 0 120 2>/dev/null)"
 
 want "pane renders QUEUE label" "QUEUE" "$pane"
@@ -261,11 +260,10 @@ for line in sys.stdin:
 '
 } > "$RUN2/cockpit.env"
 
-tl_config SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t
+tl_config SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t SPIRA_BD="${REAL_BD:-bd}"
 pane2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO2" \
-    SPIRA_BD="${REAL_BD:-bd}" \
     "$PANE2" once 0 120 2>/dev/null)"
 
 want "pane header reads 32 certified" "32 certified" "$pane2"
