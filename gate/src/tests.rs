@@ -103,6 +103,8 @@ struct Fake {
     published: RefCell<Vec<(PathBuf, String, String)>>,
     /// Every run_gate call: (command, the timeout it was given).
     timeouts: RefCell<Vec<(String, String)>>,
+    /// The `want` every checkout was asked to prove.
+    checkout_wants: RefCell<Vec<String>>,
     // ---- build IO (sp-z61hj)
     /// What build_wrapper answers; the (path, setting) it was asked with.
     wrapper: RefCell<Result<spira_config::build::Wrapper, String>>,
@@ -244,6 +246,7 @@ impl Fake {
             install_from_err: RefCell::default(),
             published: RefCell::default(),
             timeouts: RefCell::default(),
+            checkout_wants: RefCell::default(),
             wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("/box/.cargo/bin/sccache")))),
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
@@ -463,8 +466,9 @@ impl World for Fake {
         self.lock_free.get()
     }
     fn write_holder(&self, _: &Path) {}
-    fn checkout(&self, _: &Path, _: &Path, rev: &str, _: &str) -> Result<(), String> {
+    fn checkout(&self, _: &Path, _: &Path, rev: &str, want: &str) -> Result<(), String> {
         self.checkouts.borrow_mut().push(rev.to_string());
+        self.checkout_wants.borrow_mut().push(want.to_string());
         Ok(())
     }
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
@@ -3707,6 +3711,8 @@ fn warm_tools_publishes_what_a_gate_then_reuses() {
     let f = warm_fake();
     assert_eq!(warm(&f), 0, "{}", f.stderr());
     assert_eq!(f.checkouts.borrow().as_slice(), [BASE.to_string()]);
+    // The checkout proves the commit (as a gate's does), never the tree id.
+    assert_eq!(f.checkout_wants.borrow().as_slice(), [BASE.to_string()]);
     assert!(built(&f), "{:?}", f.cmds.borrow());
     let p = f.published.borrow().clone();
     assert_eq!(p.len(), 1, "{}", f.stderr());

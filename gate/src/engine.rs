@@ -1294,7 +1294,9 @@ impl<'w, W: World> Trial<'w, W> {
         if !w.tree_lock_open(&lock) || !w.tree_lock_try() {
             return fail(format!("another warm-tools holds {}", lock.display()));
         }
-        if let Err(e) = w.checkout(&repo, &tree, &commit, &want) {
+        // The checkout proves HEAD is `commit`; tools_for then proves the tree is `want`.
+        if let Err(e) = w.checkout(&repo, &tree, &commit, &commit) {
+            w.remove_worktree(&repo, &tree);
             return fail(e);
         }
         let rc = self.warm_in(&ctx, &tree, &want, &d);
