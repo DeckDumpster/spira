@@ -3441,6 +3441,12 @@ fn shared_fake() -> Fake {
 /// tools do not (a new branch's tree), and the trial sees `objects` changed.
 fn next_gate(first: &Fake, changed: &[(&str, &str)]) -> Fake {
     let f = shared_fake();
+    for r in crate::toolkey::ROOT_INPUTS.iter().filter(|r| **r != "Cargo.lock") {
+        let k = format!("{}:{r}", want());
+        if let Some(v) = first.objects.borrow().get(&k) {
+            f.objects.borrow_mut().insert(k, v.clone());
+        }
+    }
     let store = PathBuf::from(format!("{RUN}/gate-tools/spira"));
     for (p, b) in first.files.borrow().iter() {
         if p.starts_with(&store) {
@@ -3663,4 +3669,86 @@ fn the_tools_cap_bounds_the_reuse_path() {
     *g.install_from_err.borrow_mut() = Some("evicted".into());
     assert_eq!(g.run(), PASS, "{}", g.stderr());
     assert_eq!(tools_timeout(&g), Some(cap));
+}
+
+// ------------------------------------------------------------------- gate warm-tools
+
+fn warm(f: &Fake) -> i32 {
+    Trial::new(f, Args { home: PathBuf::from("/h"), branch: String::new(), repo: Some("spira".into()), release_bins: false }).warm(None)
+}
+
+/// A fake whose landing ref carries STEPS, with the same closure and sources as the merge
+/// `shared_fake` judges — so what warm-tools publishes for the landing ref, a gate reuses.
+fn warm_fake() -> Fake {
+    let f = shared_fake();
+    f.metadata.borrow_mut().insert(
+        BASE.into(),
+        Ok(metadata_json(&[("spira-lint", &["spira-config"]), ("spira-config", &[]), ("gate", &["spira-config"])])),
+    );
+    let objs: Vec<(String, String)> = f.objects.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in objs {
+        let p = k.split_once(':').unwrap().1;
+        f.objects.borrow_mut().insert(format!("tree-of-{BASE}:{p}"), v);
+    }
+    // Every root input reads the same in both trees (the fake's default answer names the tree).
+    for r in crate::toolkey::ROOT_INPUTS.iter().filter(|r| **r != "Cargo.lock") {
+        for t in [want(), format!("tree-of-{BASE}")] {
+            f.objects.borrow_mut().insert(format!("{t}:{r}"), format!("same-{r}"));
+        }
+    }
+    *f.tool_inputs.borrow_mut() = Some(vec![format!("{}/worktree/.gate-warm.spira/spira-config/../spira/conf.d", RUN)]);
+    f
+}
+
+/// warm-tools builds the landing ref's tools in its own tree and publishes them under the
+/// source key; a gate on a branch with the same closure then reuses them without building.
+#[test]
+fn warm_tools_publishes_what_a_gate_then_reuses() {
+    let f = warm_fake();
+    assert_eq!(warm(&f), 0, "{}", f.stderr());
+    assert_eq!(f.checkouts.borrow().as_slice(), [BASE.to_string()]);
+    assert!(built(&f), "{:?}", f.cmds.borrow());
+    let p = f.published.borrow().clone();
+    assert_eq!(p.len(), 1, "{}", f.stderr());
+    assert_eq!(p[0].2, "spira/conf.d\tt-confd-1\n");
+    assert_eq!(f.released.borrow().len(), 1);
+    assert_eq!(f.removed_trees.get(), 1);
+    // Off any gate's clock: the build is not cut at the tools cap.
+    assert_eq!(tools_timeout(&f), Some(crate::engine::WARM_TIMEOUT.parse().unwrap()));
+
+    let g = next_gate(&f, &[]);
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(!built(&g), "{:?}", g.cmds.borrow());
+    assert_eq!(g.installs_from.borrow().len(), 1);
+}
+
+/// The no-op: a key the store already holds is "already warm" — nothing is built or published.
+#[test]
+fn warm_tools_is_a_no_op_when_the_key_is_present() {
+    let f = warm_fake();
+    assert_eq!(warm(&f), 0, "{}", f.stderr());
+    let g = warm_fake();
+    for (p, b) in f.files.borrow().iter() {
+        if p.starts_with(format!("{RUN}/gate-tools")) {
+            g.files.borrow_mut().insert(p.clone(), b.clone());
+        }
+    }
+    assert_eq!(warm(&g), 0, "{}", g.stderr());
+    assert!(!built(&g), "{:?}", g.cmds.borrow());
+    assert!(g.published.borrow().is_empty());
+    assert_eq!(g.removed_trees.get(), 1, "its tree is removed all the same");
+}
+
+/// It refuses, never publishes a guess: a busy lock, or tools that cannot be keyed.
+#[test]
+fn warm_tools_refuses_what_it_cannot_key_or_lock() {
+    let f = warm_fake();
+    f.lock_free.set(false);
+    assert_eq!(warm(&f), 1);
+    assert!(f.stderr().contains("another warm-tools holds"), "{}", f.stderr());
+    let f = warm_fake();
+    f.metadata.borrow_mut().insert(BASE.into(), Ok(metadata_json(&[("gate", &[])])));
+    assert_eq!(warm(&f), 1);
+    assert!(f.stderr().contains("cannot be keyed"), "{}", f.stderr());
+    assert!(!built(&f) && f.published.borrow().is_empty());
 }

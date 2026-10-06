@@ -56,6 +56,27 @@ fn main() {
         release_bins = true;
         argv.remove(0);
     }
+    // `warm-tools [--rev <rev>] [--repo <name> | <name>]`: build and publish the landing ref's
+    // (or <rev>'s) gate tools into the shared store, off any gate's clock (toolkey.rs).
+    if argv.first().map(String::as_str) == Some("warm-tools") {
+        let (mut rev, mut repo) = (None, None);
+        let mut it = argv[1..].iter();
+        while let Some(a) = it.next() {
+            match a.as_str() {
+                "--rev" => rev = it.next().cloned(),
+                "--repo" => repo = it.next().cloned(),
+                r if !r.starts_with('-') && repo.is_none() => repo = Some(r.to_string()),
+                _ => {
+                    eprintln!("usage: gate [--home <spira-dir>] warm-tools [--rev <rev>] [--repo <name>]");
+                    std::process::exit(2);
+                }
+            }
+        }
+        let world = Real::new(home.clone().unwrap_or_else(default_home));
+        let branch = rev.clone().unwrap_or_default();
+        let code = Trial::new(&world, Args { home: home.unwrap_or_else(default_home), branch, repo, release_bins: false }).warm(rev.as_deref());
+        std::process::exit(code);
+    }
     if argv.first().map(String::as_str) == Some("--definition") {
         let repo = argv.get(1).filter(|r| !r.is_empty()).cloned();
         let world = Real::new(home.clone().unwrap_or_else(default_home));

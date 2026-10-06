@@ -683,6 +683,17 @@ the tree. `toolkey.rs` adds a shared store, `<run>/gate-tools/<repo>/<base>-<h>`
   in the store, `INPUTS` and `KEY` written, and renamed into place (an existing entry of the
   same name is someone else's identical publish). The eight most recently used entries are
   kept.
+* **The tools cap is for reuse.** sp-juboj's 40 s `tools` cap bounds the reuse path (the
+  build that replaces a failed store install). A cold build on a store miss, or of tools that
+  cannot be keyed, runs under the cap name `tools-cold` — bounded only by what is left of
+  `SPIRA_GATE_DEADLINE` — so the first gate of a new key can finish and publish it. It is
+  metered as `tools`.
+* **`gate warm-tools [--rev <rev>] [--repo <name>]`** builds and publishes the tools of
+  `<rev>` (default: the landing ref) exactly as a cold tools phase would — in its own gate
+  tree `<run>/worktree/.gate-warm.<repo>` (locked, on tmpfs, removed after), through the build
+  cache, bounded by an hour, never a gate's clock — and prints `warmed <entry>`; a key the
+  store already holds is a no-op, `already warm <entry>`. Run it after a landing that moves
+  the key, so the next gates reuse.
 * **No key, no sharing:** when any part of the base key cannot be read (no metadata, a `bin`
   package that is not a member, a closure directory with no tree) the tools are built and kept
   for the tree alone, as before, and the trial says why. The tree-mismatch refusal is unchanged.

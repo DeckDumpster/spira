@@ -177,44 +177,8 @@ impl<'w, W: World> Trial<'w, W> {
         // tree builds — `bin` lines, unit phases) and every other box tool a step might name.
         // Unset SPIRA_RELEASE, or a tail entry inside a release or a checkout, is a refusal
         // naming it, never a fallback.
-        match spira_config::release_path_from_env_with_tail(Some(ctx.var(spira_config::RELEASE_ENV)), ctx.var("SPIRA_PATH")) {
-            Ok(p) => self.s.path = p,
-            Err(e) => return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge")),
-        }
-        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every cargo build the
-        // trial runs — the tools, the unit phases, the build fence, testenv's — compiles
-        // through the box's one sccache, resolved on the PATH the command gets. Resolved here,
-        // required where the trial builds in the tree (below: absent is a refusal, never a cold
-        // build of every dependency); a definition that builds nothing never needs it.
-        // SPIRA_BUILD_CACHE=off opts out, loudly.
-        match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
-            Ok(wr) => {
-                if wr == spira_config::build::Wrapper::Off {
-                    w.eprint(&format!("gate: {}", wr.describe()));
-                }
-                // Every cargo the gate runs — tools, unit phases, the build fence's `make build`,
-                // release-bins — goes through `spira-admit` with the GATE's token (sp-f4ig1-fix,
-                // DESIGN-admission.md D11): it takes a compile lease for that cargo WITHOUT
-                // WAITING (oversubscribing a full pool), so the gate never queues and agent builds
-                // queue behind it instead of competing at full width. testenv's own build does
-                // the same in-process. The token also keeps every other admission inherited.
-                // Without spira-admit on PATH (an older release) the plain wrapper still carries
-                // the token: the gate never waits, it just holds nothing.
-                let who = format!("gate:{br}");
-                // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process
-                // (`merge_resolved_config`, `Real::context`) the same as every other
-                // `spira.toml`-only key this `ctx` already carries — never a bare env read.
-                let store = spira_config::build::Store::from_values(|k| {
-                    let v = ctx.var(k);
-                    (!v.is_empty()).then(|| v.to_string())
-                });
-                self.s.build_env = match w.which(spira_config::admission::BIN) {
-                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), &who, store.as_ref()),
-                    None => wr.env(store.as_ref()),
-                };
-                self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
-            }
-            Err(e) => self.s.cache_refusal = Some(e),
+        if let Err(e) = self.resolve_build(&ctx, &format!("gate:{br}")) {
+            return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge"));
         }
         self.s.home_dir = ctx.var("HOME").to_string();
         self.s.release = ctx.var(spira_config::RELEASE_ENV).to_string();
@@ -1274,6 +1238,171 @@ impl<'w, W: World> Trial<'w, W> {
         )
     }
 
+    /// `gate warm-tools [--rev <rev>] [repo]`: compute the source key of the tools `rev`'s
+    /// gate.steps builds (default: the repository's landing ref) and, unless the shared store
+    /// already holds it ("already warm <entry>"), build them in a gate tree of their own,
+    /// prove and publish them exactly as a gate's cold tools phase would ("warmed <entry>") —
+    /// off any gate's clock and admission. Exit 0 warm, 1 when anything stops it.
+    pub fn warm(mut self, rev: Option<&str>) -> i32 {
+        let w = self.w;
+        let fail = |m: String| {
+            w.eprint(&format!("gate warm-tools: {m}"));
+            1
+        };
+        let ctx = match w.context(self.a.repo.as_deref()) {
+            Ok(c) => c,
+            Err(e) => return fail(e),
+        };
+        let name = ctx.repo_name.clone();
+        self.s.repo_name = name.clone();
+        self.s.run = ctx.var("SPIRA_RUN").to_string();
+        let Some(root) = ctx.repo_root.clone() else {
+            return fail(format!("repo-map has no entry for '{name}'"));
+        };
+        let repo = PathBuf::from(root);
+        let Some(rev) = rev.map(str::to_string).or_else(|| ctx.landref.clone()) else {
+            return fail(format!("cannot resolve the ref '{name}' lands on"));
+        };
+        let (Some(commit), Some(want)) = (
+            w.rev_parse(&repo, &format!("{rev}^{{commit}}")).filter(|c| !c.is_empty()),
+            w.rev_parse(&repo, &format!("{rev}^{{tree}}")).filter(|t| !t.is_empty()),
+        ) else {
+            return fail(format!("cannot resolve {rev} in {}", repo.display()));
+        };
+        let d = match w.show_blob(&repo, &commit, def::PATH) {
+            None => {
+                println!("nothing to warm: {rev} has no {}", def::PATH);
+                return 0;
+            }
+            Some(b) => match std::str::from_utf8(&b).map_err(|_| "not UTF-8".to_string()).and_then(def::parse) {
+                Ok(d) => d,
+                Err(e) => return fail(format!("{rev}'s {}: {e}", def::PATH)),
+            },
+        };
+        if d.bins.is_empty() {
+            println!("nothing to warm: {rev}'s {} builds no tool", def::PATH);
+            return 0;
+        }
+        if let Err(e) = self.resolve_build(&ctx, &format!("warm-tools:{name}")) {
+            return fail(e);
+        }
+        let tree = PathBuf::from(format!("{}/worktree/.gate-warm.{name}", self.s.run));
+        if let Some(p) = tree.parent() {
+            w.mkdir_p(p);
+        }
+        let lock = PathBuf::from(format!("{}.lock", tree.display()));
+        if !w.tree_lock_open(&lock) || !w.tree_lock_try() {
+            return fail(format!("another warm-tools holds {}", lock.display()));
+        }
+        if let Err(e) = w.checkout(&repo, &tree, &commit, &want) {
+            return fail(e);
+        }
+        let rc = self.warm_in(&ctx, &tree, &want, &d);
+        w.release_target(&tree, false);
+        w.remove_worktree(&repo, &tree);
+        rc
+    }
+
+    fn warm_in(&self, ctx: &Ctx, tree: &Path, want: &str, d: &def::Def) -> i32 {
+        let w = self.w;
+        let fail = |m: String| {
+            w.eprint(&format!("gate warm-tools: {m}"));
+            1
+        };
+        let Some(sh) = self.shared_tools(ctx, tree, want, Some(d)) else {
+            return fail(format!("the tools of tree {want} cannot be keyed by their sources — nothing to publish"));
+        };
+        if let Some(e) = shared_hit(w, tree, want, &sh, &d.packages()) {
+            println!("already warm {}", e.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            return 0;
+        }
+        let mut reservation = None;
+        if let Some(vd) = self.prepare_build_tree(ctx, tree, &mut reservation) {
+            return fail(vd.msg);
+        }
+        let jobs = compose::jobs(key::digits(&ctx.host_cores).unwrap_or(1));
+        let tl = match tools_for(w, tree, want, Some(d), jobs, Some(sh.clone())) {
+            Ok(Some(t)) => t,
+            Ok(None) => return fail("no tools".into()),
+            Err(e) => return fail(e),
+        };
+        if let Some(cmd) = &tl.build {
+            let e = |k: &str, v: &str| (k.to_string(), v.to_string());
+            let env: Vec<(String, String)> = vec![
+                e("PATH", &self.s.path),
+                e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
+                e("HOME", ctx.var("HOME")),
+                e("TERM", "dumb"),
+            ]
+            .into_iter()
+            .chain(self.s.build_env.iter().cloned())
+            .collect();
+            let (rc, out) = w.run_gate(tree, &env, WARM_TIMEOUT, cmd);
+            if rc != 0 {
+                return fail(format!("the tools build failed (exit {rc}): {cmd}\n{out}"));
+            }
+            if let Err(e) = w.install_tools(&tl.tree, &tl.pkgs, &tl.dir, &tl.id) {
+                return fail(e);
+            }
+        }
+        if let Err(e) = tools_proved(w, &tl.dir, &tl.id, &tl.pkgs) {
+            return fail(e);
+        }
+        match publish_shared(w, &tl, &sh) {
+            Some(n) => {
+                println!("warmed {n}");
+                0
+            }
+            None => fail(format!("the tools of tree {want} were built but not published")),
+        }
+    }
+
+    /// The command PATH (from SPIRA_RELEASE) and the build cache's environment, admitted as
+    /// `who`. Err only when SPIRA_RELEASE does not give a PATH; a missing build cache is kept
+    /// in `cache_refusal` for whatever builds to refuse on.
+    fn resolve_build(&mut self, ctx: &Ctx, who: &str) -> Result<(), String> {
+        let w = self.w;
+        match spira_config::release_path_from_env_with_tail(Some(ctx.var(spira_config::RELEASE_ENV)), ctx.var("SPIRA_PATH")) {
+            Ok(p) => self.s.path = p,
+            Err(e) => return Err(e.to_string()),
+        }
+        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every cargo build the
+        // trial runs — the tools, the unit phases, the build fence, testenv's — compiles
+        // through the box's one sccache, resolved on the PATH the command gets. Resolved here,
+        // required where the trial builds in the tree (below: absent is a refusal, never a cold
+        // build of every dependency); a definition that builds nothing never needs it.
+        // SPIRA_BUILD_CACHE=off opts out, loudly.
+        match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
+            Ok(wr) => {
+                if wr == spira_config::build::Wrapper::Off {
+                    w.eprint(&format!("gate: {}", wr.describe()));
+                }
+                // Every cargo the gate runs — tools, unit phases, the build fence's `make build`,
+                // release-bins — goes through `spira-admit` with the GATE's token (sp-f4ig1-fix,
+                // DESIGN-admission.md D11): it takes a compile lease for that cargo WITHOUT
+                // WAITING (oversubscribing a full pool), so the gate never queues and agent builds
+                // queue behind it instead of competing at full width. testenv's own build does
+                // the same in-process. The token also keeps every other admission inherited.
+                // Without spira-admit on PATH (an older release) the plain wrapper still carries
+                // the token: the gate never waits, it just holds nothing.
+                // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process
+                // (`merge_resolved_config`, `Real::context`) the same as every other
+                // `spira.toml`-only key this `ctx` already carries — never a bare env read.
+                let store = spira_config::build::Store::from_values(|k| {
+                    let v = ctx.var(k);
+                    (!v.is_empty()).then(|| v.to_string())
+                });
+                self.s.build_env = match w.which(spira_config::admission::BIN) {
+                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), who, store.as_ref()),
+                    None => wr.env(store.as_ref()),
+                };
+                self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
+            }
+            Err(e) => self.s.cache_refusal = Some(e),
+        }
+        Ok(())
+    }
+
     /// The shared-store key of the tools `d` builds in `tree` (toolkey.rs), read from tree
     /// `want`'s objects. None — the tools are built and kept for this tree alone, as before —
     /// when the definition builds nothing or any part of the key cannot be read.
@@ -1692,6 +1821,9 @@ pub fn phase_cap(name: &str) -> Option<u64> {
     }
 }
 
+/// `gate warm-tools`'s bound on its build, seconds: off any gate's clock, but not unbounded.
+pub const WARM_TIMEOUT: &str = "3600";
+
 /// The cap name of a cold tools build (see [`phase_cap`]); metered as `tools` all the same.
 pub const TOOLS_COLD: &str = "tools-cold";
 
@@ -1836,12 +1968,12 @@ fn shared_hit<W: World>(w: &W, tree: &Path, want: &str, sh: &toolkey::Shared, pk
 
 /// After a build: record what it read outside the base key's closure, and publish the
 /// installed tools under that key. A failure only costs the next tree a build.
-fn publish_shared<W: World>(w: &W, tl: &Tools, sh: &toolkey::Shared) {
+fn publish_shared<W: World>(w: &W, tl: &Tools, sh: &toolkey::Shared) -> Option<String> {
     let raw = match w.tool_inputs(&tl.tree, &tl.pkgs) {
         Ok(r) => r,
         Err(e) => {
             w.eprint(&format!("gate: tools of tree {} not published to the shared store: {e}", tl.id));
-            return;
+            return None;
         }
     };
     let extra: std::collections::BTreeSet<String> = raw
@@ -1859,8 +1991,14 @@ fn publish_shared<W: World>(w: &W, tl: &Tools, sh: &toolkey::Shared) {
     let m = toolkey::manifest(&inputs);
     let name = toolkey::entry_name(&sh.base, &m);
     match w.publish_tools(&tl.dir, &tl.pkgs, &sh.store, &name, &m, toolkey::KEEP) {
-        Ok(()) => w.eprint(&format!("gate: tools of tree {} published as {} ({} recorded input(s) outside the closure)", tl.id, sh.store.join(&name).display(), inputs.len())),
-        Err(e) => w.eprint(&format!("gate: tools of tree {} not published to the shared store: {e}", tl.id)),
+        Ok(()) => {
+            w.eprint(&format!("gate: tools of tree {} published as {} ({} recorded input(s) outside the closure)", tl.id, sh.store.join(&name).display(), inputs.len()));
+            Some(name)
+        }
+        Err(e) => {
+            w.eprint(&format!("gate: tools of tree {} not published to the shared store: {e}", tl.id));
+            None
+        }
     }
 }
 
@@ -1963,7 +2101,7 @@ pub fn run_composed<W: World>(
                 return (NOVERDICT, format!("{out}\n{TOOLS_UNATTRIBUTED}: {e}"), phases);
             }
             if let Some(sh) = &tl.publish {
-                publish_shared(w, tl, sh);
+                let _ = publish_shared(w, tl, sh);
             }
         }
         if let Err(e) = tools_proved(w, &tl.dir, &tl.id, &tl.pkgs) {
