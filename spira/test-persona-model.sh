@@ -233,6 +233,8 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 export SPIRA_AGENT="$BIN/claude"
+# Registered: aeon reads the agent from config, so the shim is declared in this suite's layer.
+spira-config set spira.agent "$BIN/claude" "$TOML" >/dev/null || { echo "cannot declare spira.agent" >&2; exit 1; }
 
 aeon() { command aeon --home "$SH" "$@" 2>/dev/null; }
 
@@ -254,6 +256,11 @@ testdb_up personamodel || { echo "test-persona-model: could not build fixture da
 # the bd fixture is told to the aeon in lifecycle terms, and the shim gets back the T it records into.
 lc_aeon_mirror "$T/lcm"; export PATH="$T/lcm:$PATH"
 aeon_fixture_agent "$BIN/claude" T
+# This suite's SPIRA_TOML is its OWN ($PERSONA_FREE_BASE:$TOML), not testlib's layers, so what
+# testdb_up and aeon_fixture_agent declared through tl_config never reaches aeon: declare them here.
+for _kv in "db=$SPIRA_DB" "bd=$SPIRA_BD" "agent=$SPIRA_AGENT"; do
+    spira-config set "spira.${_kv%%=*}" "${_kv#*=}" "$TOML" >/dev/null || { echo "cannot declare spira.${_kv%%=*}" >&2; exit 1; }
+done
 
 BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "persona-model bead launch" --type task \
     -l "test-persona-model-bead,repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
