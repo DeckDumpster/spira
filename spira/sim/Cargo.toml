@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "sim"
 path = "src/main.rs"
 
+[[bin]]
+name = "sim-agent"
+path = "src/bin/sim-agent.rs"
+
 [dependencies]
 serde_json = "1"
 
