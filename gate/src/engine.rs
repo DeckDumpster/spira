@@ -759,6 +759,7 @@ impl<'w, W: World> Trial<'w, W> {
             jobs,
             &re.required,
             "",
+            self.fences_key(&want_tree).as_ref(),
         );
         self.s.phases.extend(ph);
         self.s.queue_secs = parse::queue_secs(&out);
@@ -916,16 +917,19 @@ impl<'w, W: World> Trial<'w, W> {
             // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
             // a 12 s fence red).
             //
-            // sp-kqger: A SUITES COMPOSITION NEVER MIRRORS THE BRANCH'S SELECTION ON THE BASE
-            // EITHER, for the same reason — it was the 275-337 s cost this bead exists to cut,
+            // sp-kqger: NEITHER A SUITES NOR A UNIT COMPOSITION MIRRORS THE BRANCH'S SELECTION
+            // ON THE BASE, for the same reason — it was the 275-337 s cost this bead exists to cut,
             // and it answered nothing the branch's own red suites did not already ask. The
             // base's fences run instead (cheap, ~12-60 s); each red suite is judged by the
             // base-suite cache below, or a targeted rerun that pays for only the suites the
             // cache could not answer.
-            let base_comp = if matches!(comp, Composition::Suites { .. }) {
-                Composition::Fences
+            let base_comp = Composition::Fences;
+            let unit_base_cmd;
+            let base_cmd = if matches!(comp, Composition::Unit { .. }) {
+                unit_base_cmd = compose::gate_string(&comp, base_cmd).0;
+                &unit_base_cmd
             } else {
-                self.base_composition(&comp, &ctx, &tree)
+                base_cmd
             };
             let (r, o, ph) = run_composed(
                 w,
@@ -946,6 +950,7 @@ impl<'w, W: World> Trial<'w, W> {
                 jobs,
                 &base_required,
                 "base-",
+                self.fences_key(&base_tree).as_ref(),
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
@@ -1277,27 +1282,9 @@ impl<'w, W: World> Trial<'w, W> {
             .and_then(|j| compose::parse_metadata(&j))
     }
 
-    /// The base trial runs the same composition, over the crates the base has: a crate the
-    /// branch adds cannot be tested on a base without it, and its absence is not a red.
-    fn base_composition(&self, comp: &Composition, ctx: &Ctx, tree: &Path) -> Composition {
-        let Composition::Unit { touched, crates } = comp else {
-            return comp.clone();
-        };
-        let Ok(members) = self.members(ctx, tree) else {
-            return comp.clone();
-        };
-        let crates: Vec<String> = crates
-            .iter()
-            .filter(|c| members.iter().any(|m| &m.name == *c))
-            .cloned()
-            .collect();
-        if crates.is_empty() {
-            return Composition::Fences;
-        }
-        Composition::Unit {
-            touched: touched.clone(),
-            crates,
-        }
+    fn fences_key(&self, tree: &str) -> Option<crate::fencecache::Key> {
+        crate::fencecache::path(&self.s.verdict_dir, &self.s.repo_name, tree)
+            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone() })
     }
 
     /// `gate_at`: through the port, which proves HEAD == want.
@@ -1804,6 +1791,7 @@ pub fn run_composed<W: World>(
     jobs: u64,
     reentry: &[String],
     prefix: &str,
+    fences: Option<&crate::fencecache::Key>,
 ) -> (i32, String, Vec<(String, u64)>) {
     let budget = key::digits(timeout);
     let start = w.now();
@@ -1841,12 +1829,32 @@ pub fn run_composed<W: World>(
     let first = if comp.suites_off() { "fences" } else { "gate" };
     // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
     let (cmd, _) = compose::gate_string(comp, cmd);
-    let t = w.now();
-    let (rc, mut out) = w.run_gate(tree, env, &left(first), &cmd);
-    phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
-    if rc != 0 || w.signalled() {
-        return (rc, out, phases);
-    }
+    let proved = fences
+        .filter(|_| comp.suites_off())
+        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
+    let mut out = match proved {
+        Some(o) => {
+            w.eprint(&format!("gate: fences reused from a proved run of this tree ({})", fences.map_or(String::new(), |k| k.path.display().to_string())));
+            o
+        }
+        None => {
+            let t = w.now();
+            let (rc, out) = w.run_gate(tree, env, &left(first), &cmd);
+            phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
+            if rc != 0 || w.signalled() {
+                return (rc, out, phases);
+            }
+            if let Some(k) = fences.filter(|k| comp.suites_off() && !k.harness.is_empty()) {
+                if fence::silent(&fence::expected(&cmd), &out).is_empty() {
+                    if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
+                        w.mkdir_p(dir);
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &cmd, &out));
+                    }
+                }
+            }
+            out
+        }
+    };
     let mut steps: Vec<(&str, String)> = match comp {
         Composition::Unit { crates, .. } => compose::unit_commands(crates, jobs).into(),
         _ => Vec::new(),

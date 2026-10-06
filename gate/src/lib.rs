@@ -8,6 +8,7 @@ pub mod compose;
 pub mod def;
 pub mod engine;
 pub mod fence;
+pub mod fencecache;
 pub mod key;
 pub mod parse;
 pub mod ports;
