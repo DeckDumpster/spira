@@ -8,6 +8,7 @@ use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
+use crate::toolkey;
 use spira_config::GateMode;
 use std::path::{Path, PathBuf};
 
@@ -729,7 +730,8 @@ impl<'w, W: World> Trial<'w, W> {
         // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
         // holds, which must be the merge's.
         let want_tree = w.rev_parse(&repo, &format!("{rev}^{{tree}}")).unwrap_or_default();
-        let tools = match tools_for(w, &tree, &want_tree, tree_def.as_ref(), jobs) {
+        let shared = self.shared_tools(&ctx, &tree, &want_tree, tree_def.as_ref());
+        let tools = match tools_for(w, &tree, &want_tree, tree_def.as_ref(), jobs, shared) {
             Ok(t) => t,
             Err(e) => {
                 return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
@@ -902,7 +904,8 @@ impl<'w, W: World> Trial<'w, W> {
                 w.eprint(&e);
                 return None;
             }
-            match tools_for(w, &tree, &base_tree, bdef.as_ref(), jobs) {
+            let shared = self.shared_tools(&ctx, &tree, &base_tree, bdef.as_ref());
+            match tools_for(w, &tree, &base_tree, bdef.as_ref(), jobs, shared) {
                 Ok(t) => Some(t),
                 Err(e) => {
                     w.eprint(&format!("{e}\ngate: no base trial — {base}'s tools cannot be attributed to {base}'s tree."));
@@ -1269,6 +1272,47 @@ impl<'w, W: World> Trial<'w, W> {
             &changed,
             members.as_deref().map_err(String::as_str),
         )
+    }
+
+    /// The shared-store key of the tools `d` builds in `tree` (toolkey.rs), read from tree
+    /// `want`'s objects. None — the tools are built and kept for this tree alone, as before —
+    /// when the definition builds nothing or any part of the key cannot be read.
+    fn shared_tools(&self, ctx: &Ctx, tree: &Path, want: &str, d: Option<&def::Def>) -> Option<toolkey::Shared> {
+        let d = d.filter(|d| !d.bins.is_empty())?;
+        let w = self.w;
+        let miss = |why: String| {
+            w.eprint(&format!("gate: tools of tree {want} not keyed by their sources ({why}) — built for this tree alone"));
+            None
+        };
+        if want.is_empty() || self.s.run.is_empty() || !crate::cert::is_repo_name(&self.s.repo_name) {
+            return miss("no run directory or repository name".into());
+        }
+        let members = match self.members(ctx, tree) {
+            Ok(m) => m,
+            Err(e) => return miss(format!("cargo metadata: {}", e.trim())),
+        };
+        let pkgs = d.packages();
+        let closure = match toolkey::closure(&members, &pkgs) {
+            Ok(c) => c,
+            Err(e) => return miss(e),
+        };
+        let mut ids = Vec::new();
+        for m in &closure {
+            match w.rev_parse(tree, &format!("{want}:{}", m.dir)) {
+                Some(id) if !id.is_empty() => ids.push((m.name.clone(), m.dir.clone(), id)),
+                _ => return miss(format!("{} has no tree in {want}", m.dir)),
+            }
+        }
+        let roots: Vec<(String, String)> = toolkey::ROOT_INPUTS
+            .iter()
+            .map(|r| (r.to_string(), w.rev_parse(tree, &format!("{want}:{r}")).unwrap_or_else(|| "-".into())))
+            .collect();
+        let recipe = format!("{} profile=aeon {}", pkgs.join(","), spira_config::build::one_shot_words("aeon"));
+        Some(toolkey::Shared {
+            store: Path::new(&self.s.run).join(toolkey::STORE_DIR).join(&self.s.repo_name),
+            base: toolkey::base_key(&recipe, &roots, &ids),
+            dirs: closure.iter().map(|m| m.dir.clone()).collect(),
+        })
     }
 
     fn members(&self, ctx: &Ctx, tree: &Path) -> Result<Vec<compose::Member>, String> {
@@ -1711,6 +1755,12 @@ pub struct Tools {
     pub dir: PathBuf,
     pub id: String,
     pub pkgs: Vec<String>,
+    /// A shared store entry whose sources match this tree's (toolkey.rs): installed instead
+    /// of building. `build` is None then; `fallback` is the build when the install fails.
+    pub from: Option<PathBuf>,
+    pub fallback: Option<String>,
+    /// Where a build's tools are published for the next tree with the same sources.
+    pub publish: Option<toolkey::Shared>,
 }
 
 /// The tools of the trial about to run in `tree`, which must hold `want` (a git tree id).
@@ -1722,6 +1772,7 @@ pub fn tools_for<W: World>(
     want: &str,
     d: Option<&def::Def>,
     jobs: u64,
+    shared: Option<toolkey::Shared>,
 ) -> Result<Option<Tools>, String> {
     let Some(d) = d.filter(|d| !d.bins.is_empty()) else {
         return Ok(None);
@@ -1737,13 +1788,71 @@ pub fn tools_for<W: World>(
     }
     let dir = def::Def::tools_dir(tree, want);
     let pkgs = d.packages();
-    let build = if tools_proved(w, &dir, want, &pkgs).is_ok() {
-        w.eprint(&format!("gate: tools for tree {want} reused from {} (built from this tree)", dir.display()));
-        None
-    } else {
-        d.tools_command(jobs)
+    let mut t = Tools { build: None, tree: tree.to_path_buf(), dir, id: want.to_string(), pkgs, from: None, fallback: None, publish: None };
+    if tools_proved(w, &t.dir, want, &t.pkgs).is_ok() {
+        w.eprint(&format!("gate: tools for tree {want} reused from {} (built from this tree)", t.dir.display()));
+        return Ok(Some(t));
+    }
+    if let Some(sh) = shared {
+        if let Some(entry) = shared_hit(w, tree, want, &sh, &t.pkgs) {
+            w.eprint(&format!(
+                "gate: tools for tree {want} reused from {} (built from the same sources: every closure package, root input and recorded input matches)",
+                entry.display()
+            ));
+            t.from = Some(entry);
+            t.fallback = d.tools_command(jobs);
+            return Ok(Some(t));
+        }
+        t.publish = Some(sh);
+    }
+    t.build = d.tools_command(jobs);
+    Ok(Some(t))
+}
+
+/// The newest entry of the shared store under `sh.base` whose recorded inputs all hold the
+/// same object in tree `want`, whose stamp names it, and which carries every package.
+fn shared_hit<W: World>(w: &W, tree: &Path, want: &str, sh: &toolkey::Shared, pkgs: &[String]) -> Option<PathBuf> {
+    w.tool_entries(&sh.store, &sh.base).into_iter().find(|e| {
+        let name = e.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let stamped = w.read(&e.join(toolkey::KEY)).is_some_and(|k| k.trim() == name);
+        let Some(inputs) = w.read(&e.join(toolkey::INPUTS)).and_then(|t| toolkey::parse_manifest(&t)) else {
+            return false;
+        };
+        stamped
+            && toolkey::entry_name(&sh.base, &toolkey::manifest(&inputs)) == name
+            && pkgs.iter().all(|p| w.exists(&e.join(p)))
+            && inputs.iter().all(|(p, id)| w.rev_parse(tree, &format!("{want}:{p}")).unwrap_or_else(|| "-".into()) == *id)
+    })
+}
+
+/// After a build: record what it read outside the base key's closure, and publish the
+/// installed tools under that key. A failure only costs the next tree a build.
+fn publish_shared<W: World>(w: &W, tl: &Tools, sh: &toolkey::Shared) {
+    let raw = match w.tool_inputs(&tl.tree, &tl.pkgs) {
+        Ok(r) => r,
+        Err(e) => {
+            w.eprint(&format!("gate: tools of tree {} not published to the shared store: {e}", tl.id));
+            return;
+        }
     };
-    Ok(Some(Tools { build, tree: tree.to_path_buf(), dir, id: want.to_string(), pkgs }))
+    let extra: std::collections::BTreeSet<String> = raw
+        .iter()
+        .filter_map(|a| toolkey::relative(&tl.tree, a))
+        .filter(|r| !toolkey::covered(r, &sh.dirs))
+        .collect();
+    let inputs: Vec<(String, String)> = extra
+        .into_iter()
+        .map(|r| {
+            let id = w.rev_parse(&tl.tree, &format!("{}:{r}", tl.id)).unwrap_or_else(|| "-".into());
+            (r, id)
+        })
+        .collect();
+    let m = toolkey::manifest(&inputs);
+    let name = toolkey::entry_name(&sh.base, &m);
+    match w.publish_tools(&tl.dir, &tl.pkgs, &sh.store, &name, &m, toolkey::KEEP) {
+        Ok(()) => w.eprint(&format!("gate: tools of tree {} published as {} ({} recorded input(s) outside the closure)", tl.id, sh.store.join(&name).display(), inputs.len())),
+        Err(e) => w.eprint(&format!("gate: tools of tree {} not published to the shared store: {e}", tl.id)),
+    }
 }
 
 /// `dir` is stamped with `id` and holds every package.
@@ -1823,7 +1932,16 @@ pub fn run_composed<W: World>(
     // Built into the shared target/, then installed into the directory keyed by the tree id
     // (sp-g9f3t), and — built or reused — proved before any step reads it.
     if let Some(tl) = tools {
-        if let Some(t) = &tl.build {
+        let mut build = tl.build.clone();
+        // A shared entry built from the same sources (toolkey.rs): installed, keyed and
+        // proved like a build; one that cannot be installed is built instead.
+        if let Some(src) = &tl.from {
+            if let Err(e) = w.install_tools_from(src, &tl.pkgs, &tl.dir, &tl.id) {
+                w.eprint(&format!("gate: cannot install tools from {}: {e} — building them", src.display()));
+                build = tl.fallback.clone();
+            }
+        }
+        if let Some(t) = &build {
             let t0 = w.now();
             let (rc, out) = w.run_gate(tree, env, &left("tools"), t);
             phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
@@ -1832,6 +1950,9 @@ pub fn run_composed<W: World>(
             }
             if let Err(e) = w.install_tools(&tl.tree, &tl.pkgs, &tl.dir, &tl.id) {
                 return (NOVERDICT, format!("{out}\n{TOOLS_UNATTRIBUTED}: {e}"), phases);
+            }
+            if let Some(sh) = &tl.publish {
+                publish_shared(w, tl, sh);
             }
         }
         if let Err(e) = tools_proved(w, &tl.dir, &tl.id, &tl.pkgs) {
