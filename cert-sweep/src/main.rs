@@ -446,7 +446,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
         if now() - began >= start_wait && silent(&rd, &log) {
             let _ = child.kill();
             let _ = child.wait();
-            let admit = Command::new("spira-admit").arg("status").stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
+            let admit = Command::new("timeout").args(["5", "spira-admit", "status"]).stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
             let why = format!("VERDICT no-verdict: round-vm produced no output in {start_wait}s (likely queued in host-wide admission); spira-admit status: {}", admit.replace('\n', " | "));
             eprintln!("cert-sweep: {why}");
             return Ok((Vec::new(), why));
