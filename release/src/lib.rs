@@ -9,6 +9,7 @@ pub mod build;
 pub mod canary;
 pub mod compat;
 pub mod config;
+pub mod config_delta;
 pub mod fsutil;
 pub mod git;
 pub mod install;

@@ -170,6 +170,34 @@ rendering anything when a tail segment resolves inside a release or a checkout.
 aeon (they are transient units with no file in the unit directory) and never restarts a
 oneshot mid-run, and an aeon's tools stay on disk in its release. So there is no guard.
 
+### config delta
+
+Every registry key is required and the typed config refuses unknown fields, so a release that
+adds or drops a key cannot load the config that predates it. The release declares the change
+in its own tree, `spira/config-delta.toml`:
+
+```toml
+removed = ["spira.old_key"]
+[added]
+"spira.new_key" = 300
+```
+
+`activate` (and `rollback`, from a record it kept) applies it with the flip:
+
+1. Resolve it against the layers `$SPIRA_TOML` names, in memory, and run the **release's own**
+   `bin/spira-config validate` on the result. A refusal names the key and changes nothing — an
+   added key with no declared value is refused here, because the new release finds it missing.
+2. Write the added keys (into the base layer; a key already set in any layer is the operator's
+   and stays). The old release has not stopped yet, so nothing it needs is gone.
+3. Flip `current` as above. If the switch fails, every layer is restored.
+4. Remove the dropped keys, from every layer that has them.
+5. Keep `$SPIRA_RUN/release/config-undo/<sha>`: the keys step 2 added and the values step 4
+   dropped. `rollback` applies it the same way, validated by the release it returns to.
+
+Edits are made on the TOML value, not the typed schema this binary links, which cannot know
+the other release's keys. No instant satisfies both schemas when a release both adds and drops
+a key; the exposure is the flip, not the deploy.
+
 ### Hotfix: activate an unlanded commit
 
 `activate <sha> --hotfix "<reason>"` activates as above and records

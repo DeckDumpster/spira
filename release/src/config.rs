@@ -184,6 +184,11 @@ impl Config {
         })
     }
 
+    /// The `SPIRA_TOML` spec (one file, or `base:override` layers) the running system reads.
+    pub fn toml_spec(&self) -> Option<String> {
+        self.env("SPIRA_TOML")
+    }
+
     /// `$SPIRA_RUN/release`, where the history and the hotfix record live.
     pub fn state_dir(&self) -> Result<PathBuf, String> {
         self.run

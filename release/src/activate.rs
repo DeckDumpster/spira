@@ -2,6 +2,7 @@
 //! (DESIGN.md "activate", "Hotfix", "rollback").
 
 use crate::config::Config;
+use crate::config_delta::{self, Txn};
 use crate::fsutil;
 use crate::git::Git;
 use crate::systemctl::Systemctl;
@@ -363,15 +364,39 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
     }
 }
 
+/// Switch onto `sha` with the config changes `delta` carries: validated by `sha`'s own
+/// `spira-config` before anything changes, added keys written before the flip, dropped keys
+/// removed after it, and the config put back when the switch fails. `Ok` carries the undo
+/// record and any problem dropping keys hit after the flip (the switch itself stood).
+fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>) -> Result<(Switched, Option<String>), String> {
+    if let Some(t) = txn {
+        t.apply_pre()?;
+    }
+    let out = match switch(ctx, sha) {
+        Ok(o) => o,
+        Err(e) => {
+            let undo = txn.map(Txn::restore).unwrap_or_default();
+            return Err(if undo.is_empty() { e } else { format!("{e}\n  CONFIG RESTORE INCOMPLETE:\n    {}", undo.join("\n    ")) });
+        }
+    };
+    let late = txn.and_then(|t| t.apply_post().err()).map(|e| format!("{sha} is active but the config keys it drops could not be removed: {e}"));
+    Ok((out, late))
+}
+
 /// `release activate <sha> [--hotfix <reason>]`.
 pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Switched, String> {
     let state = ctx.cfg.state_dir()?;
     fs::create_dir_all(&state).map_err(|e| format!("cannot create {}: {e}", state.display()))?;
-    verify::release_dir(ctx.cfg, sha)?;
+    let rel = verify::release_dir(ctx.cfg, sha)?;
     let standing = read_hotfix(&state)?;
     let after = hotfix_rule(ctx, standing, sha, hotfix_reason)?;
     let mut history = read_history(&state)?;
-    let out = switch(ctx, sha)?;
+    let delta = config_delta::load(&rel)?;
+    let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d)).transpose()?;
+    let (out, late) = switch_with_config(ctx, sha, txn.as_ref())?;
+    if let Some(t) = &txn {
+        config_delta::save_undo(&state, sha, &t.undo)?;
+    }
     let entry = HistEntry { sha: sha.to_string(), hotfix: hotfix_reason.map(one_line) };
     if history.last() != Some(&entry) {
         history.push(entry);
@@ -388,7 +413,10 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
             write_hotfix(&state, None)?;
         }
     }
-    Ok(out)
+    match late {
+        Some(e) => Err(e),
+        None => Ok(out),
+    }
 }
 
 /// `release rollback`: activate the release below the top of the history stack.
@@ -410,12 +438,24 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
         return Err(format!("{} is the only release ever activated; nothing to roll back to", top.sha));
     }
     let prev = history[history.len() - 2].clone();
-    switch(ctx, &prev.sha)?;
+    let undo = config_delta::load_undo(&state, &top.sha)?;
+    let txn = match &undo {
+        Some(d) => {
+            let rel = verify::release_dir(ctx.cfg, &prev.sha)?;
+            Some(config_delta::prepare(ctx.cfg, &rel, d)?)
+        }
+        None => None,
+    };
+    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref())?;
+    config_delta::clear_undo(&state, &top.sha);
     history.pop();
     write_history(&state, &history)?;
     let rec = prev.hotfix.as_ref().map(|r| Hotfix { sha: prev.sha.clone(), reason: r.clone(), at: fsutil::now_rfc3339() });
     write_hotfix(&state, rec.as_ref())?;
-    Ok(prev.sha)
+    match late {
+        Some(e) => Err(e),
+        None => Ok(prev.sha),
+    }
 }
 
 /// `release status`. Reads the hotfix record itself, never re-derived elsewhere: doctor,

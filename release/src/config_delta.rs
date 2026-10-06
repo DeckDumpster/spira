@@ -1,0 +1,296 @@
+//! The config keys a release adds or drops (DESIGN.md "config delta"): declared in the
+//! release's own tree, applied to the one source by `activate`, checked by the release's own
+//! `spira-config` before anything is touched.
+//!
+//! Edits are made on the TOML value, never through the typed schema this binary links: the
+//! schema that knows a new key is the new release's, and the one that knows a dropped key is
+//! the old release's, so neither can be trusted to round-trip the other's file.
+
+use crate::config::Config;
+use crate::fsutil;
+use std::collections::BTreeMap;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use toml::map::Map;
+use toml::Value;
+
+pub const DELTA_PATH: &str = "spira/config-delta.toml";
+const UNDO_DIR: &str = "config-undo";
+
+type Table = Map<String, Value>;
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Delta {
+    pub added: BTreeMap<String, Value>,
+    pub removed: Vec<String>,
+}
+
+impl Delta {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+
+    pub fn parse(text: &str) -> Result<Delta, String> {
+        let Value::Table(top) = text.parse::<Value>().map_err(|e| e.to_string())? else {
+            return Err("not a TOML table".into());
+        };
+        let mut d = Delta::default();
+        for (k, v) in top {
+            match (k.as_str(), v) {
+                ("added", Value::Table(t)) => d.added = t.into_iter().collect(),
+                ("removed", Value::Array(a)) => {
+                    for item in a {
+                        let Value::String(s) = item else { return Err("removed must list key paths as strings".into()) };
+                        d.removed.push(s);
+                    }
+                }
+                (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `added` (a table of key = value) and `removed` (a list of keys) are allowed")),
+            }
+        }
+        for k in d.added.keys().chain(d.removed.iter()) {
+            if k.split('.').any(str::is_empty) {
+                return Err(format!("{k:?} is not a dotted key path"));
+            }
+        }
+        if let Some(k) = d.removed.iter().find(|k| d.added.contains_key(*k)) {
+            return Err(format!("{k} is both added and removed"));
+        }
+        Ok(d)
+    }
+
+    pub fn render(&self) -> String {
+        let mut top = Table::new();
+        if !self.removed.is_empty() {
+            top.insert("removed".into(), Value::Array(self.removed.iter().cloned().map(Value::String).collect()));
+        }
+        if !self.added.is_empty() {
+            top.insert("added".into(), Value::Table(self.added.clone().into_iter().collect()));
+        }
+        toml::to_string_pretty(&Value::Table(top)).unwrap_or_default()
+    }
+}
+
+/// The delta a release declares; `None` when its tree has none.
+pub fn load(rel: &Path) -> Result<Option<Delta>, String> {
+    let p = rel.join(DELTA_PATH);
+    let text = match fs::read_to_string(&p) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("cannot read {}: {e}", p.display())),
+    };
+    Delta::parse(&text).map(Some).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+pub fn undo_path(state: &Path, sha: &str) -> PathBuf {
+    state.join(UNDO_DIR).join(sha)
+}
+
+/// The record of how to put the config back for a rollback off `sha`, if one was kept.
+pub fn load_undo(state: &Path, sha: &str) -> Result<Option<Delta>, String> {
+    let p = undo_path(state, sha);
+    match fs::read_to_string(&p) {
+        Ok(t) => Delta::parse(&t).map(Some).map_err(|e| format!("{}: {e}", p.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("cannot read {}: {e}", p.display())),
+    }
+}
+
+pub fn save_undo(state: &Path, sha: &str, undo: &Delta) -> Result<(), String> {
+    if undo.is_empty() {
+        return Ok(());
+    }
+    let p = undo_path(state, sha);
+    fs::create_dir_all(p.parent().unwrap_or(state)).map_err(|e| format!("cannot create {}: {e}", state.join(UNDO_DIR).display()))?;
+    fsutil::write_atomic(&p, &undo.render())
+}
+
+pub fn clear_undo(state: &Path, sha: &str) {
+    let _ = fs::remove_file(undo_path(state, sha));
+}
+
+fn get<'a>(t: &'a Table, path: &str) -> Option<&'a Value> {
+    let mut cur = t;
+    let mut parts = path.split('.').peekable();
+    while let Some(p) = parts.next() {
+        let v = cur.get(p)?;
+        if parts.peek().is_none() {
+            return Some(v);
+        }
+        cur = v.as_table()?;
+    }
+    None
+}
+
+fn set(t: &mut Table, path: &str, v: Value) -> Result<(), String> {
+    let parts: Vec<&str> = path.split('.').collect();
+    let (last, dirs) = parts.split_last().ok_or("empty key path")?;
+    let mut cur = t;
+    for d in dirs {
+        let e = cur.entry(d.to_string()).or_insert_with(|| Value::Table(Table::new()));
+        cur = e.as_table_mut().ok_or_else(|| format!("cannot set {path}: {d} is not a table"))?;
+    }
+    cur.insert(last.to_string(), v);
+    Ok(())
+}
+
+fn remove(t: &mut Table, path: &str) -> Option<Value> {
+    let parts: Vec<&str> = path.split('.').collect();
+    let (last, dirs) = parts.split_last()?;
+    let mut cur = t;
+    for d in dirs {
+        cur = cur.get_mut(*d)?.as_table_mut()?;
+    }
+    cur.remove(*last)
+}
+
+/// A delta resolved against the config files in force, validated by the target release.
+pub struct Txn {
+    files: Vec<PathBuf>,
+    modes: Vec<u32>,
+    original_text: Vec<String>,
+    original: Vec<Table>,
+    pre: Vec<Table>,
+    post: Vec<Table>,
+    /// What puts the config back for a rollback: the keys this added, the values this dropped.
+    pub undo: Delta,
+}
+
+/// Resolve `delta` against the layers `$SPIRA_TOML` names, and have `rel`'s own `spira-config`
+/// validate the result. Nothing on disk changes. An added key already present in any layer
+/// is the operator's and is left as it is.
+pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta) -> Result<Txn, String> {
+    let spec = cfg.toml_spec().ok_or("this release declares config changes but SPIRA_TOML names no file to apply them to")?;
+    let files: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
+    if files.is_empty() {
+        return Err("this release declares config changes but SPIRA_TOML names no file to apply them to".into());
+    }
+    let (mut modes, mut original_text, mut original) = (Vec::new(), Vec::new(), Vec::new());
+    for f in &files {
+        let text = fs::read_to_string(f).map_err(|e| format!("cannot read {}: {e}", f.display()))?;
+        let Value::Table(t) = text.parse::<Value>().map_err(|e| format!("{}: {e}", f.display()))? else {
+            return Err(format!("{}: not a TOML table", f.display()));
+        };
+        modes.push(fs::metadata(f).map(|m| m.permissions().mode() & 0o7777).unwrap_or(0o644));
+        original_text.push(text);
+        original.push(t);
+    }
+    let mut pre = original.clone();
+    let mut undo = Delta::default();
+    for (k, v) in &delta.added {
+        if pre.iter().any(|t| get(t, k).is_some()) {
+            continue;
+        }
+        set(&mut pre[0], k, v.clone())?;
+        undo.removed.push(k.clone());
+    }
+    let mut post = pre.clone();
+    for k in &delta.removed {
+        let mut dropped = None;
+        for t in post.iter_mut() {
+            if let Some(v) = remove(t, k) {
+                dropped.get_or_insert(v);
+            }
+        }
+        if let Some(v) = dropped {
+            undo.added.insert(k.clone(), v);
+        }
+    }
+    let txn = Txn { files, modes, original_text, original, pre, post, undo };
+    txn.validate(cfg, rel)?;
+    Ok(txn)
+}
+
+impl Txn {
+    fn validate(&self, cfg: &Config, rel: &Path) -> Result<(), String> {
+        let bin = rel.join("bin/spira-config");
+        if !fsutil::is_executable(&bin) {
+            return Err(format!("{} is missing; cannot check the config this release needs", bin.display()));
+        }
+        let scratch = std::env::temp_dir().join(format!(
+            "release-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        ));
+        fs::create_dir_all(&scratch).map_err(|e| format!("cannot create {}: {e}", scratch.display()))?;
+        let result = self.validate_in(cfg, rel, &bin, &scratch);
+        let _ = fs::remove_dir_all(&scratch);
+        result
+    }
+
+    fn validate_in(&self, cfg: &Config, rel: &Path, bin: &Path, scratch: &Path) -> Result<(), String> {
+        let mut staged = Vec::new();
+        for (i, t) in self.post.iter().enumerate() {
+            let p = scratch.join(format!("layer{i}.toml"));
+            let text = toml::to_string_pretty(&Value::Table(t.clone())).map_err(|e| e.to_string())?;
+            fs::write(&p, text).map_err(|e| format!("cannot write {}: {e}", p.display()))?;
+            staged.push(p.display().to_string());
+        }
+        let mut cmd = Command::new(bin);
+        cmd.arg("validate").env("SPIRA_TOML", staged.join(":"));
+        for (k, v) in crate::verify::pre_activate_env(cfg, rel)? {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        let tail: Vec<&str> = err.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect();
+        Err(format!(
+            "this release cannot load the config with its declared changes applied ({}); nothing changed: {}",
+            self.files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>().join(":"),
+            tail.join(" | ")
+        ))
+    }
+
+    fn write_layer(&self, i: usize, text: &str) -> Result<(), String> {
+        fsutil::write_atomic(&self.files[i], text)?;
+        let _ = fs::set_permissions(&self.files[i], fs::Permissions::from_mode(self.modes[i]));
+        Ok(())
+    }
+
+    fn write_changed(&self, from: &[Table], to: &[Table]) -> Result<(), String> {
+        for i in 0..to.len() {
+            if from[i] == to[i] {
+                continue;
+            }
+            let text = toml::to_string_pretty(&Value::Table(to[i].clone())).map_err(|e| e.to_string())?;
+            self.write_layer(i, &text)?;
+        }
+        Ok(())
+    }
+
+    /// Before the flip: write the keys the release adds. The old release has not stopped
+    /// running yet, so everything it still needs stays.
+    pub fn apply_pre(&self) -> Result<(), String> {
+        for i in 0..self.files.len() {
+            if self.original[i] != self.pre[i] {
+                spira_config::backup_existing(&self.files[i]).map_err(|e| format!("cannot back up {}: {e}", self.files[i].display()))?;
+            }
+        }
+        self.write_changed(&self.original, &self.pre).map_err(|e| {
+            let undo = self.restore();
+            if undo.is_empty() { e } else { format!("{e}; restoring the config also failed: {}", undo.join("; ")) }
+        })
+    }
+
+    /// After the flip: drop the keys the release dropped, which the old release needed until now.
+    pub fn apply_post(&self) -> Result<(), String> {
+        self.write_changed(&self.pre, &self.post)
+    }
+
+    /// Put every layer back as it was found. Returns the problems it hit.
+    pub fn restore(&self) -> Vec<String> {
+        let mut errs = Vec::new();
+        for i in 0..self.files.len() {
+            if self.original[i] != self.post[i] {
+                if let Err(e) = self.write_layer(i, &self.original_text[i]) {
+                    errs.push(e);
+                }
+            }
+        }
+        errs
+    }
+}
