@@ -584,7 +584,8 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             Ok(steps)
         }
         "ask" => {
-            let f = parse_flags(verb, a, 0, &["--subject", "--kind", "--default", "--class", "--bead", "--body-file"], &[])?;
+            let f = parse_flags(verb, a, 0, &["--subject", "--kind", "--default", "--class", "--bead", "--body-file"], &["--dry-run"])?;
+            let dry_run = f.iter().any(|(k, _)| k == "--dry-run");
             let (Some(subject), Some(kind), Some(default)) = (get(&f, "--subject"), get(&f, "--kind"), get(&f, "--default")) else {
                 return Err(usage(verb, "--subject, --kind and --default are all required (an ask without a default is incomplete)"));
             };
@@ -625,6 +626,10 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let classify_as = cited.clone().unwrap_or_else(|| bound.to_string());
             if let Some(b) = cited {
                 args.extend([s("--bead"), b]);
+            }
+            if dry_run {
+                args.push(s("--dry-run"));
+                return Ok(vec![Step::Ask { args, stdin: body, classify_as }]);
             }
             let mut steps = vec![Step::Ask { args, stdin: body, classify_as }];
             // A bound session's question about its OWN bead is a wait on the operator: that
@@ -926,6 +931,14 @@ mod tests {
         assert!(plan("file", "-", &call(&["t", "--for", "builder"], "ops")).is_err(), "no repo");
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "--body-file", "/etc/passwd"], "ops")).is_err());
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "-l", "x"], "ops")).is_err());
+    }
+
+    #[test]
+    fn a_dry_run_ask_forwards_the_flag_and_places_no_hold() {
+        let p = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--dry-run"], "builder")).unwrap();
+        assert_eq!(p.len(), 1, "no AskHold: {p:?}");
+        let Step::Ask { args, .. } = &p[0] else { panic!() };
+        assert!(args.contains(&s("--dry-run")), "{args:?}");
     }
 
     #[test]
