@@ -131,9 +131,17 @@ hook() {
             *) extra+=("$_a") ;;
         esac
     done
+    # SPIRA_RELEASE (not SPIRA_HOME) is what the real registered hook command sets
+    # (release/src/session_hook.rs's hook_command: "env SPIRA_RELEASE=<releases>/current ...
+    # <releases>/current/spira/hooks/session.sh") — session.sh can source conf.sh via its own
+    # BASH_SOURCE, but the compiled `watchd` binary it shells out to has no such trick and
+    # needs SPIRA_HOME/SPIRA_RELEASE in its own environment (locate_home: "named, never
+    # searched for"). Without it every watchd call here refused "neither SPIRA_HOME nor
+    # SPIRA_RELEASE is set", which the hook swallows into a generic "status unavailable" line.
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
       | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
+        SPIRA_RELEASE="$CLONE" \
         "${extra[@]+"${extra[@]}"}" \
         timeout 30 bash "$CLONE/spira/hooks/session.sh"
 }
@@ -306,9 +314,12 @@ has "a configured optional row is a watcher like any other" "$oout" "view"
 
 # Reset SPIRA_VIEW back to "not configured" — tl_config persists, unlike the old per-call
 # env prefix, so the positive control's /bin/true above would otherwise leak into this
-# negative control. Any path that cannot resolve to a real executable represents "not
-# configured" here; the complete fixture's own declared default doesn't exist in this sandbox.
-tl_config SPIRA_VIEW=/nonexistent/cockpit-remote
+# negative control. "Not configured" means truly EMPTY (watchd/src/manifest.rs's optional-row
+# rule: an empty key makes the row Kind::Off, never checked for DEGRADED; a non-empty value,
+# even a nonexistent path, is "configured but broken" and DOES show DEGRADED). The complete
+# fixture's own declared default is a non-empty nonexistent path — exactly that "configured
+# but broken" case, not "unconfigured" — so it must be overridden to "" here, not to a path.
+tl_config SPIRA_VIEW=""
 offout="$(ohook)"
 has  "an unconfigured one is still named in the table"  "$offout" "view"
 hasnt "no Monitor latch is emitted for it"              "$offout" "tail view"
@@ -427,11 +438,6 @@ rm -f "$RUN/watchd/concierge-inbox.log"
 # SPIRA_CONCIERGE were somehow also set.
 aeon_out="$(hook SessionStart startup SPIRA_AEON=mindy SPIRA_CONCIERGE=1)"
 is "an aeon session gets nothing, even with SPIRA_CONCIERGE set" "" "$aeon_out"
-
-_wd_out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
-    SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
-    bash -c '. "$1/conf.sh"; watchd status; echo "RC=$?"' _ "$CLONE/spira" 2>&1)"
-is "DEBUG watchd status dump" "__DEBUG_MARKER__" "$_wd_out"
 
 echo
 tl_summary
