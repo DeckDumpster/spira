@@ -501,8 +501,11 @@ adigest() {  # adigest <archivist.sh args...>
     # calls spira_config::process::cfg, not a plain std::env::var — the file's own header
     # comment is stale on this point): a raw env -i assignment no longer reaches `mail`,
     # the archivist's own child, at all. Declare them via tl_config instead, same as
-    # SPIRA_TZ.
-    tl_config SPIRA_TZ=UTC SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+    # SPIRA_TZ. SPIRA_MAIL_MUTE too: the complete fixture declares mail_mute=true as its
+    # base value (pattern 2) — muted mail delivers straight to cur/ already marked Seen,
+    # which read as "no mail" to this suite's new/-count checks.
+    tl_config SPIRA_TZ=UTC SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
+        SPIRA_MAIL_MUTE=0
     env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
         "$ARC" "$@" 2>&1
 }
@@ -566,8 +569,6 @@ is "three record calls queue three lines" "3" \
     "$(wc -l < "$T/run/archivist/digest.pending" 2>/dev/null | tr -d ' ')"
 
 out="$(adigest digest-send)"; rc=$?
-echo "DEBUG out=[$out] T=$T" >&2
-ls -la "$T/mail" >&2 2>&1
 is "digest-send exits 0" 0 "$rc"
 op_count="$(ls "$T/mail/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "digest-send delivers exactly one mail" "1" "$op_count"
