@@ -589,8 +589,8 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let (Some(subject), Some(kind), Some(default)) = (get(&f, "--subject"), get(&f, "--kind"), get(&f, "--default")) else {
                 return Err(usage(verb, "--subject, --kind and --default are all required (an ask without a default is incomplete)"));
             };
-            if !["question", "fyi"].contains(&kind) {
-                return Err(usage(verb, &format!("--kind {kind:?} (want question or fyi)")));
+            if !MAIL_KINDS.contains(&kind) {
+                return Err(usage(verb, &format!("--kind {kind:?} (want one of {})", MAIL_KINDS.join(", "))));
             }
             let cited = match get(&f, "--bead") {
                 Some(b) if is_bead_id(b) => Some(b.to_string()),
@@ -711,6 +711,9 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
     Ok(())
 }
 
+/// The kinds mail has a template for; a test holds this equal to `spira/mail/kinds`.
+const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
+
 fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, String) {
     let call = split_reserved(rest);
     let steps = match plan(verb, bound, &call) {
@@ -732,7 +735,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
             }
             Step::Ask { args, stdin, classify_as } => {
                 let prog = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail"));
-                crate::bd::tool_env(&prog, &args, Some(&stdin), actor, TOOL_SECS, &[("BEAD_ID", &classify_as)])
+                crate::bd::tool_env_noisy(&prog, &args, Some(&stdin), actor, TOOL_SECS, &[("BEAD_ID", &classify_as)])
             }
             Step::AskHold { bead, question } => {
                 let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question) };
@@ -950,7 +953,7 @@ mod tests {
         assert!(stdin.contains("## Question\nClose sp-a1?") && stdin.contains("## Default\nyes"));
         assert_eq!(classify_as, "sp-me1");
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "question"], "ops")).is_err(), "no default");
-        assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "note", "--default", "d"], "ops")).is_err());
+        assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "bogus", "--default", "d"], "ops")).is_err());
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "fyi", "--default", "d", "--from", "Ryan"], "ops")).is_err(), "the sender is the broker's");
         assert_eq!(display_name("batcher"), "Judge");
     }
@@ -970,7 +973,7 @@ mod tests {
         // fyi, nor for an unbound caller (nothing of its own to wait on).
         let other = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--bead", "sp-other"], "groomer")).unwrap();
         assert!(!other.iter().any(|x| matches!(x, Step::AskHold { .. })), "{other:?}");
-        let fyi = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "fyi", "--default", "d"], "builder")).unwrap();
+        let fyi = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "note", "--default", "d"], "builder")).unwrap();
         assert!(!fyi.iter().any(|x| matches!(x, Step::AskHold { .. })), "{fyi:?}");
         let unbound = plan("ask", "-", &call(&["--subject", "q", "--kind", "question", "--default", "d"], "archivist")).unwrap();
         assert!(!unbound.iter().any(|x| matches!(x, Step::AskHold { .. })), "{unbound:?}");
@@ -996,6 +999,18 @@ mod tests {
         let p = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--class", "policy"], "builder")).unwrap();
         let Step::Ask { args, .. } = &p[0] else { panic!() };
         assert!(args.windows(2).any(|w| w == v(&["--class", "policy"])), "{args:?}");
+    }
+
+    #[test]
+    fn ask_kinds_are_the_kinds_mail_can_deliver() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path().file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
+        on_disk.sort();
+        assert_eq!(on_disk, MAIL_KINDS);
+        assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "fyi", "--default", "d"], "ops")).is_err(), "fyi has no template");
     }
 
     // ---- tools ----
