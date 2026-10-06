@@ -301,11 +301,11 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-/// When the row entered its current state: the `at` of the latest applied event that
-/// landed the machine there, read from the append-only event log.
-fn entered_at_sql(machine: &str, key_col: &str, state_col: &str) -> String {
+/// Derived table of the latest applied event into each (key, state) of a machine. Joined,
+/// not correlated: Dolt does not resolve a per-row subquery through the event index.
+fn entered_at_join(machine: &str) -> String {
     format!(
-        "(SELECT MAX(e.at) FROM event e WHERE e.machine = '{machine}' AND e.lc_key = {key_col} AND e.applied = 1 AND e.to_state = {state_col})"
+        "(SELECT lc_key, to_state, MAX(at) AS entered FROM event WHERE machine = '{machine}' AND applied = 1 GROUP BY lc_key, to_state) s"
     )
 }
 
@@ -314,9 +314,10 @@ fn cmd_list_delivery(args: &[String], conn: &Conn) -> (i32, String) {
         Some(state) => format!(" WHERE delivery.state = '{}'", rows::escape(&state)),
         None => String::new(),
     };
-    let entered = entered_at_sql("delivery", "delivery.bead_id", "delivery.state");
+    let entered = entered_at_join("delivery");
     let sql = format!(
-        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, version, {entered} AS entered_at FROM delivery{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, version, s.entered AS entered_at FROM delivery \
+         LEFT JOIN {entered} ON s.lc_key = delivery.bead_id AND s.to_state = delivery.state{where_clause} ORDER BY bead_id"
     );
     match conn.query(&sql) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),
@@ -564,10 +565,11 @@ mod tests {
 
     #[test]
     fn entered_at_reads_the_latest_applied_event_into_the_current_state() {
-        let sql = entered_at_sql("delivery", "delivery.bead_id", "delivery.state");
-        assert!(sql.contains("MAX(e.at)"));
-        assert!(sql.contains("e.machine = 'delivery'"));
-        assert!(sql.contains("e.applied = 1"));
-        assert!(sql.contains("e.to_state = delivery.state"));
+        let sql = entered_at_join("delivery");
+        assert!(sql.contains("MAX(at)"));
+        assert!(sql.contains("machine = 'delivery'"));
+        assert!(sql.contains("applied = 1"));
+        assert!(sql.contains("GROUP BY lc_key, to_state"));
+        assert!(!sql.contains("e.lc_key = delivery"));
     }
 }
