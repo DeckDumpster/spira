@@ -43,7 +43,14 @@ esac
 exit 0
 MOCK
 chmod +x "$MOCK_BIN/systemctl"
-for t in loginctl spira-supervise; do
+# `release` TOO: units-install unconditionally runs `release session-hook install` as part
+# of its own install (sp-7jr34), and the real `release` binary resolves its own release root
+# from the complete fixture's default (a fixed /fixture/... "current" symlink) whose
+# hooks/session.sh is not executable here — a harmless note, but one that lands in this
+# suite's captured output and trips the "not executable" substring check. What's under test
+# here is ExecStart executability, not the session hook, so it gets the same stub treatment
+# as systemctl/loginctl/spira-supervise above.
+for t in loginctl spira-supervise release; do
     printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$t"; chmod +x "$MOCK_BIN/$t"
 done
 
