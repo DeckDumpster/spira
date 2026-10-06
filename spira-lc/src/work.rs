@@ -219,7 +219,8 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 //
 // Who may run what is ONE table, [`ALLOW`]. The caller's persona is the `--actor` the `work`
 // client appends from its own environment (`SPIRA_FAYTH`, else `SPIRA_WORK_ACTOR`); the
-// client refuses a user-typed `--actor`, so the trailing one is the environment's.
+// client refuses a user-typed `--actor`; serve binds it to the peer's uid ([`bind_peer`]) for
+// every uid listed in `<socket>.personas`, since the environment is the caller's to set.
 
 /// Every verb that is not bound to the summoned bead. The bound verbs above act on the
 /// bead the client is bound to; these name their target (or none) themselves.
@@ -330,6 +331,45 @@ pub fn split_reserved(rest: &[String]) -> Call {
     }
     let actors = rest.iter().filter(|a| *a == "--actor").count();
     Call { args, stdin, actor, actors }
+}
+
+/// `<uid> <persona>` lines (`#` comments): the personas whose own OS account is the identity.
+pub fn parse_persona_uids(text: &str) -> Vec<(u32, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.split('#').next().unwrap_or("").trim();
+            let mut it = l.split_whitespace();
+            let (uid, persona) = (it.next()?.parse().ok()?, it.next()?.to_string());
+            it.next().is_none().then_some((uid, persona))
+        })
+        .collect()
+}
+
+/// Binds a `work` request's persona to the connecting process's uid. A uid in `map` IS its
+/// persona: a different `--actor` is refused, never overridden, and an absent one is filled
+/// in. A uid not in `map` keeps the client-sent `--actor` (nothing else identifies it).
+pub fn bind_peer(argv: &[String], peer_uid: Option<u32>, map: &[(u32, String)]) -> Result<Vec<String>, (i32, String)> {
+    if argv.first().map(String::as_str) != Some("work") || map.is_empty() {
+        return Ok(argv.to_vec());
+    }
+    let Some(uid) = peer_uid else {
+        return Err((REFUSED, "refused: the caller's uid could not be read from the socket, and personas are bound to uids here".into()));
+    };
+    let Some((_, persona)) = map.iter().find(|(u, _)| *u == uid) else {
+        return Ok(argv.to_vec());
+    };
+    let sent = argv.iter().filter(|a| *a == "--actor").count();
+    let mut out = argv.to_vec();
+    match sent {
+        0 => out.extend(["--actor".to_string(), persona.clone()]),
+        1 if out.len() >= 2 && out[out.len() - 2] == "--actor" => {
+            if out[out.len() - 1] != *persona {
+                return Err((REFUSED, format!("refused: uid {uid} is persona {persona}, not {}", out[out.len() - 1])));
+            }
+        }
+        _ => return Err((REFUSED, "refused: work: --actor is the client's trailer alone, never the caller's".into())),
+    }
+    Ok(out)
 }
 
 /// The operation key [`ALLOW`] is read with.
@@ -772,6 +812,24 @@ mod tests {
 
     fn v(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn a_uid_bound_to_a_persona_cannot_present_as_another() {
+        let map = parse_persona_uids("# aeons\n1001 builder\n1002 czar  # the czar\nbad line here\n");
+        assert_eq!(map, vec![(1001, "builder".to_string()), (1002, "czar".to_string())]);
+        let forged = v(&["work", "sp-1", "queue", "eject", "sp-2", "--actor", "czar"]);
+        let (code, msg) = bind_peer(&forged, Some(1001), &map).unwrap_err();
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("builder"), "{msg}");
+        assert_eq!(bind_peer(&forged, Some(1002), &map).unwrap(), forged);
+        assert_eq!(bind_peer(&v(&["work", "sp-1", "show"]), Some(1001), &map).unwrap(), v(&["work", "sp-1", "show", "--actor", "builder"]));
+        assert!(bind_peer(&v(&["work", "sp-1", "show", "--actor", "czar", "--actor", "builder"]), Some(1001), &map).is_err());
+        assert!(bind_peer(&forged, None, &map).is_err());
+        assert_eq!(bind_peer(&forged, Some(5), &map).unwrap(), forged);
+        assert_eq!(bind_peer(&forged, Some(1001), &[]).unwrap(), forged);
+        let other = v(&["show", "sp-1"]);
+        assert_eq!(bind_peer(&other, Some(1001), &map).unwrap(), other);
     }
 
     fn call(xs: &[&str], actor: &str) -> Call {
