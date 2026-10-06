@@ -26,6 +26,16 @@ pub fn config() -> Result<&'static Resolved, String> {
         .map_err(|e| e.clone())
 }
 
+/// The spec `$SPIRA_TOML` names — one file, or `base:override` layers — for a caller that must
+/// HAND it on (a rendered unit, a launched process) rather than read it: the only door onto the
+/// spec's location (spira-config is the only door onto spira.toml). Unset is a refusal.
+pub fn spec() -> Result<String, String> {
+    std::env::var("SPIRA_TOML")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "SPIRA_TOML is not set — it names the one source of config".to_string())
+}
+
 /// One key's declared value. `Err` when the config cannot be resolved or the key is not a
 /// registered config key — never a default.
 pub fn cfg(key: &str) -> Result<String, String> {

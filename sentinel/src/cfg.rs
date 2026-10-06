@@ -423,7 +423,7 @@ impl Cfg {
             raw.insert(k.to_string(), s(k));
         }
         // The spec this sentinel runs under — every launch runs under the same one source.
-        raw.insert("SPIRA_TOML".into(), std::env::var("SPIRA_TOML").unwrap_or_default());
+        raw.insert("SPIRA_TOML".into(), spira_config::process::spec().unwrap_or_default());
         // Registered keys forwarded to a spawned aeon's `--setenv`: from `d`, not Context.
         raw.insert("SPIRA_RUN".into(), run.to_string_lossy().into_owned());
         raw.insert("SPIRA_DB".into(), d.db.clone());

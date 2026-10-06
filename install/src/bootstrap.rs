@@ -138,7 +138,7 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let dolt_data = spira_config::process::cfg("SPIRA_DOLT_DATA")?;
     let testdb_data = spira_config::process::cfg("SPIRA_TESTDB_DATA")?;
     // The units run under the same one source this installer runs under — named, required.
-    let toml = std::env::var("SPIRA_TOML").ok().filter(|t| !t.is_empty()).ok_or("SPIRA_TOML is not set — it names the one source of config the units run under")?;
+    let toml = spira_config::process::spec()?;
     Ok(HostValues {
         home,
         lc_password_file,
