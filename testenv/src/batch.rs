@@ -14,13 +14,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 pub fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
 pub struct BatchCfg {
@@ -1079,5 +1076,17 @@ mod tests {
         assert!(out.deferred().is_empty());
         assert!(out.records.values().all(|r| r.status == Status::Ok));
         assert!(rt.suite_execs().iter().all(|r| r.deadline.is_none()));
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn now_epoch_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || now_epoch());
+        assert_eq!(got, 1_900_000_000);
     }
 }

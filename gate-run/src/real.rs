@@ -6,7 +6,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Real {
     pub home: PathBuf,
@@ -98,7 +97,7 @@ impl World for Real {
     }
 
     fn now(&self) -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        spira_config::vtime::now_epoch()
     }
 
     fn sleep(&self, secs: u64) {
@@ -207,5 +206,17 @@ impl World for Real {
     fn print(&self, s: &str) {
         print!("{s}");
         let _ = std::io::stdout().flush();
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::World;
+
+    #[test]
+    fn world_now_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Real::new(std::path::PathBuf::from("/nonexistent")).now());
+        assert_eq!(got, 1_900_000_000);
     }
 }

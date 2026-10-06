@@ -27,7 +27,10 @@ impl Branches for Repos<'_> {
 struct Wall;
 impl Clock for Wall {
     fn now_ms(&self) -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+        match spira_config::vtime::override_epoch() {
+            Some(s) => s * 1000,
+            None => SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+        }
     }
 }
 
@@ -128,4 +131,16 @@ fn main() -> ExitCode {
         let _ = c.wait();
     }
     result
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn wall_honours_spira_now_in_ms() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Wall.now_ms() / 1000);
+        assert_eq!(got, 1_900_000_000);
+    }
 }

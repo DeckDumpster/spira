@@ -53,6 +53,7 @@ pub fn run(spec: Spec) -> Out {
     cmd.args(&spec.args);
     if let Some(env) = spec.env {
         cmd.env_clear();
+        cmd.envs(spira_config::vtime::passthrough());
         cmd.envs(env.iter());
     }
     if let Some(d) = spec.cwd {

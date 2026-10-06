@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration};
 
 /// One program invocation: `env K=V ... prog args...` in `cwd`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -119,7 +119,7 @@ impl Host for RealHost {
     }
 
     fn now(&self) -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        spira_config::vtime::now_epoch()
     }
 
     fn sleep(&self, secs: u64) {
@@ -133,4 +133,16 @@ pub fn which(prog: &str, path: &str) -> Option<PathBuf> {
         return None;
     }
     path.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(prog)).find(|p| crate::fsutil::is_executable(p))
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use super::Host;
+
+    #[test]
+    fn real_host_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealHost.now());
+        assert_eq!(got, 1_900_000_000);
+    }
 }

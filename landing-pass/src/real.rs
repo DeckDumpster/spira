@@ -1311,3 +1311,15 @@ mod lifecycle_join_tests {
         assert_eq!(b.bead_lc_state("sp-w"), "-");
     }
 }
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn real_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now());
+        assert_eq!(got, 1_900_000_000);
+    }
+}

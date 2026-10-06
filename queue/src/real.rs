@@ -825,7 +825,7 @@ pub struct SysClock;
 
 impl Clock for SysClock {
     fn now(&self) -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        spira_config::vtime::now_epoch()
     }
     fn stamp(&self) -> String {
         utc_stamp(self.now())
@@ -1535,5 +1535,17 @@ esac
             "the whole process group must be killed, grandchild included — pid {gc} still alive"
         );
         std::env::set_var("PATH", &old_path);
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn sys_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || SysClock.now());
+        assert_eq!(got, 1_900_000_000);
     }
 }

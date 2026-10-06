@@ -5,7 +5,6 @@ use crate::ports::World;
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Real {
     pub home: PathBuf,
@@ -81,7 +80,7 @@ impl World for Real {
     }
 
     fn now(&self) -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+        spira_config::vtime::now_epoch() as i64
     }
 
     fn open_trigger_count(&self, labels: &str) -> u64 {

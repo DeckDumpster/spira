@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration};
 
 use batcher::attrib::{Job, JobResult};
 use batcher::core::{Id, Member, MergeResult};
@@ -296,7 +296,7 @@ impl Drop for VmRunner<'_> {
 }
 
 fn epoch() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
 impl RoundRunner for VmRunner<'_> {
@@ -529,5 +529,17 @@ mod scope_tests {
         assert!(scope_args(None).contains(&"CPUQuota=1600%".to_string()));
         assert!(scope_args(Some("800%")).contains(&"CPUQuota=800%".to_string()));
         assert!(scope_args(None).contains(&"--scope".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn epoch_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || epoch());
+        assert_eq!(got, 1_900_000_000);
     }
 }

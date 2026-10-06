@@ -7,3 +7,9 @@ description = "spira-sim — deterministic simulation of the Spira loop: virtual
 [lib]
 name = "sim"
 path = "src/lib.rs"
+
+[dependencies]
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

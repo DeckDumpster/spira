@@ -1,7 +1,6 @@
 use crate::ports::{Bd, Clock, Proc};
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Shells out to `lib.sh` exactly as `gate-check`'s Rust port already shells out to
 /// `repo_root` — see `ports.rs`'s `Bd` doc comment for why this is the right boundary
@@ -151,8 +150,7 @@ pub struct RealClock {
 
 impl Clock for RealClock {
     fn now(&self) -> (u64, String) {
-        let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        let epoch = d.as_secs();
+        let epoch = spira_config::vtime::now_epoch();
         let iso = fmt_iso(epoch);
         (epoch, iso)
     }
@@ -166,7 +164,7 @@ impl Clock for RealClock {
             .output();
         match out {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-            _ => fmt_iso(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())[..10]
+            _ => fmt_iso(spira_config::vtime::now_epoch())[..10]
                 .to_string(),
         }
     }
@@ -274,4 +272,16 @@ mod tests {
         assert_eq!(fmt_iso(1790726400 + 13 * 3600 + 45 * 60 + 7), "2026-09-30T13:45:07Z");
     }
 
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn real_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock { tz: "UTC".into() }.now().0);
+        assert_eq!(got, 1_900_000_000);
+    }
 }

@@ -849,6 +849,7 @@ impl World for Real {
             .arg(cmd)
             .current_dir(tree)
             .env_clear();
+        c.envs(spira_config::vtime::passthrough());
         for (k, v) in env {
             c.env(k, v);
         }
