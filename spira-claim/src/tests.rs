@@ -1169,3 +1169,57 @@ fn ready_count_json_is_the_machine_set_with_titles() {
     let refused = enforced_count(BD_OPEN_UNASSIGNED, "not json", bd_both, &["ready-count", "plan", "", "--json"]);
     assert_eq!((refused.code, refused.out.as_str()), (1, ""), "a machine that cannot answer is no empty queue");
 }
+
+// ---- one resolution path: the label keys come from the config file, never the caller's env ----
+
+const OC_LABEL: &str = "oc-fixture";
+
+fn label_ready_set(extra_toml: &[(&str, &str)], exported: Option<&str>) -> Outcome {
+    let rows = format!(
+        r#"[{{"id":"A","priority":1,"issue_type":"task","labels":["plan","{OC_LABEL}"]}},{{"id":"B","priority":1,"issue_type":"task","labels":["plan"]}}]"#
+    );
+    let lc = r#"[{"bead_id":"A","state":"READY","holds":"[]"},{"bead_id":"B","state":"READY","holds":"[]"}]"#;
+    let home = chamber_home(&[("probe", "plan", "")]);
+    let chamber = chamber_path(&home);
+    let bd = sh(&format!("echo '{rows}'"));
+    let path = fake_lc_path(lc);
+    let mut declare = vec![
+        ("SPIRA_BD", bd.as_str()),
+        ("SPIRA_DB", ""),
+        ("SPIRA_FAYTHS", "[]"),
+        ("SPIRA_CHAMBER", chamber.as_str()),
+        ("SPIRA_SCOPE_LABEL", ""),
+        ("SPIRA_OPEN_CHILDREN_LABEL", OC_LABEL),
+    ];
+    declare.extend_from_slice(extra_toml);
+    run_cfg(
+        &["fayth-ready", "probe", "--json"],
+        "",
+        &declare,
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str())), ("SPIRA_OPEN_CHILDREN_LABEL", exported)],
+    )
+}
+
+#[test]
+fn the_ready_set_is_the_same_whether_or_not_the_caller_exports_the_label_variables() {
+    let unexported = label_ready_set(&[], None);
+    let exported_empty = label_ready_set(&[], Some(""));
+    let exported_other = label_ready_set(&[], Some("something-else"));
+    assert_eq!(unexported.code, 0, "{}", unexported.err);
+    assert_eq!(ids_of(&unexported.out), vec!["B".to_string()], "the declared exclusion applies");
+    assert_eq!(exported_empty.out, unexported.out, "{}", exported_empty.err);
+    assert_eq!(exported_other.out, unexported.out, "{}", exported_other.err);
+}
+
+#[test]
+fn an_absent_registry_key_is_refused_by_name_never_resolved_to_empty() {
+    let toml = toml_fixture(&[]);
+    let text = std::fs::read_to_string(toml.as_str()).unwrap();
+    let kept: Vec<&str> = text.lines().filter(|l| !l.trim_start().starts_with("open_children_label")).collect();
+    assert!(kept.len() < text.lines().count(), "the plant must remove the key, or this test proves nothing");
+    std::fs::write(toml.as_str(), kept.join("\n")).unwrap();
+    let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.as_str()))]);
+    let o = exec_spira_claim(&["fayth-ready", "probe"], "");
+    assert_ne!(o.code, 0, "{}", o.out);
+    assert!(o.err.contains("SPIRA_OPEN_CHILDREN_LABEL"), "the refusal names the key: {}", o.err);
+}
