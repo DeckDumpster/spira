@@ -283,11 +283,10 @@ mod tests {
         // this has to be the checkout's own, so it is found relative to this crate's own
         // manifest, never by trusting an ancestor search from the test binary's path.
         let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        std::env::set_var("SPIRA_HOME", &real_home);
-        std::env::set_var("SPIRA_TOML", &toml);
-        let c = Config::resolve(&NoEnv).unwrap();
-        std::env::remove_var("SPIRA_TOML");
-        std::env::remove_var("SPIRA_HOME");
+        let c = {
+            let _env = testkit::env(&[("SPIRA_HOME", Some(real_home.to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+            Config::resolve(&NoEnv).unwrap()
+        };
 
         assert_eq!(c.incident_label, "incident", "the complete fixture's own declared default");
         assert_eq!(c.groom_ask_label, "groom-asked");

@@ -235,8 +235,10 @@ impl Conf {
         if !m.is_empty() {
             return m;
         }
-        let toml = self.or("SPIRA_TOML_FILE", "");
-        persona_model("builder", (!toml.is_empty()).then(|| Path::new(&toml)))
+        persona_model("builder", &self.s("SPIRA_TOML")).unwrap_or_else(|e| {
+            eprintln!("aeon: FATAL: {e}");
+            std::process::exit(1)
+        })
     }
 }
 
@@ -251,15 +253,19 @@ pub fn merge_capacity_env(snap: &mut crate::seam::Snapshot, env: &BTreeMap<Strin
     }
 }
 
-/// `persona_model`: `persona.<name>.model` from the resolved spira.toml, default
-/// `claude-opus-5`.
-pub fn persona_model(name: &str, toml_file: Option<&Path>) -> String {
-    const DEF: &str = "claude-opus-5";
-    let Some(p) = toml_file.filter(|p| p.is_file()) else { return DEF.into() };
-    match spira_config::load(p) {
-        Ok(doc) => doc.persona.get(name).map(|p| p.model.clone()).filter(|m| !m.is_empty()).unwrap_or_else(|| DEF.into()),
-        Err(_) => DEF.into(),
+/// `persona.<name>.model`, from the one source of config: the spec `$SPIRA_TOML` names, layers
+/// and all (per Ryan 2026-10-05). Undeclared is a refusal naming the key — never a built-in
+/// model, which once launched every persona on `claude-opus-5` whatever its config said.
+pub fn persona_model(name: &str, spec: &str) -> Result<String, String> {
+    if spec.is_empty() {
+        return Err("SPIRA_TOML is not set — it names the one source of config".into());
     }
+    let doc = spira_config::load(Path::new(&spec))?;
+    doc.persona
+        .get(name)
+        .map(|p| p.model.clone())
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| format!("persona.{name}.model is not declared in {spec}"))
 }
 
 /// Where the harness's `spira/` directory is (DESIGN.md §2.1).
@@ -335,6 +341,10 @@ pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env:
     // accidentally-reintroduced seam value free to outrank the resolved one if that ever
     // changed. The registered keys this resolves are the ONE source; they win outright.
     let resolved = spira_config::resolve::resolve_for_process(home, &repo, env)?;
+    // The spec itself travels with the config it resolved (persona tables are read from it).
+    if let Some(t) = env.get("SPIRA_TOML") {
+        snap.vars.insert("SPIRA_TOML".into(), t.clone());
+    }
     for (k, v) in resolved.values {
         snap.vars.insert(k, v);
     }
@@ -381,12 +391,13 @@ mod tests {
         let dir = testkit::TempDir::new("aeon-conf-capacity-model");
         let toml = dir.join("spira.toml");
         std::fs::write(&toml, "[persona.builder]\nmodel = \"toml-override-model\"\n").unwrap();
-        let snap = crate::seam::Snapshot { vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap())]), ..Default::default() };
+        // The builder's model comes from the spec SPIRA_TOML names (the one source).
+        let snap = crate::seam::Snapshot { vars: vars(&[("SPIRA_TOML", toml.to_str().unwrap())]), ..Default::default() };
         let conf = Conf::new(&snap, &dir);
         assert_eq!(conf.capacity_probe_model(), "toml-override-model");
 
         let snap2 = crate::seam::Snapshot {
-            vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap()), ("SPIRA_CAPACITY_PROBE_MODEL", "operator-override")]),
+            vars: vars(&[("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_CAPACITY_PROBE_MODEL", "operator-override")]),
             ..Default::default()
         };
         let conf2 = Conf::new(&snap2, &dir);
@@ -395,13 +406,16 @@ mod tests {
     }
 
     #[test]
-    fn persona_model_reads_the_toml_else_the_default() {
+    fn persona_model_reads_the_declared_model_and_refuses_an_undeclared_one() {
         let dir = testkit::TempDir::new("aeon-conf");
-        let toml = dir.join("spira.toml");
-        std::fs::write(&toml, "[persona.builder]\nmodel = \"claude-x\"\n").unwrap();
-        assert_eq!(persona_model("builder", Some(&toml)), "claude-x");
-        assert_eq!(persona_model("ops", Some(&toml)), "claude-opus-5");
-        let _ = std::fs::remove_dir_all(&dir);
+        let base = dir.join("base.toml");
+        let over = dir.join("over.toml");
+        std::fs::write(&base, "[persona.builder]\nmodel = \"claude-x\"\n").unwrap();
+        std::fs::write(&over, "[persona.builder]\nmodel = \"claude-y\"\n").unwrap();
+        let spec = format!("{}:{}", base.display(), over.display());
+        assert_eq!(persona_model("builder", &spec), Ok("claude-y".to_string()), "the layered spec, later layer wins");
+        let e = persona_model("ops", &spec).unwrap_err();
+        assert!(e.contains("persona.ops.model is not declared"), "{e}");
     }
 
     // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same

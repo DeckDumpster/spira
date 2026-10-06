@@ -366,16 +366,16 @@ mod tests {
         // production fault this bead fixes was exactly that leak (a systemd unit's own
         // ambient default, /root/.cargo, silently used in place of the template's actual
         // one). Only this binary's own key, env or spira.toml, ever sets cache_home.
-        let _g = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("SPIRA_ROUND_VM_CACHE_HOME");
-        std::env::set_var("CARGO_HOME", "/opt/spira/cargo");
-        let got = cache_home_from_env_or_toml();
-        std::env::remove_var("CARGO_HOME");
+        let got = {
+            let _env = testkit::env(&[("SPIRA_ROUND_VM_CACHE_HOME", None), ("CARGO_HOME", Some("/opt/spira/cargo"))]);
+            cache_home_from_env_or_toml()
+        };
         assert!(got.is_none(), "a bare CARGO_HOME must never be read");
 
-        std::env::set_var("SPIRA_ROUND_VM_CACHE_HOME", "/opt/spira/cargo");
-        let got = cache_home_from_env_or_toml();
-        std::env::remove_var("SPIRA_ROUND_VM_CACHE_HOME");
+        let got = {
+            let _env = testkit::env(&[("SPIRA_ROUND_VM_CACHE_HOME", Some("/opt/spira/cargo"))]);
+            cache_home_from_env_or_toml()
+        };
         assert_eq!(got.as_deref(), Some("/opt/spira/cargo"));
     }
 
@@ -384,10 +384,10 @@ mod tests {
         // SPIRA_ROUND_VM_BOOT_TRIES is not declared in spira/conf.d — round-vm still reads
         // it, and still refuses by name, straight from the environment (see this module's
         // migration notes); unlike a spira/conf.d key, there is no spira.toml fallback.
-        let _g = ENV_LOCK.lock().unwrap();
-        std::env::set_var("SPIRA_ROUND_VM_BOOT_TRIES", "lots");
-        let e = num_env::<u32>("SPIRA_ROUND_VM_BOOT_TRIES", 60).unwrap_err();
-        std::env::remove_var("SPIRA_ROUND_VM_BOOT_TRIES");
+        let e = {
+            let _env = testkit::env(&[("SPIRA_ROUND_VM_BOOT_TRIES", Some("lots"))]);
+            num_env::<u32>("SPIRA_ROUND_VM_BOOT_TRIES", 60).unwrap_err()
+        };
         assert!(e.contains("SPIRA_ROUND_VM_BOOT_TRIES"), "{e}");
     }
 

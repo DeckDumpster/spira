@@ -335,6 +335,10 @@ pub(crate) fn complete_vars() -> BTreeMap<String, String> {
     spira_config::spira_string_map(&doc)
         .into_iter()
         .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
+        .chain(std::iter::once((
+            "SPIRA_TOML".to_string(),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-config/tests/fixtures/complete.toml").to_string(),
+        )))
         .collect()
 }
 
@@ -908,7 +912,7 @@ fn happy_path_submits_through_the_machine() {
     assert!(spec.env.get("GH_TOKEN").is_none(), "no credential-shaped var leaked to the model");
     let a = spec.args.join(" ");
     assert!(a.starts_with("-p --output-format stream-json --verbose --include-partial-messages --system-prompt-snapshot on --append-system-prompt-file "));
-    assert!(a.contains("--model claude-opus-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
+    assert!(a.contains("--model claude-sonnet-5-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
     // The brief.
     let sys = std::fs::read_to_string(f.run.join("sp-h.system.md")).unwrap();
     let task = std::fs::read_to_string(f.run.join("sp-h.task.md")).unwrap();

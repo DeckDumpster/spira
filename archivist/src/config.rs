@@ -61,8 +61,7 @@ mod tests {
         // actually lives), never the throwaway fixture dir: `cfg()` needs both a real
         // registry AND the fixture's declared values.
         let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        std::env::set_var("SPIRA_HOME", &real_home);
-        std::env::set_var("SPIRA_TOML", &toml);
+        let _env = testkit::env(&[("SPIRA_HOME", Some(real_home.to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
 
         let e = resolve().expect("a complete fixture toml must resolve every key this crate needs");
         assert_eq!(e.every, 10);

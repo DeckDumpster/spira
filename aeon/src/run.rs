@@ -1008,10 +1008,10 @@ impl<'a> Run<'a> {
             SystemPrompt::Replace => "--system-prompt-file",
             SystemPrompt::Append => "--append-system-prompt-file",
         };
-        // SPIRA_TOML_FILE is not a registered config key — `Conf::or`, not the strict
-        // `Conf::s`, since it may legitimately be absent.
-        let toml = self.conf.or("SPIRA_TOML_FILE", "");
-        let model = conf::persona_model(self.f(), (!toml.is_empty()).then(|| Path::new(&toml)));
+        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML")).unwrap_or_else(|e| {
+            eprintln!("aeon: FATAL: {e}");
+            std::process::exit(1)
+        });
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
         if self.fayth.project_instructions == "none" {
