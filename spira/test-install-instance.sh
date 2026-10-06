@@ -83,7 +83,11 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 # The logger dir goes first on PATH (conf.sh keeps the caller's PATH first).
 inst() {
     > "$SCTL_LOG"
-    tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" \
+    # SPIRA_MAIL undeclared resolves to the complete fixture's own
+    # /fixture/home/spira/run/mail — units-install now calls `mail ensure concierge` on every
+    # run (sp-xp0u2) and that mkdir fails "Permission denied" under the fixture's unwritable
+    # tree, so the whole install refuses before it ever gets to systemctl.
+    tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_MAIL="$TMP/mail" \
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" \
         SPIRA_REPO_MAP=/nonexistent SPIRA_WATCHERS="${SPIRA_WATCHERS:-}"
     SCTL_LOG="$SCTL_LOG" \
