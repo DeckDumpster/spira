@@ -67,6 +67,9 @@ impl Fx {
                 ("SPIRA_RUN", &p.join("run").display().to_string()),
                 ("SPIRA_DB", &p.join("db").display().to_string()),
                 ("SPIRA_BD", "bd"),
+                // An empty repo-map, DECLARED (the environment's copy is never read): no row
+                // names this fixture repo, so landref falls to its own current branch.
+                ("SPIRA_REPO_MAP", &p.join("repo-map.txt").display().to_string()),
             ],
         );
         // `landing_ref`'s own `spira_config::repos::Registry::from_env` call ALSO reads
@@ -94,7 +97,6 @@ impl Fx {
             .env("SPIRA_HOME", &real_home)
             .env("SPIRA_TOML", &toml)
             .env("SPIRA_REPO", p.join("repo"))
-            .env("SPIRA_REPO_MAP", &repo_map)
             .output()
             .unwrap();
         (o.status.code().unwrap(), String::from_utf8_lossy(&o.stdout).into(), String::from_utf8_lossy(&o.stderr).into())

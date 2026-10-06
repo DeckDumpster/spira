@@ -593,27 +593,9 @@ mod tests {
         assert_eq!(got.get("SPIRA_CI_PARK_MAX"), Some(&"5".to_string()));
     }
 
-    #[test]
-    fn repo_registry_reads_live_env_when_boot_never_ran() {
-        // BOOT is a process-global OnceLock that only bootstrap_config() (main() only,
-        // never a test) ever sets, so every test in this binary — this one included —
-        // takes the fallback branch. That fallback must still read a live SPIRA_REPO_MAP
-        // exactly as repo_registry() did before this bead (probes::unsent's own
-        // missing_run_dir_renders_unsent_zero_not_refusal depends on the same thing).
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        assert!(BOOT.get().is_none(), "a prior test in this binary must have called bootstrap_config()");
-        let dir = testkit::TempDir::new("cc-io-repo-registry-fallback");
-        let map = dir.join("repomap");
-        std::fs::write(&map, "x|/some/path\n").unwrap();
-        let saved = std::env::var("SPIRA_REPO_MAP").ok();
-        std::env::set_var("SPIRA_REPO_MAP", &map);
-        let reg = repo_registry();
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        assert!(reg.map_present(), "repo_registry() did not pick up the live SPIRA_REPO_MAP");
-    }
+    // repo_registry_reads_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
+    // source of config): it asserted the registry picks up a SPIRA_REPO_MAP set in the
+    // environment, which is exactly what the registry no longer reads.
     // max_aeons_falls_back_to_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
     // source of config): it asserted that a bare `SPIRA_MAX_AEONS` env override reaches
     // `max_aeons()` without any `SPIRA_TOML` — exactly the behaviour the one-door law
