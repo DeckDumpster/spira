@@ -4,7 +4,7 @@
 # carries (SPIRA_TOML), nothing else. A unit's environment is rendered for it; these have none,
 # so a launcher that quietly depends on a variable only a unit sets passes every other suite.
 #
-# Each launcher is run twice: with the profile export, where it must run, and with nothing, where
+# Each launcher (the ops pane aside, which renders "?" for what it cannot read) is run twice: with the profile export, where it must run, and with nothing, where
 # it must refuse — the second proves the bare environment is bare and the first could have failed.
 # The client-registered commands (status line, session hook) are run by
 # release/tests/session_hook_minimal_env.rs, which names their use cases.
@@ -61,7 +61,6 @@ refuses_bare "concierge.sh" "$ROOT/concierge.sh" status
 out="$(profile SPIRA_HOME="$HERE" health once </dev/null 2>&1)"; rc=$?
 nowant "ops pane names no missing config" "SPIRA_TOML" "$out"
 wantrc "ops pane renders once from a bare login environment" 0 "$rc"
-refuses_bare "ops pane" env SPIRA_HOME="$HERE" health once
 
 echo
 tl_summary

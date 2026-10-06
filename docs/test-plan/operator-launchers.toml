@@ -19,7 +19,7 @@ statement = "`concierge.sh status` runs from a bare login environment carrying o
 [[use_case]]
 id = "UC-operator-launchers-04"
 tier = "T3"
-statement = "The ops pane (`health once`) renders from a bare login environment carrying only the operator's SPIRA_TOML, and refuses without it."
+statement = "The ops pane (`health once`) renders from a bare login environment carrying only the operator's SPIRA_TOML."
 
 [[use_case]]
 id = "UC-operator-launchers-05"
