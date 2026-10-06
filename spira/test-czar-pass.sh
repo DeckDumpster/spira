@@ -643,7 +643,11 @@ FEOF27A
 chmod +x "$STUB_FORGE"
 tl_config SPIRA_CZAR_STAGE_CI_STALLED=act
 timeout 30 "$CZAR" --pass >/dev/null 2>&1
-_ref_a="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
+# Stale testrepo/baseredrepo/etc. batches from earlier sections (SPIRA_RUN is never wiped)
+# re-fire their own deadlock/base-red incidents on every pass too, so a bare
+# `grep -o 'ref=...' | tail -1` can pick up the LAST unrelated incident instead of this
+# section's ci-stalled one — filter to this cause before taking the ref.
+_ref_a="$(grep 'cause=ci-stalled' "$INC_LOG" 2>/dev/null | grep -o 'ref=[^ ]*' | tail -1)"
 
 rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
 _qs2=$(( $(date +%s) - 5000 ))
@@ -658,9 +662,7 @@ FEOF27B
 chmod +x "$STUB_FORGE"
 tl_config SPIRA_CZAR_STAGE_CI_STALLED=act
 timeout 30 "$CZAR" --pass >/dev/null 2>&1
-_ref_b="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
-echo "DEBUG INC_LOG: [$(cat "$INC_LOG" 2>/dev/null)]" >&2
-echo "DEBUG ref_a=[$_ref_a] ref_b=[$_ref_b]" >&2
+_ref_b="$(grep 'cause=ci-stalled' "$INC_LOG" 2>/dev/null | grep -o 'ref=[^ ]*' | tail -1)"
 is "ci-stalled: dedupe ref stable across passes with different queued durations" \
     "$_ref_a" "$_ref_b"
 want "ci-stalled ref names the repo" "refstable" "$_ref_a"
