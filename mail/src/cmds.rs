@@ -63,7 +63,10 @@ pub const ESCALATION_CLASSES: [&str; 3] = ["permissions", "policy", "destructive
 /// Why an aeon's decision ask for the operator does not qualify, or None if it does.
 /// A class is supported only when declared, one of `ESCALATION_CLASSES`, and argued in a
 /// non-empty `## Class basis` section (law-escalate-decisions-not-problems).
-pub fn class_refusal(class: &str, body: &str) -> Option<String> {
+pub fn class_refusal(class: &str, default: &str, body: &str) -> Option<String> {
+    if default.trim().is_empty() {
+        return Some("no --default stated".to_string());
+    }
     if class.is_empty() {
         return Some("no --class declared".to_string());
     }
@@ -101,9 +104,9 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     let mut body = body;
     let mut rerouted = false;
     if mailbox == "operator" && (args.kind == "question" || args.kind == "decision") {
-        if let Some(why) = class_refusal(args.class, &body) {
+        if let Some(why) = class_refusal(args.class, args.default, &body) {
             eprintln!(
-                "mail: routed to the concierge, not the operator — {why}. Only permissions, policy and destructive-on-production-data asks go to the operator (--class); everything else is the concierge's judgement."
+                "mail: routed to the concierge, not the operator — {why}. Only permissions, policy and destructive-on-production-data asks go to the operator (--class); everything else is the concierge's judgement, and carries no ask label. Exit: state the question, --default, --class and a '## Class basis' section."
             );
             body = format!("(Routed here from an operator ask: {why}.)\n\n{body}");
             mailbox = "concierge".to_string();
@@ -475,16 +478,21 @@ mod class_tests {
     #[test]
     fn a_declared_supported_class_qualifies() {
         for c in ["permissions", "policy", "destructive"] {
-            assert_eq!(class_refusal(c, BASIS), None);
+            assert_eq!(class_refusal(c, "take the safe path", BASIS), None);
         }
     }
 
     #[test]
     fn no_class_an_architecture_class_or_no_basis_is_refused() {
-        assert!(class_refusal("", BASIS).is_some());
-        assert!(class_refusal("architecture", BASIS).is_some());
-        assert!(class_refusal("policy", "## Question\nq\n").is_some());
-        assert!(class_refusal("policy", "## Class basis\n\n").is_some());
+        assert!(class_refusal("", "d", BASIS).is_some());
+        assert!(class_refusal("architecture", "d", BASIS).is_some());
+        assert!(class_refusal("policy", "d", "## Question\nq\n").is_some());
+        assert!(class_refusal("policy", "d", "## Class basis\n\n").is_some());
+    }
+
+    #[test]
+    fn a_missing_default_is_refused_whatever_the_class() {
+        assert!(class_refusal("policy", "  ", BASIS).is_some());
     }
 }
 
@@ -529,6 +537,7 @@ mod sweep_tests {
 mod probe_tests {
     use super::*;
     use crate::bead::fake::FakeBd;
+    use crate::bead::BdOut;
 
     fn env(root: &Path) -> Env {
         Env {
@@ -604,5 +613,35 @@ mod probe_tests {
         let out = send(&FakeBd::new(vec![]), &env(t.path()), &args("Close sp-abcd1?", false), "body".into()).unwrap();
         assert!(out.delivered_path.exists());
         assert_eq!(mailbox_entries(t.path()), 1);
+    }
+
+    fn send_ask(root: &Path, bd: &FakeBd, default: &str, class: &str, body: &str) -> SendOutcome {
+        for d in ["mail/operator/new", "mail/concierge/new", "run"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default, class, bead: "", urgent: false, digest: false, dry_run: false };
+        let mut e = env(root);
+        e.db = "db".into();
+        e.bd_bin = "bd".into();
+        send(bd, &e, &args, body.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_machine_alarm_with_no_class_carries_no_ask_label_and_reaches_the_concierge() {
+        let t = testkit::TempDir::new("mail-ask-alarm");
+        let bd = FakeBd::new(vec![]);
+        let out = send_ask(t.path(), &bd, "mute it", "", "## Question\nrecurred 5 times\n");
+        assert!(bd.calls().is_empty(), "no tracking bead, so no ask label: {:?}", bd.calls());
+        assert!(out.delivered_path.to_string_lossy().contains("/concierge/"), "{:?}", out.delivered_path);
+    }
+
+    #[test]
+    fn a_proper_decision_ask_still_carries_the_ask_label() {
+        let t = testkit::TempDir::new("mail-ask-proper");
+        let bd = FakeBd::new(vec![BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        let out = send_ask(t.path(), &bd, "grant it", "permissions", "## Question\nq\n\n## Class basis\nneeds a credential\n");
+        let calls = bd.calls();
+        assert!(calls[0].0.iter().any(|a| a.starts_with("needs-x")), "{calls:?}");
+        assert!(out.delivered_path.to_string_lossy().contains("/operator/"), "{:?}", out.delivered_path);
     }
 }
