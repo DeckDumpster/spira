@@ -45,7 +45,7 @@ echo "test-uninstall.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # round 4 fix (pattern 7): SPIRA_WORKSPACES is a registered key; undeclared, a non-prod
 # SPIRA_INSTANCE (this suite uses "test") gets confined to the complete fixture's
-# placeholder /fixture/home/spira, and every path under $TMP (SPIRA_RUN included) is
+# placeholder /fixture/userhome/spira, and every path under $TMP (SPIRA_RUN included) is
 # outside it — units-install refuses with a containment violation. Declare this suite's
 # own workspaces root wide enough to cover everything under $TMP.
 tl_config SPIRA_WORKSPACES="$TMP"
@@ -80,7 +80,7 @@ printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 printf '# empty\n' > "$FIXTURE/spira/watchers"
 # round 3 fix (pattern 7): SPIRA_WATCHERS is a registered key; undeclared, units-install
 # resolves it to the complete fixture's placeholder
-# /fixture/home/spira/spira-releases/current/spira/watchers, which does not exist.
+# /fixture/userhome/spira/spira-releases/current/spira/watchers, which does not exist.
 tl_config SPIRA_WATCHERS="$FIXTURE/spira/watchers"
 
 # NO STUB FOR `release` (sp-7jr34). owned.sh's session-hook status and uninstall.sh's own

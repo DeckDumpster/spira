@@ -188,7 +188,7 @@ BASE_ENV=(
 # source of config, per Ryan 2026-10-05), persisting for every later section too (sections
 # 4-8 want the same unmuted behaviour).
 # SPIRA_MAIL_KINDS="$HERE/mail/kinds": the complete fixture's default names a release-shaped
-# path ("/fixture/home/.../spira-releases/current/spira/mail/kinds") that conf.sh no longer
+# path ("/fixture/userhome/.../spira-releases/current/spira/mail/kinds") that conf.sh no longer
 # derives from SPIRA_HOME; watchd's escalation sends "--kind question", and `mail send`
 # refuses any kind it cannot find a <kind>.md file for in SPIRA_MAIL_KINDS. Declare this
 # suite's own real checkout, the same pattern test-mail-aeon.sh uses for SPIRA_CHAMBER.

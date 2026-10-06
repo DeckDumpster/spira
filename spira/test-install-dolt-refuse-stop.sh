@@ -145,7 +145,7 @@ for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "
 : > "$LOG"
 # SPIRA_MAIL_READERS="": this suite is about dolt-beads.service's restart dispatch, not
 # mail — the fixture's declared reader points units-install's own ensure_reader_mailboxes()
-# at a shared "/fixture/home/.../mail" tree this suite's sandboxed SPIRA_RUN never touches,
+# at a shared "/fixture/userhome/.../mail" tree this suite's sandboxed SPIRA_RUN never touches,
 # which has intermittently refused mkdir with EACCES under concurrent runs (same fix as
 # test-install-unit-prune.sh); declaring no readers means install never calls `mail ensure`.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \

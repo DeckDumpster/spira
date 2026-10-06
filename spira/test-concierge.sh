@@ -94,7 +94,7 @@ brief_fx() { # brief_fx [persona] -> compose the brief for a fixture persona
     # declare via tl_config, not the env prefix below, which no process reads it from any more.
     # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME either.
     # SPIRA_RUN is the same story (pattern 2): it no longer derives from SPIRA_HOME=$FX —
-    # it is a flat declared value in the complete fixture (/fixture/home/spira/run), a path
+    # it is a flat declared value in the complete fixture (/fixture/userhome/spira/run), a path
     # this suite's own fixture tree neither owns nor can write to. concierge.sh writes the
     # rendered brief at $SPIRA_RUN/concierge-brief.md with no fallback, so give it this
     # suite's own run dir.
@@ -307,7 +307,7 @@ else
     # suite's own override layer (this toml is base:$MT_TOML, not base:$_TL_CONF_OVERRIDE)
     # also drops the top-of-suite SPIRA_CLIENT_SETTINGS override, so without this `start`'s
     # session-hook install falls through to the complete fixture's own literal
-    # /fixture/home/.claude/settings.json and refuses (permission denied) instead of
+    # /fixture/userhome/.claude/settings.json and refuses (permission denied) instead of
     # writing under this case's own $MT_TMP.
     # chamber = "$MT_TMP/chamber", not chamber-empty: spira-config's chamber_dir() (the
     # fayth_get/persona_model path) now prefers the cfg()-resolved SPIRA_CHAMBER over

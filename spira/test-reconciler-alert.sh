@@ -58,7 +58,7 @@ SPIRA_DB="$T/db"; tl_config SPIRA_DB="$SPIRA_DB"        # never the operator's r
 # below silently refuses instead of reaching the operator.
 tl_config SPIRA_ASK_LABEL="needs-operator"
 # SPIRA_MAIL/SPIRA_MAIL_KINDS/SPIRA_MAIL_INDEX/SPIRA_MAIL_MUTE: all four now declared by the
-# fixture (a fictional /fixture/home/... tree, mail_mute=true) instead of deriving from
+# fixture (a fictional /fixture/userhome/... tree, mail_mute=true) instead of deriving from
 # SPIRA_RUN/SPIRA_HOME — left alone, `mail send` tries to create its mailbox under that
 # unwritable fixture path (permission denied) or refuses on an unknown kind, and even once
 # those are fixed, a muted send lands straight in cur/ as already-seen, so every

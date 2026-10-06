@@ -274,7 +274,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 
 AEON_HOME="$TMP/aeonhome"; mkdir -p "$AEON_HOME/chamber"
 # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
-# fixture declares its own /fixture/home/.../chamber. Declare this suite's real one.
+# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
 tl_config SPIRA_CHAMBER="$AEON_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$AEON_HOME/"

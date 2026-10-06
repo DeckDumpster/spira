@@ -89,7 +89,7 @@ done
 # non-empty string too, set here while it is still the server's fresh empty default, and
 # used by every root_sql call from this point on.
 ROOT_PW="adminpw-not-real"
-"$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls \
+timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls \
     sql -q "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOT_PW'" >/dev/null 2>&1 \
     || bail "could not set the throwaway server's root password"
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "$ROOT_PW" --no-tls "$@"; }

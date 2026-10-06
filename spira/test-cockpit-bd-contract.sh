@@ -44,7 +44,7 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
-    # SPIRA_CHAMBER: the complete fixture declares a /fixture/home path that does not exist
+    # SPIRA_CHAMBER: the complete fixture declares a /fixture/userhome path that does not exist
     # here, which now wins over chamber_dir's own home-derived fallback (spira-config's
     # chamber.rs resolves it from the one source, never a derived default) — fayth_get then
     # finds no builder.fayth there and silently returns "" for FAYTH_LABELS, so the SP_READY
@@ -167,7 +167,7 @@ JSONL
     # store.rs::Cfg::load reads COCKPIT_DB, never SPIRA_DB directly — conf.d's own
     # `: "${COCKPIT_DB:=$SPIRA_DB}"` default only fires when the toml leaves cockpit_db
     # undeclared, and the complete fixture declares it explicitly
-    # ("/fixture/home/spira/db", nonexistent here), so it wins over the derivation and the
+    # ("/fixture/userhome/spira/db", nonexistent here), so it wins over the derivation and the
     # panel queried an empty database. Declare cockpit_db itself (one source of config, per
     # Ryan 2026-10-05).
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH" COCKPIT_DB="$SPIRA_DB"

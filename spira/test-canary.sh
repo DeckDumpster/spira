@@ -40,7 +40,7 @@ tl_subshell_safe
 
 # `release`'s own Config::from_env resolves SPIRA_LC_PASSWORD_FILE via cfg() ambiently —
 # the complete fixture declares a path that does not exist on disk
-# (/fixture/home/.config/spira/spira-lc.credential), which `release stage up`'s own
+# (/fixture/userhome/.config/spira/spira-lc.credential), which `release stage up`'s own
 # root schema-apply step then tries to read and fails. This suite never declared its own
 # (sfail round 3, pattern 7); stage's throwaway dolt server takes no password, so empty.
 tl_config SPIRA_LC_PASSWORD_FILE=""

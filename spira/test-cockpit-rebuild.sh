@@ -39,7 +39,7 @@ TM="$(mktemp -d)"
 export TMUX_TMPDIR="$T"
 
 # SPIRA_RUN: this suite never declared it, so rebuild/layout resolved the complete
-# fixture's own default ("/fixture/home/spira/run", not writable here) instead of a real
+# fixture's own default ("/fixture/userhome/spira/run", not writable here) instead of a real
 # directory (sfail round 3, pattern 7).
 RUNDIR="$T/run"; mkdir -p "$RUNDIR"
 tl_config SPIRA_RUN="$RUNDIR"

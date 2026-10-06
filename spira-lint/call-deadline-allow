@@ -39,7 +39,6 @@
 4 groomer/src/seam.rs
 1 groomer/src/sweep.rs
 1 groomer/src/unpoison.rs
-1 inbox-triage/src/main.rs
 3 incident/src/main.rs
 1 incident/src/real.rs
 28 install/src/bin/install.rs
@@ -146,7 +145,7 @@
 4 spira/test-aeon-gate-close-silent.sh
 4 spira/test-aeon-gate-unfinished-attempts.sh
 6 spira/test-aeon-lifecycle-cutover.sh
-12 spira/test-aeon-prod-dirty.sh
+10 spira/test-aeon-prod-dirty.sh
 6 spira/test-aeon-prompt-layers.sh
 5 spira/test-aeon-resume-collision.sh
 6 spira/test-aeon-resume.sh
@@ -154,7 +153,7 @@
 7 spira/test-aeon-sweep.sh
 2 spira/test-aeon-teardown-e2e.sh
 2 spira/test-aeon-wiki-concurrent.sh
-9 spira/test-aeon-wiki-dirty.sh
+7 spira/test-aeon-wiki-dirty.sh
 4 spira/test-aeon-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
 3 spira/test-aeon-world-stop.sh
@@ -202,7 +201,6 @@
 2 spira/test-gate-verdict.sh
 4 spira/test-gh-issue-closeout.sh
 1 spira/test-gh-run-gate.sh
-5 spira/test-groom-escalation-check.sh
 4 spira/test-groomer-incident-reroute.sh
 9 spira/test-groomer-split-piece.sh
 9 spira/test-groomer-state.sh
@@ -222,7 +220,7 @@
 3 spira/test-landing-cutover-round.sh
 2 spira/test-landing-pass-map.sh
 3 spira/test-landing-queue-early.sh
-4 spira/test-landing-race.sh
+3 spira/test-landing-race.sh
 10 spira/test-landing-rebase.sh
 8 spira/test-landing.sh
 3 spira/test-law-synth.sh
@@ -239,7 +237,7 @@
 3 spira/test-mail-aeon.sh
 4 spira/test-mail-dismiss-sweep.sh
 3 spira/test-mail-sh-compat.sh
-6 spira/test-ops-closing.sh
+5 spira/test-ops-closing.sh
 1 spira/test-overrides.sh
 3 spira/test-persona-model.sh
 3 spira/test-pilgrimage.sh

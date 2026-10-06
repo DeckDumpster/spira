@@ -22,7 +22,7 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 # round 6: mail/src/env.rs's OWN header comment says so explicitly ("every REGISTERED key
 # comes from the config file... never the environment"), contradicting earlier rounds' belief
 # that mail read these raw. Without this, mail_root resolved to the complete fixture's
-# bogus "/fixture/home/spira/run/mail" default, and every done/read/sendmail call below
+# bogus "/fixture/userhome/spira/run/mail" default, and every done/read/sendmail call below
 # operated on a directory this suite never touched (silent "no such mailbox"/permission
 # errors, since that path may partially exist with the wrong ownership in the container).
 export SPIRA_MAIL="$TMP/mail"

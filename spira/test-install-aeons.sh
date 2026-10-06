@@ -136,7 +136,7 @@ chmod +x "$MOCK_BIN/spira-supervise"
 # ---------------------------------------------------------------------------
 inst() {
     > "$MOCK_LOG"
-    # SPIRA_MAIL: the fixture's own default (/fixture/home/...) isn't writable here —
+    # SPIRA_MAIL: the fixture's own default (/fixture/userhome/...) isn't writable here —
     # units-install's normal (non --render) path now ensures every reader mailbox before
     # the aeon guard even runs (sp-xp0u2), so a non-writable mail root turned every
     # scenario's output into a "mail: ensure: Permission denied" message instead of this

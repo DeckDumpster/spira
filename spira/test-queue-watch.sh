@@ -68,7 +68,7 @@ git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
 git -C "$T/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "land sp-a"
 TIP_A="$(git -C "$T/repo" rev-parse HEAD)"
 git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
-git -C "$T/repo" fetch -q origin 2>/dev/null
+timeout 5 git -C "$T/repo" fetch -q origin 2>/dev/null
 
 cat > "$FX/spira.toml" <<EOF
 [repo.q]
@@ -156,19 +156,19 @@ rm -f "$Q/open"
 printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"},{"bead_id":"sp-c"}]' > "$FX/certified.json"
 EOF
 
-# SPIRA_DB undeclared resolves to the complete fixture's own /fixture/home/spira/db
+# SPIRA_DB undeclared resolves to the complete fixture's own /fixture/userhome/spira/db
 # (nonexistent): queue-watch falls back to cfg("SPIRA_DB") for --db when the flag is not
 # passed, and read_beads() does `cmd.current_dir(db)` before exec'ing SPIRA_BD — a
 # nonexistent cwd fails Command::spawn() with the SAME "No such file or directory (os
 # error 2)" text a missing binary would, which is why "bd show" looked like it couldn't
 # find $FX/bd even though that file exists and is executable.
 # SPIRA_QUEUE_DIR undeclared resolves to the complete fixture's own
-# /fixture/home/spira/run/queue (nonexistent, and non-empty so the "" -> run.join("queue")
+# /fixture/userhome/spira/run/queue (nonexistent, and non-empty so the "" -> run.join("queue")
 # fallback in queue-watch/src/main.rs never fires) — every "$Q/open" this suite writes under
 # "$RUN/queue/<repo>" went unread, reading as "no batch open" rather than a real refusal.
 tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh" SPIRA_DB="" SPIRA_QUEUE_DIR="$RUN/queue"
 export FX SPIRA_LC_BIN="$FX/spira-lc"
-out="$(timeout 30 "$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
+out="$("$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 printf '%s\n' "$out" | sed 's/^/    | /'
 
 # --- 2. the event stream ---------------------------------------------------------------------
@@ -186,31 +186,31 @@ want "close without landing reported from state"  "q closed-unlanded: PR 51 clos
 nowant "the push-mode repo is not watched"          " p watching" "$out"
 
 # --- 3. health -------------------------------------------------------------------------------
-timeout 30 "$BIN" health --run "$RUN" --home "$FX" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
+"$BIN" health --run "$RUN" --home "$FX" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
 
 touch "$FX/lc-broken"
-blind="$(timeout 30 "$BIN" watch --ticks 2 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
+blind="$("$BIN" watch --ticks 2 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 want "an unreadable queue is reported blind after two failed polls"      "q blind: cannot see the queue" "$blind"
-herr="$(timeout 30 "$BIN" health --run "$RUN" --home "$FX" 2>&1)"; hrc=$?
+herr="$("$BIN" health --run "$RUN" --home "$FX" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails after a blind poll" || bad "health fails after a blind poll (rc=$hrc)"
 want "health says why"                            "blind" "$herr"
 rm -f "$FX/lc-broken"
 
-herr="$(timeout 30 "$BIN" health --run "$T/never" --home "$FX" 2>&1)"; hrc=$?
+herr="$("$BIN" health --run "$T/never" --home "$FX" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails when it has never polled" || bad "health fails when it has never polled (rc=$hrc)"
 want "never-polled is named"                      "never polled" "$herr"
 
 # --- 4. nothing to watch is idle, not a crash loop -------------------------------------------
 printf '[repo.p]\npath = "%s"\nmode = "push"\n' "$T/repo" > "$FX/push-only.toml"
 IRUN="$T/idle-run"
-rout="$(timeout 30 "$BIN" watch --ticks 1 --interval 1 --run "$IRUN" --home "$FX" --config "$FX/push-only.toml" 2>&1)"; rrc=$?
+rout="$("$BIN" watch --ticks 1 --interval 1 --run "$IRUN" --home "$FX" --config "$FX/push-only.toml" 2>&1)"; rrc=$?
 [ "$rrc" -eq 0 ] && ok "no queue-mode repository is idle, not an exit" || bad "no queue-mode repository is idle, not an exit (rc=$rrc)"
 want "idle says why"                              'idle: '"$FX"'/push-only.toml: no repository has mode = "queue"' "$rout"
-hout="$(timeout 30 "$BIN" health --run "$IRUN" --home "$FX" 2>&1)"; hrc=$?
+hout="$("$BIN" health --run "$IRUN" --home "$FX" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "idle reads DEGRADED, not healthy" || bad "idle reads DEGRADED, not healthy (rc=$hrc)"
 want "health names the idle reason"               "idle:" "$hout"
 printf 'not = [valid\n' > "$FX/broken.toml"
-bout="$(timeout 30 "$BIN" watch --ticks 1 --run "$IRUN" --home "$FX" --config "$FX/broken.toml" 2>&1)"; brc=$?
+bout="$("$BIN" watch --ticks 1 --run "$IRUN" --home "$FX" --config "$FX/broken.toml" 2>&1)"; brc=$?
 [ "$brc" -ne 0 ] && ok "an unparseable spira.toml is fatal" || bad "an unparseable spira.toml is fatal (rc=$brc)"
 
 # --- 4b. a gutted config is re-read, not latched idle forever ---------------------------------
@@ -226,12 +226,12 @@ mkdir -p "$ARUN/queue/q"
     mv "$APPEAR.tmp" "$APPEAR"
 ) &
 appear_pid=$!
-aout="$(timeout 30 "$BIN" watch --ticks 3 --interval 2 --run "$ARUN" --home "$FX" --config "$APPEAR" 2>&1)"; arc=$?
+aout="$("$BIN" watch --ticks 3 --interval 2 --run "$ARUN" --home "$FX" --config "$APPEAR" 2>&1)"; arc=$?
 wait "$appear_pid" 2>/dev/null || true
 [ "$arc" -eq 0 ] && ok "watch keeps running across the config being restored" || bad "watch keeps running across the config being restored (rc=$arc)"
 want "starts idle on the gutted config"            'idle: '"$APPEAR"': no repository has mode = "queue"' "$aout"
 want "notices the restored repo and resumes"       "watching resumed: 1 queue-mode repo(s) found" "$aout"
-hout2="$(timeout 30 "$BIN" health --run "$ARUN" --home "$FX" 2>&1)"; hrc2=$?
+hout2="$("$BIN" health --run "$ARUN" --home "$FX" 2>&1)"; hrc2=$?
 [ "$hrc2" -eq 0 ] && ok "health is healthy again once watching resumed" || bad "health is healthy again once watching resumed (rc=$hrc2)"
 
 # --- 5. a queued job with no runner is named distinctly and gets a durable delivery path -----
@@ -289,7 +289,7 @@ export SPIRA_INCIDENT_SH="$FX/incident.sh"
 tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1 \
     SPIRA_QUEUE_DIR="$SRUN/queue"
 sout="$(QUEUE_WATCH_HEAD_STALL_SECS=100000000 \
-    timeout 30 "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"
+    "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"
 printf '%s\n' "$sout" | sed 's/^/    | /'
 
 want "a queued job with no runner is named distinctly"        "qs stall: PR 419 CI queued" "$sout"

@@ -133,7 +133,7 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
-# fixture declares its own /fixture/home/.../chamber. Declare this suite's real one.
+# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
 tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
 # builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset

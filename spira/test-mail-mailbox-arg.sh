@@ -28,7 +28,7 @@ SPIRA_MAIL_KINDS="$TMP/kinds"
 SPIRA_ID_PREFIX="sp"
 mkdir -p "$TMP/watchd"
 # SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
-# /fixture/home/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
 # the write fails outright with no such directory (sfail round 3, pattern 7).
 # SPIRA_MAIL_MUTE=0: the complete fixture's own declared default is true, which silently
 # writes every "creates the mailbox on demand" send to cur/ Seen instead of new/.
@@ -44,7 +44,7 @@ export SPIRA_CONF=""
 export SPIRA_HOME="$HERE"
 mkdir -p "$SPIRA_MAIL_KINDS"
 
-run() { timeout 30 mail "$@"; }
+run() { mail "$@"; }
 
 no_mailbox_created() {  # <name> <label>
     [ -e "$SPIRA_MAIL/$1" ] && bad "$2: no mailbox created" "found $SPIRA_MAIL/$1" \

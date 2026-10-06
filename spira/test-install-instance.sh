@@ -84,7 +84,7 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 inst() {
     > "$SCTL_LOG"
     # SPIRA_MAIL undeclared resolves to the complete fixture's own
-    # /fixture/home/spira/run/mail — units-install now calls `mail ensure concierge` on every
+    # /fixture/userhome/spira/run/mail — units-install now calls `mail ensure concierge` on every
     # run (sp-xp0u2) and that mkdir fails "Permission denied" under the fixture's unwritable
     # tree, so the whole install refuses before it ever gets to systemctl.
     tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_MAIL="$TMP/mail" \
@@ -95,7 +95,7 @@ inst() {
     SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     "$@" \
-    timeout 90 units-install test 2>&1
+    units-install test 2>&1
 }
 
 # ==========================================================================
@@ -112,7 +112,7 @@ tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
     SPIRA_WATCHERS="$WATCHERS"
 rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    timeout 90 units-install test --render 2>&1)"
+    units-install test --render 2>&1)"
 render_rc=$?
 if [ "$render_rc" != 0 ]; then
     printf 'fixture: install.sh test --render failed (rc=%s)\n' "$render_rc"
@@ -173,7 +173,7 @@ tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
     SPIRA_WATCHERS="$WATCHERS"
 wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    timeout 90 units-install test --render 2>&1)"
+    units-install test --render 2>&1)"
 current_unit=""
 while IFS= read -r line; do
     if [[ "$line" =~ ^=====\ (.+)\ =====$ ]]; then

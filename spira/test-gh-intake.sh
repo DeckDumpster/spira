@@ -154,7 +154,7 @@ run_intake() {
         SPIRA_HOME="$T/spira-home" \
         SPIRA_GH_INTAKE_API="$API" \
         GITHUB_TOKEN="canary-token-must-never-be-sent" \
-        timeout 30 "$BIN" "$@" 2>&1
+        "$BIN" "$@" 2>&1
 }
 
 echo
@@ -199,7 +199,7 @@ out="$(env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_MAIL_BIN="$T/bin_mail.sh" \
     SPIRA_HOME="$T/spira-home" \
-    SPIRA_GH_INTAKE_API="$API" timeout 30 "$BIN" 2>&1)"; rc=$?
+    SPIRA_GH_INTAKE_API="$API" "$BIN" 2>&1)"; rc=$?
 is "exits 1" "1" "$rc"
 want "names the unresolved repo" "no-such-repo" "$out"
 

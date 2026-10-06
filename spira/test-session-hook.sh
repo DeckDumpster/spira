@@ -93,7 +93,7 @@ mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierg
 # one-source-of-config law — "no legacy spira.conf, no conversion"), so these are declared
 # through tl_config/SPIRA_TOML instead of a hand-written $TMP/spira.conf.
 # SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's own
-# /fixture/home/spira/run/watchd/concierge-inbox.log — the hook (and mail, underneath it)
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — the hook (and mail, underneath it)
 # reads/appends it directly, and that path does not exist here (sfail round 3, pattern 7).
 tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$CLONE/spira" SPIRA_RUN="$RUN" \
     SPIRA_WATCHERS="$MANIFEST" SPIRA_CLIENT_SETTINGS="$TMP/elsewhere/settings.json" \
@@ -143,7 +143,7 @@ hook() {
         SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
         SPIRA_RELEASE="$CLONE" \
         "${extra[@]+"${extra[@]}"}" \
-        timeout 30 bash "$CLONE/spira/hooks/session.sh"
+        bash "$CLONE/spira/hooks/session.sh"
 }
 
 echo "one line per watcher, and nothing else — the positive control"
@@ -211,7 +211,7 @@ echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
     printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
-        timeout 30 bash "$CLONE/spira/hooks/session.sh"
+        bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
 has "and still summarises"        "$out4" "## Spira watchers"

@@ -275,7 +275,7 @@ make_bd_stub ok
 # SPIRA_PATH/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_RUN/SPIRA_PROD/
 # SPIRA_COCKPIT/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
-# SPIRA_MAIL: the fixture's own default (/fixture/home/...) isn't writable here — install's
+# SPIRA_MAIL: the fixture's own default (/fixture/userhome/...) isn't writable here — install's
 # units phase ensures every reader mailbox (sp-xp0u2), and a non-writable mail root turns
 # that into "mail: ensure: Permission denied" instead of this suite's own readiness/retry
 # output (one source of config, per Ryan 2026-10-05).

@@ -59,7 +59,7 @@ export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$TMP/kinds"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 # round 5 fix (pattern 7): SPIRA_RUN was never declared — mail's repeat-guard state file
-# resolved to the complete fixture's placeholder /fixture/home/spira/run, which this
+# resolved to the complete fixture's placeholder /fixture/userhome/spira/run, which this
 # process cannot create ("blocked"/"superseded-by" are the first cases to need it).
 # SPIRA_MAIL_MUTE: the complete fixture declares it true (pattern 2); muted delivery lands
 # in cur/<id>:2,S pre-marked read (mail/src/maildir.rs mail_deliver), not new/ — this suite's
@@ -120,7 +120,7 @@ export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 # round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
-# resolves to the complete fixture's placeholder /fixture/home/.../spira-lc.credential,
+# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
 # which does not exist. Declare this suite's own (empty-password) credential file.
 : > "$TMP/lc-credential"
 tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential"

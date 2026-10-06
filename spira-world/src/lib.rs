@@ -168,7 +168,7 @@ mod tests {
         }
         let got = got.unwrap();
         assert_ne!(got, PathBuf::from("/tmp/spira"));
-        assert_eq!(got, PathBuf::from("/fixture/home/spira/run"), "the complete fixture's own declared spira.run");
+        assert_eq!(got, PathBuf::from("/fixture/userhome/spira/run"), "the complete fixture's own declared spira.run");
     }
 
     #[test]

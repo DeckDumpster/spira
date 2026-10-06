@@ -61,7 +61,7 @@ RUN="$TMP/run"
 REPO_MAP="$TMP/repo-map"
 : > "$REPO_MAP"
 # SPIRA_MAIL AND SPIRA_MAIL_KINDS TOO: the complete fixture's own defaults are fixed,
-# unwritable "/fixture/home/..." paths now (one source of config, never derived from
+# unwritable "/fixture/userhome/..." paths now (one source of config, never derived from
 # SPIRA_RUN at runtime) — SPIRA_MAIL because the tick3 assertions below read mail straight
 # out of "$RUN/mail/concierge/", and SPIRA_MAIL_KINDS because "mail send --kind event"
 # lints the kind against a real file in that directory (this checkout's own mail/kinds/,
@@ -72,7 +72,7 @@ export SPIRA_CONF="$CONF" HOME="$TMP/home"
 # An operator-muted host files mail into cur/, where the unread-count checks never look.
 # SPIRA_CONCIERGE_INBOX EXPLICITLY: mail's default reader for the concierge mailbox
 # (inbox-append.sh) resolves this from config, and the complete fixture's own value is a
-# fixed, unwritable "/fixture/home/..." path now.
+# fixed, unwritable "/fixture/userhome/..." path now.
 tl_config SPIRA_MAIL_MUTE=0 SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
 
 # SOURCEABLE, AND SILENT WHEN IT IS (pr-notify.sh's own guard): this reaches _PR_STATUS_PY

@@ -95,12 +95,12 @@ pub const IMAGE_PATH: &str =
 
 /// Writes the container's config file ([`Fixture::config_toml`]): the complete fixture with
 /// the installed release (`…/spira-releases/current`) rewritten to the staged one and
-/// `/fixture/home` to this user's `$HOME`, then the batch's own keys set over it. The
+/// `/fixture/userhome` to this user's `$HOME`, then the batch's own keys set over it. The
 /// container is its own (confined) instance whose workspaces root is the batch run directory,
 /// so the containment check passes on the merits — never named `prod` to skip it
 /// (law-never-disarm-a-check-to-proceed).
 const CONFIGURE_SCRIPT: &str = r#"set -eu
-sed -e "s#/fixture/home/spira/spira-releases/current#$SPIRA_RELEASE#g" -e "s#/fixture/home#$HOME#g" "$CONFIGURE_FIXTURE" > "$CONFIGURE_OUT.tmp"
+sed -e "s#/fixture/userhome/spira/spira-releases/current#$SPIRA_RELEASE#g" -e "s#/fixture/userhome#$HOME#g" "$CONFIGURE_FIXTURE" > "$CONFIGURE_OUT.tmp"
 set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OUT.tmp" >/dev/null; }
 set_key instance "$CONFIGURE_INSTANCE"
 set_key workspaces "$CONFIGURE_RUN"
@@ -467,7 +467,7 @@ impl<'a> Session<'a> {
     }
 
     /// The container's one source of config: the tree's complete fixture with every
-    /// `/fixture/home` path moved under the container user's own home, then this batch's own
+    /// `/fixture/userhome` path moved under the container user's own home, then this batch's own
     /// values declared over it ([`CONFIGURE_SCRIPT`]). Every later step and suite names it
     /// through `SPIRA_TOML` ([`Self::release_env`]); nothing is derived or defaulted.
     pub fn config_toml(&self) -> String {

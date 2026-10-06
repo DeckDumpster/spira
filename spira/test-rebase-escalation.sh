@@ -58,7 +58,7 @@ tl_config SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail" SPIRA_MAIL_KINDS="$HERE/mail/k
 # $SPIRA_TOML fresh on every invocation and see the override fine, but this suite's own
 # body_of/count_new/reset_mail/needs_ryan_count helpers below read the bash variables
 # $SPIRA_MAIL/$SPIRA_ASK_LABEL directly, which are still conf.sh's stale, pre-override
-# values ("/fixture/home/.../mail", "needs-ryan") — hence reset_mail's
+# values ("/fixture/userhome/.../mail", "needs-ryan") — hence reset_mail's
 # "mkdir: cannot create directory '/fixture': Permission denied" and body_of/count_new
 # always reading an empty, wrong mailbox. Reassign them here so this script's own shell
 # code agrees with what it just told the binaries.

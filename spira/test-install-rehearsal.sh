@@ -181,6 +181,7 @@ echo "stage spira-install (sp-31dm0: systemd/install.sh is retired; it is a comp
 _si="$(command -v spira-install 2>/dev/null || true)"
 [ -n "$_si" ] || bail "spira-install is not on PATH (the tree's build provides it)"
 INSTALL_BIN="/tmp/spira-install"
+# batch-job: copying the staged installer into the rehearsal container and marking it executable
 podman cp "$_si" "$CNAME:$INSTALL_BIN" >&2 && podman exec "$CNAME" chmod 0755 "$INSTALL_BIN" >&2
 iszero "the tree's spira-install is staged in the container" "$?"
 
