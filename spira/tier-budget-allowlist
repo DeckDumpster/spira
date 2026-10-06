@@ -224,7 +224,6 @@ test-incident-delivers-satisfiable.sh	T1	3.0
 test-incident-recur-bounded.sh	T1	98.0
 test-incident.sh	T1	77.0
 test-install-aeons.sh	T1	109.0
-test-install-bd-init-cwd.sh	T1	31.0
 test-install-bootstrap-release.sh	T1	7.5
 test-install-conf-seed.sh	T1	61.0
 test-install-conflicts.sh	T1	9.0
