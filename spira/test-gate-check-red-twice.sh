@@ -83,12 +83,17 @@ run_gate_check() {
     # re-exports every registered key from SPIRA_TOML — overwriting a plain env SPIRA_DB
     # with the complete fixture's bogus default unless it is declared the same way (sfail
     # round 3, pattern 3/7).
+    # SPIRA_CHAMBER is registered too: bead.sh resolves `--for builder`'s persona through
+    # it, and the complete fixture's own non-empty default shadows the real chamber at
+    # $HERE — bead.sh file was refusing "no such persona: builder" silently (gate-check's
+    # file_bead discards bead.sh's own stderr/exit code entirely), round 6.
     tl_config SPIRA_RUN="$TMP/run" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo"
+        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
+        SPIRA_CHAMBER="$HERE/chamber"
     SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         PATH="$TMP/sbin:$PATH" \
         SPIRA_CONF="$TMP/no.conf" \
-        gate-check.sh 2>&1
+        gate-check.sh 2>/dev/null
 }
 
 # --------------------------------------------------------------------------------------
@@ -122,14 +127,6 @@ GHSTUB
 chmod +x "$TMP/sbin/gh"
 
 run_gate_check
-
-# TEMPORARY DIAGNOSTIC (round 6): gate-check's file_bead swallows bead.sh's stderr/rc
-# entirely (Stdio::null() + `let _ = child.wait()`), so a silent repo-guard refusal or
-# any other bead.sh failure never surfaces. Replicate its exact invocation to see it.
-SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" PATH="$TMP/sbin:$PATH" \
-    SPIRA_CONF="$TMP/no.conf" \
-    bead.sh file "DIAG probe" --for builder --repo spira -p 1 --body-file - <<<'diag' \
-    2>&1 | sed 's/^/DIAG: /' >&2
 
 is "two P1 beads are filed"          "2" "$(count_red_twice)"
 is "bead for test-alpha.sh is P1"    "1" "$(priority_of_bead 'suite red on main: test-alpha.sh')"
