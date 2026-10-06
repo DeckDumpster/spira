@@ -430,8 +430,8 @@ is "an aeon session gets nothing, even with SPIRA_CONCIERGE set" "" "$aeon_out"
 
 _wd_out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
     SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
-    watchd status 2>&1)"; _wd_rc=$?
-is "DEBUG watchd status dump" "__DEBUG_MARKER__ rc=$_wd_rc" "$_wd_out"
+    bash -c '. "$1/conf.sh"; watchd status; echo "RC=$?"' _ "$CLONE/spira" 2>&1)"
+is "DEBUG watchd status dump" "__DEBUG_MARKER__" "$_wd_out"
 
 echo
 tl_summary
