@@ -133,6 +133,7 @@ _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 # never `export SPIRA_X=`, which no process reads any more.
 # Layers: the checked-in complete fixture (every key declared) as the base, then this suite's
 # own override file, which holds ONLY what the suite changes.
+_TL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 _TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira-config/tests/fixtures/complete.toml"
 [ -f "$_TL_CONF_BASE" ] || { echo "testlib: no complete fixture at $_TL_CONF_BASE" >&2; exit 1; }
 _TL_CONF_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tl-conf.XXXXXX")"
@@ -142,11 +143,26 @@ export SPIRA_TOML="$_TL_CONF_BASE:$_TL_CONF_OVERRIDE"
 
 # tl_config KEY=value ... — declare config in this suite's override file (SPIRA_FOO -> spira.foo,
 # COCKPIT_FOO -> spira.cockpit_foo). Refuses on a key the schema does not know.
+# A value is given in its shell form and written in the key's registered TYPE: a list as
+# space- or comma-separated words, a bool as 1/0/true/false/yes/no/on/off.
 tl_config() {
-    local kv k v d
+    local kv k v d t w out
     for kv in "$@"; do
         k="${kv%%=*}"; v="${kv#*=}"
         d="spira.$(printf '%s' "${k#SPIRA_}" | tr '[:upper:]' '[:lower:]')"
+        t="$(sed -n 's/^TYPE=//p' "$_TL_HERE/conf.d/$k" 2>/dev/null | head -1)"
+        case "$t" in
+            list)
+                out=""
+                for w in ${v//,/ }; do out="${out:+$out,}\"$w\""; done
+                v="[$out]" ;;
+            bool)
+                case "$v" in
+                    1|true|yes|on) v=true ;;
+                    0|false|no|off|"") v=false ;;
+                    *) echo "tl_config: $k is a bool, not '$v'" >&2; return 1 ;;
+                esac ;;
+        esac
         spira-config set "$d" "$v" "$_TL_CONF_OVERRIDE" >/dev/null \
             || { echo "tl_config: cannot declare $k" >&2; return 1; }
     done
