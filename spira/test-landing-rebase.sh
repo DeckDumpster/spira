@@ -159,6 +159,7 @@ echo
 seed; branch sp-held held.txt; branch sp-lands lands.txt
 withhold_gate sp-held
 out="$(landing)"
+printf 'FULL_OUT_DEBUG:\n%s\nEND_FULL_OUT_DEBUG\n' "$out" >&2; exit 1
 want "the branch whose gate was withheld is not landed" "gate NO_VERDICT on spira/sp-held" "$out"
 want "and the branch behind it lands"                   "landed spira/sp-lands" "$out"
 want "the survivor is rebased onto the new base at once" \
