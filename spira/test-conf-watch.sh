@@ -53,6 +53,11 @@ run_loom() {      # run_loom <window> <marker>
     # through env -i, which clears it. There is no separate SPIRA_CONF env var any more;
     # loom.sh's watched path is $_TL_CONF_OVERRIDE (SPIRA_TOML's last layer).
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
+    # Back-date the override file tl_config just wrote (same trick the old CONF_CHG fixture
+    # used): everything here runs well under 1s, so without this the baseline loom.sh
+    # captures and the later real touch can land in the same integer mtime second and the
+    # change goes unnoticed.
+    touch -d "3 seconds ago" "$_TL_CONF_OVERRIDE"
     timeout "$1" env -i PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_GOAL=sp-test \
@@ -82,9 +87,7 @@ for name in loom; do
     else
         bad "$label: config change — armed before the touch" "marker never appeared within 10s"
     fi
-    echo "DEBUG SPIRA_TOML=$SPIRA_TOML _TL_CONF_OVERRIDE=$_TL_CONF_OVERRIDE exists=$([ -f "$_TL_CONF_OVERRIDE" ] && echo yes || echo no) mtime=$(stat --format='%Y' "$_TL_CONF_OVERRIDE" 2>&1)" >&2
     touch "$_TL_CONF_OVERRIDE"
-    echo "DEBUG after touch mtime=$(stat --format='%Y' "$_TL_CONF_OVERRIDE" 2>&1)" >&2
     ec_chg=0
     wait "$run_pid" || ec_chg=$?
     is "$label: config change — exits 0" "0" "$ec_chg"
