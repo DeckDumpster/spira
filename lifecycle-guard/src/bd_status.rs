@@ -349,6 +349,24 @@ mod tests {
     }
 
     #[test]
+    fn rowless_controls_match_the_design() {
+        let design = include_str!("../DESIGN.md");
+        let section = design.split("### The rowless controls").nth(1).unwrap().split("\n### ").next().unwrap();
+        let named: Vec<(String, String)> = section
+            .lines()
+            .filter_map(|l| l.strip_prefix("- `"))
+            .filter_map(|l| {
+                let (file, rest) = l.split_once("` `")?;
+                Some((file.to_string(), rest.split('`').next()?.to_string()))
+            })
+            .collect();
+        let coded: Vec<(String, String)> =
+            ROWLESS_CONTROLS.iter().map(|(f, n)| (f.to_string(), n.to_string())).collect();
+        assert!(!named.is_empty(), "the design lists the controls");
+        assert_eq!(named, coded, "an exception not named in the design is refused");
+    }
+
+    #[test]
     fn test_files_and_the_machine_are_out_of_scope() {
         assert!(is_test_file("sentinel/src/tests.rs"));
         assert!(is_test_file("spira-claim/src/unpoison_tests.rs"));

@@ -20,11 +20,12 @@ Scope, which is not an allow-list:
 - the `lifecycle` crate is the machine, and spira-lc's `bd_facts.rs` is the one-time
   migration classifier's reader of bd (§4);
 - a bead that is not a work bead (an ask, an alert, an insight, an intake mirror, an epic, a
-  hold bead, the release canary's synthetic bead) has no lifecycle row and its bd status is
-  its whole lifecycle. Those reads go through `spira_config::nonwork`, naming the kind, so the
+  hold bead, the release canary's synthetic bead, an incident bead) has no lifecycle row and its
+  bd status is its whole lifecycle. Those reads go through `spira_config::nonwork`, naming the kind, so the
   call site says which non-work bead it means. Routing a work bead through it is a review
-  finding, not a loophole. Incident beads are work beads (Ops claims them); the incident
-  crate's dedup still reads bd status until sp-jgjvh moves it.
+  finding, not a loophole. An incident bead is a non-work bead: its state lives in bd. A work
+  bead that resolves one may refer to it, and the reference grants the work bead no state of
+  the incident's.
 
 ### The rowless controls
 
@@ -39,9 +40,25 @@ A bead with no lifecycle row has no state except bd's, so the only way to find o
 bd which beads it considers live and look each one up in the machine. Reading bd status there
 audits the machine's coverage of bd. It decides nothing about a bead the machine holds, and
 it is the one place where the answer cannot come from the machine. A third entry is a design
-change argued here, not a configuration. A function with the same name in another file, or a
+change argued here, not a configuration, and `rowless_controls_match_the_design` fails when
+`ROWLESS_CONTROLS` and the list above disagree. A function with the same name in another file, or a
 longer name that starts the same way, is still held to the rule (unit test
 `the_rowless_controls_are_named_exceptions_and_nothing_else_is`).
+
+Each rowless control carries a comment at its definition naming the exception and pointing
+here. A new call site of the same kind states its reason there the same way.
+
+### Clearing a finding
+
+A finding is cleared exactly three ways:
+
+1. move the access to spira-lc (`spira_config::lc_state`);
+2. delete the access;
+3. argue a named exception in the owning crate's design, as the rowless controls are argued
+   above, and name it in the rule's source by file and function.
+
+Never an allow-list file, a suppression comment, or a pattern that exempts by shape. An
+exception that is not named in a design and in `ROWLESS_CONTROLS` is a finding.
 
 ### Gate status
 
