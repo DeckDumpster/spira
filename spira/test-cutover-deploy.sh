@@ -154,10 +154,12 @@ want "it ran the classifier" "classifying the quiesced store" "$out"
 
 out_flag="$(run_deploy --remove-dropin /nonexistent 2>&1)"; wantrc "the retired --remove-dropin flag is refused" 2 $?
 
-echo
-echo "the config step left a freshly created spira.toml with no lifecycle switch in it:"
-[ -f "$TOML" ] || bail "spira.toml was not created"
-nowant "spira.toml carries no lifecycle_enforce key" "lifecycle_enforce" "$(cat "$TOML")"
+# "the config step left a freshly created spira.toml at $CFGHOME" is deleted: that coupling
+# between SPIRA_CONFIG_HOME (the operator's config home, for classify's own --home) and
+# where conf.sh's spira_config_unset actually WRITES is gone under one source of config
+# (per Ryan 2026-10-05) — spira_config_unset always targets $SPIRA_TOML's own last layer
+# (this suite's testlib override file), never $CFGHOME/spira.toml. "it reports the retired
+# switch's removal" above already covers that the step ran.
 
 echo
 echo "the classifier actually ran (its own event log is non-empty, or it had nothing to classify):"
@@ -195,11 +197,16 @@ rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --
     --testdb-port 3308 --snap-stale-s 60 --lc-password-file "$CRED")"
 unit_env="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\)$/\1/p')"
 is "the rendered unit carries the configured credential path" "SPIRA_LC_PASSWORD_FILE=$CRED" "$unit_env"
+# SPIRA_RELEASE=... TOO: a real deployed unit's Environment= block carries it alongside
+# SPIRA_LC_PASSWORD_FILE (systemd/spira-sentinel.service), and it is what lets a process
+# with no explicit SPIRA_TOML locate its config (spira_config::resolve's home search) — one
+# rendered credential line alone no longer resolves anything under one source of config.
+unit_env_all="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\|SPIRA_RELEASE=.*\)$/\1/p')"
 lc_caller() {
     env -i HOME="$HOME" PATH="$PATH" "$@" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
         SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" "$LC_BIN" history sp-manual
 }
-lc_caller "$unit_env" >/dev/null 2>&1
+lc_caller $unit_env_all >/dev/null 2>&1
 wantrc "a caller with only the rendered variable authenticates" 0 $?
 lc_caller >/dev/null 2>&1
 wantrc "positive control: the same call without the variable fails closed" 2 $?
@@ -211,7 +218,7 @@ want "dry run reaches the classify step" "would classify demo" "$dry_out"
 
 echo
 echo "--system-user runs no phase but its own:"
-su_out="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_REPO="$REPO" SPIRA_HOME="$REPO/spira" "$INSTALL_BIN/spira-install" --system-user --dry-run 2>&1)"
+su_out="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$REPO" SPIRA_HOME="$REPO/spira" "$INSTALL_BIN/spira-install" --system-user --dry-run 2>&1)"
 wantrc "spira-install --system-user --dry-run exits 0" 0 $?
 want "it reports the system-user phase" "phase 6.5" "$su_out"
 printf '%s\n' "$su_out" | grep -qE 'phase (0|0\.5|1|1\.5|2|3|4|5|6|7):'; wantrc "no other phase ran" 1 $?

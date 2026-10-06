@@ -97,7 +97,12 @@ T0=1735689600
 UNIT_START=$((T0 + 100))
 NEWER=$((T0 + 200))
 reset_mtimes() {
-    touch -d "@$T0" "$CLONE/spira"/*.sh "$COCKPIT"/* "$OTHER"/watchd "$CONF" "$MAN"
+    # $_TL_CONF_OVERRIDE TOO: testlib.sh's own override file is "the config file in force"
+    # watch-refresh.sh watches (SPIRA_CONF_FILE, passed below) — every tl_config call in
+    # this suite rewrites it in real wall-clock time, so without resetting it here too it
+    # is always newer than $T0/$UNIT_START, and every pass "restarts" it, not just the one
+    # test at line ~265 that means to make it stale.
+    touch -d "@$T0" "$CLONE/spira"/*.sh "$COCKPIT"/* "$OTHER"/watchd "$CONF" "$MAN" "$_TL_CONF_OVERRIDE"
 }
 
 # ---- the stubs -------------------------------------------------------------------------
@@ -202,7 +207,16 @@ fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UN
 # outright instead of being missed.
 runpass() {
     : > "$ACT"
+    # WAS $_TL_CONF_OVERRIDE ALREADY STALE (deliberately, e.g. restarts_on "the config
+    # file in force") before this call? tl_config's own write below always bumps its
+    # mtime to real now — true on every single call, not just that one test — so left
+    # alone it would make every pass see "the config file in force" as newer than the
+    # process and restart on that alone. Undo tl_config's bookkeeping touch only when the
+    # file was not already (deliberately) stale coming in.
+    local _conf_file_was_stale=0
+    [ "$(stat -c %Y "$_TL_CONF_OVERRIDE" 2>/dev/null || echo 0)" -gt "$UNIT_START" ] && _conf_file_was_stale=1
     tl_config SPIRA_WATCHERS="${WR_MAN:-$MAN}"
+    [ "$_conf_file_was_stale" = 0 ] && touch -d "@$T0" "$_TL_CONF_OVERRIDE"
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" SPIRA_HOME="$CLONE/spira" \
         \
         WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" SHIM="$SHIM" \
