@@ -170,9 +170,21 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     let db_s = home.join(".local/share/spira/db").display().to_string();
     let chamber_s = root.join("spira/chamber").display().to_string();
     let overlay_s = home.join("chamber-overlay-unset").display().to_string();
+    // SPIRA_BD has no registry default (resolves empty unless set) — `complete.toml`'s own
+    // fixture placeholder (`/fixture/home/.local/bin/bd`) does not exist on this machine, so
+    // spira-claim's `bd list` call failed with "No such file or directory" until this named
+    // the fixture's own `bd` stub (written to `root/bin/bd` above) explicitly.
+    let bd_s = root.join("bin/bd").display().to_string();
     let toml = spira_config::process::fixture_toml(
         &home,
-        &[("SPIRA_RUN", &run_s), ("SPIRA_DB", &db_s), ("SPIRA_INSTANCE", "prod"), ("SPIRA_CHAMBER", &chamber_s), ("SPIRA_CHAMBER_OVERLAY", &overlay_s)],
+        &[
+            ("SPIRA_RUN", &run_s),
+            ("SPIRA_DB", &db_s),
+            ("SPIRA_INSTANCE", "prod"),
+            ("SPIRA_CHAMBER", &chamber_s),
+            ("SPIRA_CHAMBER_OVERLAY", &overlay_s),
+            ("SPIRA_BD", &bd_s),
+        ],
     );
     Fixture { root, home, systemd_run_log, toml, _dir: t }
 }

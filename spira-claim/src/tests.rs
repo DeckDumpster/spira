@@ -680,7 +680,15 @@ fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
 fn ready_count_cli_real_count() {
     let bd = sh(&format!("echo '{}'", plan_rows(&["a", "b", "c"])));
     let path = fake_lc_path(&lc_ready(&["a", "b", "c"]));
-    let o = run_cfg(&["ready-count", "plan", ""], "", &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", "")], &[("PATH", Some(path.as_str()))]);
+    // `machine_claimable` applies `scope_label` BEFORE the <labels> argument does — the
+    // baseline fixture's own "spira" would filter out every "plan"-only bead here; this
+    // test means unscoped readiness, so it declares no scope restriction.
+    let o = run_cfg(
+        &["ready-count", "plan", ""],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_SCOPE_LABEL", "")],
+        &[("PATH", Some(path.as_str()))],
+    );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "3", ""));
 }
 
@@ -941,10 +949,13 @@ fn fayth_ready_cli_real_count_including_zero() {
     let chamber = chamber_path(&home);
     let bd_zero = sh("echo '[]'");
     let path_zero = fake_lc_path("[]");
+    // `machine_claimable` applies `scope_label` before the fayth's own predicate does —
+    // "probe"'s FAYTH_LABELS is bare "plan", so the baseline fixture's "spira" scope
+    // would filter out every bead below; this test means unscoped readiness.
     let o = run_cfg(
         &["fayth-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd_zero.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd_zero.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path_zero.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "0", ""));
@@ -955,7 +966,7 @@ fn fayth_ready_cli_real_count_including_zero() {
     let o2 = run_cfg(
         &["fayth-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd_seven.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd_seven.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o2.code, o2.out.as_str()), (0, "7"), "{}", o2.err);
@@ -1046,10 +1057,14 @@ fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
     let chamber = chamber_path(&home);
     let bd = sh(&format!("case \"$*\" in *--id*) echo '{recs}';; *) echo '{ready}';; esac"));
     let path = fake_lc_path(lc);
+    // `machine_claimable` applies `scope_label` before any fayth predicate or <labels>
+    // argument does — every fixture bead here carries only "plan", never "spira", so the
+    // baseline fixture's own scope would filter them all out; these tests mean unscoped
+    // readiness.
     run_cfg(
         verb,
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     )
 }

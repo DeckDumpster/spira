@@ -71,16 +71,21 @@ impl Fx {
         );
         // `landing_ref`'s own `spira_config::repos::Registry::from_env` call ALSO reads
         // this process's `SPIRA_HOME` (raw, unrelated to `cfg()`) — and, with it now real,
-        // `registry_env`'s fallback resolves `SPIRA_HOME_REPO`/`SPIRA_REPO_DERIVED` from
-        // this SAME fixture toml when they are not already present. Left alone,
-        // `SPIRA_REPO_DERIVED` would resolve to the REAL checkout's own root (not this
-        // fixture repo), making `repo_override` treat `SPIRA_REPO` (this fixture's own
-        // repo path) as a deliberate root override — which then matches `name_at` and
-        // pulls in the fixture toml's `[repo.spira]` row (`base = "local/main"`), exactly
-        // the ref this test asserts the fixture repo does NOT have. Declaring
-        // SPIRA_REPO_DERIVED equal to SPIRA_REPO here means no override is detected,
-        // restoring the fixture's own "no map, fall through to the repo's real current
-        // branch" behavior.
+        // `registry_env` UNCONDITIONALLY recomputes `SPIRA_REPO_DERIVED` from the real
+        // checkout's own git root (never this fixture repo), so `repo_override` always
+        // treats `SPIRA_REPO` as a deliberate root override here; `name_at` then matches
+        // it and `landref`'s rung 1 consults whatever row `reg.base(name)` finds. Left to
+        // `Registry::from_env`'s own "no map file -> read $SPIRA_TOML's [repo.*] tables"
+        // fallback, that row would be the COMPLETE fixture's `[repo.spira]` (`base =
+        // "local/main"`) — a row that means nothing for THIS fixture repo and names a ref
+        // it does not have. A real (if empty) repo-map FILE here short-circuits that
+        // fallback entirely: `Registry::from_env` reads a real `SPIRA_REPO_MAP` before
+        // ever considering `$SPIRA_TOML`'s tables, and an empty map has no row for this
+        // repo under any name, so `landref` correctly falls through to the repo's own
+        // current branch (rung 4) — exactly what these "repo without local/main" tests
+        // mean to exercise.
+        let repo_map = p.join("repo-map.txt");
+        std::fs::write(&repo_map, "").unwrap();
         let o = Command::new(env!("CARGO_BIN_EXE_cert-sweep"))
             .args(args)
             .env_clear()
@@ -89,7 +94,7 @@ impl Fx {
             .env("SPIRA_HOME", &real_home)
             .env("SPIRA_TOML", &toml)
             .env("SPIRA_REPO", p.join("repo"))
-            .env("SPIRA_REPO_DERIVED", p.join("repo"))
+            .env("SPIRA_REPO_MAP", &repo_map)
             .output()
             .unwrap();
         (o.status.code().unwrap(), String::from_utf8_lossy(&o.stdout).into(), String::from_utf8_lossy(&o.stderr).into())
