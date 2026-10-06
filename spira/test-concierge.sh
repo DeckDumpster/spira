@@ -290,7 +290,7 @@ echo "start — the launcher's --model comes from persona.<fayth>.model, not FAY
 if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
     printf '  skip  (no systemd user session — launcher model test requires it)\n'
 else
-    MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber" "$MT_TMP/chamber-empty"
+    MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber"
     ln -s "$HERE/conf.d" "$MT_TMP/conf.d"
     cp "$HARNESS/spira/chamber/concierge.md" "$MT_TMP/chamber/modeltest.md"
     sed -e 's|^FAYTH_NAME=.*|FAYTH_NAME=modeltest|' \
@@ -309,6 +309,15 @@ else
     # session-hook install falls through to the complete fixture's own literal
     # /fixture/home/.claude/settings.json and refuses (permission denied) instead of
     # writing under this case's own $MT_TMP.
+    # chamber = "$MT_TMP/chamber", not chamber-empty: spira-config's chamber_dir() (the
+    # fayth_get/persona_model path) now prefers the cfg()-resolved SPIRA_CHAMBER over
+    # <home>/chamber unconditionally (one source of config) — pointing it at the empty dir
+    # made fayth_get read nothing and silently return "" for FAYTH_STATUTE_CORE (every core
+    # slug demoted, "no statute rendered in full"). The old worry this dodged —
+    # spira_toml_resolve's auto-convert-from-fayth re-seeding this toml from modeltest.fayth's
+    # FAYTH_MODEL — is retired along with every other derivation (conf.sh: "the write
+    # spira_toml_resolve's auto-convert USED TO EXIST to survive"); nothing reads a fayth to
+    # produce a spira.toml any more, so there is nothing left to defeat.
     cat > "$MT_TOML" <<EOF
 [persona.modeltest]
 model = "concierge-toml-model"
@@ -317,7 +326,7 @@ model = "concierge-toml-model"
 run = "$MT_TMP/run"
 wiki = "$MT_TMP"
 repo_map = "/nonexistent"
-chamber = "$MT_TMP/chamber-empty"
+chamber = "$MT_TMP/chamber"
 memories_cache = ""
 client_settings = "$MT_TMP/settings.json"
 EOF
