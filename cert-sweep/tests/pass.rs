@@ -326,3 +326,16 @@ fn a_repo_with_no_suites_is_a_clean_no_op() {
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("nothing to certify"), "{out}");
 }
+
+#[test]
+fn a_full_pass_whose_runner_stays_silent_is_a_sweep_fault_naming_admission() {
+    let fx = Fx::new();
+    let p = fx.d.path();
+    write_exe(p.join("bin/round-vm"), "#!/bin/sh\nexec sleep 60\n");
+    write_exe(p.join("bin/spira-admit"), "#!/bin/sh\necho 'compile 0/4 held 9 waiting'\n");
+    let t = std::time::Instant::now();
+    let (rc, out, _) = fx.cert(&["pass", "--mode", "full", "--tree", &p.join("tree").display().to_string(), "--start-deadline", "2"]);
+    assert!(t.elapsed().as_secs() < 30, "the silent runner must be cut at the deadline");
+    assert_eq!(rc, 1);
+    assert!(out.contains("SWEEP FAULT") && out.contains("no-verdict") && out.contains("9 waiting"), "{out}");
+}

@@ -28,7 +28,7 @@ extern "C" {
 }
 const LOCK_EX: i32 = 2;
 
-const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
+const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME] [--start-deadline SECS]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -428,14 +428,31 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
     let rd = run.join("cert-sweep").join(format!("{start}-full-{seq}"));
     fs::create_dir_all(&rd).map_err(|e| format!("{}: {e}", rd.display()))?;
     let log = rd.with_extension("log");
-    let st = Command::new("round-vm")
+    let mut child = Command::new("round-vm")
         .args(["run", tree, "--maxpar", &num(f, "maxpar", 16)?.to_string(), "--suites", &picks.join(","), "--results-dir"])
         .arg(&rd)
         .stdout(fs::File::create(&log).map_err(|e| e.to_string())?)
         .stderr(Stdio::inherit())
-        .status()
+        .spawn()
         .map_err(|e| format!("round-vm: {e}"))?;
-    eprintln!("cert-sweep: round-vm run exited {:?}", st.code());
+    let start_wait = num(f, "start-deadline", 900)?;
+    let began = now();
+    let silent = |rd: &Path, log: &Path| fs::metadata(log).map_or(true, |m| m.len() == 0) && fs::read_dir(rd).map_or(true, |d| d.count() == 0);
+    loop {
+        if let Some(st) = child.try_wait().map_err(|e| format!("round-vm: {e}"))? {
+            eprintln!("cert-sweep: round-vm run exited {:?}", st.code());
+            break;
+        }
+        if now() - began >= start_wait && silent(&rd, &log) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let admit = Command::new("spira-admit").arg("status").stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
+            let why = format!("VERDICT no-verdict: round-vm produced no output in {start_wait}s (likely queued in host-wide admission); spira-admit status: {}", admit.replace('\n', " | "));
+            eprintln!("cert-sweep: {why}");
+            return Ok((Vec::new(), why));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
     Ok((results_in(&rd), fs::read_to_string(&log).unwrap_or_default()))
 }
 
