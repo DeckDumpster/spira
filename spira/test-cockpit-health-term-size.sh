@@ -41,7 +41,7 @@ echo "test-cockpit-health-term-size.sh"
 # tl_config — `health` no longer reads the -e SPIRA_RUN below from its environment, but the
 # new session's SPIRA_TOML is seeded from this process's, which tl_config writes into.
 tl_config SPIRA_RUN="$RUN"
-TMUX_TMPDIR="$T" tmux new-session -d -x 168 -y 81 -e "SPIRA_RUN=$RUN" "health loop"
+TMUX_TMPDIR="$T" tmux new-session -d -x 168 -y 81 -e "SPIRA_RUN=$RUN" -e "SPIRA_HOME=$HERE" "health loop"
 sleep 3
 OUT="$(TMUX_TMPDIR="$T" tmux capture-pane -p)"
 
