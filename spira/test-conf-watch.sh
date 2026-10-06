@@ -82,7 +82,9 @@ for name in loom; do
     else
         bad "$label: config change — armed before the touch" "marker never appeared within 10s"
     fi
+    echo "DEBUG SPIRA_TOML=$SPIRA_TOML _TL_CONF_OVERRIDE=$_TL_CONF_OVERRIDE exists=$([ -f "$_TL_CONF_OVERRIDE" ] && echo yes || echo no) mtime=$(stat --format='%Y' "$_TL_CONF_OVERRIDE" 2>&1)" >&2
     touch "$_TL_CONF_OVERRIDE"
+    echo "DEBUG after touch mtime=$(stat --format='%Y' "$_TL_CONF_OVERRIDE" 2>&1)" >&2
     ec_chg=0
     wait "$run_pid" || ec_chg=$?
     is "$label: config change — exits 0" "0" "$ec_chg"
