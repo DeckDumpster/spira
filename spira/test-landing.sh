@@ -183,7 +183,14 @@ landing() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
         SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
-    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
+    # SPIRA_RUN AS A PLAIN ENV VAR TOO, not only in config: landing-pass's own process reads
+    # it through the one source (SPIRA_TOML), but gate.sh is a plain child process that
+    # inherits whatever landing-pass's OWN environment held — real.rs's with_env() never
+    # clears or re-derives it. Without this, gate.sh's own "$SPIRA_RUN/reap-during-gate" read
+    # resolves against an empty SPIRA_RUN, so the reap-during-gate fixture never fires and
+    # the branch it names is never actually removed (sp-zzz staying present makes the pass
+    # read it as "already landed", not "gone since this pass began").
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 notes_of() { B show "$1" 2>/dev/null; }
