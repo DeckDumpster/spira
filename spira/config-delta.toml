@@ -1,0 +1,3 @@
+# Keys this release adds to the one source (release/src/config_delta.rs, sp-pr6jn6), applied at activation.
+[added]
+"spira.gate_deadline" = 300
