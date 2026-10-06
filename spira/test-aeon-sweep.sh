@@ -69,6 +69,14 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} on {{BRANCH}}\n{{PARK}}\n' \
     > "$SPIRA_HOME/chamber/testsweep.md"
+# persona.testsweep.model: aeon::conf::persona_model refuses outright when a fayth's
+# model is undeclared (no built-in fallback, per Ryan 2026-10-05) — the complete fixture
+# declares every REAL persona's model but has never heard of this suite's own "testsweep"
+# fayth. tl_config only knows the SPIRA_FOO -> spira.foo mapping, not [persona.*] tables,
+# so this sets the dotted path directly (same pattern as test-aeon-teardown-e2e.sh's
+# sweeper fixture).
+spira-config set persona.testsweep.model claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
+    || { printf 'test-aeon-sweep: could not declare persona.testsweep.model\n' >&2; exit 1; }
 
 # Mock claude binary. THE GUARD IS NOT DECORATION: conf.sh replaces $PATH, so a PATH
 # shim would reach the real model through the replaced PATH and run it at full cost.
