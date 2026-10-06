@@ -132,6 +132,12 @@ impl Config {
     }
 }
 
+/// `SPIRA_HOME`, else `$SPIRA_RELEASE/spira` — what every unit carries.
+fn home_of(src: &dyn Source) -> Option<PathBuf> {
+    let path = |env: &str| src.env(env).filter(|v| !v.is_empty()).map(PathBuf::from);
+    path("SPIRA_HOME").or_else(|| path("SPIRA_RELEASE").map(|r| r.join("spira")))
+}
+
 impl Config {
     /// Every REGISTERED key (`spira/conf.d`) goes through `spira_config::process::cfg`/
     /// `cfg_parse` — the declared value in `$SPIRA_TOML`, resolved once per process, no
@@ -185,7 +191,7 @@ impl Config {
         Ok(Config {
             db: nonempty(cfg("SPIRA_DB")?),
             run: nonempty(cfg("SPIRA_RUN")?).map(PathBuf::from),
-            home: path("SPIRA_HOME"),
+            home: home_of(src),
             bd,
             vocab: Vocab {
                 ask: cfg("SPIRA_ASK_LABEL")?,
@@ -303,5 +309,21 @@ mod tests {
         assert_eq!(c.throttle_release_at, "12");
         assert_eq!(c.vocab.submitted, "spira-submitted");
         assert_eq!(c.exclude_default(), format!("spira-poison,ask-x,{}", c.ci_label));
+        assert_eq!(c.home, None, "no SPIRA_HOME and no SPIRA_RELEASE resolves no home");
+    }
+
+    #[test]
+    fn home_resolves_from_the_release_when_spira_home_is_absent() {
+        struct UnitEnv(Vec<(&'static str, &'static str)>);
+        impl Source for UnitEnv {
+            fn env(&self, k: &str) -> Option<String> {
+                self.0.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+            }
+        }
+        let rel = UnitEnv(vec![("SPIRA_RELEASE", "/rel/abc")]);
+        assert_eq!(home_of(&rel), Some(PathBuf::from("/rel/abc/spira")));
+        let both = UnitEnv(vec![("SPIRA_HOME", "/h"), ("SPIRA_RELEASE", "/rel/abc")]);
+        assert_eq!(home_of(&both), Some(PathBuf::from("/h")));
+        assert_eq!(home_of(&NoEnv), None);
     }
 }

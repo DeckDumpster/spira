@@ -172,7 +172,7 @@ pub fn parse_roster(text: &str) -> Vec<PartitionSpec> {
 /// Every partition this run covers, with the personas that work it. `want` narrows to one
 /// partition (SPIRA_LABELS). Err when the probe itself failed — never an empty roster.
 pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, String> {
-    let home = cfg.home.as_ref().ok_or("SPIRA_HOME is unknown (not in the environment, no [spira].prod)")?;
+    let home = cfg.home.as_ref().ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
     let lib = home.join("lib.sh");
     if !lib.is_file() {
         return Err(format!("{} is missing — cannot read the persona roster", lib.display()));
