@@ -142,7 +142,22 @@ pub fn tool_env(program: &str, args: &[String], stdin: Option<&str>, actor: &str
     spawn(cmd, stdin, program)
 }
 
-fn spawn(mut cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
+/// [`tool_env`] for a tool whose stderr is part of its answer even on success (mail's
+/// "routed to the concierge" notice): nothing it says is dropped.
+pub fn tool_env_noisy(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64, env: &[(&str, &str)]) -> (i32, String) {
+    let mut cmd = Command::new("timeout");
+    cmd.arg(secs.to_string()).arg(program).args(args).env("SPIRA_FAYTH", actor);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    spawn_with(cmd, stdin, program, true)
+}
+
+fn spawn(cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
+    spawn_with(cmd, stdin, what, false)
+}
+
+fn spawn_with(mut cmd: Command, stdin: Option<&str>, what: &str, keep_stderr: bool) -> (i32, String) {
     use std::io::Write;
     use std::process::Stdio;
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -163,8 +178,33 @@ fn spawn(mut cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
     };
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     match out.status.code() {
+        Some(0) if keep_stderr => (0, format!("{stdout}{}", String::from_utf8_lossy(&out.stderr))),
         Some(0) => (0, stdout),
         Some(c) => (c, format!("{stdout}{}", String::from_utf8_lossy(&out.stderr))),
         None => (2, format!("{what} was killed by a signal: {stdout}{}", String::from_utf8_lossy(&out.stderr))),
+    }
+}
+
+#[cfg(test)]
+mod noisy_tests {
+    use super::*;
+
+    fn sh(script: &str) -> (i32, String) {
+        tool_env_noisy("sh", &["-c".to_string(), script.to_string()], None, "t", 10, &[])
+    }
+
+    #[test]
+    fn a_refused_ask_exits_nonzero_with_the_reason() {
+        let (code, out) = sh("echo 'mail: lint: unknown kind x' >&2; exit 1");
+        assert_eq!(code, 1);
+        assert!(out.contains("unknown kind x"), "{out}");
+    }
+
+    #[test]
+    fn a_successful_ask_still_shows_the_stderr_notice() {
+        let (code, out) = sh("echo 'mail: routed to the concierge' >&2");
+        assert_eq!(code, 0);
+        assert!(out.contains("routed to the concierge"), "{out}");
+        assert!(!tool("sh", &["-c".to_string(), "echo hidden >&2".to_string()], None, "t", 10).1.contains("hidden"));
     }
 }
