@@ -228,7 +228,7 @@ if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
 else
     echo "round-vm: UNIT-TESTS: FAIL (cargo test rc=$unit_rc):" >&2
-    grep -E '^(test .* FAILED|failures:|---- |error(\[|:))' ~/round-unit-tests.log | head -40 >&2
+    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     [ "$rc" -eq 0 ] && rc=1
 fi
 suites_secs=$(( $(date +%s) - t_start - setup_secs ))
