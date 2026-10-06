@@ -1677,14 +1677,23 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 /// The most a named phase may take, seconds (`base-` prefix ignored). They are the branch
 /// trial's fixed phases and sum under SPIRA_GATE_DEADLINE's 300 s, so the suites keep the rest;
 /// phases not listed take whatever of the deadline is left.
+///
+/// The `tools` cap bounds tools that come from the shared store (toolkey.rs) — an install, or
+/// the build that replaces an install that failed. A COLD build on a store miss (a new source
+/// key, or tools that cannot be keyed) is [`TOOLS_COLD`]: uncapped, bounded only by what is
+/// left of the deadline, so the first gate of a new key can finish and publish it for the rest.
 pub fn phase_cap(name: &str) -> Option<u64> {
     match name.strip_prefix("base-").unwrap_or(name) {
+        TOOLS_COLD => None,
         "tools" => Some(40),
         "fences" => Some(90),
         "gate" => Some(190),
         _ => None,
     }
 }
+
+/// The cap name of a cold tools build (see [`phase_cap`]); metered as `tools` all the same.
+pub const TOOLS_COLD: &str = "tools-cold";
 
 /// NO_VERDICT: the gate ran out of wall clock — in `phase` — and judged nothing.
 pub fn deadline_verdict(deadline: u64, phase: &str, ran: u64, cmd: &str, out: &str) -> Verdict {
@@ -1943,7 +1952,9 @@ pub fn run_composed<W: World>(
         }
         if let Some(t) = &build {
             let t0 = w.now();
-            let (rc, out) = w.run_gate(tree, env, &left("tools"), t);
+            // Capped only on the reuse path (a failed store install); a miss builds cold.
+            let cap = if tl.from.is_some() { "tools" } else { TOOLS_COLD };
+            let (rc, out) = w.run_gate(tree, env, &left(cap), t);
             phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
             if rc != 0 || w.signalled() {
                 return (rc, format!("{out}\ngate: phase 'tools' failed (exit {rc}): {t}"), phases);

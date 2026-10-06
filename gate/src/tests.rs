@@ -101,6 +101,8 @@ struct Fake {
     install_from_err: RefCell<Option<String>>,
     /// Every publish_tools call: (store, name, inputs).
     published: RefCell<Vec<(PathBuf, String, String)>>,
+    /// Every run_gate call: (command, the timeout it was given).
+    timeouts: RefCell<Vec<(String, String)>>,
     // ---- build IO (sp-z61hj)
     /// What build_wrapper answers; the (path, setting) it was asked with.
     wrapper: RefCell<Result<spira_config::build::Wrapper, String>>,
@@ -241,6 +243,7 @@ impl Fake {
             installs_from: RefCell::default(),
             install_from_err: RefCell::default(),
             published: RefCell::default(),
+            timeouts: RefCell::default(),
             wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("/box/.cargo/bin/sccache")))),
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
@@ -546,7 +549,8 @@ impl World for Fake {
     fn remove_worktree(&self, _: &Path, _: &Path) {
         self.removed_trees.set(self.removed_trees.get() + 1);
     }
-    fn run_gate(&self, tree: &Path, env: &[(String, String)], _: &str, cmd: &str) -> (i32, String) {
+    fn run_gate(&self, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
+        self.timeouts.borrow_mut().push((cmd.to_string(), timeout.to_string()));
         self.ran.borrow_mut().push(env.to_vec());
         self.cmds.borrow_mut().push(cmd.to_string());
         self.clock.set(self.clock.get() + self.phase_secs.get());
@@ -3623,4 +3627,40 @@ fn the_real_store_publishes_atomically_and_keeps_the_newest() {
     // A missing binary publishes nothing.
     assert!(crate::real::publish_tools_at(&from, &["nope".into()], &store, "k-3", "", 2).is_err());
     assert!(!store.join("k-3").exists());
+}
+
+fn tools_timeout(f: &Fake) -> Option<u64> {
+    f.timeouts.borrow().iter().find(|(c, _)| c.starts_with("cargo build --profile aeon")).map(|(_, t)| t.parse().unwrap())
+}
+
+/// A store miss is a cold build: it is never cut at the tools cap, only by the deadline — so
+/// the first gate of a new key can finish and publish. So is a tree whose tools cannot be keyed.
+#[test]
+fn a_cold_tools_build_on_a_store_miss_is_not_capped() {
+    let cap = crate::engine::phase_cap("tools").unwrap();
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let t = tools_timeout(&f).expect("built");
+    assert!(t > cap, "a cold build was capped at {t}s");
+    assert!(t <= 300, "{t}");
+    let f = shared_fake();
+    f.metadata.borrow_mut().insert(MERGE_SHA.into(), Ok(metadata_json(&[("gate", &[])])));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(tools_timeout(&f).unwrap() > cap);
+    assert_eq!(crate::engine::phase_cap(crate::engine::TOOLS_COLD), None);
+    assert_eq!(crate::engine::phase_cap(&format!("base-{}", crate::engine::TOOLS_COLD)), None);
+    // Metered as `tools` all the same.
+    assert!(f.appended.borrow().iter().any(|l| l.contains("phases=tools:")), "{:?}", f.appended.borrow());
+}
+
+/// The reuse path keeps the cap: the build that replaces a failed store install is cut at it.
+#[test]
+fn the_tools_cap_bounds_the_reuse_path() {
+    let cap = crate::engine::phase_cap("tools").unwrap();
+    let f = shared_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let g = next_gate(&f, &[]);
+    *g.install_from_err.borrow_mut() = Some("evicted".into());
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert_eq!(tools_timeout(&g), Some(cap));
 }
