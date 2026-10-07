@@ -68,8 +68,8 @@ run_bdq() {  # run_bdq <title> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" BD_TIMEOUT=10 \
-        bash -c '. "$1/lib.sh"; bdq create "$2" --labels "$3" -d "Approve the step?"$'"'"'\nDefault: decline\nClass: destructive"' \
-            -- "$HERE" "$1" "$2" 2>&1
+        bash -c '. "$1/lib.sh"; bdq create "$2" --labels "$3" -d "$4"' \
+            -- "$HERE" "$1" "$2" "$(printf 'Approve the step?\nDefault: decline\nClass: destructive')" 2>&1
 }
 
 # ==========================================================================
