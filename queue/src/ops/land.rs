@@ -75,6 +75,11 @@ pub fn land_members(text: &str, head: &str) -> Vec<Member> {
 }
 
 pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text, worktree: Option<&Path>) -> i32 {
+    land_local_with(w, repo, head_arg, members, worktree, lock_held_by_caller(w))
+}
+
+/// [`land_local`] for a caller that already holds the repository's queue lock.
+pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &Text, worktree: Option<&Path>, lock_held: bool) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
@@ -124,7 +129,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
             return FAIL;
         }
     }
-    let _g = if lock_held_by_caller(w) {
+    let _g = if lock_held {
         None
     } else {
         match take_lock(w, "land-local", &c, "") {

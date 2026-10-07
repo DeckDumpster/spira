@@ -11,7 +11,7 @@ use crate::records::{self, one_line, write_atomic, Kv};
 
 /// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED (Returned is
 /// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK. Reported, never fatal.
-fn lc_return(w: &World, id: &str) {
+pub fn lc_return(w: &World, id: &str) {
     let fail = |why: String| w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
     let Some((mut state, version)) = w.lc.bead_state(id) else { return fail("no lifecycle row".into()) };
     let Ok(mut v) = version.trim().parse::<u64>() else { return fail(format!("unreadable version {version:?}")) };

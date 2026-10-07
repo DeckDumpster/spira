@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=round
+DOC=SECONDS `queue round certify` ALLOWS THE ROUND VM'S FULL CORPUS before it is killed and reported as a harness fault
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS `queue round certify` ALLOWS THE ROUND VM'S FULL CORPUS before it is killed and
+    # reported as a harness fault, never as a red.
+    : "${SPIRA_ROUND_CERTIFY_WALL_SECS:=900}"
+SPIRA_CONF_DEFAULT_EOF

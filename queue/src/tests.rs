@@ -12,6 +12,7 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::testutil::tmpdir;
 
+mod round;
 mod verdict;
 
 // ------------------------------------------------------------------------------- fakes
@@ -282,6 +283,9 @@ struct FScripts {
     calls: RefCell<Vec<String>>,
     /// What `batcher judgement-ci` answers.
     judgement: RefCell<RunOut>,
+    /// What `round-vm run` answers, and the `<suite>.result` files it leaves in --results-dir.
+    round_vm: RefCell<RunOut>,
+    round_vm_results: RefCell<Vec<(String, String)>>,
 }
 
 impl Scripts for FScripts {
@@ -306,6 +310,14 @@ impl Scripts for FScripts {
     fn czar_fence(&self, class: &str) -> bool {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
+    }
+    fn round_vm(&self, tree: &Path, results: &Path, wall_secs: u64) -> RunOut {
+        self.calls.borrow_mut().push(format!("round-vm {} wall={wall_secs}", tree.display()));
+        fs::create_dir_all(results).unwrap();
+        for (suite, status) in self.round_vm_results.borrow().iter() {
+            fs::write(results.join(format!("{suite}.result")), format!("{status}\n")).unwrap();
+        }
+        self.round_vm.borrow().clone()
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((bin.display().to_string(), args.join(" "), db.to_string()));
@@ -582,6 +594,7 @@ impl T {
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
             express_label: "express".into(),
+            round_wall_secs: 900,
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {

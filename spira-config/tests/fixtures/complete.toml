@@ -261,6 +261,7 @@ reviewer_verdicts = "/fixture/userhome/spira/run/review-verdicts"
 review_label = "review-finding"
 round_due_remind = 1200
 round_idle_cut = 1200
+round_certify_wall_secs = 900
 round_marker_max_age = 10800
 round_min = 8
 round_vm_cache_home = "/fixture/userhome/.cargo"
