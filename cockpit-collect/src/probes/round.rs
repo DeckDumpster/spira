@@ -16,7 +16,7 @@ pub fn round_keys(cap_secs: i64) -> Kv {
 
 fn list_batches() -> Option<String> {
     let bin = spira_config::lifecycle_row::lc_bin();
-    let o = Command::new("timeout").arg("30").arg(bin).args(["list", "--batches"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let o = Command::new("timeout").arg("5").arg(bin).args(["list", "--batches"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
