@@ -1,0 +1,17 @@
+[Unit]
+Description=Reap terminal beads' worktrees and aged scratch every hour
+
+[Timer]
+# HOURLY: a terminal bead's worktree is dead weight the moment its row says so, and one
+# aeon's build tree is gigabytes, so a daily sweep leaves a day of them on disk.
+OnCalendar=*-*-* *:20:00
+Persistent=true
+AccuracySec=2min
+RandomizedDelaySec=120
+Unit=spira-reap-terminal.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work

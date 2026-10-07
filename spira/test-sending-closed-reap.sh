@@ -170,7 +170,7 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "All shapes in one pass:"
-out="$(sending)"
+out="$(sending --all 2>&1)"
 printf '%s\n' "$out" >&2
 
 # Shape A

@@ -1,7 +1,7 @@
 //! sending — the Sending (DESIGN.md). Delete the branch and the worktree of every bead whose
 //! work has landed, and nothing else.
 //!
-//!   sending                     one pass over every repository
+//!   sending --all               one pass over every repository (no arguments: usage, exit 2)
 //!   sending --dry-run           print each branch's disposition, change nothing
 //!   sending <bead-id|branch>    send exactly one bead's branch and worktree
 //!   sending --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
@@ -16,6 +16,7 @@
 //! lib.sh's now-shimmed functions call, and the ones other bash callers (`held.sh`) use by
 //! bare name instead of bypassing the chokepoint:
 //!
+//!   sending reap-terminal [--dry-run]   remove terminal beads' worktrees and aged scratch
 //!   sending destroy-worktree    [--status-from <f>] <id> <path> <repo> <why>
 //!   sending destroy-branch      [--status-from <f>] [--base <ref>] <id> <branch> <repo> <why> [<caller>]
 //!   sending reap-landed-branch  [--status-from <f>] <id> <branch> <repo> <why> [<caller>]
@@ -41,7 +42,7 @@ use std::path::{Path, PathBuf};
 use sending::ports::World;
 use sending::real::{self, Real};
 use sending::sweep::Sweep;
-use sending::{locate_home, parse, reap};
+use sending::{locate_home, parse, reap, terminal};
 
 /// Pulls a leading `--status-from <f>` / `--base <r>` pair out of `args`, wherever it
 /// appears, leaving the rest in order — the chokepoint subcommands accept these mixed in
@@ -118,6 +119,32 @@ fn cmd_destroy_branch(mut args: Vec<String>) -> ExitCodeLike {
             1
         }
     }
+}
+
+/// `reap-terminal [--dry-run]`: the worktree directory's reaper (terminal.rs). It refuses,
+/// deleting nothing, when the lifecycle machine does not answer with at least one row.
+fn cmd_reap_terminal(mut args: Vec<String>) -> ExitCodeLike {
+    let dry = match args.as_slice() {
+        [] => false,
+        [f] if f == "--dry-run" => true,
+        _ => return die("reap-terminal [--dry-run]"),
+    };
+    args.clear();
+    let max_age_hours = match spira_config::process::cfg_parse::<u64>("SPIRA_SCRATCH_MAX_AGE_HOURS") {
+        Ok(h) => h,
+        Err(e) => return die(&e),
+    };
+    let rows = match spira_config::lc_state::list_with(&spira_config::lifecycle_row::lc_bin()) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => return die("reap-terminal: the lifecycle machine listed no beads — refusing to judge against nothing"),
+        Err(e) => return die(&format!("reap-terminal: cannot read the lifecycle machine: {e}")),
+    };
+    let states = rows.into_iter().map(|r| (r.bead_id, r.state)).collect();
+    let w = match real_world(None) {
+        Ok(w) => w,
+        Err(e) => return die(&e),
+    };
+    terminal::run(&w, &states, std::time::Duration::from_secs(max_age_hours * 3600), dry)
 }
 
 fn cmd_prune(args: Vec<String>) -> ExitCodeLike {
@@ -245,6 +272,7 @@ fn main() {
             "destroy-worktree" => Some(cmd_destroy_worktree(rest())),
             "destroy-branch" => Some(cmd_destroy_branch(rest())),
             "reap-landed-branch" => Some(cmd_reap_landed_branch(rest())),
+            "reap-terminal" => Some(cmd_reap_terminal(rest())),
             "prune" => Some(cmd_prune(rest())),
             "salvage" => Some(cmd_salvage(rest())),
             "witness" => Some(cmd_witness(rest())),
@@ -260,6 +288,11 @@ fn main() {
         }
     }
 
+    if args.is_empty() {
+        eprintln!("usage: sending <verb> | sending [--dry-run] [--no-fetch] [--skip-queue|--queue-only] [--budget-secs <n>] [<bead-id|branch>]");
+        eprintln!("       verbs: reap-terminal destroy-worktree destroy-branch reap-landed-branch prune salvage witness");
+        std::process::exit(2);
+    }
     let (opts, status) = match parse(&args) {
         Ok(p) => p,
         Err(e) => {

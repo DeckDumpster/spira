@@ -120,3 +120,10 @@ exact shape sccache writes), PROPFIND on a file vs. a directory vs. a miss, MKCO
 idempotence, DELETE's two-call contract, the bearer-token check (absent/wrong/right), path
 traversal, and `config_from_env`'s fail-closed checks. Nothing here reaches a real VM or a
 real Proxmox: that is `round-vm`'s own test suite and the proof run in the bead.
+
+## Size cap
+
+`SPIRA_SCCACHE_DAV_MAX_GB` bounds the store. Every `SWEEP_EVERY` the process deletes the
+least recently used files until the store is under the cap; a GET refreshes the entry's mtime,
+which is the recency it orders by. In-flight PUT tmp files and directories are left alone. A
+missing or zero cap refuses to start.
