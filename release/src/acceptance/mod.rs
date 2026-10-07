@@ -130,8 +130,13 @@ impl Opts {
     pub fn release_src(&self) -> PathBuf {
         self.tmp.join("release-source")
     }
-    pub fn conf(&self) -> PathBuf {
-        self.xdg_config.join("spira/spira.conf")
+    /// The one config: where `release install-tarball` produces it on a fresh box.
+    pub fn toml(&self) -> PathBuf {
+        spira_config::toml_path_at(&self.xdg_config.join("spira"))
+    }
+    /// The operator's answers phase A hands the installer (`Run::answers_text`).
+    pub fn answers(&self) -> PathBuf {
+        self.tmp.join("answers")
     }
     pub fn scratch_name(&self) -> String {
         self.a.scratch_repo.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
@@ -442,14 +447,6 @@ pub fn unit_set(list_unit_files: &str) -> Vec<String> {
         .collect();
     v.sort();
     v
-}
-
-/// The value of the first `KEY = value` line for `key` in a spira.conf text.
-pub fn conf_line_value(text: &str, key: &str) -> Option<String> {
-    text.lines().find_map(|l| {
-        let (k, v) = l.split_once('=')?;
-        (k.trim() == key).then(|| v.trim_start().to_string())
-    })
 }
 
 /// The acceptance note recorded on `refs/tags/<tag>` (DESIGN.md "acceptance", Schema).

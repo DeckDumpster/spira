@@ -1,5 +1,9 @@
 //! `spira-config` — validate, read, export and convert `spira.toml`.
 //!
+//!   spira-config init [--out F] [--answers F] [--<key> V]...
+//!                                       a fresh box's spira.toml from the operator's
+//!                                       answers; an existing one is validated, never
+//!                                       overwritten (spira_config::init)
 //!   spira-config validate [file]        exit 1 and name the TOML path on the first error;
 //!                                       also refuses a [spira] with no id_prefix (sp-k6m1m)
 //!   spira-config get <dotted.path>      one value read out of the document
@@ -1307,6 +1311,38 @@ fn cmd_local_pass(args: &[String]) -> ExitCode {
     }
 }
 
+/// `spira-config init`: a fresh box's spira.toml from the operator's answers
+/// (`spira_config::init`) — validated and used when one is already there, never overwritten.
+fn cmd_init(args: &[String]) -> ExitCode {
+    let (mut flags, rest) = match spira_config::init::split_flags(args, &[]) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("spira-config init: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if !rest.is_empty() {
+        eprintln!("spira-config init: unexpected argument(s): {}", rest.join(" "));
+        return ExitCode::from(2);
+    }
+    let out = flags.remove("out").map(std::path::PathBuf::from);
+    let answers = flags.remove("answers").map(std::path::PathBuf::from);
+    match spira_config::init::ensure_from_cli(out, answers.as_deref(), &flags) {
+        Ok(spira_config::init::Outcome::Existing(p)) => {
+            println!("spira-config init: using existing {}", p.display());
+            ExitCode::SUCCESS
+        }
+        Ok(spira_config::init::Outcome::Written(p)) => {
+            println!("spira-config init: wrote {}", p.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("spira-config init: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -1396,6 +1432,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("init") => cmd_init(&args[1..]),
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
         Some("fayth") => cmd_fayth(&args[1..]),
@@ -1416,6 +1453,7 @@ fn main() -> ExitCode {
                  \x20       convert|set|unset|writeback|schema|path-tail|fayth|unit|deps|\n\
                  \x20       convert-legacy|migrate|repo> ...\n\
                  \n\
+                 \x20 init [--out F] [--answers F] [--<key> VALUE]...\n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\

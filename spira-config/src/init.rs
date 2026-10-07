@@ -1,0 +1,340 @@
+//! A fresh box's first `spira.toml`, produced from the operator's answers (per Ryan
+//! 2026-10-07: install PRODUCES spira.toml from user-provided inputs when none exists).
+//!
+//! The handful of values that genuinely vary per box are asked for — [`REQUIRED`]; every
+//! other key keeps its registered default. Every path is pinned explicitly in the file, so
+//! nothing silently falls back to a default store. An existing file is validated and used,
+//! never overwritten. With an input missing and nobody to ask, the refusal names exactly
+//! which inputs are missing.
+//!
+//! Answers come from an answers file (`key = value` lines, `#` comments, values optionally
+//! quoted — the `[spira]` key names), from flags, or from a prompt. Beyond [`REQUIRED`] and
+//! the home repository's row ([`HOME_REPO_ROW`]), an answers file may carry any other
+//! registered `[spira]` key; it is written as given and validated like every other.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// The inputs every fresh install must name: `(key, what it is)`.
+pub const REQUIRED: &[(&str, &str)] = &[
+    ("instance", "the name of this installation (prod for the only one on a box)"),
+    ("id_prefix", "the prefix of this installation's bead ids (e.g. sp)"),
+    ("home_repo", "the name of the repository this harness works on"),
+    ("db", "the beads database directory"),
+    ("run", "the runtime state directory"),
+    ("releases", "the directory releases are installed under"),
+    ("dolt_data", "the Dolt server's data directory"),
+];
+
+/// The home repository's row in the repo map: `(key, what it is, default)`. Asked only when
+/// `home_repo_path` is answered — a box whose repo map already carries the row skips it.
+pub const HOME_REPO_ROW: &[(&str, &str, &str)] = &[
+    ("home_repo_path", "the home repository's checkout (blank: the repo map already names it)", ""),
+    ("home_repo_land", "how its work lands: push, pr or queue.local", "push"),
+    ("home_repo_base", "the ref its work lands on", "origin/main"),
+];
+
+/// What [`ensure`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// A file was already there; it validated and is the one in force.
+    Existing(PathBuf),
+    /// A new file was written from the answers.
+    Written(PathBuf),
+}
+
+/// Where a fresh box's config goes: the file `SPIRA_TOML` names when it names one file,
+/// else the canonical `${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml`.
+pub fn default_out(env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    if let Some(t) = env.get("SPIRA_TOML").filter(|t| !t.is_empty()) {
+        if t.contains(':') {
+            return Err(format!("SPIRA_TOML names layers ({t}); a fresh config is one file — name it with --out"));
+        }
+        return Ok(PathBuf::from(t));
+    }
+    let base = match (env.get("XDG_CONFIG_HOME").filter(|v| !v.is_empty()), env.get("HOME").filter(|v| !v.is_empty())) {
+        (Some(x), _) => PathBuf::from(x),
+        (None, Some(h)) => PathBuf::from(h).join(".config"),
+        (None, None) => return Err("neither XDG_CONFIG_HOME nor HOME is set — name the config file with --out".into()),
+    };
+    Ok(base.join("spira").join(crate::FILE_NAME))
+}
+
+/// An answers file: `key = value` per line; blank lines and `#` comments ignored; a value
+/// may be wrapped in double quotes. A key may be written bare or as `spira.<key>`.
+pub fn parse_answers(text: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    for (n, line) in text.lines().enumerate() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        let (k, v) = l.split_once('=').ok_or_else(|| format!("answers line {}: not key = value: {l}", n + 1))?;
+        let k = k.trim();
+        let k = k.strip_prefix("spira.").unwrap_or(k).to_string();
+        let v = v.trim();
+        let v = v.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(v).to_string();
+        if k.is_empty() {
+            return Err(format!("answers line {}: empty key", n + 1));
+        }
+        out.insert(k, v);
+    }
+    Ok(out)
+}
+
+/// The inputs `answers` still lacks, in [`REQUIRED`] order.
+pub fn missing(answers: &BTreeMap<String, String>) -> Vec<&'static str> {
+    REQUIRED.iter().map(|(k, _)| *k).filter(|k| answers.get(*k).is_none_or(|v| v.trim().is_empty())).collect()
+}
+
+/// The `spira.toml` text for `answers`, with `repo_map` pinned (default: `repo-map` beside
+/// `out`). `Err` names the first answer the schema refuses.
+pub fn render(answers: &BTreeMap<String, String>, out: &Path) -> Result<String, String> {
+    let gone = missing(answers);
+    if !gone.is_empty() {
+        return Err(format!("missing required input(s): {}", gone.join(", ")));
+    }
+    let mut a = answers.clone();
+    if a.get("repo_map").is_none_or(|v| v.is_empty()) {
+        let dir = out.parent().unwrap_or(Path::new("."));
+        a.insert("repo_map".into(), dir.join("repo-map").display().to_string());
+    }
+    let row_keys: Vec<&str> = HOME_REPO_ROW.iter().map(|(k, _, _)| *k).collect();
+    let mut doc = crate::SpiraToml::default();
+    for (k, v) in &a {
+        if row_keys.contains(&k.as_str()) {
+            continue;
+        }
+        doc = crate::set_path(&doc, &format!("spira.{k}"), v).map_err(|e| format!("answer {k} = {v:?}: {e}"))?;
+    }
+    let text = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    let checked = crate::validate(&text)?;
+    crate::require_id_prefix(&checked)?;
+    Ok(format!("# spira.toml — produced from the operator's answers at install (spira-config init).\n# Every key not named here keeps its registered default; change one with `spira-config set`.\n{text}"))
+}
+
+/// The repo-map row for the home repository, when `home_repo_path` was answered.
+fn home_row(a: &BTreeMap<String, String>) -> Option<String> {
+    let path = a.get("home_repo_path").filter(|p| !p.is_empty())?;
+    let get = |k: &str, d: &str| a.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
+    Some(format!("{} | {} | {} | {} | |\n", a.get("home_repo")?, path, get("home_repo_land", "push"), get("home_repo_base", "origin/main")))
+}
+
+/// Make sure the config at `out` exists: validate and use one already there, else ask
+/// `ask` (a prompt, or `None` with nobody to ask) for each required input `answers` lacks,
+/// then write the file — and, when the home repository's checkout was named, its repo-map
+/// row (never a second row for a name the map already carries).
+pub fn ensure(
+    out: &Path,
+    mut answers: BTreeMap<String, String>,
+    ask: Option<&mut dyn FnMut(&str, &str, &str) -> Option<String>>,
+) -> Result<Outcome, String> {
+    if out.exists() {
+        let text = std::fs::read_to_string(out).map_err(|e| format!("{}: {e}", out.display()))?;
+        let doc = crate::validate(&text).map_err(|e| format!("{}: {e}", out.display()))?;
+        crate::require_id_prefix(&doc).map_err(|e| format!("{}: {e}", out.display()))?;
+        return Ok(Outcome::Existing(out.to_path_buf()));
+    }
+    if let Some(ask) = ask {
+        for (k, what) in REQUIRED {
+            if answers.get(*k).is_none_or(|v| v.trim().is_empty()) {
+                if let Some(v) = ask(k, what, "") {
+                    answers.insert(k.to_string(), v);
+                }
+            }
+        }
+        // The row's path first; land mode and base only when a path was given.
+        for (k, what, d) in HOME_REPO_ROW {
+            if *k != "home_repo_path" && answers.get("home_repo_path").is_none_or(|p| p.is_empty()) {
+                break;
+            }
+            if !answers.contains_key(*k) {
+                if let Some(v) = ask(k, what, d) {
+                    answers.insert(k.to_string(), v);
+                }
+            }
+        }
+    }
+    let gone = missing(&answers);
+    if !gone.is_empty() {
+        return Err(format!(
+            "no config at {} and missing required input(s): {} — answer them (spira-config init --answers FILE, or --<key> VALUE)",
+            out.display(),
+            gone.join(", ")
+        ));
+    }
+    let text = render(&answers, out)?;
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    if let Some(row) = home_row(&answers) {
+        let map = crate::get_path(&crate::validate(&text)?, "spira.repo_map").unwrap_or_default();
+        let map = PathBuf::from(map);
+        let have = std::fs::read_to_string(&map).unwrap_or_default();
+        let name = answers.get("home_repo").cloned().unwrap_or_default();
+        let named = have.lines().any(|l| l.split('|').next().map(str::trim) == Some(name.as_str()));
+        if !named {
+            let mut body = have;
+            if !body.is_empty() && !body.ends_with('\n') {
+                body.push('\n');
+            }
+            body.push_str(&row);
+            crate::write_atomic(&map, &body).map_err(|e| format!("{}: {e}", map.display()))?;
+        }
+    }
+    // Never overwrite: create_new refuses a file that appeared since the check above.
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    f.write_all(text.as_bytes()).map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok(Outcome::Written(out.to_path_buf()))
+}
+
+/// [`ensure`] for a CLI: answers from `answers_file` (if any) overlaid by `flags`, a prompt on
+/// the terminal when stdin is one, and `out` defaulting to [`default_out`].
+pub fn ensure_from_cli(out: Option<PathBuf>, answers_file: Option<&Path>, flags: &BTreeMap<String, String>) -> Result<Outcome, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let out = match out {
+        Some(o) => o,
+        None => default_out(&env)?,
+    };
+    let mut answers = match answers_file {
+        Some(f) => parse_answers(&std::fs::read_to_string(f).map_err(|e| format!("answers file {}: {e}", f.display()))?)?,
+        None => BTreeMap::new(),
+    };
+    answers.extend(flags.iter().map(|(k, v)| (k.clone(), v.clone())));
+    use std::io::IsTerminal;
+    let mut prompt = |k: &str, what: &str, default: &str| -> Option<String> {
+        use std::io::{BufRead, Write};
+        let d = if default.is_empty() { String::new() } else { format!(" [{default}]") };
+        eprint!("{k} — {what}{d}: ");
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line).ok()?;
+        let v = line.trim();
+        Some(if v.is_empty() { default.to_string() } else { v.to_string() })
+    };
+    let ask: Option<&mut dyn FnMut(&str, &str, &str) -> Option<String>> = if std::io::stdin().is_terminal() { Some(&mut prompt) } else { None };
+    ensure(&out, answers, ask)
+}
+
+/// `--<key> VALUE` pairs out of `args` (dashes in a key become underscores); every other
+/// argument comes back untouched, in order.
+pub fn split_flags(args: &[String], keep: &[&str]) -> Result<(BTreeMap<String, String>, Vec<String>), String> {
+    let mut flags = BTreeMap::new();
+    let mut rest = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.strip_prefix("--") {
+            Some(k) if !keep.contains(&a.as_str()) => {
+                let v = it.next().ok_or_else(|| format!("{a} needs a value"))?;
+                flags.insert(k.replace('-', "_"), v.clone());
+            }
+            _ => rest.push(a.clone()),
+        }
+    }
+    Ok((flags, rest))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn full() -> BTreeMap<String, String> {
+        parse_answers(
+            "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = /b/db\nrun = /b/run\nreleases = \"/b/rel\"\nspira.dolt_data = /b/dolt\noperated = 0\n",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn answers_parse_bare_quoted_and_prefixed_keys() {
+        let a = full();
+        assert_eq!(a["releases"], "/b/rel");
+        assert_eq!(a["dolt_data"], "/b/dolt");
+        assert!(parse_answers("no equals here").is_err());
+    }
+
+    #[test]
+    fn missing_inputs_are_named_exactly() {
+        let mut a = full();
+        a.remove("db");
+        a.insert("run".into(), " ".into());
+        assert_eq!(missing(&a), vec!["db", "run"]);
+    }
+
+    #[test]
+    fn a_fresh_box_gets_every_path_pinned_and_a_valid_file() {
+        let d = testkit::TempDir::new("spira-config-init-fresh");
+        let out = d.path().join("cfg/spira.toml");
+        let mut a = full();
+        a.insert("home_repo_path".into(), "/b/scratch".into());
+        assert_eq!(ensure(&out, a, None).unwrap(), Outcome::Written(out.clone()));
+        let doc = crate::load(&out).unwrap();
+        assert_eq!(crate::get_path(&doc, "spira.db").as_deref(), Some("/b/db"));
+        assert_eq!(crate::get_path(&doc, "spira.repo_map").as_deref(), Some(d.path().join("cfg/repo-map").to_str().unwrap()));
+        let map = std::fs::read_to_string(d.path().join("cfg/repo-map")).unwrap();
+        assert_eq!(map, "scratch | /b/scratch | push | origin/main | |\n");
+    }
+
+    #[test]
+    fn an_existing_repo_map_row_is_never_duplicated() {
+        let d = testkit::TempDir::new("spira-config-init-row");
+        let out = d.path().join("spira.toml");
+        std::fs::write(d.path().join("repo-map"), "scratch | /x | queue.local | local/main | |\n").unwrap();
+        let mut a = full();
+        a.insert("home_repo_path".into(), "/b/scratch".into());
+        ensure(&out, a, None).unwrap();
+        assert_eq!(std::fs::read_to_string(d.path().join("repo-map")).unwrap(), "scratch | /x | queue.local | local/main | |\n");
+    }
+
+    #[test]
+    fn an_existing_file_is_validated_and_never_overwritten() {
+        let d = testkit::TempDir::new("spira-config-init-existing");
+        let out = d.path().join("spira.toml");
+        std::fs::write(&out, "[spira]\nid_prefix = \"zz\"\n").unwrap();
+        assert_eq!(ensure(&out, full(), None).unwrap(), Outcome::Existing(out.clone()));
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "[spira]\nid_prefix = \"zz\"\n");
+        std::fs::write(&out, "[spira]\nnot_a_key = 1\n").unwrap();
+        assert!(ensure(&out, full(), None).is_err());
+    }
+
+    #[test]
+    fn nobody_to_ask_refuses_naming_the_missing_inputs_and_writes_nothing() {
+        let d = testkit::TempDir::new("spira-config-init-refuse");
+        let out = d.path().join("spira.toml");
+        let mut a = full();
+        a.remove("releases");
+        a.remove("instance");
+        let e = ensure(&out, a, None).unwrap_err();
+        assert!(e.contains("instance, releases"), "{e}");
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn a_prompt_fills_what_the_answers_lack() {
+        let d = testkit::TempDir::new("spira-config-init-ask");
+        let out = d.path().join("spira.toml");
+        let mut a = full();
+        a.remove("run");
+        let mut ask = |k: &str, _: &str, _: &str| (k == "run").then(|| "/asked/run".to_string());
+        ensure(&out, a, Some(&mut ask)).unwrap();
+        assert_eq!(crate::get_path(&crate::load(&out).unwrap(), "spira.run").as_deref(), Some("/asked/run"));
+    }
+
+    #[test]
+    fn an_unknown_answer_is_refused_by_name() {
+        let mut a = full();
+        a.insert("no_such_key".into(), "1".into());
+        let e = render(&a, Path::new("/x/spira.toml")).unwrap_err();
+        assert!(e.contains("no_such_key"), "{e}");
+    }
+
+    #[test]
+    fn default_out_prefers_spira_toml_then_xdg_then_home() {
+        let m = |p: &[(&str, &str)]| p.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
+        assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a/s.toml"), ("HOME", "/h")])).unwrap(), PathBuf::from("/a/s.toml"));
+        assert_eq!(default_out(&m(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")])).unwrap(), PathBuf::from("/x/spira/spira.toml"));
+        assert_eq!(default_out(&m(&[("HOME", "/h")])).unwrap(), PathBuf::from("/h/.config/spira/spira.toml"));
+        assert!(default_out(&m(&[("SPIRA_TOML", "/a:/b")])).is_err());
+    }
+}

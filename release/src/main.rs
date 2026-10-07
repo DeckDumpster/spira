@@ -22,7 +22,7 @@ const USAGE: &str = "usage:
   release rollback [--repo R] [--settle SECS] [--drain-wait SECS]
   release prune [--keep N]
   release status
-  release install-tarball <tarball> [--dry-run] [--settle SECS] [--skip-restart]
+  release install-tarball <tarball> [--answers FILE] [--dry-run] [--settle SECS] [--skip-restart]
   release stage up [ROOT]
   release stage down <ROOT>
   release canary [--stage ROOT] [--deadline SECS]
@@ -47,6 +47,7 @@ struct Args {
     stage: Option<String>,
     deadline: Duration,
     skip_restart: bool,
+    answers: Option<PathBuf>,
 }
 
 fn parse(argv: &[String]) -> Result<Args, String> {
@@ -66,6 +67,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         // batch-job: a release restart waits on every unit to come back
         deadline: Duration::from_secs(120),
         skip_restart: false,
+        answers: None,
     };
     let mut it = argv.iter();
     while let Some(x) = it.next() {
@@ -84,6 +86,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--no-pre-activate" => a.pre_activate = false,
             "--dry-run" => a.dry_run = true,
             "--skip-restart" => a.skip_restart = true,
+            "--answers" => a.answers = Some(val(x)?.into()),
             "--stage" => a.stage = Some(val(x)?),
             "--deadline" => a.deadline = Duration::from_secs(val(x)?.parse().map_err(|_| "--deadline needs whole seconds".to_string())?),
             "-h" | "--help" => return Err(String::new()),
@@ -322,6 +325,24 @@ fn intake_cmd(env: &config::Env, rest: &[String]) -> Result<(), (u8, String)> {
     Ok(())
 }
 
+/// The config this install runs on: the file `SPIRA_TOML` names, else the canonical
+/// location — produced from `answers` (or a prompt on a terminal) when absent. When
+/// `SPIRA_TOML` was unset it names the file for the rest of this process, and the operator is
+/// told to export it for the steps that follow.
+fn ensure_config(env: &config::Env, answers: Option<&Path>) -> Result<(), String> {
+    use spira_config::init;
+    let out = init::default_out(env)?;
+    match init::ensure_from_cli(Some(out.clone()), answers, &Default::default())? {
+        init::Outcome::Existing(_) => {}
+        init::Outcome::Written(p) => println!("release: wrote {} from the operator's answers", p.display()),
+    }
+    if env.get("SPIRA_TOML").is_none_or(|t| t.is_empty()) {
+        std::env::set_var("SPIRA_TOML", &out);
+        println!("release: SPIRA_TOML names the one config — export SPIRA_TOML={} for the steps that follow", out.display());
+    }
+    Ok(())
+}
+
 fn run(argv: &[String]) -> Result<(), (u8, String)> {
     let usage = |m: String| (2u8, if m.is_empty() { USAGE.to_string() } else { format!("{m}\n{USAGE}") });
     let a = parse(argv).map_err(usage)?;
@@ -389,6 +410,12 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         _ => {}
     }
 
+    // A fresh box has no config yet: install-tarball is the first step of an install, so it
+    // PRODUCES the config from the operator's answers (per Ryan 2026-10-07) — before anything
+    // reads config. An existing file is validated and used, never overwritten.
+    if cmd == "install-tarball" && !a.dry_run {
+        ensure_config(&env, a.answers.as_deref()).map_err(fail)?;
+    }
     let cfg = resolve_config(&a, &env, &cmd, rest).map_err(|e| (1, e))?;
     let repo = || release::repo::resolve(a.repo.as_deref().map(Path::new), &env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
     match cmd.as_str() {

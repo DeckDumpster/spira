@@ -73,13 +73,6 @@ fn missing_release_bins_names_what_is_missing_and_nothing_when_complete() {
 }
 
 #[test]
-fn conf_line_value_reads_the_first_assignment() {
-    let t = "SPIRA_OPERATED = 0\n\nSPIRA_CHECK5_MAX_FILE = 42\nSPIRA_CHECK5_MAX_FILE = 7\n";
-    assert_eq!(conf_line_value(t, "SPIRA_CHECK5_MAX_FILE").as_deref(), Some("42"));
-    assert_eq!(conf_line_value(t, "SPIRA_NOPE"), None);
-}
-
-#[test]
 fn gh_repo_prefers_env_then_a_github_origin() {
     assert_eq!(gh_repo_from([None, Some("a/b".into()), Some("c/d".into())], None).as_deref(), Some("a/b"));
     assert_eq!(gh_repo_from([None, None, None], Some("git@github.com:Deck/spira.git\n".into())).as_deref(), Some("Deck/spira"));
@@ -248,6 +241,14 @@ impl Fake {
             ("systemctl", ["--user", "list-units", "--state=active", ..]) => ok("spira-sentinel-t.timer loaded active waiting\n"),
             ("systemctl", ["--user", "list-units", "--state=failed", ..]) => ok(if self.failed_unit { "spira-ops-t.service loaded failed failed\n" } else { "" }),
             ("systemctl", _) => ok(""),
+            (_, ["install-tarball", "--skip-restart", tb, "--answers", answers]) => {
+                // As the real one does: the operator's answers become the one config file.
+                let text = fs::read_to_string(answers).unwrap();
+                let toml = Path::new(c.env_of("SPIRA_TOML").expect("install-tarball names SPIRA_TOML"));
+                spira_config::init::ensure(toml, spira_config::init::parse_answers(&text).unwrap(), None).unwrap();
+                self.activate(Path::new(tb).file_name().unwrap().to_string_lossy().trim_end_matches(".tar.gz"));
+                ok("")
+            }
             (_, ["install-tarball", tb]) | (_, ["install-tarball", "--skip-restart", tb]) => {
                 self.activate(Path::new(tb).file_name().unwrap().to_string_lossy().trim_end_matches(".tar.gz"));
                 ok("")
@@ -476,7 +477,7 @@ fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allo
     assert!(tools.len() >= 11, "{} tool calls", tools.len());
     for c in &tools {
         assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "{}", c.line());
-        assert_eq!(c.env_of("SPIRA_CONF"), Some(b.root.join("config/spira/spira.conf").display().to_string().as_str()), "{}", c.line());
+        assert_eq!(c.env_of("SPIRA_TOML"), Some(spira_config::toml_path_at(&b.root.join("config/spira")).display().to_string().as_str()), "{}", c.line());
     }
     // uninstall.sh (phases A, C, D) carries the SAME SPIRA_HOME_REPO install_env() gave the
     // install it undoes. Without it, owned.sh's manifest re-derives repo_is_git_checkout
@@ -715,33 +716,23 @@ fn record_without_a_notes_repo_is_a_usage_error() {
     assert_eq!(main(&a), 2);
 }
 
-/// Regression sp-oppza: phase A's own bootstrap `spira.conf` — not `configure.sh`, which
-/// never touches a file already there — is what a fresh acceptance install's box actually
-/// gets its config from. sp-k6m1m made `spira.id_prefix` required by `spira-config validate`
-/// (doctor, pre-activate) whenever `[spira]` sets anything, but this bootstrap text set
-/// `SPIRA_OPERATED`/`SPIRA_RELEASES` without ever setting `SPIRA_ID_PREFIX` — so the box it
-/// produced failed activation immediately. Runs the bootstrap text through the SAME
-/// converter `conf.sh`'s auto-convert uses (`spira-config convert`'s own reader), the
-/// positive control every absence check needs: before the fix, `id_prefix` came back `None`
-/// and `require_id_prefix` refused exactly as the real box did.
+/// Phase A's answers are exactly what the installer needs from an operator: every required
+/// input present (so `release install-tarball --answers` never prompts or refuses), and the
+/// config they produce passes the same id_prefix check doctor/pre-activate run.
 #[test]
-fn phase_a_bootstrap_conf_sets_id_prefix() {
+fn phase_a_answers_produce_a_valid_spira_toml() {
     let b = Box_::new();
     let f = b.fake();
     let o = b.opts(&[]);
     let releases = o.releases();
     let r = Run::new(&f, o);
-    let text = r.bootstrap_conf_text(&releases);
-
-    assert!(text.contains("SPIRA_OPERATED = 0"), "sanity: this IS the bootstrap conf — {text:?}");
-
-    let raw = spira_config::convert::read_conf(&text, "/home/test");
-    let mut warnings = spira_config::convert::ConvertWarnings::default();
-    let section = spira_config::convert::spira_section(&raw, &mut warnings).expect("no unknown keys in the bootstrap conf");
-    assert_eq!(section.id_prefix.as_deref(), Some("sp"), "bootstrap conf must set SPIRA_ID_PREFIX (sp-k6m1m/sp-oppza)");
-
-    let doc = spira_config::SpiraToml { spira: Some(section), repo: Default::default(), persona: Default::default() };
-    assert!(spira_config::require_id_prefix(&doc).is_ok(), "the converted document must pass the same check doctor/pre-activate run");
+    let a = spira_config::init::parse_answers(&r.answers_text(&releases)).expect("answers parse");
+    assert!(spira_config::init::missing(&a).is_empty(), "missing: {:?}", spira_config::init::missing(&a));
+    let text = spira_config::init::render(&a, &spira_config::toml_path_at(&b.root.join("config/spira"))).expect("answers render");
+    let doc = spira_config::validate(&text).expect("valid");
+    assert!(spira_config::require_id_prefix(&doc).is_ok());
+    assert_eq!(spira_config::get_path(&doc, "spira.releases").as_deref(), Some(releases.display().to_string().as_str()));
+    assert_eq!(spira_config::get_path(&doc, "spira.operated").as_deref(), Some("0"));
 }
 
 #[test]

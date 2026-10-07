@@ -583,19 +583,25 @@ fn main() -> ExitCode {
 
     // ---- phase 1: config --------------------------------------------------------------
     phase("phase 1: config");
-    let conf_dest = nonempty_env("XDG_CONFIG_HOME").map(|x| format!("{x}/spira/spira.conf")).or_else(|| nonempty_env("HOME").map(|h| format!("{h}/.config/spira/spira.conf"))).unwrap_or_default();
+    // The one config (per Ryan 2026-10-07): the file SPIRA_TOML names — normally
+    // produced by `release install-tarball` from the operator's answers. One already there is
+    // validated and used, never overwritten; a missing one is produced here (asked for on a
+    // terminal; with no terminal the refusal names each missing input).
     let mut changes = 0u32;
-    if Path::new(&conf_dest).is_file() {
-        skip(&format!("config exists at {conf_dest}"));
-    } else if opts.dry {
-        would("run: spira/configure.sh --out ...");
+    if opts.dry {
+        would("ensure the config SPIRA_TOML names (spira-config init)");
     } else {
-        info("running configure.sh");
-        if tool_status("configure.sh", &[]) != 0 {
-            eprintln!("install: phase config failed — configure.sh exited non-zero");
-            return ExitCode::from(2);
+        match spira_config::init::ensure_from_cli(None, None, &Default::default()) {
+            Ok(spira_config::init::Outcome::Existing(p)) => skip(&format!("config exists at {}", p.display())),
+            Ok(spira_config::init::Outcome::Written(p)) => {
+                info(&format!("wrote {}", p.display()));
+                changes += 1;
+            }
+            Err(e) => {
+                eprintln!("install: phase config failed — {e}");
+                return ExitCode::from(2);
+            }
         }
-        changes += 1;
     }
 
     // Resolve the locations the rest of install reads, now that the config exists. They
