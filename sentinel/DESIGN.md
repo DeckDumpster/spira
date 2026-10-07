@@ -120,7 +120,7 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 
 | path (under `$SPIRA_RUN`) | r/w | shape | who else |
 |---|---|---|---|
-| `list-snapshot.XXXXXX`, `ready-snapshot.XXXXXX`, `ready-cache.XXXXXX` | w, removed at exit | bd JSON; the cache is `<fayth> <count>` lines | exported as `SPIRA_LIST_SNAPSHOT`, `SPIRA_READY_SNAPSHOT`, `SPIRA_READY_CACHE` to every child (strand, the seams) |
+| `list-snapshot.XXXXXX`, `ready-cache.XXXXXX` | w, removed at exit | bd JSON; the cache is `<fayth> <count>` lines | exported as `SPIRA_LIST_SNAPSHOT`, `SPIRA_READY_CACHE` to every child (strand, the seams) |
 | `audit.status` | w (audit), r (pass) | `SP_AUDIT_AT=<epoch>\nSP_AUDIT_RC=0\n` | tests only |
 | `audit.progress`, `audit.progress.drain.<pid>` | append (audit), drain-by-rename (pass) | one progress message per line | — |
 | `audit.dispatched`, `landing.dispatched` | w once, never overwritten | `<epoch>\n` | cockpit.sh reads landing.* |

@@ -74,6 +74,13 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
 
+    let working: std::collections::HashSet<String> = match spira_config::lc_state::list() {
+        Ok(rows) => rows.into_iter().filter(|r| r.working()).map(|r| r.bead_id).collect(),
+        Err(e) => {
+            warn(&format!("WARN the lifecycle rows could not be read ({e}) — no bead is counted as moving by WORKING"));
+            Default::default()
+        }
+    };
     let mut rows = Vec::new();
     let mut watching = Vec::new();
     for (labels, excl, fayths) in parts {
@@ -95,6 +102,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             store: &store,
             labels: need.iter().map(|s| s.to_string()).collect(),
             ready,
+            working: working.clone(),
             vocab: &cfg.vocab,
             facts: &facts,
         };

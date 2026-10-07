@@ -461,13 +461,8 @@ impl<'a> Sentinel<'a> {
                 self.h.set_env("SPIRA_LIST_SNAPSHOT", &p.to_string_lossy());
             }
         }
-        if snap.ready.is_some() {
-            if let Some(p) = self.temp_file("ready-snapshot", &snap.ready_raw) {
-                self.h.set_env("SPIRA_READY_SNAPSHOT", &p.to_string_lossy());
-            }
-            if self.mode == Mode::Pass {
-                self.export_ready_cache();
-            }
+        if snap.ready.is_some() && self.mode == Mode::Pass {
+            self.export_ready_cache();
         }
     }
 
@@ -537,8 +532,7 @@ impl<'a> Sentinel<'a> {
         self.check6();
         self.phase("CHECK3b");
         // S4 is retired (wave 4.28, sp-fbqsv): mark_queue_waiters/close_landed_queue_waiters
-        // are native now, reading the pass's own broad ready snapshot already in memory
-        // rather than round-tripping through $SPIRA_READY_SNAPSHOT's temp file.
+        // are native now, reading the pass's own broad ready snapshot already in memory.
         self.mark_queue_waiters(snap.ready.as_deref());
         self.close_landed_queue_waiters();
         // CHECK 3c from the snapshot: one walk in memory, never one `bd children` per
