@@ -102,6 +102,67 @@ pub fn cmd_facts(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// The facts as a table named `events` with bd's column names, for a query written against
+/// bd's own `events` table (census): `FROM events` becomes `FROM <this> events`.
+pub fn events_table() -> String {
+    format!(
+        "(SELECT lc_key AS issue_id, event AS event_type, JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')) AS new_value, actor, DATE_ADD(TIMESTAMP('1970-01-01 00:00:00'), INTERVAL `at` SECOND) AS created_at FROM event WHERE machine = '{MACHINE}')"
+    )
+}
+
+const BD_TABLE: &str = "FROM events";
+
+/// One SELECT written against bd's `events` table, with every `FROM events` pointed at the facts.
+/// Refused when it is anything else.
+pub fn retarget(sql: &str) -> Result<String, &'static str> {
+    if !sql.trim_start().starts_with("SELECT ") {
+        return Err("not a SELECT");
+    }
+    if sql.contains(';') {
+        return Err("more than one statement");
+    }
+    if !sql.contains(BD_TABLE) {
+        return Err("does not read the events table");
+    }
+    Ok(sql.replace(BD_TABLE, &format!("FROM {} events", events_table())))
+}
+
+/// bd's `sql` table rendering, which is what census's parsers read.
+pub fn render_table(rows: &[Value]) -> String {
+    let cell = |v: &Value| match v {
+        Value::Null => String::new(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let Some(Value::Object(first)) = rows.first() else { return String::new() };
+    let cols: Vec<&String> = first.keys().collect();
+    let sep = format!("+{}+\n", cols.iter().map(|_| "---").collect::<Vec<_>>().join("+"));
+    let line = |vals: Vec<String>| format!("| {} |\n", vals.join(" | "));
+    let mut out = sep.clone();
+    out.push_str(&line(cols.iter().map(|c| c.to_string()).collect()));
+    out.push_str(&sep);
+    for r in rows {
+        out.push_str(&line(cols.iter().map(|c| cell(r.get(c.as_str()).unwrap_or(&Value::Null))).collect()));
+    }
+    out.push_str(&sep);
+    out
+}
+
+/// `facts-query <sql>`: census's aggregate over the facts, answered as bd's `sql` table.
+pub fn cmd_facts_query(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(sql) = args.first() else {
+        return (CANNOT_TELL, "facts-query: missing <sql>".into());
+    };
+    let sql = match retarget(sql) {
+        Ok(q) => q,
+        Err(why) => return (REFUSED, format!("facts-query: refused: {why}")),
+    };
+    match conn.query(&sql) {
+        Ok(r) => (0, render_table(&r)),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +200,27 @@ mod tests {
     fn a_cause_is_bounded_and_single_line() {
         assert_eq!(bounded(&format!("a\nb{}", "x".repeat(300))).len(), CAUSE_MAX);
         assert!(!bounded("a\nb").contains('\n'));
+    }
+
+    #[test]
+    fn a_census_query_is_retargeted_from_bd_events_to_the_facts() {
+        let q = retarget("SELECT a FROM events WHERE x IN (SELECT i FROM events WHERE y)").unwrap();
+        assert_eq!(q.matches("machine = 'fact'").count(), 2, "{q}");
+        assert!(!q.contains("FROM events WHERE"), "{q}");
+        assert!(retarget("DELETE FROM events").is_err());
+        assert!(retarget("SELECT 1 FROM events; DROP TABLE event").is_err());
+        assert!(retarget("SELECT * FROM bead").is_err(), "a SELECT that never reads events is refused");
+    }
+
+    #[test]
+    fn the_table_renders_as_bd_sql_does_with_the_columns_in_query_order() {
+        let mut m = serde_json::Map::new();
+        m.insert("event_type".into(), "requeued".into());
+        m.insert("beads".into(), "2".into());
+        m.insert("note".into(), Value::Null);
+        let t = render_table(&[Value::Object(m)]);
+        assert_eq!(t, "+---+---+---+\n| event_type | beads | note |\n+---+---+---+\n| requeued | 2 |  |\n+---+---+---+\n");
+        assert_eq!(render_table(&[]), "");
     }
 
     #[test]

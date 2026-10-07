@@ -81,6 +81,40 @@ impl Real {
         }
     }
 
+    /// The same query over the attempt-history facts in the lifecycle event log, answered as
+    /// bd's `sql` table so the one parser reads both.
+    fn run_fact_sql(&self, query: &str) -> (bool, String, String) {
+        let out = Command::new("timeout")
+            .arg("30")
+            .arg(spira_config::lifecycle_row::lc_bin())
+            .arg("facts-query")
+            .arg(query)
+            .stdin(Stdio::null())
+            .output();
+        match out {
+            Ok(o) => (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string(),
+                String::from_utf8_lossy(&o.stderr).trim_end_matches('\n').to_string(),
+            ),
+            Err(e) => (false, String::new(), e.to_string()),
+        }
+    }
+
+    /// bd's events and the lifecycle facts, one table: the history written before the move
+    /// lives in bd, everything since in the lifecycle log. Either leg failing fails the query.
+    fn run_events_sql(&self, query: &str) -> (bool, String, String) {
+        let (bd_ok, bd_out, bd_err) = self.run_bd_sql(query);
+        if !bd_ok {
+            return (false, bd_out, bd_err);
+        }
+        let (lc_ok, lc_out, lc_err) = self.run_fact_sql(query);
+        if !lc_ok {
+            return (false, lc_out, format!("lifecycle facts: {lc_err}"));
+        }
+        (true, format!("{bd_out}\n{lc_out}"), String::new())
+    }
+
     fn run_py(&self, script: &str, args: &[&Path], stdin: Option<&str>) -> String {
         let mut cmd = Command::new("python3");
         cmd.arg(self.census_py().join(script));
@@ -131,7 +165,7 @@ impl World for Real {
         let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
         let mut last_stderr = String::new();
         for attempt in 1..=3 {
-            let (ok, out, err) = self.run_bd_sql(&query);
+            let (ok, out, err) = self.run_events_sql(&query);
             if ok {
                 return Ok(out);
             }
@@ -144,11 +178,11 @@ impl World for Real {
         Err(format!("census_events_run_sql: query failed after 3 attempts: {last_stderr}"))
     }
     fn census_handwritten_run_sql(&self) -> String {
-        self.run_bd_sql(&crate::sql::handwritten_sql()).1
+        self.run_events_sql(&crate::sql::handwritten_sql()).1
     }
     fn census_deliberate_run_sql(&self, since: Option<i64>) -> String {
         let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
-        self.run_bd_sql(&crate::sql::deliberate_sql(since_formatted.as_deref(), &self.deliberate_cause_names())).1
+        self.run_events_sql(&crate::sql::deliberate_sql(since_formatted.as_deref(), &self.deliberate_cause_names())).1
     }
     fn census_class_fold_map(&self) -> String {
         crate::sql::class_fold_map().trim_end_matches('\n').to_string()

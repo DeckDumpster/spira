@@ -425,6 +425,26 @@ mod tests {
     }
 
     #[test]
+    fn an_attempt_history_fact_exports_with_its_cause_as_the_reason() {
+        let row = LifecycleEventRow {
+            seq: 9,
+            machine: "fact".to_string(),
+            lc_key: "sp-m".to_string(),
+            event: "requeued".to_string(),
+            from_state: String::new(),
+            to_state: String::new(),
+            applied: true,
+            refusal: None,
+            evidence: serde_json::json!({"cause": "gate-red"}),
+            actor: "harness".to_string(),
+            at: 1758000000,
+        };
+        let out = map_lifecycle_row(&row);
+        assert_eq!((out.machine.as_str(), out.event.as_str()), ("fact", "requeued"));
+        assert_eq!(out.reason.as_deref(), Some("gate-red"));
+    }
+
+    #[test]
     fn a_refused_lifecycle_event_still_yields_one_row_with_applied_false() {
         let row = LifecycleEventRow {
             seq: 8,
