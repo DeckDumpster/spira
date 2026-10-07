@@ -134,7 +134,7 @@ is      "queue: the base did not move"          "$base0" "$(remote_main)"
 is      "queue: the bead stays closed"          closed "$(status_of sp-queued)"
 nowant  "queue: no land event"                  "kind: bead.landed" "$(events)"
 nowant  "queue: no pull request opened"         "pr-create" "$(cat "$FORGE_LOG")"
-want    "queue: the landstate record says CERTIFIED" "CERTIFIED" "$(cat "$RUN"/landstate/sp-queued* 2>/dev/null)"
+want    "queue: lifecycle was told the branch passed" "certify sp-queued" "$(cat "$TMP/lcfix/calls.log")"
 
 # ========================================================================================
 echo
@@ -154,6 +154,6 @@ nowant  "pr: no land event"                     "kind: bead.landed" "$(events)"
 
 out="$(runpass pr)"
 is      "pr: a second pass opens no second pull request" 1 "$(grep -c '^pr-create' "$FORGE_LOG")"
-nowant  "pr: the second pass does not report opening one" "opened a pull request" "$out"
+want    "pr: the second pass finds the pull request already open" "pull request 41 open on spira/sp-prd" "$out"
 
 tl_summary
