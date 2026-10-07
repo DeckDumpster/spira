@@ -274,8 +274,10 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         return cmd_list_delivery(args, conn);
     }
     let mut clauses = Vec::new();
+    let mut scope = String::new();
     if let Some(state) = flag(args, "--state") {
         clauses.push(format!("state = '{}'", rows::escape(&state)));
+        scope.push_str(&format!(" AND to_state = '{}'", rows::escape(&state)));
     }
     // --hold <kind>: beads currently carrying that hold (design §3.1: "Holds are a
     // dimension, not states"), e.g. every poison-held bead regardless of its underlying
@@ -283,6 +285,10 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     // lc_holds call against every dispatchable bead.
     if let Some(kind) = flag(args, "--hold") {
         clauses.push(format!("JSON_CONTAINS(holds, '\"{}\"')", rows::escape(&kind)));
+        scope.push_str(&format!(
+            " AND lc_key IN (SELECT bead_id FROM bead WHERE JSON_CONTAINS(holds, '\"{}\"'))",
+            rows::escape(&kind)
+        ));
     }
     let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
@@ -292,7 +298,7 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     // took 85 s on 3.7k rows, past every caller's timeout (sp-c3azm).
     let sql = format!(
         "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth, s.since AS since FROM bead \
-         LEFT JOIN (SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 GROUP BY lc_key, to_state) s \
+         LEFT JOIN (SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1{scope} GROUP BY lc_key, to_state) s \
          ON s.lc_key = bead.bead_id AND s.to_state = bead.state{where_clause} ORDER BY bead_id"
     );
     match conn.query(&sql) {
