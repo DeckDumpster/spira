@@ -204,6 +204,10 @@ pub fn epoch_s(ts: &str) -> Option<i64> {
 /// that reopen (bead_reopen writes both, bd's first).
 pub const PAIR_WINDOW_S: i64 = 120;
 
+/// A second claim this close behind an open one is one claim episode seen twice (a claim
+/// race), not a session that ended without a close.
+pub const DOUBLE_CLAIM_WINDOW_S: i64 = 10;
+
 /// Order one bead's rows deterministically: timestamp, then kind precedence, then input order.
 fn ordered(rows: &[EventRow]) -> Vec<(String, EventKind)> {
     let mut v: Vec<(String, u8, usize, EventKind)> = rows
@@ -236,6 +240,11 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
     for (t, k) in evs.iter().filter(|(t, _)| floor.as_ref().map_or(true, |f| t > f)) {
         match k {
             EventKind::Claim => {
+                if let (Some(at), Some(now)) = (open.as_deref().and_then(epoch_s), epoch_s(t)) {
+                    if now - at <= DOUBLE_CLAIM_WINDOW_S {
+                        continue;
+                    }
+                }
                 spent_by_no_verdict = false;
                 if let Some(at) = open.take() {
                     attempt_log.push(Attempt {
@@ -369,6 +378,34 @@ mod tests {
         let closes = after.iter().filter(|r| r.event_type == "closed").count() as i64;
         let exempt = after.iter().filter(|r| r.event_type == "requeued" && is_legacy_exempt(&v(r))).count() as i64;
         (claims - closes - exempt).max(0) as u32
+    }
+
+    fn at(kind: &str, ts: &str) -> EventRow {
+        EventRow::new(B, kind, "", &format!("2026-09-28T10:{ts}Z"))
+    }
+
+    #[test]
+    fn a_double_claim_a_second_apart_is_one_attempt() {
+        let r = vec![at("claimed", "00:00"), at("claimed", "00:01")];
+        assert_eq!(fold(B, &r).attempts, 1);
+    }
+
+    #[test]
+    fn three_claims_released_without_submit_are_three_attempts() {
+        let r = vec![at("claimed", "00:00"), at("claimed", "10:00"), at("claimed", "20:00")];
+        assert_eq!(fold(B, &r).attempts, 3);
+    }
+
+    #[test]
+    fn the_old_count_charged_a_double_claim_twice() {
+        // Planted control: counting every claim row, as the fold used to, reaches 3 here.
+        let r = vec![at("claimed", "00:00"), at("claimed", "00:01"), at("claimed", "10:00"), at("claimed", "20:00")];
+        let old = r.iter().filter(|x| EventKind::of(x) == Some(EventKind::Claim)).count();
+        assert_eq!(old, 4);
+        assert_eq!(fold(B, &r).attempts, 3);
+        let two = vec![at("claimed", "00:00"), at("claimed", "00:01"), at("claimed", "10:00")];
+        assert_eq!(two.len(), 3, "old count: poisoned at 3");
+        assert_eq!(fold(B, &two).attempts, 2, "new count: not poisoned");
     }
 
     #[test]
