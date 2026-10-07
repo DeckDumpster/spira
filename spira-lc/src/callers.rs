@@ -711,5 +711,97 @@ pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
     }
 }
 
+/// `close <id> (--reason R | --reason-file F|-) [--superseded-by X] [--actor A]` — the one
+/// door for closing a bead (sp-3fue0j). The lifecycle machine records the end FIRST — an open
+/// ask is withdrawn, then SUPERSEDED (a successor named by `--superseded-by` or in the reason)
+/// or DROPPED — and only then is the store closed, so a closed bead can never sit READY on
+/// its row again (237 did on 2026-10-06, closed by raw `bd close` from ten callers). A row
+/// already terminal (a landing recorded LANDED before its close) gets no event; a bead with
+/// no row has no state to diverge, and is closed in the store alone. `reason_file` reads
+/// `--reason-file`'s argument (`-` is stdin) — injected so the composition is testable.
+///
+/// Exit: 0 closed · 2 cannot tell (usage, the machine unreadable, or the store close failed
+/// after the event — the row is terminal either way) · 3 refused (the event lost its CAS:
+/// nothing is closed, the store is left as it was).
+pub fn close(
+    args: &[String],
+    m: &mut dyn Machine,
+    bd: &mut dyn Bd,
+    reason_file: &mut dyn FnMut(&str) -> Result<String, String>,
+) -> Answer {
+    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id>] [--actor <name>]";
+    let mut id = None;
+    let (mut reason, mut by, mut actor) = (None, None, "close".to_string());
+    let mut i = 0;
+    while i < args.len() {
+        let val = args.get(i + 1).cloned();
+        match args[i].as_str() {
+            "--reason" => reason = val,
+            "--reason-file" => match val.map(|f| reason_file(&f)) {
+                Some(Ok(t)) => reason = Some(t),
+                Some(Err(e)) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: --reason-file: {e}\n"), ..Default::default() },
+                None => return usage(USE),
+            },
+            "--superseded-by" => by = val,
+            "--actor" => actor = val.unwrap_or_default(),
+            a if !a.starts_with('-') && id.is_none() => {
+                id = Some(a.to_string());
+                i += 1;
+                continue;
+            }
+            _ => return usage(USE),
+        }
+        i += 2;
+    }
+    let (Some(id), Some(reason)) = (id.filter(|s| !s.is_empty()), reason.map(|r| r.trim_end().to_string()).filter(|r| !r.is_empty())) else {
+        return usage(USE);
+    };
+    if actor.is_empty() {
+        return usage(USE);
+    }
+    match show(m, &id) {
+        Err(NO_ROW) => {}
+        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc close: {id}: the lifecycle row is unreadable — nothing closed\n"), ..Default::default() },
+        Ok(v) => {
+            let (mut state, mut version) = (bead_field(&v, "state"), bead_field(&v, "version"));
+            if state.is_empty() || version.is_empty() {
+                return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: unreadable row\n"), ..Default::default() };
+            }
+            let terminal = matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
+            if !terminal {
+                if holds_of(v.get("bead").and_then(|b| b.get("holds"))).iter().any(|h| h == "ask") {
+                    let ev = serde_json::to_string(&BeadEventKind::AskWithdrawn).unwrap_or_default();
+                    match event(m, "bead", &id, &state, &version, &actor, &ev).0 {
+                        APPLIED => match show(m, &id) {
+                            Ok(v) => (state, version) = (bead_field(&v, "state"), bead_field(&v, "version")),
+                            Err(rc) => return Answer::code(rc),
+                        },
+                        rc => return Answer { code: rc, stderr: format!("spira-lc close: {id}: withdrawing its ask was refused — nothing closed\n"), ..Default::default() },
+                    }
+                }
+                let kind = match by.as_deref().filter(|b| !b.is_empty()) {
+                    Some(b) => BeadEventKind::Supersede { by: b.to_string() },
+                    None => terminal_event_for(&reason),
+                };
+                let ev = serde_json::to_string(&kind).unwrap_or_default();
+                match event(m, "bead", &id, &state, &version, &actor, &ev) {
+                    (APPLIED, _) => {}
+                    (rc, out) => {
+                        return Answer { code: rc, stderr: format!("spira-lc close: {id}: {state} -> terminal refused ({}) — nothing closed\n", out.trim()), ..Default::default() }
+                    }
+                }
+            }
+        }
+    }
+    match bd.close(&id, &reason) {
+        Ok(()) => Answer::code(APPLIED),
+        Err(e) => Answer {
+            code: CANNOT_TELL,
+            stderr: format!("spira-lc close: {id}: the lifecycle row is terminal but the store close failed: {}\n", e.trim()),
+            ..Default::default()
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -83,6 +83,9 @@ pub const GATE_CLASSES: &[Class] = &[
     Class::DynamicVerb,
     Class::LifecycleRead,
     Class::BdStatusRead,
+    // sp-3fue0j: a bd close from Rust, joined in the commit that routed every caller through
+    // `spira-lc close`.
+    Class::BdCloseRust,
 ];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or

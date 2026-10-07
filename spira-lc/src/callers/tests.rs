@@ -641,3 +641,74 @@ fn a_close_reason_naming_a_successor_supersedes_otherwise_drops() {
     assert_eq!(terminal_event_for("superseded by nobody"), BeadEventKind::Drop { reason: DropReason::ClosedNoBranch });
     assert_eq!(terminal_event_for(""), BeadEventKind::Drop { reason: DropReason::ClosedNoBranch });
 }
+
+// ---- close (sp-3fue0j): the one door for closing a bead -----------------------------------
+
+fn no_file(_: &str) -> Result<String, String> {
+    Err("no reason file in this test".into())
+}
+
+#[test]
+fn close_records_the_end_on_the_row_before_the_store_closes() {
+    let mut f = Fake::default();
+    f.bead("sp-d", BeadState::Ready);
+    let mut bd = FakeBd::default();
+    let a = close(&v(&["sp-d", "--reason", "Decided by the Concierge: neither"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-d"), "DROPPED", "a closed bead never stays READY on its row");
+    assert_eq!(bd.closed, vec![("sp-d".to_string(), "Decided by the Concierge: neither".to_string())]);
+    assert_eq!(f.events.last().unwrap().4, "close", "default actor");
+}
+
+#[test]
+fn close_withdraws_an_open_ask_first_and_names_a_successor() {
+    let mut f = Fake::default();
+    f.bead("sp-a", BeadState::Ready).holds.insert(HoldKind::Ask);
+    let mut bd = FakeBd::default();
+    let a = close(&v(&["sp-a", "--reason", "answered", "--superseded-by", "sp-b", "--actor", "operator"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-a"), "SUPERSEDED");
+    let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
+    assert_eq!(kinds, vec![r#""AskWithdrawn""#, r#"{"Supersede":{"by":"sp-b"}}"#]);
+    assert!(f.events.iter().all(|e| e.4 == "operator"));
+    // A successor named in the prose earns SUPERSEDED as reconcile-closed reads it.
+    f.bead("sp-c", BeadState::Rework);
+    assert_eq!(close(&v(&["sp-c", "--reason", "Superseded by sp-z (landed)"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(f.state("sp-c"), "SUPERSEDED");
+    assert_eq!(f.beads["sp-c"].reason.as_deref(), Some("sp-z"));
+}
+
+#[test]
+fn close_of_a_terminal_or_rowless_bead_closes_the_store_alone() {
+    let mut f = Fake::default();
+    f.bead("sp-l", BeadState::Landed);
+    let mut bd = FakeBd::default();
+    assert_eq!(close(&v(&["sp-l", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(close(&v(&["sp-none", "--reason", "an alert"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert!(f.events.is_empty(), "nothing to record: already terminal, or no row");
+    assert_eq!(bd.closed.len(), 2);
+}
+
+#[test]
+fn close_never_closes_the_store_when_the_row_cannot_be_read_or_moved() {
+    let mut f = Fake { down: true, ..Default::default() };
+    let mut bd = FakeBd::default();
+    let a = close(&v(&["sp-d", "--reason", "x"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, CANNOT_TELL, "{}", a.stderr);
+    assert!(bd.closed.is_empty(), "fail closed: no store close without the row's end");
+}
+
+#[test]
+fn close_reads_its_reason_from_a_file_and_refuses_without_one() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Ready);
+    let mut bd = FakeBd::default();
+    let mut file = |p: &str| -> Result<String, String> { if p == "-" { Ok("from stdin\n".into()) } else { Err("nope".into()) } };
+    assert_eq!(close(&v(&["sp-r", "--reason-file", "-"]), &mut f, &mut bd, &mut file).code, APPLIED);
+    assert_eq!(bd.closed, vec![("sp-r".to_string(), "from stdin".to_string())]);
+    for bad in [&["sp-r"][..], &["--reason", "x"], &["sp-r", "--reason", "  "], &["sp-r", "--reason", "x", "--bogus", "y"]] {
+        assert_eq!(close(&v(bad), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL, "{bad:?}: usage");
+    }
+    assert_eq!(close(&v(&["sp-r", "--reason-file", "/nope"]), &mut f, &mut bd, &mut file).code, CANNOT_TELL);
+    assert_eq!(bd.closed.len(), 1);
+}

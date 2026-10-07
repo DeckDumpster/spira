@@ -406,22 +406,9 @@ impl Lib for RealLib {
     fn release_claim(&self, id: &str) {
         self.call(Op::ReleaseClaim, &[id], false);
     }
+    // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn bead_close(&self, id: &str, reason: &str) -> bool {
-        let timeout = std::env::var("BD_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "180".into());
-        let Ok(mut child) = Command::new("timeout")
-            .arg(timeout)
-            .args(["bdq", "close", id, "--reason-file", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
-            return false;
-        };
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(reason.as_bytes());
-        }
-        child.wait().map(|s| s.success()).unwrap_or(false)
+        spira_config::lifecycle_row::close(id, reason, "queue", None).is_ok()
     }
     fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
         let Some(root) = self.repo_registry().root(repo) else { return Ok(false) };

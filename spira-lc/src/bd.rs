@@ -57,7 +57,9 @@ impl crate::callers::Bd for LiveBd {
         doc.get("issue_type").and_then(|t| t.as_str()).map(str::to_string).ok_or_else(|| format!("bd show {id}: no issue_type"))
     }
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
-        run(&["close", id, "--reason", reason]).map(|_| ())
+        // --force: the lifecycle row is already terminal when `close` gets here, so the store
+        // must follow it; a refused store close would leave the two disagreeing again.
+        run(&["close", id, "--force", "--reason", reason]).map(|_| ())
     }
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
         if ids.is_empty() {

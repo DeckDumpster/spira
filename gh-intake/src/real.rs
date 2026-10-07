@@ -148,18 +148,9 @@ impl Bd for RealBd {
         matches!(status, Ok(s) if s.success())
     }
 
+    // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn close(&self, id: &str, reason: &str) -> bool {
-        let status = self
-            .cmd()
-            .arg("close")
-            .arg(id)
-            .arg("--reason")
-            .arg(reason)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        matches!(status, Ok(s) if s.success())
+        spira_config::lifecycle_row::close(id, reason, "gh-intake", None).is_ok()
     }
 
     fn show_json(&self, id: &str) -> Option<serde_json::Value> {

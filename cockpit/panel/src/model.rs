@@ -333,12 +333,10 @@ fn run_as(cmd: &str, args: &[&str], actor: Option<&str>, cfg: &Cfg) -> Result<()
 fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), String> {
     let actor = &cfg.operator_actor;
     let id = &item.id;
-    let e = match run_as(
-        "bd",
-        &["-C", db, "close", id, "--reason", reason, "--force"],
-        Some(actor),
-        cfg,
-    ) {
+    // Through the lifecycle machine (sp-3fue0j), which forces the store close once the row
+    // has ended — never a raw bd close.
+    let lc = crate::store::bin("spira-lc", cfg);
+    let e = match spira_config::lifecycle_row::close_with(&lc, id, reason, actor, None) {
         Ok(()) => {
             lift_work_holds(db, item, actor, cfg);
             notify_or_log(db, item, "verdict", reason, actor, cfg);

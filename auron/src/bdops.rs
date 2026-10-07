@@ -112,13 +112,9 @@ impl BdOps for SeamBdOps<'_> {
         }
     }
 
+    // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn close(&self, id: &str, reason: &str) -> R<()> {
-        let o = seam::bdq(self.seam, &["close", id, "--reason", reason]);
-        if o.success() {
-            Ok(())
-        } else {
-            Err(fail_of(o.code))
-        }
+        spira_config::lifecycle_row::close(id, reason, "auron", None).map_err(|_| fail_of(1))
     }
 
     fn label_add(&self, id: &str, label: &str) -> R<()> {

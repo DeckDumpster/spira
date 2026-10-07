@@ -135,7 +135,7 @@ pub const ROWLESS_CONTROLS: &[(&str, &str)] =
 
 /// Test code decides nothing in production: a file under a `tests/` directory, or named
 /// `tests.rs` / `*_tests.rs`.
-fn is_test_file(rel: &str) -> bool {
+pub(crate) fn is_test_file(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     rel.starts_with("tests/") || rel.contains("/tests/") || name == "tests.rs" || name.ends_with("_tests.rs")
 }
@@ -150,7 +150,7 @@ fn in_scope(rel: &str) -> bool {
 /// `code` (masked) with every short, identifier-like string literal's text put back from
 /// `orig`, byte for byte (masking keeps lengths), so `"closed"` reads as itself while a
 /// long or escaped literal stays blank.
-fn restore_short_literals(orig: &str, code: &str) -> String {
+pub(crate) fn restore_short_literals(orig: &str, code: &str) -> String {
     let ob = orig.as_bytes();
     let mut cb = code.as_bytes().to_vec();
     let mut i = 0;

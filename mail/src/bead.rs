@@ -35,6 +35,8 @@ impl BdOut {
 
 pub trait Bd {
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut;
+    /// Close `id` through the lifecycle machine (`spira-lc close`, sp-3fue0j) — never bd.
+    fn close(&self, id: &str, reason: &str) -> BdOut;
 }
 
 /// The real `bd` binary, `-C <db>` prefixed. Refuses (matching mail.sh's own
@@ -54,6 +56,12 @@ pub struct BdCli {
 }
 
 impl Bd for BdCli {
+    fn close(&self, id: &str, reason: &str) -> BdOut {
+        match spira_config::lifecycle_row::close(id, reason, "mail", None) {
+            Ok(()) => BdOut::ok(""),
+            Err(e) => BdOut::fail(1, e),
+        }
+    }
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
         if self.db.is_empty() {
             return BdOut::fail(1, "SPIRA_DB is empty/unset");
@@ -285,7 +293,7 @@ pub fn dep_list_up_ids(bd: &dyn Bd, db_configured: bool, bead: &str) -> Vec<Stri
 }
 
 pub fn close(bd: &dyn Bd, id: &str, reason: &str) -> Result<(), String> {
-    let out = bd.run(&a(&["close", id, "--reason-file", "-"]), Some(reason));
+    let out = bd.close(id, reason);
     if out.code == 0 {
         Ok(())
     } else {
@@ -435,6 +443,10 @@ pub mod fake {
     }
 
     impl Bd for FakeBd {
+        // Recorded as the argv the real close used to be, so the callers' tests read the same.
+        fn close(&self, id: &str, reason: &str) -> BdOut {
+            self.run(&[String::from("close"), id.to_string(), "--reason-file".into(), "-".into()], Some(reason))
+        }
         fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
             self.calls.borrow_mut().push((args.to_vec(), stdin.map(str::to_string)));
             let mut r = self.responses.borrow_mut();

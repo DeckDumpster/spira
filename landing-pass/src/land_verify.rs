@@ -156,18 +156,10 @@ fn label_value<'a>(labels: &'a [String], prefix: &str) -> Option<&'a str> {
     labels.iter().find_map(|l| l.strip_prefix(prefix))
 }
 
-/// `bdq close <id> --reason-file -`, the reason on stdin — the exact shape
-/// the retired bash close's heredoc wrote. `true` only on a clean exit.
+/// The close through the lifecycle machine (sp-3fue0j): the row is already LANDED here, so
+/// `spira-lc close` records nothing new and closes the store. `true` only on a clean exit.
 fn bdq_close(id: &str, reason: &str) -> bool {
-    let mut c = Command::new("bdq");
-    c.args(["close", id, "--reason-file", "-"]);
-    c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
-    let Ok(mut child) = c.spawn() else { return false };
-    if let Some(mut si) = child.stdin.take() {
-        use std::io::Write;
-        let _ = si.write_all(reason.as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    spira_config::lifecycle_row::close(id, reason, "landing-pass", None).is_ok()
 }
 
 /// `sending reap-landed-branch [--status-from <f>] <id> <branch> <repo> <why>` — the same

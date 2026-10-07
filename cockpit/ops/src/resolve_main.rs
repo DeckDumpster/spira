@@ -11,36 +11,13 @@ use cockpit_ops::resolve::{run, usage_error, BdResult, Closer, Outcome, USAGE};
 struct RealBd;
 
 impl Closer for RealBd {
-    fn close(&self, db: &Path, id: &str, reason: &str) -> BdResult {
-        let bd = db::bd_bin();
-        let out = Command::new(&bd)
-            .arg("-C")
-            .arg(db)
-            .args(["close", id, "--force", "--reason", reason])
-            .env("BEADS_ACTOR", "claude")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output();
-        match out {
-            Ok(o) => {
-                // Concatenated, not byte-interleaved — see ../DESIGN.md Decisions.
-                let mut combined = String::from_utf8_lossy(&o.stdout).into_owned();
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                if !stderr.is_empty() {
-                    if !combined.is_empty() && !combined.ends_with('\n') {
-                        combined.push('\n');
-                    }
-                    combined.push_str(&stderr);
-                }
-                BdResult {
-                    success: o.status.success(),
-                    combined,
-                }
-            }
-            Err(e) => BdResult {
-                success: false,
-                combined: format!("failed to run {bd}: {e}"),
-            },
+    // Through the lifecycle machine (sp-3fue0j): the row's end is recorded, then the store
+    // closed — a raw `bd close` here left resolved beads READY on their rows. `db` is the
+    // store spira-lc itself resolves from config.
+    fn close(&self, _db: &Path, id: &str, reason: &str) -> BdResult {
+        match spira_config::lifecycle_row::close(id, reason, "claude", None) {
+            Ok(()) => BdResult { success: true, combined: String::new() },
+            Err(e) => BdResult { success: false, combined: e },
         }
     }
 

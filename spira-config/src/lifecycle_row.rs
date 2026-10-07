@@ -113,6 +113,45 @@ pub fn after_close(who: &str, args: &[String]) -> Result<(), String> {
     })
 }
 
+/// Close a bead through the lifecycle machine (`spira-lc close`, sp-3fue0j): the row's end is
+/// recorded first, then the store is closed. Every Rust closer calls this rather than handing
+/// bd a `close` (lifecycle-guard's `bd-close-rust` refuses that at the gate). `actor` names who
+/// closed it on the event; `superseded_by` names a successor. The reason goes on stdin, so
+/// any length or quoting survives.
+pub fn close_with(bin: &str, id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    let mut cmd = Command::new(bin);
+    cmd.args(["close", id, "--reason-file", "-", "--actor", actor]);
+    if let Some(by) = superseded_by.filter(|b| !b.is_empty()) {
+        cmd.args(["--superseded-by", by]);
+    }
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        si.write_all(reason.as_bytes()).map_err(|e| format!("{bin} close {id}: writing the reason: {e}"))?;
+    }
+    let out = child.wait_with_output().map_err(|e| format!("{bin} close {id}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{bin} close {id} exited {}: {}{}",
+            out.status.code().map_or("signal".into(), |c| c.to_string()),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// [`close_with`] through the configured `spira-lc`.
+pub fn close(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), String> {
+    close_with(&lc_bin(), id, reason, actor, superseded_by)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,4 +209,21 @@ mod tests {
         assert_eq!(closed_id(&a(&["update", "sp-c"])), None);
         assert!(terminalize_closed_with(&stub(t.path(), 3), "sp-c").unwrap_err().contains("exited 3"));
     }
+
+    #[test]
+    fn close_hands_spira_lc_the_reason_on_stdin_and_reports_its_refusal() {
+        let t = testkit::TempDir::new("lcclose");
+        let log = t.path().join("calls");
+        let stub = |name: &str, exit: i32| {
+            let p = t.path().join(name);
+            testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> {l}\ncat >> {l}\necho >> {l}\nexit {exit}\n", l = log.display()));
+            p.to_string_lossy().into_owned()
+        };
+        let (ok, refused) = (stub("lc-ok", 0), stub("lc-refused", 3));
+        assert_eq!(close_with(&ok, "sp-a", "two\nlines", "operator", Some("sp-b")), Ok(()));
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.starts_with("close sp-a --reason-file - --actor operator --superseded-by sp-b\ntwo\nlines"), "{calls}");
+        assert!(close_with(&refused, "sp-a", "r", "operator", None).unwrap_err().contains("exited 3"));
+    }
 }
+

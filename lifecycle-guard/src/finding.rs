@@ -15,6 +15,7 @@ pub enum Class {
     LandstateCall,
     LandstatePath,
     BdStatusRead,
+    BdCloseRust,
 }
 
 impl Class {
@@ -31,6 +32,7 @@ impl Class {
             Class::LandstateCall => "landstate-call",
             Class::LandstatePath => "landstate-path",
             Class::BdStatusRead => "bd-status-read",
+            Class::BdCloseRust => "bd-close-rust",
         }
     }
 }
