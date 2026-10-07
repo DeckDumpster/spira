@@ -31,7 +31,7 @@ ln -s "$R" "$TMP/releases/current"
 
 printf 'probe|daemon|/bin/true\n' > "$TMP/watchers"
 tl_config SPIRA_RELEASES="$TMP/releases" SPIRA_PROD="$R/spira" SPIRA_RUN="$TMP/run" \
-    SPIRA_MAIL="$TMP/mail" SPIRA_DB="" SPIRA_WATCHERS="$TMP/watchers" \
+    SPIRA_MAIL="$TMP/mail" SPIRA_DB="$TMP/nodb" SPIRA_WATCHERS="$TMP/watchers" \
     SPIRA_WATCHERS_OVERLAY="$TMP/no-overlay" SPIRA_CLIENT_SETTINGS="$TMP/settings.json" \
     SPIRA_COCKPIT="$TMP/cockpit"
 
@@ -133,8 +133,8 @@ for label in ATTN BEADS LAND GATE; do
 done
 nowant "no STOPPED banner" "STOPPED" "$OUT"
 nowant "no refusal line" "config unresolved" "$OUT"
-printf '%s\n' "$OUT" | grep -qE '(^|[[:space:]])\?([[:space:]]|$)' \
-    && bad "no '?' placeholder" "$(printf '%s\n' "$OUT" | grep -E '(^|[[:space:]])\?([[:space:]]|$)')" || ok "no '?' placeholder"
+printf '%s\n' "$OUT" | grep -qE 'pass [0-9]+s' && ok "the pane shows values the collector wrote to the configured run directory" \
+    || bad "the pane shows values the collector wrote to the configured run directory" "$OUT"
 
 OUT="$(pane bad "")"
 want "SEEN RED: a pane started with no config says so instead of rendering a default" "config unresolved" "$OUT"
