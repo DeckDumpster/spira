@@ -350,7 +350,7 @@ timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q 
 # to AT on the FIRST sighting of this conflict — land_state is not yet RED, so the
 # RED-recurring guard does not intercept it first.
 tl_config SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$SH/repo-map"
-SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" PATH="$SH:$PATH" \
     bash -c '. "$1/lib.sh" >/dev/null 2>&1
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1' \
