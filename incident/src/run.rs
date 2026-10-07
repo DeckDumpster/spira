@@ -132,8 +132,7 @@ pub fn file_one(
         Some(DedupHit::Closed { id, closed_at: Some(closed_at) }) => {
             let closed_ts = parse_iso8601(&closed_at);
             let cause = closed_ts.map(|ts| decide::reopen_cause(ts, now, cfg.watcher_interval_s)).unwrap_or("recurrence");
-            let _ = cause;
-            bd.reopen(cfg.db, &id);
+            bd.reopen(cfg.db, &id, cause);
             let note = format!(
                 "Recurrence at {} — same failure fingerprint, dedup within {}-day window",
                 iso_now_public(now),
@@ -479,7 +478,7 @@ mod tests {
         fn set_state(&self, _db: &str, _id: &str, _kv: &str) -> bool {
             true
         }
-        fn reopen(&self, _db: &str, id: &str) -> bool {
+        fn reopen(&self, _db: &str, id: &str, _cause: &str) -> bool {
             self.reopened.borrow_mut().push(id.to_string());
             if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
                 row.status = BeadStatus::Open;

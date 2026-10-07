@@ -625,7 +625,10 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let Some(ev) = get(&f, "--evidence").filter(|e| !e.trim().is_empty()) else {
                 return Err(usage(verb, "--evidence <text> is required: a reopen with no evidence hands the next session nothing"));
             };
-            Ok(vec![bd(vec![s("reopen"), id, s("--reason"), format!("reopened by {actor}: {ev}")])])
+            Ok(vec![
+                Step::Tool { program: "spira-lc", args: vec![s("reopen"), id.clone(), s("operator-reopen"), actor.to_string()], stdin: None },
+                Step::Bd { args: vec![s("note"), id, s("--stdin")], stdin: Some(format!("reopened by {actor}: {ev}")) },
+            ])
         }
         "close-other" => {
             let id = bead_arg(verb, a, 0, "<bead-id>")?;
@@ -1090,7 +1093,10 @@ mod tests {
         assert!(plan("reopen", "-", &call(&["sp-a1"], "czar")).is_err());
         assert_eq!(
             plan("reopen", "-", &call(&["sp-a1", "--evidence", "red on main"], "czar")).unwrap(),
-            vec![Step::Bd { args: v(&["reopen", "sp-a1", "--reason", "reopened by czar: red on main"]), stdin: None }]
+            vec![
+                Step::Tool { program: "spira-lc", args: v(&["reopen", "sp-a1", "operator-reopen", "czar"]), stdin: None },
+                Step::Bd { args: v(&["note", "sp-a1", "--stdin"]), stdin: Some("reopened by czar: red on main".into()) },
+            ]
         );
         assert!(plan("close-other", "-", &call(&["sp-a1"], "czar")).is_err());
         assert_eq!(

@@ -86,7 +86,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
         stack also 3 = not claimable (its own JSON still names the reason);
         deadlocked also 3 = a candidate was refused or a lift did not verify;
         write-event also 1 = could not write (a no-op on an empty bead/event-type is 0);
-        reopen also 1 = bdq reopen/release_claim/note each separately failed (bd refused);
+        reopen also 1 = the lifecycle reopen/note each separately failed (refused);
         deliberate-exempt is a bare exit code (0 exempt, 1 not), no stdout;
         fayth-ready also exits 2 (no fayth in the chamber) or 1 (query failed) — stdout is
         '0' in both cases, matching fayth_ready's own historic contract (sp-3ntca)";
@@ -1341,7 +1341,7 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         ask_label: String::new(),
         beads_actor: actor,
     };
-    let o = reopen::Opts { id: id.clone(), cause, note, suites, submitted_label: submitted_label_f(env) };
+    let o = reopen::Opts { id: id.clone(), cause, note, suites };
     let rc = reopen::run(&o, &mut live);
     if rc == 0 {
         Outcome::ok(String::new())
@@ -1362,7 +1362,7 @@ fn cmd_release(a: &Args, env: &Env) -> Outcome {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
-    match st.release_claim(&id) {
+    match st.release_claim(&id, &env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into())) {
         Ok(()) => Outcome::ok(String::new()),
         Err(e) => Outcome { code: 1, out: String::new(), err: format!("spira-claim: release: {e}") },
     }

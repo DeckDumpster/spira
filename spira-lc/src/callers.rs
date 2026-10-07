@@ -75,6 +75,7 @@ pub const VERBS: &[&str] = &[
     "certify",
     "resubmit",
     "renew",
+    "reopen",
 ];
 
 pub fn is_verb(v: &str) -> bool {
@@ -213,6 +214,12 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
         }
         "renew" => renew(m, args),
+        "reopen" => {
+            if !need(1) {
+                return usage("reopen <bead-id> [cause] [actor]");
+            }
+            reopen(m, &a(0), &a(1), &actor_or(args.get(2), "reopen"))
+        }
         other => usage(&format!("unknown caller verb {other:?}")),
     }
 }
@@ -564,6 +571,62 @@ fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
     match event(m, "bead", id, &state, &version, holder, &kind) {
         (APPLIED, _) => Answer::code(APPLIED),
         (rc, out) => Answer { code: rc, stderr: format!("spira-lc renew: {id}: {}\n", out.trim()), ..Default::default() },
+    }
+}
+
+/// The ReturnedReason a reopen's free-text cause earns: an eject is the batch's own, anything
+/// else a CERTIFIED or in-delivery bead is handed back for is the base having moved.
+fn reopen_returned_reason(cause: &str) -> ReturnedReason {
+    match cause {
+        "eject" | "batch-eject" => ReturnedReason::BatchEjected,
+        "base-withdrawn" => ReturnedReason::BaseWithdrawn,
+        _ => ReturnedReason::PushRejected,
+    }
+}
+
+/// `reopen <id> [cause] [actor]` — hand a bead back to its builder: the machine's
+/// return-to-rework, recording the event the row's own state implies. SUBMITTED GateRed ·
+/// CERTIFIED Deliver then Returned · IN_DELIVERY Returned · WORKING Release · READY or REWORK
+/// nothing (already there) · terminal refused. A hold stays on the row: reopening is not an
+/// unhold.
+///
+/// Exit: 0 reopened, or already open · 1 no row · 2 cannot tell · 3 refused (terminal, or the
+/// event lost its CAS).
+fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
+    let refuse = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc reopen: {id}: {why}\n"), ..Default::default() };
+    let v = match show(m, id) {
+        Ok(v) => v,
+        Err(rc) => return Answer::code(rc),
+    };
+    let (state, version) = (bead_field(&v, "state"), bead_field(&v, "version"));
+    if state.is_empty() || version.is_empty() {
+        return Answer::code(NO_ROW);
+    }
+    let send = |m: &mut dyn Machine, expect: &str, version: &str, kind: BeadEventKind| {
+        event(m, "bead", id, expect, version, actor, &serde_json::to_string(&kind).unwrap_or_default())
+    };
+    let returned = BeadEventKind::Returned { reason: reopen_returned_reason(cause) };
+    let rc = match state.as_str() {
+        "READY" | "REWORK" => return Answer::code(APPLIED),
+        "WORKING" => send(m, &state, &version, BeadEventKind::Release).0,
+        "SUBMITTED" => {
+            let kind = BeadEventKind::GateRed { tip: bead_field(&v, "tip"), reason: gate_red_reason(cause) };
+            send(m, &state, &version, kind).0
+        }
+        "IN_DELIVERY" => send(m, &state, &version, returned).0,
+        "CERTIFIED" => match send(m, &state, &version, BeadEventKind::Deliver).0 {
+            APPLIED => match state_version(m, id) {
+                Some((st, ver, _)) if st == "IN_DELIVERY" => send(m, &st, &ver, returned).0,
+                _ => CANNOT_TELL,
+            },
+            rc => rc,
+        },
+        other => return refuse(format!("{other} is terminal — a finished bead is not reopened")),
+    };
+    match rc {
+        APPLIED => Answer::code(APPLIED),
+        REFUSED => refuse("the row moved under the reopen (lost the compare-and-swap)".into()),
+        rc => Answer::code(rc),
     }
 }
 

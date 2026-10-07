@@ -89,6 +89,9 @@ pub const GATE_CLASSES: &[Class] = &[
     // sp-psztcc: a hold kept as a bd label, joined in the commit that moved every claim
     // predicate and writer onto the row's hold.
     Class::HoldLabel,
+    // sp-swh8b8: a bd reopen (or claim-clearing assign) from Rust, joined in the commit that
+    // routed every caller through `spira-lc reopen`.
+    Class::BdReopenRust,
 ];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or

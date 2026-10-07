@@ -161,13 +161,26 @@ impl Store {
         run(c, self.timeout).map_err(|e| format!("spira-lc list: {e}"))
     }
 
-    /// lib.sh `release_claim <id>` (wave 4.19, row I): `bd assign <id> ""`. `bd assign`
-    /// refuses to overwrite another actor's LIVE in_progress claim unless forced, which is
-    /// the safety property — this runs from callers racing a database aeons are claiming
-    /// out of concurrently, and the primitive that loses a race harmlessly is the correct
-    /// one. Never `bd unclaim --force`, which by definition does not lose that race.
-    pub fn release_claim(&self, id: &str) -> Result<(), String> {
-        self.bd(&["assign", id, ""]).map(|_| ())
+    /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
+    pub fn lc_reopen(&self, id: &str, cause: &str, actor: &str) -> Result<(), String> {
+        spira_config::lifecycle_row::reopen_with(&self.lc, id, cause, actor)
+    }
+
+    /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. A row not WORKING
+    /// has no claim to hand back (the machine refuses it, exit 3); that is not a failure.
+    pub fn release_claim(&self, id: &str, actor: &str) -> Result<(), String> {
+        self.lc_verb(&["release", id, actor], &[0, 1, 3])
+    }
+
+    fn lc_verb(&self, args: &[&str], ok: &[i32]) -> Result<(), String> {
+        let mut c = Command::new(&self.lc);
+        c.args(args);
+        let r = run_full(c, self.timeout, None)?;
+        if ok.contains(&r.code) {
+            return Ok(());
+        }
+        let said = r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output");
+        Err(format!("spira-lc {} exit {}: {said}", args[0], r.code))
     }
 }
 

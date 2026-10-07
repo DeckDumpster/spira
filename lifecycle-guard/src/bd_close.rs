@@ -31,13 +31,13 @@ fn close_arg() -> &'static Regex {
     })
 }
 
-fn gh_close() -> &'static Regex {
+pub(crate) fn gh_close() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#""(?:pr|issue|run)""#).unwrap())
 }
 
 /// The machine, this analyser, and the door itself.
-fn in_scope(rel: &str) -> bool {
+pub(crate) fn in_scope(rel: &str) -> bool {
     !(rel.starts_with("lifecycle/")
         || rel.starts_with("lifecycle-guard/")
         || rel == "spira-lc/src/bd.rs"
