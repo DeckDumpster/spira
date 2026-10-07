@@ -405,7 +405,7 @@ enum Mode { Pass, Report, SummonOnly, Audit, OpenChildren { dry: bool } }
 ## 4. The pass, check by check
 
 All numbered checks keep their names in the tsd phase rows (`setup`, `CHECK1`, `CHECK2`,
-`CHECK2b`, `CHECK2c`, `CHECK3`, `CHECK6`, `CHECK3b`, `CHECK3c`, `CHECK7`, `CHECK8`, `end`).
+`CHECK2b`, `CHECK2c`, `CHECK2d`, `CHECK3`, `CHECK6`, `CHECK3b`, `CHECK3c`, `CHECK7`, `CHECK8`, `end`).
 These rows are the per-check timing; the `end` phase is never flushed, so a complete pass is
 one with a `CHECK8` row. The full
 pass writes them. The audit worker writes none: the old one crashed with
@@ -494,6 +494,12 @@ chamber fayth left out of SPIRA_FAYTHS, deduplicated by the stamp. `--report` th
 - If any printed, log
   `CHECK2c: <n> spira-lc row(s) with holder/state out of sync — a bug reached spira_lifecycle outside its own CAS`
   and act `surfaced <n> inconsistent spira-lc row(s)`.
+
+**CHECK 2d** (`holds.rs`; skipped under SKIP_RECLAIM). Withdraws an `ask` hold whose cause is gone:
+a `repo:<name> has no … entry` hold once the repo resolves in the map, a `rapid-recur:` hold
+once it is older than the reclaim grace, and any hold with no open ask (no ask label, no open
+`work-bead:<id>` ask bead, no open ask dependency) once it is older than the grace. It also
+announces `queue.starved` when held beads exceed 25% of READY (at least three).
 
 **CHECK 3 — stale blocked flags.** Runs only when not SKIP_RECLAIM, `plan_ready == 0`,
 `plan_inprog == 0` and `n_open > 0`.

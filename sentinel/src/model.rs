@@ -117,6 +117,8 @@ pub struct LcRow {
     pub lease_until: Option<i64>,
     pub holds: Vec<String>,
     pub version: Option<String>,
+    pub reason: Option<String>,
+    pub updated_at: Option<i64>,
 }
 
 fn scalar(v: Option<&Value>) -> Option<String> {
@@ -159,6 +161,8 @@ pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
                 .map(|f| f as i64),
             holds: parse_holds(r.get("holds")),
             version: scalar(r.get("version")),
+            reason: scalar(r.get("reason")).filter(|x| !x.is_empty()),
+            updated_at: scalar(r.get("updated_at")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
         })
         .filter(|r| !r.bead_id.is_empty())
         .collect())
