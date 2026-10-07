@@ -604,7 +604,7 @@ impl Scripts for RealScripts {
         }
     }
     fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut {
-        // batch-job: the round's full suite on the round VM, bounded by the round wall (900 s cap).
+        // batch-job: the round's lint and suites, bounded by the caller's wall budget
         match Command::new("timeout")
             .args(["-k", "10", &wall_secs.to_string(), "round-vm", "run"])
             .arg(tree)

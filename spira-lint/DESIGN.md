@@ -8,7 +8,7 @@ so and says what the rule does instead.
 ## The program
 
 ```
-spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--emit-allow]
+spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow]
 ```
 
 - `--root` defaults to the git work tree containing the current directory. At the gate that
@@ -18,6 +18,11 @@ spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--emit-allow]
   (`plan-matrix`, `lockfile-lint`, the tier-budget ledgers). It defaults to
   `SPIRA_GATE_BASE`, which the gate always sets. With neither, those rules **refuse** (exit
   3): comparing against nothing reads exactly like a clean comparison.
+- `--diff <rev>` is `--base <rev>` plus a filter: a finding is reported only on a line the
+  working tree adds or changes against `git merge-base <rev> HEAD`, and a whole-file finding
+  only for a file the diff touches (untracked files count whole). The base-comparing rules
+  above are left unfiltered. The fast tier uses it, so a finding already on the base never
+  reds a bead; the round's full-tree lint is where such a finding is judged.
 - **One walk.** `git ls-files -z` (tracked) and `git ls-files -z --others --exclude-standard`
   (untracked, not ignored), once. Each rule filters that walk; no rule lists files itself.
   A file's bytes are read at most once and shared between rules.

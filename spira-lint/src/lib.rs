@@ -178,6 +178,71 @@ impl Tree {
     }
 }
 
+/// Rules that already judge the branch against the base themselves; `--diff` leaves their
+/// findings whole.
+pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
+
+/// What a branch changed relative to `git merge-base <base> HEAD`: per touched file, the
+/// new-side line ranges it adds or changes (`None` for a whole file: untracked, or binary).
+pub struct DiffScope {
+    files: std::collections::BTreeMap<String, Option<Vec<(usize, usize)>>>,
+}
+
+impl DiffScope {
+    pub fn from_tree(tree: &Tree) -> Result<DiffScope, LintError> {
+        let base = tree.base_commit()?;
+        let mb = tree
+            .git(&["merge-base", &base, "HEAD"])
+            .map(|o| String::from_utf8_lossy(&o).trim().to_string())
+            .map_err(|e| LintError::Refused(format!("--diff: {e}")))?;
+        let out = tree
+            .git(&["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", &mb])
+            .map_err(|e| LintError::Refused(format!("--diff: {e}")))?;
+        let mut scope = DiffScope { files: Default::default() };
+        scope.parse(&String::from_utf8_lossy(&out));
+        for e in tree.entries.iter().filter(|e| !e.tracked) {
+            scope.files.insert(e.path.clone(), None);
+        }
+        Ok(scope)
+    }
+
+    fn parse(&mut self, diff: &str) {
+        let mut cur: Option<String> = None;
+        for l in diff.lines() {
+            if let Some(p) = l.strip_prefix("+++ ") {
+                cur = p.strip_prefix("b/").map(str::to_string);
+                if let Some(c) = &cur {
+                    self.files.entry(c.clone()).or_insert_with(|| Some(Vec::new()));
+                }
+            } else if l.starts_with("Binary files ") {
+                if let Some(p) = l.strip_suffix(" differ").and_then(|l| l.rsplit(" and b/").next()) {
+                    self.files.insert(p.to_string(), None);
+                }
+            } else if let (Some(h), Some(c)) = (l.strip_prefix("@@ "), cur.as_ref()) {
+                let plus = h.split(' ').find(|t| t.starts_with('+')).unwrap_or("+0");
+                let mut it = plus[1..].split(',');
+                let start: usize = it.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+                let len: usize = it.next().and_then(|n| n.parse().ok()).unwrap_or(1);
+                if len > 0 {
+                    if let Some(Some(r)) = self.files.get_mut(c) {
+                        r.push((start, start + len - 1));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether a finding is on code this branch adds or changes. A finding with no line is
+    /// whole-file: kept when the diff touches the file at all.
+    pub fn keeps(&self, f: &Finding) -> bool {
+        match (self.files.get(&f.path), f.line) {
+            (None, _) => false,
+            (Some(None), _) | (Some(Some(_)), None) => true,
+            (Some(Some(r)), Some(n)) => r.iter().any(|&(a, b)| a <= n && n <= b),
+        }
+    }
+}
+
 /// One thing a rule found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
@@ -532,6 +597,17 @@ mod tests {
         if std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) > 1 {
             assert!(t0.elapsed() < std::time::Duration::from_millis(serial), "ran serially: {:?}", t0.elapsed());
         }
+    }
+
+    #[test]
+    fn diff_scope_keeps_only_changed_lines_and_touched_files() {
+        let mut d = DiffScope { files: Default::default() };
+        d.parse("diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -9 +11 @@\n-c\n+d\n@@ -20,2 +21,0 @@\n-e\n-f\ndiff --git a/y.rs b/y.rs\n--- a/y.rs\n+++ b/y.rs\n@@ -1 +1 @@\n-1\n+2\n");
+        let f = |path: &str, line| Finding { rule: "r", path: path.into(), line, message: String::new() };
+        assert!(d.keeps(&f("x.rs", Some(4))) && d.keeps(&f("x.rs", Some(5))) && d.keeps(&f("x.rs", Some(11))));
+        assert!(!d.keeps(&f("x.rs", Some(3))) && !d.keeps(&f("x.rs", Some(6))) && !d.keeps(&f("x.rs", Some(21))));
+        assert!(d.keeps(&f("x.rs", None)) && d.keeps(&f("y.rs", Some(1))));
+        assert!(!d.keeps(&f("z.rs", None)) && !d.keeps(&f("z.rs", Some(1))));
     }
 
     #[test]
