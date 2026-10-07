@@ -1803,8 +1803,8 @@ spira_lane_admitted() {
 }
 
 # spira_open_trigger_count <labels> -> count of open-or-in_progress beads carrying every
-# label in <labels> (comma-separated), or 0 on a query failure (fail toward filing rather
-# than silently going quiet — the caller's own dedup guard is what a false 0 would defeat).
+# label in <labels> (comma-separated). Non-zero status, no stdout, when the count cannot be
+# read: callers must refuse to file, never treat it as zero.
 # in_progress is included because a claimed trigger bead leaves --status open, and a dedup
 # query scoped to open alone would file a duplicate on the very next tick (sp-mp9s — the
 # defect that motivated including it in maechen-trigger.sh, extracted here so

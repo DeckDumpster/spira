@@ -83,7 +83,7 @@ impl World for Real {
         spira_config::vtime::now_epoch() as i64
     }
 
-    fn open_trigger_count(&self, labels: &str) -> u64 {
+    fn open_trigger_count(&self, labels: &str) -> Result<u64, String> {
         // bd says which beads carry the labels; whether each is still open is the lifecycle
         // machine's answer (sp-mve9i), never bd's status.
         let out = Command::new(&self.bd)
@@ -92,18 +92,15 @@ impl World for Real {
             .args(["list", "--all", "--label", labels, "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
-            .output();
-        let ids = match out {
-            Ok(o) if o.status.success() => json_ids(&String::from_utf8_lossy(&o.stdout)),
-            _ => return 0,
-        };
-        match spira_config::lc_state::list() {
-            Ok(rows) => unfinished_count(&ids, &spira_config::lc_state::index(rows)),
-            Err(e) => {
-                eprintln!("maechen-trigger: lifecycle state unreadable ({e}); counting no open trigger");
-                0
-            }
+            .output()
+            .map_err(|e| format!("cannot run bd list: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("bd list exited {}", out.status));
         }
+        let ids = json_ids(&String::from_utf8_lossy(&out.stdout))
+            .ok_or_else(|| "bd list output is not a JSON array".to_string())?;
+        let rows = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable ({e})"))?;
+        Ok(unfinished_count(&ids, &spira_config::lc_state::index(rows)))
     }
 
     fn lane_admitted(&self, lane: &str) -> bool {
@@ -195,11 +192,11 @@ impl World for Real {
     }
 }
 
-/// The ids in `bd list --json`'s array; none for anything that fails to parse.
-fn json_ids(input: &str) -> Vec<String> {
+/// The ids in `bd list --json`'s array; `None` for anything that is not an array.
+fn json_ids(input: &str) -> Option<Vec<String>> {
     match serde_json::from_str::<serde_json::Value>(input) {
-        Ok(serde_json::Value::Array(a)) => a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect(),
-        _ => Vec::new(),
+        Ok(serde_json::Value::Array(a)) => Some(a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect()),
+        _ => None,
     }
 }
 
@@ -232,12 +229,12 @@ mod tests {
     /// hand-off; bd's status is not read.
     #[test]
     fn an_open_trigger_is_one_the_machine_has_not_seen_handed_on() {
-        let ids = json_ids(r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c"},{"id":"d"},{"id":"e"}]"#);
+        let ids = json_ids(r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c"},{"id":"d"},{"id":"e"}]"#).unwrap();
         let lc = [("a", "READY"), ("b", "SUBMITTED"), ("c", "WORKING"), ("d", "DONE")]
             .iter()
             .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
             .collect();
         assert_eq!(unfinished_count(&ids, &lc), 2);
-        assert!(json_ids("not json").is_empty());
+        assert!(json_ids("not json").is_none());
     }
 }

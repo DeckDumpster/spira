@@ -17,8 +17,9 @@ pub trait World {
     fn read_lastpass(&self) -> i64;
     fn now(&self) -> i64;
 
-    /// `spira_open_trigger_count <labels>`.
-    fn open_trigger_count(&self, labels: &str) -> u64;
+    /// `spira_open_trigger_count <labels>`. `Err` when bd or the lifecycle machine cannot
+    /// answer: an unreadable machine is not "none open".
+    fn open_trigger_count(&self, labels: &str) -> Result<u64, String>;
     /// `spira_lane_admitted <lane>`.
     fn lane_admitted(&self, lane: &str) -> bool;
     /// `spira_repo_lanes <name>` — reached by `main.rs`'s `repo-lanes` CLI door, the one

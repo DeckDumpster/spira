@@ -22,7 +22,10 @@ if ! flock --nonblock 9; then
     exit 0
 fi
 
-open_count="$(spira_open_trigger_count "$LABELS")"
+if ! open_count="$(spira_open_trigger_count "$LABELS")"; then
+    log "cannot count open triggers (spira-lc or bd unreadable) — refusing to file, retrying next pass"
+    exit 0
+fi
 if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     log "sweep already open ($open_count bead(s) with labels [$LABELS]) — skipping"
     exit 0
