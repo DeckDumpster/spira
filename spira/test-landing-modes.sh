@@ -92,10 +92,9 @@ closed_branch() {
 
 runpass() {  # runpass <land|pr>
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/land-map" SPIRA_GH="$SH/gh" \
-        SPIRA_GATE_WORKER=0 PATH="$SH:$PATH" landing-pass "$1" 2>&1
+    tl_config SPIRA_GATE_WORKER=0 SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp SPIRA_REPO_MAP="$SH/land-map" SPIRA_GH="$SH/gh"
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" PATH="$SH:$PATH" landing-pass "$1" 2>&1
 }
 
 remote_main() { timeout 5 git -C "$REMOTE" rev-parse main; }
