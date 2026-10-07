@@ -2308,7 +2308,7 @@ mod lc_withdraw_tests {
         testkit::write_exe(
             &bin,
             &format!(
-                "#!/bin/bash\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"bead_id\":\"'$2'\",\"state\":\"{state}\",\"version\":4}}}}' ;; esac\nexit 0\n",
+                "#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"bead_id\":\"'$2'\",\"state\":\"{state}\",\"version\":4}}}}' ;; esac\nexit 0\n",
                 log.display()
             ),
         );
