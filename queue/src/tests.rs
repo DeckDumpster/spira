@@ -311,8 +311,8 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
     }
-    fn round_vm(&self, tree: &Path, results: &Path, wall_secs: u64) -> RunOut {
-        self.calls.borrow_mut().push(format!("round-vm {} wall={wall_secs}", tree.display()));
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut {
+        self.calls.borrow_mut().push(format!("round-vm {} base={base} wall={wall_secs}", tree.display()));
         fs::create_dir_all(results).unwrap();
         for (suite, status) in self.round_vm_results.borrow().iter() {
             fs::write(results.join(format!("{suite}.result")), format!("{status}\n")).unwrap();

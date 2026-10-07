@@ -135,6 +135,7 @@ while [ $# -gt 0 ]; do
         --toolchain) toolchain="${2:-}"; shift 2 ;;
         --results-dir) results="${2:-}"; shift 2 ;;
         --attr-spool) spool="${2:-}"; shift 2 ;;
+        --base) shift 2 ;;
         *) wt="$1"; shift ;;  # the round worktree positional
     esac
 done

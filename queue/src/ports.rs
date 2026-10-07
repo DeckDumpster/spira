@@ -212,10 +212,10 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
-    /// `round-vm run <tree> --results-dir <results>` under `timeout <wall_secs>`: the full
+    /// `round-vm run <tree> --results-dir <results> --base <base>` under `timeout <wall_secs>`: the full
     /// corpus of `tree` on the round VM. Exit 0/1 ran (the results say which suites are red);
     /// 124/137 hit the wall; anything else is the harness's fault.
-    fn round_vm(&self, tree: &Path, results: &Path, wall_secs: u64) -> RunOut;
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.

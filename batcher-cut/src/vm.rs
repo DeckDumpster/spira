@@ -338,6 +338,7 @@ impl RoundRunner for VmRunner<'_> {
                 cmd.arg("--toolchain").arg(&self.env.rust_toolchain);
                 cmd.arg("--results-dir").arg(&self.results);
                 cmd.arg("--attr-spool").arg(&self.spool);
+                cmd.arg("--base").arg(&self.repo.base);
                 cmd.env("SPIRA_HOME", &self.env.home).env("SPIRA_RUN", &self.env.run);
                 cmd.stdin(Stdio::null()).stderr(Stdio::from(err));
                 self.child = Some(cmd.spawn().map_err(|e| format!("round-vm: {e}"))?);

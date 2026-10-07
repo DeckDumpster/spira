@@ -361,7 +361,11 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
     if attest.is_none() {
         let results = rounds_dir(&c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
-        let out = w.scripts.round_vm(&wt, &results, c.s.round_wall_secs);
+        let Some(base) = c.r.landref.clone() else {
+            w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} — the round's lint has nothing to judge against", c.r.name));
+            return FAIL;
+        };
+        let out = w.scripts.round_vm(&wt, &results, &base, c.s.round_wall_secs);
         let mut found = Vec::new();
         suite_statuses(&results, &mut found, 0);
         let fault = match out.rc {
