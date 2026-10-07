@@ -118,7 +118,7 @@ case "$(cat "$TMP/act")" in
     log-and-ask)
         # Write ESCALATED and file a matching ask bead.
         bd -C "$SPIRA_DB" create "Close sp-gc2 as litter?" \
-            -l "needs-operator,overseer" --type decision --silent >/dev/null 2>&1
+            -l "$SPIRA_ASK_LABEL,overseer" --type decision --silent >/dev/null 2>&1
         printf '%s groom: pass complete. Examined 1 beads. LIVELOCK rows: 0. Actions: ESCALATED sp-gc2.\n' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GROOM_LOG"
         ;;
@@ -138,7 +138,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"result":"done","n
 exit 0
 SHIM
 chmod +x "$BIN/claude"
-aeon_fixture_agent "$BIN/claude" GROOM_LOG
+aeon_fixture_agent "$BIN/claude" GROOM_LOG SPIRA_ASK_LABEL
 
 run_aeon() {    # run_aeon <fayth> <act>
     printf '%s' "$2" > "$TMP/act"
