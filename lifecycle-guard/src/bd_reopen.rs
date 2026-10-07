@@ -51,6 +51,12 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
         {
             break;
         }
+        // A const/static table is data, not a call: a list of fact kinds naming "reopen" hands
+        // nothing to bd (law-a-matcher-reads-code-not-prose; spira-lc/src/facts.rs KINDS).
+        let decl = n.trim_start();
+        if ["const ", "pub const ", "static ", "pub static "].iter().any(|p| decl.starts_with(p)) {
+            continue;
+        }
         let callee = if reopen_arg().is_match(n) && !gh_close().is_match(n) {
             "reopen"
         } else if clearing_assign().is_match(n) {
@@ -96,6 +102,7 @@ fn b() { eprintln!("never run bd reopen by hand"); }
 fn c() { match verb { "reopen" => 1, _ => 0 } }
 fn d() { bd(&["assign", id, actor]); }
 fn e() { Some(("reopen", "rebase-conflict")) }
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed"];
 #[cfg(test)]
 mod tests {
     fn t() { bd(&["reopen", "sp-1"]); }

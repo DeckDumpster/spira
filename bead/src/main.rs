@@ -713,8 +713,14 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     0
 }
 
-fn is_closed(status: &str) -> bool {
-    status == "closed"
+/// Finished, by the lifecycle machine's own judgement (law-the-lifecycle-is-the-only-authority-on-
+/// bead-state): never bd's status. A bead the machine has no row for, or a state it cannot read,
+/// is treated as not finished, so the incident checks still run.
+fn lc_done(lc: &mut Option<Result<HashMap<String, spira_config::lc_state::Row>, String>>, id: &str) -> bool {
+    match lc.get_or_insert_with(|| spira_config::lc_state::list().map(spira_config::lc_state::index)) {
+        Ok(rows) => rows.get(id).is_some_and(|r| r.terminal()),
+        Err(_) => false,
+    }
 }
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
@@ -846,7 +852,7 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         } else {
             false
         };
-        if row.labels.iter().any(|l| l == &incident_label) && !is_closed(&row.status) {
+        if row.labels.iter().any(|l| l == &incident_label) && !lc_done(&mut lc, id) {
             let (_, rel_out) =
                 bdq_capture(home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
             for oid in parse_blocks_targets(&rel_out) {
@@ -855,7 +861,7 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
                 }
                 let (_, oout) = bdq_capture(home, &s(&["show", &oid, "--json"]));
                 let Some(orow) = parse_show_row(&oout) else { continue };
-                if is_closed(&orow.status) || orow.labels.iter().any(|l| l == &incident_label) {
+                if lc_done(&mut lc, &oid) || orow.labels.iter().any(|l| l == &incident_label) {
                     continue;
                 }
                 eprintln!(
