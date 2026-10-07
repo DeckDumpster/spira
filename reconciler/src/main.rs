@@ -125,6 +125,9 @@ struct Config {
     reconciler_label: String,
     incident_sh: String,
     systemctl: String,
+    ctrl_path: PathBuf,
+    instance: String,
+    reminders_path: PathBuf,
     tmux: String,
     git: String,
     units_manifest_sh: String,
@@ -244,6 +247,9 @@ impl Config {
             incident_sh: env::var("SPIRA_INCIDENT_SH")
                 .unwrap_or_else(|_| "incident.sh".to_string()),
             systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
+            ctrl_path: PathBuf::from(cfg("SPIRA_CTRL")?),
+            instance: cfg("SPIRA_INSTANCE")?,
+            reminders_path: spira_run.join("reconciler-reminders.json"),
             tmux: env::var("SPIRA_TMUX").unwrap_or_else(|_| "tmux".to_string()),
             git: env::var("SPIRA_GIT").unwrap_or_else(|_| "git".to_string()),
             units_manifest_sh: env::var("SPIRA_UNITS_MANIFEST_SH")
@@ -438,12 +444,113 @@ fn desired_unit_state(cfg: &Config, unit: &str) -> (bool, bool) {
     }
 }
 
-/// The control plane's data and the instance, or `None` when either is unreadable — then
-/// nothing is declined and every unit is checked.
-fn declined_units() -> Option<(spira_ctrl::CtrlData, String)> {
-    let path = spira_config::process::cfg("SPIRA_CTRL").ok()?;
-    let inst = spira_config::process::cfg("SPIRA_INSTANCE").ok()?;
-    Some((spira_ctrl::read(std::path::Path::new(&path)).ok()?, inst))
+// ──────────────────────────────────────────────────────────────────────────────
+// Declared overrides: a spira-ctrl suspension is desired state. The reconciler reads it
+// every pass, never remedies what it covers, and reminds once when it falls due — it never
+// lifts one.
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn load_ctrl(cfg: &Config) -> spira_ctrl::CtrlData {
+    spira_ctrl::read(&cfg.ctrl_path).unwrap_or_else(|e| {
+        log_print(cfg, &format!("reconciler: control file unreadable, no override honoured: {}", e));
+        spira_ctrl::CtrlData::new()
+    })
+}
+
+/// The suspension covering `unit`, as (subject, reason). A subject names a unit by its full
+/// name, its name without the extension, or that without the instance suffix.
+fn suspension_of(ctrl: &spira_ctrl::CtrlData, instance: &str, unit: &str) -> Option<(String, String)> {
+    let subjects = [
+        unit.to_string(),
+        unit.rsplit_once('.').map(|(b, _)| b.to_string()).unwrap_or_else(|| unit.to_string()),
+        spira_ctrl::subject_of_masked_unit(unit, instance),
+    ];
+    subjects.into_iter().find_map(|s| {
+        spira_ctrl::reason(ctrl, &s).map(|r| (s, r.to_string()))
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Due {
+    NotDue,
+    Until(String),
+    OwnerLanded(String),
+}
+
+/// A suspension is due when its `until` date has come, or its owner bead has landed.
+fn reminder_due(owner: &str, until: Option<&str>, today: &str, owner_landed: bool) -> Due {
+    if let Some(u) = until.filter(|u| *u <= today) {
+        return Due::Until(u.to_string());
+    }
+    if owner_landed {
+        return Due::OwnerLanded(owner.to_string());
+    }
+    Due::NotDue
+}
+
+fn owner_landed(cfg: &Config, owner: &str) -> bool {
+    if owner.is_empty() || cfg.lc_bin.is_empty() {
+        return false;
+    }
+    matches!(spira_config::lc_state::row_with(&cfg.lc_bin, owner), Ok(Some(r)) if r.state == "LANDED")
+}
+
+/// Mails the Concierge once per (subject, owner, until) declaration when it falls due. The
+/// sent set is persisted; a failed send is not recorded, so it is retried next pass.
+fn remind_due_suspensions(cfg: &Config, ctrl: &spira_ctrl::CtrlData) {
+    let today = &cfg.now_iso[..cfg.now_iso.len().min(10)];
+    let mut sent: std::collections::BTreeSet<String> = fs::read_to_string(&cfg.reminders_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let live: std::collections::BTreeSet<String> = ctrl
+        .keys()
+        .filter_map(|s| spira_ctrl::declared(ctrl, s).map(|(o, u)| format!("{}|{}|{}", s, o, u.unwrap_or(""))))
+        .collect();
+    let before = sent.clone();
+    sent.retain(|k| live.contains(k));
+    for subject in ctrl.keys() {
+        let Some((owner, until)) = spira_ctrl::declared(ctrl, subject) else { continue };
+        let marker = format!("{}|{}|{}", subject, owner, until.unwrap_or(""));
+        if sent.contains(&marker) {
+            continue;
+        }
+        let landed = owner_landed(cfg, owner);
+        let why = match reminder_due(owner, until, today, landed) {
+            Due::NotDue => continue,
+            Due::Until(u) => format!("its until date {} has come", u),
+            Due::OwnerLanded(o) => format!("its owner bead {} has landed", o),
+        };
+        let reason = spira_ctrl::reason(ctrl, subject).unwrap_or("");
+        let subj = format!("reconciler: suspension of {} is due for review", subject);
+        let body = format!(
+            "The suspension of {subject} is due: {why}.\n\nreason  {reason}\nowner   {owner}\n\n\
+             The reconciler has not lifted it and will not. Lift it with `ctrl resume {subject}`, or \
+             extend it by suspending again with a new owner or --until.\n"
+        );
+        match mail_concierge(&cfg.mail_sh, &subj, &body) {
+            Ok(()) => {
+                log_print(cfg, &format!("reconciler: reminded — {}: {}", subject, why));
+                sent.insert(marker);
+            }
+            Err(e) => log_print(cfg, &format!("reconciler: reminder for {} not sent: {}", subject, e)),
+        }
+    }
+    if sent != before {
+        if let Ok(json) = serde_json::to_string_pretty(&sent) {
+            let _ = fs::write(&cfg.reminders_path, json);
+        }
+    }
+}
+
+fn unit_key(cfg: &Config, unit: &str) -> String {
+    if unit == cfg.store_unit {
+        format!("store:{}", unit)
+    } else if unit.ends_with(".timer") {
+        format!("units-timer:{}", unit)
+    } else {
+        format!("units-daemon:{}", unit)
+    }
 }
 
 fn observe_units(cfg: &Config) -> Vec<Check> {
@@ -458,10 +565,15 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
             manifest_names.lines().map(str::trim).filter(|l| !l.is_empty()).collect()
         }
     };
+    let ctrl = load_ctrl(cfg);
     let mut checks = Vec::new();
-    let declined = declined_units();
     for unit in unit_names {
-        if declined.as_ref().is_some_and(|(data, inst)| spira_ctrl::unit_suspended(data, unit, inst)) {
+        if let Some((subject, reason)) = suspension_of(&ctrl, &cfg.instance, unit) {
+            checks.push(Check {
+                key: unit_key(cfg, unit),
+                raw: RawStatus::Deliberate { reason: format!("suspended ({}): {}", subject, reason) },
+                remedy: Remedy::Escalate,
+            });
             continue;
         }
         let enabled = systemctl_state(cfg, "is-enabled", unit);
@@ -1171,6 +1283,7 @@ fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, check:
 fn describe(verdict: &Verdict) -> String {
     match &verdict.status {
         RawStatus::Satisfied => "satisfied".to_string(),
+        RawStatus::Deliberate { reason } => format!("deliberate: {}", reason),
         RawStatus::Gap { desired, observed, .. } => format!("desired={} observed={}", desired, observed),
         RawStatus::Unobservable { reason } => format!("unobservable: {}", reason),
     }
@@ -1264,6 +1377,8 @@ fn run_pass() -> Result<(), String> {
     state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
     checks.extend(junk);
 
+    remind_due_suspensions(&cfg, &load_ctrl(&cfg));
+
     let n = checks.len();
     for check in checks {
         evaluate(&cfg, &mut state, &mut pending, check);
@@ -1332,6 +1447,121 @@ mod tests {
             HysteresisState::default(),
         );
         assert_eq!(describe(&verdict), "desired=d observed=o");
+    }
+
+    fn suspension_fixture(tag: &str, owner: &str, until: Option<&str>) -> (testkit::TempDir, Config) {
+        let dir = scratch_dir(tag);
+        let bin = |name: &str, body: &str| {
+            testkit::write_exe(dir.join(name), body);
+            dir.join(name).to_string_lossy().to_string()
+        };
+        let calls = dir.join("systemctl-calls");
+        let systemctl = bin(
+            "systemctl",
+            &format!(
+                "#!/bin/sh\necho \"$*\" >> {}\ncase \"$2\" in is-enabled) echo disabled; exit 1;; is-active) echo inactive; exit 3;; esac\n",
+                calls.display()
+            ),
+        );
+        let manifest = bin("manifest", "#!/bin/sh\necho spira-round-template-prod.timer\n");
+        let lc = bin("lc", "#!/bin/sh\necho '{\"bead\":{\"bead_id\":\"sp-xn3nou\",\"state\":\"LANDED\"}}'\n");
+        let mail = bin("mail", &format!("#!/bin/sh\ncat >> {}\necho --- >> {}\n", dir.join("mail-body").display(), dir.join("mail-body").display()));
+        let ctrl_path = dir.join("control");
+        let mut data = spira_ctrl::CtrlData::new();
+        spira_ctrl::suspend(&mut data, "spira-round-template", "fails every run", owner, "2026-10-07", "operator");
+        if let Some(u) = until {
+            spira_ctrl::set_until(&mut data, "spira-round-template", u);
+        }
+        spira_ctrl::write_atomic(&ctrl_path, &data).unwrap();
+        let cfg = Config {
+            systemctl,
+            units_manifest_sh: manifest,
+            lc_bin: lc,
+            mail_sh: mail,
+            ctrl_path,
+            reminders_path: dir.join("reminders.json"),
+            status_log: dir.join("status.jsonl"),
+            now_iso: "2026-10-08T00:00:00Z".into(),
+            grace_secs: 0,
+            ..test_config()
+        };
+        (dir, cfg)
+    }
+
+    #[test]
+    fn a_suspended_timer_survives_a_remedy_pass_and_reads_deliberate() {
+        let (dir, cfg) = suspension_fixture("suspended-unit", "sp-never", None);
+        let mut state = StateMap::new();
+        let checks = observe_units(&cfg);
+        assert_eq!(checks.len(), 1);
+        for c in checks {
+            evaluate(&cfg, &mut state, &mut Default::default(), c);
+        }
+        let calls = fs::read_to_string(dir.join("systemctl-calls")).unwrap_or_default();
+        assert!(!calls.contains("enable") && !calls.contains("restart"), "a remedy ran against a suspended unit: {calls}");
+        let status = fs::read_to_string(&cfg.status_log).unwrap();
+        assert!(status.contains("\"status\":\"deliberate\""), "{status}");
+        assert!(status.contains("fails every run"), "{status}");
+    }
+
+    #[test]
+    fn positive_control_an_unsuspended_timer_is_remedied() {
+        let (dir, cfg) = suspension_fixture("unsuspended-unit", "sp-never", None);
+        fs::remove_file(&cfg.ctrl_path).unwrap();
+        let mut state = StateMap::new();
+        for c in observe_units(&cfg) {
+            evaluate(&cfg, &mut state, &mut Default::default(), c);
+        }
+        let calls = fs::read_to_string(dir.join("systemctl-calls")).unwrap();
+        assert!(calls.contains("enable --now spira-round-template-prod.timer"), "{calls}");
+    }
+
+    #[test]
+    fn a_reminder_is_sent_once_when_the_owner_bead_lands_and_the_suspension_stays() {
+        let (dir, cfg) = suspension_fixture("reminder-owner", "sp-xn3nou", None);
+        let ctrl = load_ctrl(&cfg);
+        remind_due_suspensions(&cfg, &ctrl);
+        remind_due_suspensions(&cfg, &ctrl);
+        let mail = fs::read_to_string(dir.join("mail-body")).unwrap();
+        assert_eq!(mail.matches("---").count(), 1, "reminded more than once: {mail}");
+        assert!(mail.contains("sp-xn3nou") && mail.contains("has landed"), "{mail}");
+        assert!(spira_ctrl::is_suspended(&load_ctrl(&cfg), "spira-round-template"), "the reconciler lifted a suspension");
+    }
+
+    #[test]
+    fn a_reminder_is_sent_when_until_has_come_and_not_before() {
+        let (dir, cfg) = suspension_fixture("reminder-until", "sp-never", Some("2026-10-09"));
+        let cfg_lc = Config { lc_bin: "/bin/false".into(), ..test_config_from(&cfg) };
+        remind_due_suspensions(&cfg_lc, &load_ctrl(&cfg_lc));
+        assert!(!dir.join("mail-body").exists(), "reminded before until");
+        let later = Config { now_iso: "2026-10-09T00:00:00Z".into(), ..test_config_from(&cfg_lc) };
+        remind_due_suspensions(&later, &load_ctrl(&later));
+        assert!(fs::read_to_string(dir.join("mail-body")).unwrap().contains("2026-10-09"));
+    }
+
+    #[test]
+    fn a_failed_send_is_retried_not_recorded() {
+        let (dir, cfg) = suspension_fixture("reminder-retry", "sp-xn3nou", None);
+        let broken = Config { mail_sh: "/bin/false".into(), ..test_config_from(&cfg) };
+        remind_due_suspensions(&broken, &load_ctrl(&broken));
+        remind_due_suspensions(&cfg, &load_ctrl(&cfg));
+        assert!(dir.join("mail-body").exists());
+    }
+
+    #[test]
+    fn reminder_due_reads_until_and_owner() {
+        assert_eq!(reminder_due("sp-1", None, "2026-10-07", false), Due::NotDue);
+        assert_eq!(reminder_due("sp-1", Some("2026-10-07"), "2026-10-07", false), Due::Until("2026-10-07".into()));
+        assert_eq!(reminder_due("sp-1", Some("2026-10-08"), "2026-10-07", true), Due::OwnerLanded("sp-1".into()));
+    }
+
+    #[test]
+    fn suspension_of_matches_unit_base_and_instance_stripped_subject() {
+        let mut d = spira_ctrl::CtrlData::new();
+        spira_ctrl::suspend(&mut d, "spira-groom", "r", "sp-1", "w", "b");
+        assert!(suspension_of(&d, "prod", "spira-groom-prod.timer").is_some());
+        assert!(suspension_of(&d, "prod", "spira-groom.timer").is_some());
+        assert!(suspension_of(&d, "prod", "spira-other-prod.timer").is_none());
     }
 
     #[test]
@@ -1557,6 +1787,9 @@ mod tests {
             reconciler_label: "reconciler-gap".into(),
             incident_sh: "/bin/true".into(),
             systemctl: "systemctl".into(),
+            ctrl_path: PathBuf::from("/dev/null"),
+            instance: "prod".into(),
+            reminders_path: PathBuf::from("/dev/null"),
             tmux: "tmux".into(),
             git: "git".into(),
             units_manifest_sh: String::new(),
@@ -1603,6 +1836,9 @@ mod tests {
             reconciler_label: base.reconciler_label.clone(),
             incident_sh: base.incident_sh.clone(),
             systemctl: base.systemctl.clone(),
+            ctrl_path: base.ctrl_path.clone(),
+            instance: base.instance.clone(),
+            reminders_path: base.reminders_path.clone(),
             tmux: base.tmux.clone(),
             git: base.git.clone(),
             units_manifest_sh: base.units_manifest_sh.clone(),

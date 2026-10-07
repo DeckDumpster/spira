@@ -75,6 +75,7 @@ pub fn append_status(path: &Path, now_iso: &str, key: &str, verdict: &Verdict) {
         RawStatus::Satisfied => ("satisfied", None, None, None),
         RawStatus::Gap { desired, observed, .. } => ("gap", Some(desired.as_str()), Some(observed.as_str()), None),
         RawStatus::Unobservable { reason } => ("unobservable", None, None, Some(reason.as_str())),
+        RawStatus::Deliberate { reason } => ("deliberate", None, None, Some(reason.as_str())),
     };
     let record = StatusRecord {
         ts: now_iso,

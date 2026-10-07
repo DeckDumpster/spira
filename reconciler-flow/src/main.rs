@@ -217,6 +217,7 @@ fn status_word(v: &Verdict) -> &'static str {
         RawStatus::Satisfied => "satisfied",
         RawStatus::Gap { .. } => "gap",
         RawStatus::Unobservable { .. } => "unobservable",
+        RawStatus::Deliberate { .. } => "deliberate",
     }
 }
 

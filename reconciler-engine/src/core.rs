@@ -18,11 +18,15 @@ pub enum RawStatus {
     /// first happened to notice. `None` falls back to that first-noticed pass.
     Gap { desired: String, observed: String, since_hint: Option<u64> },
     Unobservable { reason: String },
+    /// Stopped on purpose, declared in the control plane. Satisfied for every purpose except
+    /// the time series, which records it as its own word so a deliberate stop is never
+    /// mistaken for health.
+    Deliberate { reason: String },
 }
 
 impl RawStatus {
     fn is_satisfied(&self) -> bool {
-        matches!(self, RawStatus::Satisfied)
+        matches!(self, RawStatus::Satisfied | RawStatus::Deliberate { .. })
     }
 }
 

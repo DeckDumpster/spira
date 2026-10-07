@@ -111,6 +111,7 @@ fn cmd_suspend(args: &[String]) -> ExitCode {
     let mut reason = None;
     let mut owner = None;
     let mut force = false;
+    let mut until = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -126,10 +127,20 @@ fn cmd_suspend(args: &[String]) -> ExitCode {
                 force = true;
                 i += 1;
             }
+            "--until" => {
+                until = args.get(i + 1).cloned();
+                i += 2;
+            }
             other => {
                 eprintln!("ctrl: unknown flag: {other}");
                 return ExitCode::from(1);
             }
+        }
+    }
+    if let Some(u) = &until {
+        if !ctrl::is_date(u) {
+            eprintln!("ctrl: --until must be a YYYY-MM-DD date");
+            return ExitCode::from(1);
         }
     }
     let Some(reason) = reason.filter(|r| !r.is_empty()) else {
@@ -157,6 +168,9 @@ fn cmd_suspend(args: &[String]) -> ExitCode {
         }
     }
     ctrl::suspend(&mut data, subject, &reason, &owner, &today(&tz), &by);
+    if let Some(u) = &until {
+        ctrl::set_until(&mut data, subject, u);
+    }
     if let Err(e) = ctrl::write_atomic(&ctrl_path(), &data) {
         eprintln!("ctrl: failed to update control file: {e}");
         return ExitCode::from(1);
