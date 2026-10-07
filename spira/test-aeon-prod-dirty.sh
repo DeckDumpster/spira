@@ -225,8 +225,8 @@ b4="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: own dirty with override"
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 SPIRA_ALLOW_PROD_DIRTY=1 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
-fi
 not_reopened "override (despite dirty worktree)" "$b4"
+fi
 
 echo
 tl_summary
