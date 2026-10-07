@@ -37,7 +37,7 @@ _as_mark_delivered() {
 
 _as_tick() {
     local id title json
-    json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 0
+    json="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 0
     while IFS=$'\t' read -r id title; do
         [ -n "$id" ] || continue
         [ -n "${_as_seen[$id]:-}" ] && continue
@@ -46,6 +46,12 @@ _as_tick() {
     done < <(printf '%s' "$json" | tr -d '\n' \
         | grep -oE '"id": *"[^"]+", *"title": *"([^"\\]|\\.)*"' \
         | sed -E 's/^"id": *"([^"]+)", *"title": *"(.*)"$/\1\t\2/' | cut -c1-170)
+    while read -r id; do
+        [ -n "$id" ] || continue
+        [ -n "${_as_seen[$id]:-}" ] && continue
+        _as_seen[$id]=1
+        [ "$_as_seeded" -eq 1 ] && _as_say "NEW ASK HOLD $id (spira-lc show $id names why)"
+    done < <(timeout 5 spira-lc list-held ask 2>/dev/null)
     _as_seeded=1
 }
 
