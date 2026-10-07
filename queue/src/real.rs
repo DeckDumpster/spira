@@ -689,12 +689,12 @@ pub struct RealLc {
 impl RealLc {
     fn run(&self, args: &[&str]) -> (i32, String) {
         let Some(bin) = &self.bin else { return (2, "no spira-lc program".into()) };
-        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
+        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "5".into());
         run_combined(Command::new("timeout").arg(timeout).arg(bin).args(args))
     }
     fn stdout(&self, args: &[&str]) -> Result<String, String> {
         let bin = self.bin.as_ref().ok_or("no spira-lc program")?;
-        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
+        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "5".into());
         let mut last = String::new();
         for attempt in 0..2 {
             if attempt > 0 {
