@@ -189,3 +189,50 @@ fn config_from_env_refuses_a_wildcard_bind_and_missing_vars() {
     assert_eq!(cfg.addr, "192.168.1.56:9431");
     assert!(cfg.token.is_none());
 }
+
+fn put_aged(root: &std::path::Path, rel: &str, bytes: usize, age_secs: u64) {
+    let p = root.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, vec![b'x'; bytes]).unwrap();
+    let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+    std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
+}
+
+#[test]
+fn eviction_removes_the_least_recently_used_until_under_the_cap() {
+    let d = scratch();
+    put_aged(d.path(), "a/oldest", 100, 3000);
+    put_aged(d.path(), "b/middle", 100, 2000);
+    put_aged(d.path(), "c/newest", 100, 1000);
+    put_aged(d.path(), "c/inflight.tmp-77", 500, 9000);
+
+    let ev = sccache_dav::evict_to_cap(d.path(), 250);
+
+    assert_eq!((ev.files, ev.bytes, ev.remaining), (1, 100, 200));
+    assert!(!d.path().join("a/oldest").exists());
+    assert!(d.path().join("b/middle").exists() && d.path().join("c/newest").exists());
+    assert!(d.path().join("c/inflight.tmp-77").exists(), "an in-flight PUT is never evicted");
+    assert!(d.path().join("a").is_dir(), "shard directories stay");
+}
+
+#[test]
+fn eviction_under_the_cap_deletes_nothing() {
+    let d = scratch();
+    put_aged(d.path(), "a/f", 100, 5000);
+    assert_eq!(sccache_dav::evict_to_cap(d.path(), 100).files, 0);
+    assert!(d.path().join("a/f").exists());
+}
+
+#[tokio::test]
+async fn a_get_marks_the_entry_read_so_it_outlives_an_unread_newer_one() {
+    let d = scratch();
+    put_aged(d.path(), "a/hit", 100, 5000);
+    put_aged(d.path(), "b/unread", 100, 1000);
+    let addr = spawn(d.path().to_path_buf(), None).await;
+
+    assert_eq!(req(addr, "GET", "/a/hit", None, b"").await.code, 200);
+    sccache_dav::evict_to_cap(d.path(), 100);
+
+    assert!(d.path().join("a/hit").exists(), "read just now");
+    assert!(!d.path().join("b/unread").exists());
+}

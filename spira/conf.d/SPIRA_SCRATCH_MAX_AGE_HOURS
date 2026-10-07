@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=disk
+DOC=HOURS A ROW-LESS ENTRY MAY SIT IN run/worktree before the reaper treats it as scratch and removes it
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOURS A ROW-LESS ENTRY MAY SIT IN run/worktree before `sending reap-terminal` treats it
+    # as scratch (gate, check and round litter that no lifecycle row names) and removes it.
+    # Longer than any gate or round runs, so a live one is never reaped.
+    : "${SPIRA_SCRATCH_MAX_AGE_HOURS:=24}"
+SPIRA_CONF_DEFAULT_EOF

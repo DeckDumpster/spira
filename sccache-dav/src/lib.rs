@@ -214,6 +214,9 @@ async fn get_file(fs_path: &Path, head_only: bool) -> Response {
                 .into_response();
         }
     };
+    if !head_only {
+        mark_read(fs_path);
+    }
     let len = data.len();
     let body = if head_only { Body::empty() } else { Body::from(data) };
     Response::builder()
@@ -222,6 +225,72 @@ async fn get_file(fs_path: &Path, head_only: bool) -> Response {
         .header(header::CONTENT_LENGTH, len)
         .body(body)
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// A hit refreshes the entry's mtime, which is the recency [`evict_to_cap`] orders by.
+fn mark_read(fs_path: &Path) {
+    if let Ok(f) = std::fs::File::open(fs_path) {
+        let _ = f.set_modified(SystemTime::now());
+    }
+}
+
+/// How often the store is swept against its cap.
+pub const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// An in-flight PUT's tmp file ([`write_atomic`]) is never evicted.
+fn is_inflight(p: &Path) -> bool {
+    p.extension().is_some_and(|e| e.to_string_lossy().starts_with("tmp-"))
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Evicted {
+    pub files: u64,
+    pub bytes: u64,
+    /// What the store held after the sweep.
+    pub remaining: u64,
+}
+
+/// Deletes the least recently used files under `root` until the store holds at most
+/// `cap_bytes`. Directories stay: sccache's MKCOL walk reuses them.
+pub fn evict_to_cap(root: &Path, cap_bytes: u64) -> Evicted {
+    let mut files: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
+            if m.is_dir() {
+                stack.push(p);
+            } else if m.is_file() && !is_inflight(&p) {
+                files.push((m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), p));
+            }
+        }
+    }
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    files.sort();
+    let mut out = Evicted::default();
+    for (_, len, p) in files {
+        if total <= cap_bytes {
+            break;
+        }
+        if std::fs::remove_file(&p).is_ok() {
+            total -= len;
+            out.files += 1;
+            out.bytes += len;
+        }
+    }
+    out.remaining = total;
+    out
+}
+
+/// `SPIRA_SCCACHE_DAV_MAX_GB`, through the one door onto config; no default here.
+pub fn cap_bytes_from_config() -> Result<u64, String> {
+    let gb = spira_config::process::cfg_parse::<u64>("SPIRA_SCCACHE_DAV_MAX_GB")?;
+    if gb == 0 {
+        return Err("SPIRA_SCCACHE_DAV_MAX_GB = 0 would empty the store on every sweep".to_string());
+    }
+    Ok(gb.saturating_mul(1 << 30))
 }
 
 /// Writes via a tmp file in the same directory, then renames over the target — so a reader

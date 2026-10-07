@@ -520,3 +520,128 @@ fn budget_flag_parses() {
     assert!(crate::parse(&a(&["--budget-secs", "soon"])).is_err());
     assert!(crate::parse(&a(&["--budget-secs"])).is_err());
 }
+
+// ---- terminal.rs: the worktree directory's reaper ---------------------------------------------
+
+mod terminal_reaper {
+    use super::*;
+    use crate::terminal::{decide, run, Decision, Unsaved, Why};
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    const OLD: Duration = Duration::from_secs(10_000);
+    const MAX: Duration = Duration::from_secs(100);
+
+    #[test]
+    fn a_terminal_bead_with_nothing_unsaved_is_removed() {
+        for s in ["DONE", "LANDED", "DROPPED", "SUPERSEDED"] {
+            assert_eq!(decide("sp-a", Some(s), true, Unsaved::No, Duration::ZERO, MAX), Decision::Remove(Why::Terminal), "{s}");
+        }
+    }
+
+    #[test]
+    fn a_live_bead_is_never_removed_however_old() {
+        for s in ["READY", "WORKING", "REWORK", "SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
+            assert_eq!(decide("sp-a", Some(s), true, Unsaved::No, OLD, MAX), Decision::Keep("live bead"), "{s}");
+        }
+    }
+
+    #[test]
+    fn unsaved_or_unreadable_commits_keep_the_worktree() {
+        assert!(matches!(decide("sp-a", Some("LANDED"), true, Unsaved::Yes, OLD, MAX), Decision::Keep(_)));
+        assert!(matches!(decide("sp-a", Some("LANDED"), true, Unsaved::Unknown, OLD, MAX), Decision::Keep(_)));
+        assert!(matches!(decide("chk-1", None, true, Unsaved::Yes, OLD, MAX), Decision::Keep(_)));
+    }
+
+    #[test]
+    fn a_row_less_entry_is_scratch_only_once_it_is_old_enough() {
+        assert!(matches!(decide("chk-1", None, false, Unsaved::No, Duration::from_secs(5), MAX), Decision::Keep(_)));
+        assert_eq!(decide("chk-1", None, false, Unsaved::No, OLD, MAX), Decision::Remove(Why::Scratch));
+    }
+
+    #[test]
+    fn a_dot_named_tree_is_never_touched() {
+        assert!(matches!(decide(".harness", None, false, Unsaved::No, OLD, MAX), Decision::Keep(_)));
+        assert!(matches!(decide(".harness", Some("DONE"), false, Unsaved::No, OLD, MAX), Decision::Keep(_)));
+    }
+
+    fn states(xs: &[(&str, &str)]) -> HashMap<String, String> {
+        xs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    fn world() -> (testkit::TempDir, PathBuf, Fake) {
+        let t = testkit::TempDir::new("sending-terminal");
+        let repo = t.path().join("repo");
+        let wts = t.path().join("run/worktree");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&wts).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let f = Fake { wts, base: Some(Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None }), ..Default::default() };
+        (t, repo, f)
+    }
+
+    fn add_wt(repo: &Path, wts: &Path, id: &str, commit: bool) -> PathBuf {
+        let p = wts.join(id);
+        git(repo, &["worktree", "add", "-q", "-b", &format!("spira/{id}"), p.to_str().unwrap(), "main"]);
+        if commit {
+            git(&p, &["commit", "-q", "--allow-empty", "-m", &format!("{id}: work")]);
+        }
+        p
+    }
+
+    #[test]
+    fn the_pass_removes_terminal_and_scratch_and_keeps_everything_else() {
+        let (_t, repo, f) = world();
+        let wts = f.wts.clone();
+        let done = add_wt(&repo, &wts, "sp-done", true);
+        let live = add_wt(&repo, &wts, "sp-live", true);
+        let landed_clean = add_wt(&repo, &wts, "sp-clean", false);
+        let detached = add_wt(&repo, &wts, "sp-det", false);
+        git(&detached, &["checkout", "-q", "--detach"]);
+        git(&detached, &["commit", "-q", "--allow-empty", "-m", "sp-det: only here"]);
+        std::fs::create_dir_all(wts.join("chk-old")).unwrap();
+        std::fs::write(wts.join("chk-old/f"), "x").unwrap();
+        std::fs::write(wts.join("round-9.out"), "x").unwrap();
+        std::fs::create_dir_all(wts.join(".keep")).unwrap();
+        let st = states(&[("sp-done", "DROPPED"), ("sp-live", "WORKING"), ("sp-clean", "LANDED"), ("sp-det", "LANDED")]);
+
+        let rc = run(&f, &st, Duration::ZERO, false);
+
+        assert_eq!(rc, 0, "{}", f.out());
+        assert!(!done.exists(), "terminal, its commits kept by its branch: {}", f.out());
+        assert!(git(&repo, &["branch", "--list", "spira/sp-done"]).contains("spira/sp-done"), "the branch is not the reaper's");
+        assert!(!landed_clean.exists());
+        assert!(live.exists(), "a WORKING bead's worktree");
+        assert!(detached.exists(), "a detached HEAD holding a commit no ref keeps");
+        assert!(!wts.join("chk-old").exists() && !wts.join("round-9.out").exists(), "scratch: {}", f.out());
+        assert!(wts.join(".keep").exists());
+    }
+
+    #[test]
+    fn dry_run_and_young_scratch_change_nothing() {
+        let (_t, repo, f) = world();
+        let wts = f.wts.clone();
+        let done = add_wt(&repo, &wts, "sp-done", false);
+        std::fs::create_dir_all(wts.join("chk-new")).unwrap();
+        let st = states(&[("sp-done", "DONE")]);
+
+        assert_eq!(run(&f, &st, Duration::ZERO, true), 0);
+        assert!(done.exists() && wts.join("chk-new").exists());
+        assert!(f.out().contains("WOULD   remove sp-done"), "{}", f.out());
+
+        assert_eq!(run(&f, &st, Duration::from_secs(86_400), false), 0);
+        assert!(!done.exists());
+        assert!(wts.join("chk-new").exists(), "younger than the scratch age");
+    }
+
+    #[test]
+    fn a_refused_removal_is_a_failure_and_the_tree_stays() {
+        let (_t, repo, mut f) = world();
+        let wts = f.wts.clone();
+        let done = add_wt(&repo, &wts, "sp-done", false);
+        f.destroy_fails = true;
+        assert_eq!(run(&f, &states(&[("sp-done", "DONE")]), Duration::ZERO, false), 1);
+        assert!(done.exists());
+    }
+}

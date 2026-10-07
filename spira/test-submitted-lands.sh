@@ -175,7 +175,7 @@ landing() {
 }
 sending() {
     SPIRA_REPO="$REPO" \
-        command sending 2>&1
+        command sending --all 2>&1
 }
 on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 branch_tip() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }

@@ -70,7 +70,7 @@ landing() {
 
 sending() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
-        command sending 2>&1
+        command sending --all 2>&1
 }
 
 seed() {

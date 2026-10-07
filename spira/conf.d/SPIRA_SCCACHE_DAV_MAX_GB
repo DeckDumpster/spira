@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=sccache
+DOC=SIZE CAP OF THE SHARED COMPILATION CACHE in GiB; sccache-dav evicts least-recently-used entries past it
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SIZE CAP OF THE SHARED COMPILATION CACHE, in GiB. sccache-dav sweeps its store on a
+    # timer and deletes the least recently read entries until it is under this. A GET marks
+    # an entry read, so what builds still hit stays and what nothing asks for goes.
+    : "${SPIRA_SCCACHE_DAV_MAX_GB:=40}"
+SPIRA_CONF_DEFAULT_EOF

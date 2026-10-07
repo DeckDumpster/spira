@@ -429,7 +429,7 @@ fi
 # ---- the pass ---------------------------------------------------------------------------
 echo
 echo "one sending pass, every disposition:"
-out="$(sending)"
+out="$(sending --all 2>&1)"
 rc=$?
 printf '%s\n' "$out" >&2
 

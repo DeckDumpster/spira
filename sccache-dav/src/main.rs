@@ -27,6 +27,26 @@ async fn main() {
         cfg.root.display(),
         if cfg.token.is_some() { "required" } else { "OFF" }
     );
+    let cap = match sccache_dav::cap_bytes_from_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("sccache-dav: {e}");
+            std::process::exit(2);
+        }
+    };
+    let sweep_root = cfg.root.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(sccache_dav::SWEEP_EVERY);
+        loop {
+            tick.tick().await;
+            let root = sweep_root.clone();
+            if let Ok(ev) = tokio::task::spawn_blocking(move || sccache_dav::evict_to_cap(&root, cap)).await {
+                if ev.files > 0 {
+                    eprintln!("sccache-dav: evicted {} files ({} bytes); {} bytes remain (cap {cap})", ev.files, ev.bytes, ev.remaining);
+                }
+            }
+        }
+    });
     let state = Arc::new(AppState { root: cfg.root, token: cfg.token });
     let app = router(state);
     if let Err(e) = axum::serve(listener, app)
