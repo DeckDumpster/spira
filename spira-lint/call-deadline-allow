@@ -121,7 +121,6 @@
 1 spira/gate-sweep.sh
 1 spira/gh-app.sh
 1 spira/git-credential-app.sh
-1 spira/groom-trigger.sh
 1 spira/law-synth.sh
 2 spira/lib-test-install.sh
 9 spira/lib.sh
