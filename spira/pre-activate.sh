@@ -137,9 +137,9 @@ check_store() {
     fi
     local out rc
     if [ -n "${SPIRA_DB:-}" ]; then
-        out="$(bd -C "$SPIRA_DB" migrate status 2>&1)"
+        out="$(timeout 5 bd -C "$SPIRA_DB" migrate status 2>&1)"
     else
-        out="$(bd migrate status 2>&1)"
+        out="$(timeout 5 bd migrate status 2>&1)"
     fi
     rc=$?
     if [ "$rc" -eq 0 ]; then

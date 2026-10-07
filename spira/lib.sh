@@ -540,7 +540,8 @@ lc_event_bead() {
 #
 # An applied claim writes the `claimed` events row the attempt counters fold.
 lc_claim_bead() {
-    local id="$1" holder="$2" lease_until="$3" stack="${4:-{\}}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
+    local id="$1" holder="$2" lease_until="$3" stack="${4:-}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
+    [ -n "$stack" ] || stack='{}'
     # A bead filed by any path that skips row creation (a raw create in the beads CLI — acceptance, and at
     # least four actors in production; sp-tb4yk) has no lifecycle row, and `spira-lc show`
     # cannot tell "no row" from "unreachable". create-bead is idempotent and fails only when

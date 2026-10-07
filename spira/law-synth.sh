@@ -33,7 +33,7 @@ OUT_ABS="$SPIRA_WIKI/$OUT"
 
 command -v bd >/dev/null || { echo "law-synth: bd not on PATH" >&2; exit 1; }
 [ -d "$DB/.beads" ] || { echo "law-synth: $DB has no .beads — refusing to guess a database" >&2; exit 1; }
-statutes=$(bd -C "$DB" memories --json 2>/dev/null) || {
+statutes=$(timeout 5 bd -C "$DB" memories --json 2>/dev/null) || {
   echo "law-synth: could not read the statute book at $DB" >&2; exit 1; }
 
 # REFUSE TO WRITE FROM A NEAR-EMPTY DATABASE. A store with .beads but zero law- memories is

@@ -74,7 +74,7 @@ _pve_api() {
     _PVE_STATUS="" _PVE_BODY=""
     local _tmpfile _status _rc=0
     _tmpfile=$(mktemp)
-    _status=$(curl -sS \
+    _status=$(curl -sS --max-time 5 \
         --cacert "$PVE_CACERT" \
         -o "$_tmpfile" -w '%{http_code}' \
         -X "$method" \

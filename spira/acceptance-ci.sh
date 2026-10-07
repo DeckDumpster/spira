@@ -67,11 +67,11 @@ if [ "$_waive_upgrade" -eq 0 ] && [ -n "${SPIRA_WAIVE_UPGRADE_COMMIT:-}" ]; then
 fi
 
 git init --bare --initial-branch=main "$HOME/scratch-repo.git"
-git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"
+timeout 5 git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"
 git -C "$HOME/scratch-repo" config user.email "acceptance@spira.local"
 git -C "$HOME/scratch-repo" config user.name "Spira Acceptance"
 git -C "$HOME/scratch-repo" commit --allow-empty -m "init"
-git -C "$HOME/scratch-repo" push origin main
+timeout 5 git -C "$HOME/scratch-repo" push origin main
 
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/spira"
 printf 'scratch-repo | %s | push | origin/main | |\n' "$HOME/scratch-repo" \
@@ -79,11 +79,11 @@ printf 'scratch-repo | %s | push | origin/main | |\n' "$HOME/scratch-repo" \
 # One repository per remaining land mode, so every release proves queue, pr and push.
 for _m in queue.local:scratch-queue pr:scratch-pr; do
     git init --bare --initial-branch=main "$HOME/${_m#*:}.git"
-    git clone "$HOME/${_m#*:}.git" "$HOME/${_m#*:}"
+    timeout 5 git clone "$HOME/${_m#*:}.git" "$HOME/${_m#*:}"
     git -C "$HOME/${_m#*:}" config user.email "acceptance@spira.local"
     git -C "$HOME/${_m#*:}" config user.name "Spira Acceptance"
     git -C "$HOME/${_m#*:}" commit --allow-empty -m "init"
-    git -C "$HOME/${_m#*:}" push origin main
+    timeout 5 git -C "$HOME/${_m#*:}" push origin main
     _base="origin/main"
     if [ "${_m%%:*}" = "queue.local" ]; then
         # queue.local's base must be a LOCAL branch, never a remote-tracking ref: queue.sh
@@ -124,7 +124,7 @@ git -C "$_NOTES_REPO" config user.name "Spira Acceptance" 2>/dev/null || true
 # actions/checkout does not fetch refs/notes/*; fetch before release acceptance writes
 # so the note appends onto the remote's history and the push is a fast-forward.
 if [ -n "${GH_TOKEN:-}" ]; then
-    git -C "$_NOTES_REPO" fetch origin \
+    timeout 5 git -C "$_NOTES_REPO" fetch origin \
         'refs/notes/acceptance:refs/notes/acceptance' 2>/dev/null || true
 fi
 
@@ -135,12 +135,12 @@ _push_ok=0
 if [ -n "${GH_TOKEN:-}" ]; then
     for _attempt in 1 2 3; do
         _push_rc=0
-        git -C "$_NOTES_REPO" push origin 'refs/notes/acceptance' 2>&1 || _push_rc=$?
+        timeout 5 git -C "$_NOTES_REPO" push origin 'refs/notes/acceptance' 2>&1 || _push_rc=$?
         if [ "$_push_rc" -eq 0 ]; then _push_ok=1; break; fi
         # Concurrent run pushed between our fetch and push: re-fetch and re-apply.
         _saved_note="$(git -C "$_NOTES_REPO" notes --ref=acceptance show \
             "refs/tags/$_tag" 2>/dev/null || true)"
-        git -C "$_NOTES_REPO" fetch origin \
+        timeout 5 git -C "$_NOTES_REPO" fetch origin \
             'refs/notes/acceptance:refs/notes/acceptance' 2>/dev/null || true
         [ -n "$_saved_note" ] && \
             git -C "$_NOTES_REPO" notes --ref=acceptance add -f -m "$_saved_note" \

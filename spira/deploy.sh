@@ -149,8 +149,8 @@ _named_tag=1
 if [ "$tag" = "latest" ]; then
     _named_tag=0
     tag=""
-    git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
-    _rel_list="$(gh --repo "$_gh_repo" release list --json tagName,isDraft 2>/dev/null)" \
+    timeout 5 git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
+    _rel_list="$(timeout 5 gh --repo "$_gh_repo" release list --json tagName,isDraft 2>/dev/null)" \
         || _rel_list=""
     if [ -n "$_rel_list" ]; then
         tag="$(printf '%s' "$_rel_list" | python3 -c '
@@ -171,7 +171,7 @@ except Exception:
             tag="$(git -C "$SPIRA_REPO" tag --list 'spira-release-*' \
                     --sort=-version:refname 2>/dev/null | head -1)"
         else
-            tag="$(git ls-remote --tags "https://github.com/$_gh_repo" \
+            tag="$(timeout 5 git ls-remote --tags "https://github.com/$_gh_repo" \
                     'refs/tags/spira-release-*' 2>/dev/null \
                 | awk '{print $2}' | sed 's|refs/tags/||' \
                 | sort -V | tail -1)"
@@ -201,7 +201,7 @@ fi
 # Refuse a draft release before any disruptive action.
 _draft_info=""
 [ -n "$local_tarball" ] \
-    || _draft_info="$(gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
+    || _draft_info="$(timeout 5 gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
     || _draft_info=""
 if [ -n "$_draft_info" ]; then
     _is_draft="$(printf '%s' "$_draft_info" \
@@ -223,7 +223,7 @@ _assets_json=""
 if [ -n "$local_tarball" ]; then
     _assets_json="$(printf '{"assets":[{"name":"%s"}]}' "$(basename "$local_tarball")")"
 else
-    _assets_json="$(gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
+    _assets_json="$(timeout 5 gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
         || _assets_json=""
 fi
 _asset_name="$(printf '%s' "${_assets_json:-}" | python3 -c '
@@ -333,6 +333,7 @@ if [ -n "$local_tarball" ]; then
         printf 'deploy: could not copy %s\n' "$local_tarball" >&2; exit 2; }
 else
     log "deploy: fetching $tag"
+    # batch-job: release asset download
     gh --repo "$_gh_repo" release download "$tag" \
         --pattern "${release_stem}.tar.gz" \
         --dir "$_deploy_tmp" || {
@@ -347,12 +348,15 @@ _tarball="$_deploy_tmp/${release_stem}.tar.gz"
 # Check DB migration compatibility before drain so a mismatch does not strand the instance.
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
     log "deploy: checking DB migration compatibility"
+    # batch-job: schema migration over the whole store
     _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
     _mig_rc=$?
     if [ "$_mig_rc" -ne 0 ] \
             && printf '%s' "$_mig_out" | grep -qE 'unreachable|connection refused'; then
         log "deploy: Dolt server not running — starting"
+        # batch-job: starts the dolt server
         "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dolt start 2>/dev/null || true
+        # batch-job: schema migration over the whole store
         _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
         _mig_rc=$?
     fi

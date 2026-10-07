@@ -86,12 +86,14 @@ if [ "$RELEASE_MODE" = 1 ]; then
     fi
     _rel_tmp="$(mktemp -d)"
     echo "build-bd.sh: downloading $TAG from $_rel_url" >&2
+    # batch-job: release download
     if ! curl -fsSL --retry 3 -o "$_rel_tmp/bd.tar.gz" "$_rel_url"; then
         echo "build-bd.sh: download failed — $_rel_url" >&2
         rm -rf "$_rel_tmp"
         exit 1
     fi
     if [ -n "${_rel_checksum_url:-}" ]; then
+        # batch-job: checksum download
         if ! curl -fsSL --retry 3 -o "$_rel_tmp/checksums.txt" "$_rel_checksum_url"; then
             echo "build-bd.sh: checksum download failed — $_rel_checksum_url" >&2
             rm -rf "$_rel_tmp"; exit 1
@@ -119,9 +121,11 @@ else
     command -v gcc  >/dev/null 2>&1 || { echo "build-bd.sh: CGO_ENABLED=1 needs gcc; none found" >&2; exit 1; }
 
     if [ -d "$SRC/.git" ]; then
+        # batch-job: source fetch for the release build
         git -C "$SRC" fetch -q --tags origin || { echo "build-bd.sh: fetch failed" >&2; exit 1; }
     else
         mkdir -p "$(dirname "$SRC")"
+        # batch-job: source clone for the release build
         git clone -q "$REPO" "$SRC" || { echo "build-bd.sh: clone failed" >&2; exit 1; }
     fi
     # A TAG THAT IS NOT ON THE main LINEAGE IS REFUSED. This is the v1.2.2 trap, mechanised: a

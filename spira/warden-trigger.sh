@@ -28,7 +28,7 @@ if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     exit 0
 fi
 
-if "$BD" -C "$DB" create \
+if timeout 5 "$BD" -C "$DB" create \
     "Warden sweep — landed work in force, anomalies attributed" \
     --type task \
     --label "$LABELS,delivers:note:${SPIRA_RUN}/warden.log" \

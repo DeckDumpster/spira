@@ -37,7 +37,7 @@ done
 _gh_args=(release list --json tagName,isDraft)
 [ -n "$_repo" ] && _gh_args=(--repo "$_repo" "${_gh_args[@]}")
 
-_list="$(gh "${_gh_args[@]}" 2>/dev/null)" || _list=""
+_list="$(timeout 5 gh "${_gh_args[@]}" 2>/dev/null)" || _list=""
 [ -n "$_list" ] || exit 0
 
 printf '%s' "$_list" | python3 -c '
