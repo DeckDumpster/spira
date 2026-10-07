@@ -10,6 +10,8 @@ use crate::git::Git;
 use crate::ports::{Repo, World};
 
 pub const DEFAULT_IDLE_SECS: u64 = 48 * 3600;
+/// A tree no bead names has no finished state to wait for, so idleness is its only rule.
+pub const UNBEADED_IDLE_SECS: u64 = 4 * 3600;
 /// A branch with no commits is an ancestor of the land ref the moment it is cut, so the
 /// merged rule alone would reap a worktree its aeon has just been given.
 pub const MERGED_GRACE_SECS: u64 = 3600;
@@ -110,7 +112,8 @@ pub fn run(w: &dyn World, repos: &[Repo], opts: Opts) -> Tally {
             });
             let merged = branch.as_deref().and_then(|b| landrefs.iter().find(|lr| g.is_ancestor(b, lr)).cloned());
             let idle = last_activity(&path).and_then(|m| SystemTime::now().duration_since(m).ok()).unwrap_or_default();
-            let why = match decide(state.as_deref(), merged.as_deref(), idle, opts.idle_secs) {
+            let window = if state.is_none() { opts.idle_secs.min(UNBEADED_IDLE_SECS) } else { opts.idle_secs };
+            let why = match decide(state.as_deref(), merged.as_deref(), idle, window) {
                 Verdict::BeadFinished(s) => format!("bead is {s}"),
                 Verdict::BranchMerged(r) => format!("branch is merged into {r}"),
                 Verdict::Idle(s) => format!("no activity for {}h", s / 3600),
