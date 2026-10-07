@@ -200,20 +200,6 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
 }
 
-/// Did the session's builder hand its bead on by closing it — the legacy close path the
-/// verdict fences (sp-mve9i; teardown's own closed branch is deleted, sp-v62vn)? Read from the bead's
-/// lifecycle row, never bd's `status` (design §3.4: bd status is inert for work beads).
-///
-/// A restricted session (every session the aeon launches) hands its bead on only through the work verbs
-/// (`work submit`/`done`), which teardown's disposition reads as `submitted`
-/// (`lc_bead_verified`); bd's status never moved for it, so it never took this path and
-/// still does not. An unrestricted session's close is the row past the builder
-/// (`lc_state::past_builder`). No row is not a close: the conservative answer, which sends
-/// the bead through the disposition (release, never a reopen).
-pub fn builder_closed(restricted: bool, row: Option<&spira_config::lc_state::Row>) -> bool {
-    !restricted && row.is_some_and(|r| r.past_builder())
-}
-
 /// A restricted session handed its bead on by `work submit`: the row stands SUBMITTED. The
 /// close guards (prod-dirty, close-reason, groom escalation) judge this hand-on as they judge an
 /// unrestricted close; without it they never ran, since every session is restricted.
@@ -450,7 +436,6 @@ mod tests {
         let row = |st: &str| spira_config::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
         // Every session is restricted: its hand-on is SUBMITTED, never a bd close.
         assert!(builder_submitted(true, Some(&row("SUBMITTED"))));
-        assert!(!builder_closed(true, Some(&row("SUBMITTED"))));
         assert!(!builder_submitted(true, Some(&row("WORKING"))));
         assert!(!builder_submitted(true, Some(&row("REWORK"))));
         assert!(!builder_submitted(true, None));

@@ -72,7 +72,7 @@ tier = "T3"
 statement = "a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt"
 
 [use_case.uncovered]
-reason = "test-aeon-teardown-e2e.sh's rebase-conflict-at-close row (sp-rq-1) is deleted: sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so teardown's closed branch (aeon decide::builder_closed) — where this behaviour lives — is reached by no session. The subject is unreachable, not regressed; the dead branch itself is still in aeon/src/teardown.rs."
+reason = "test-aeon-teardown-e2e.sh's rebase-conflict-at-close row (sp-rq-1) is deleted: sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so the close fences (aeon decide::builder_closed, now deleted) — where this behaviour lived — is deleted (sp-nyo1m). The subject is unreachable, not regressed."
 date = "2026-10-05"
 bead = "sp-v62vn"
 
@@ -97,7 +97,7 @@ tier = "T1"
 statement = "closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen"
 
 [use_case.uncovered]
-reason = "test-aeon-gate-close-silent.sh's aeon rows are deleted (the suite keeps only gate-run.sh's own --status codes): sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so teardown's closed branch (aeon decide::builder_closed) — where this behaviour lives — is reached by no session. The subject is unreachable, not regressed; the dead branch itself is still in aeon/src/teardown.rs."
+reason = "test-aeon-gate-close-silent.sh's aeon rows are deleted (the suite keeps only gate-run.sh's own --status codes): sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so the close fences (aeon decide::builder_closed, now deleted) — where this behaviour lived — is deleted (sp-nyo1m). The subject is unreachable, not regressed."
 date = "2026-10-05"
 bead = "sp-v62vn"
 
