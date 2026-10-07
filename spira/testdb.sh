@@ -319,6 +319,7 @@ testdb_seed() {          # testdb_seed  < JSONL on stdin
     local f; f="$(mktemp)"
     cat > "$f"
     # Use SPIRA_BD (set by testdb_up to the right binary for the current mode).
+    # batch-job: fixture import
     "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" import "$f" >/dev/null 2>&1
     local rc=$?
     rm -f "$f"
