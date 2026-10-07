@@ -7,6 +7,7 @@
 //! brief asks for); where this port intentionally differs, the difference is named inline.
 
 use serde_json::Value;
+use std::path::Path;
 
 /// lib.sh `spira_is_generated_file`: a path substring match against a space-separated
 /// pattern list (`SPIRA_REBASE_GENERATED_FILES`).
@@ -149,6 +150,20 @@ pub fn budget_deferred_mail(branch: &str, repo_name: &str, n: u32) -> (String, S
     let subj = format!("{branch} budget-deferred: {n} consecutive passes in {repo_name}");
     let body = format!(
         "## Alert\n{subj}\n\nBranch {branch} has been deferred by budget exhaustion {n} consecutive landing passes in {repo_name}.\nThe pass runs out of gate budget before reaching this branch.\n"
+    );
+    (subj, body)
+}
+
+pub fn repo_unreadable_subject(repo: &str) -> String {
+    format!("{repo} not a git checkout")
+}
+
+/// Kind `alert`, no `--default`: the only repository the pass walks cannot be walked.
+pub fn repo_unreadable_mail(repo: &str, path: &Path) -> (String, String) {
+    let subj = format!("{} — the landing pass sees no branches", repo_unreadable_subject(repo));
+    let body = format!(
+        "## Alert\n{subj}\n\nThe landing pass resolved {repo} to {}, which is not a git checkout, and it is the only repository the pass walks. Nothing can land until the repository map or SPIRA_REPO points at the real checkout.\n",
+        path.display()
     );
     (subj, body)
 }

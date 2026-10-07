@@ -199,6 +199,9 @@ impl Lib for FakeLib {
     fn ask_budget_deferred(&self, br: &str, repo: &str, n: u32) {
         self.rec(format!("ask_budget_deferred {br} {repo} {n}"));
     }
+    fn ask_repo_unreadable(&self, repo: &str, path: &Path) {
+        self.rec(format!("ask_repo_unreadable {repo} {}", path.display()));
+    }
     fn rebase(&self, br: &str, onto: &str, _: &Path, _: &str) -> Rebase {
         self.rec(format!("rebase {br} {onto}"));
         self.rebase_fail.borrow().get(br).cloned().unwrap_or(Rebase { ok: true, ..Default::default() })
@@ -864,6 +867,30 @@ fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
 }
 
 #[test]
+fn the_sole_repository_not_being_a_git_checkout_is_an_alert() {
+    let mut h = H::new(LandMode::QueueLocal);
+    let release = h.dir.join("spira-releases/abc");
+    fs::create_dir_all(&release).unwrap();
+    h.repos[0].path = release.clone();
+    h.run();
+    assert!(h.logged(&format!("CHECK6 spira: {} is not a git checkout — skipped", release.display())));
+    assert!(h.lib.has(&format!("ask_repo_unreadable spira {}", release.display())));
+}
+
+#[test]
+fn a_checkout_among_several_repositories_skipped_is_not_an_alert() {
+    let mut h = H::new(LandMode::QueueLocal);
+    let release = h.dir.join("spira-releases/abc");
+    fs::create_dir_all(&release).unwrap();
+    let mut other = h.repos[0].clone();
+    other.name = "other".into();
+    other.path = release;
+    h.repos.push(other);
+    h.run();
+    assert!(!h.lib.has("ask_repo_unreadable"));
+}
+
+#[test]
 fn the_queue_step_runs_before_and_after_the_walk_and_a_missing_binary_is_said() {
     let h = H::new(LandMode::QueueLocal);
     h.closed("sp-a", "t1");
@@ -1102,6 +1129,9 @@ fn push_mode_lands_on_a_real_remote() {
         }
         fn ask_budget_deferred(&self, a: &str, b: &str, n: u32) {
             self.0.ask_budget_deferred(a, b, n)
+        }
+        fn ask_repo_unreadable(&self, a: &str, b: &Path) {
+            self.0.ask_repo_unreadable(a, b)
         }
         fn rebase(&self, a: &str, b: &str, c: &Path, d: &str) -> Rebase {
             self.0.rebase(a, b, c, d)

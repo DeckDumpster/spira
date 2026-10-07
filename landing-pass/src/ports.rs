@@ -72,6 +72,7 @@ pub trait Lib {
     fn ask_red_recurring(&self, id: &str, branch: &str, repo: &str, class: &str, first_at: &str);
     fn ask_rebase_refused(&self, id: &str, branch: &str, repo: &str, reason: &str);
     fn ask_budget_deferred(&self, branch: &str, repo: &str, n: u32);
+    fn ask_repo_unreadable(&self, repo: &str, path: &Path);
     fn rebase(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Rebase;
     fn recut(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Recut;
     fn bump_requeue(&self, id: &str, reason: &str);

@@ -97,7 +97,7 @@ pub fn load_context(home: &Path, out: &Reporter) -> Result<(Settings, Vec<RepoRo
 /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`); `from_env` resolves them
 /// in-process instead.
 fn repo_registry(home: &Path) -> spira_config::repos::Registry {
-    spira_config::repos::Registry::from_env(std::env::vars().collect(), home)
+    spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), home)
 }
 
 /// The base-ref columns (family W) for one already-resolved `(name, path, mode)` — ported
@@ -424,6 +424,14 @@ impl<'a> Lib for RealLib<'a> {
         }
         let (subj, body) = crate::ask::budget_deferred_mail(branch, repo, n);
         self.send_mail("operator", "Landing gate <gate@spira>", &subj, "alert", None, branch.rsplit('/').next().unwrap_or(""), &body);
+    }
+    fn ask_repo_unreadable(&self, repo: &str, path: &Path) {
+        let subj = crate::ask::repo_unreadable_subject(repo);
+        if self.ask_already_open(&subj) {
+            return;
+        }
+        let (subj, body) = crate::ask::repo_unreadable_mail(repo, path);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "alert", None, repo, &body);
     }
     fn rebase(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Rebase {
         let (rc, ans) = self.seam.call(Op::Rebase, &[branch, onto, &p(repo), name]);

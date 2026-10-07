@@ -240,6 +240,9 @@ impl<'a> Pass<'a> {
         }
         if !repo.path.join(".git").exists() {
             self.log(&format!("CHECK6 {name}: {} is not a git checkout — skipped", repo.path.display()));
+            if self.repos.len() == 1 {
+                self.lib.ask_repo_unreadable(name, &repo.path);
+            }
             return;
         }
         let refs = self.git.spira_refs(&repo.path);

@@ -205,7 +205,7 @@ pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, row: Option<&Be
     out.log(&format!("land-close {id}: closed at {shown_sha} (submitted -> landed)"));
 
     let (Some(repo_label), Some(branch_label)) = (label_value(&row.labels, "repo:"), label_value(&row.labels, "branch:")) else { return };
-    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), home);
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), home);
     let Some(root) = reg.root(repo_label) else { return };
     if !git.branch_exists(Path::new(&root), branch_label) {
         return;

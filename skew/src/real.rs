@@ -54,7 +54,7 @@ impl Real {
     /// first. `repo_names`, `repo_root`, `repo_field`, `home_repo`, `repo_land`, `landref`,
     /// `ref_remote` and `ref_branch` below all read this same registry.
     fn registry(&self) -> &spira_config::repos::Registry {
-        self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
+        self.registry.get_or_init(|| spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), &self.home))
     }
 
     fn git(&self, repo: &Path, args: &[&str]) -> (bool, String) {
