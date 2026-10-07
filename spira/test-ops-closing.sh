@@ -160,7 +160,7 @@ field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' |
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; } # batch-job: fixture bd call against the suite's throwaway store
-notes()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | tr -s '[:space:]' ' '; }
+notes()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | tr -s '[:space:]' ' '; } # batch-job: fixture bd call against the suite's throwaway store
 
 fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead
     testdb_reset
