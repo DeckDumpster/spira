@@ -629,14 +629,16 @@ echo "census_event_rows_run_sql — shares the retry path with census_events_run
 # hand-written copy that could drift.
 printf '0' > "$_calls_file"
 _retry_rc=0
-CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir" \
+tl_config SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir"
+CENSUS_RETRY_DELAY_S=0 \
     census_event_rows_run_sql >/dev/null 2>/dev/null || _retry_rc=$?
 is "raw-rows retry: succeeds after 2 failures" "0" "$_retry_rc"
 is "raw-rows retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
 
 _fail_err=""
 _fail_rc=0
-_fail_err="$(CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir" \
+tl_config SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir"
+_fail_err="$(CENSUS_RETRY_DELAY_S=0 \
     census_event_rows_run_sql 2>&1 >/dev/null)" || _fail_rc=$?
 is    "raw-rows all-fail: returns non-zero" "1" "$_fail_rc"
 want  "raw-rows all-fail: driver error in final message" "i/o timeout" "$_fail_err"
