@@ -47,7 +47,7 @@ want "the refusal names the command"        "acceptance-local.sh"               
 OUT="$(dispatch SPIRA_LOCAL_PASS_OVERRIDE=short)"; RC=$?
 [ "$RC" -ne 0 ] && ok "a too-short override reason is refused" || bad "a too-short override reason is refused" "$OUT"
 
-SPIRA_RUN="$TMP/run" spira-config local-pass record full-suite "$SHA" t
+SPIRA_TOML="$(tl_layer SPIRA_RUN="$TMP/run")" spira-config local-pass record full-suite "$SHA" t
 OUT="$(dispatch)"; RC=$?
 [ "$RC" -ne 0 ] && ok "a full-suite record does not satisfy the acceptance check" || bad "a full-suite record does not satisfy the acceptance check" "$OUT"
 
