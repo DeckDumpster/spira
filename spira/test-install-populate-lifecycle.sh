@@ -23,8 +23,12 @@
 #     and bd is only ever read (every bd call the classifier makes is list/show).
 #   - Idempotent: a second run creates nothing, and leaves the bead table and the event log
 #     exactly as the first run left them.
-#   - Loud: a bead that cannot be classified (labelled with a repository no config names)
-#     fails the phase, exit 2, naming the bead.
+#   - A beads DB from somewhere else: a bead labelled with a repository this config does not
+#     have gets a row by its bd status alone (open -> READY, closed -> DROPPED — never LANDED,
+#     even with a `spira: land` line for it in a configured repository), the run exits 0, and
+#     install warns `unknown-repo: N (ids)`.
+#   - Loud: a bead that cannot be classified (two repo: labels — genuinely ambiguous) fails
+#     the phase, exit 2, naming the bead.
 #
 # defect: sp-k62xz8
 # tier: T2
@@ -65,6 +69,9 @@ git -C "$GITREPO" commit -q --allow-empty -m "initial"
 printf 'the fix\n' > "$GITREPO/fix.txt"
 git -C "$GITREPO" add fix.txt
 git -C "$GITREPO" commit -q -m "a batch" -m "spira: land sp-landed"
+# A landing line for a bead whose own label names ANOTHER (unconfigured) repository: it must
+# not make that bead LANDED — an unknown repository has no evidence to read.
+git -C "$GITREPO" commit -q --allow-empty -m "another batch" -m "spira: land sp-gone-landed"
 
 # ── config: the run/queue dirs, a repository table layer, and a bd that logs its argv ──
 mkdir -p "$TMP/run/landstate" "$TMP/run/queue"
@@ -141,16 +148,35 @@ want "the second run creates nothing" "lifecycle population: 6 bead(s) in the da
 is "the bead table is byte-for-byte what the first run left" "$TABLE_AFTER_FIRST" "$(dump)"
 is "the event log gained nothing" "$EVENTS_AFTER_FIRST" "$(rows event)"
 
+# ── a beads DB from somewhere else: repo: labels this config does not know ──────────
+testdb_seed <<JSONL
+{"id":"sp-stray","title":"open, labelled with a repository nothing configures","type":"task","status":"open","labels":["repo:gone"]}
+{"id":"sp-gone-landed","title":"closed, unknown repository, landing line in demo","type":"task","status":"closed","labels":["repo:gone"]}
+JSONL
+wantrc "the unknown-repo beads seed" 0 $?
+OUT="$(install_populate)"; RC=$?
+printf '%s\n' "$OUT" | sed 's/^/  | /'
+wantrc "unknown repo: labels do not stop the install (exit 0)" 0 "$RC"
+want "the counts include them" "lifecycle population: 8 bead(s) in the database, 2 row(s) created, 6 already present" "$OUT"
+want "install warns with the unknown-repo line" "WARNING: unknown-repo: 2 (" "$OUT"
+is "the warning names sp-stray" "sp-stray" "$(printf '%s\n' "$OUT" | grep 'unknown-repo:' | grep -oE 'sp-stray([,)]|$)' | tr -d ',)')"
+is "the warning names sp-gone-landed" "sp-gone-landed" "$(printf '%s\n' "$OUT" | grep 'unknown-repo:' | grep -oE 'sp-gone-landed([,)]|$)' | tr -d ',)')"
+is "open with an unknown repo -> READY, by bd status" "READY" "$(lcfix_state sp-stray)"
+is "closed with an unknown repo -> DROPPED, by bd status" "DROPPED" "$(lcfix_state sp-gone-landed)"
+nowant "never LANDED by another repository's landing line" "terminal-landing-line" "$(reason sp-gone-landed)"
+is "rows from the first run are untouched" "$TABLE_AFTER_FIRST" "$(dump | grep -vE '^(sp-stray|sp-gone-landed),')"
+TABLE_AFTER_UNKNOWN="$(dump)"
+
 # ── loud: an unclassifiable bead fails the phase, named ─────────────────────────────
 testdb_seed <<JSONL
-{"id":"sp-stray","title":"labelled with a repository nothing configures","type":"task","status":"open","labels":["repo:gone"]}
+{"id":"sp-twin","title":"two repo labels","type":"task","status":"open","labels":["repo:demo","repo:other"]}
 JSONL
-wantrc "the stray bead seeds" 0 $?
+wantrc "the two-label bead seeds" 0 $?
 OUT="$(install_populate)"; RC=$?
 wantrc "an unclassifiable bead fails the phase (exit 2)" 2 "$RC"
-want "the failure names the bead" "sp-stray" "$OUT"
-want "the failure says why" "repo:gone" "$OUT"
-is "the stray bead got no row" "" "$(lcfix_state sp-stray)"
-is "the failed run changed no existing row" "$TABLE_AFTER_FIRST" "$(dump)"
+want "the failure names the bead" "sp-twin" "$OUT"
+want "the failure says why" "more than one repo: label" "$OUT"
+is "the two-label bead got no row" "" "$(lcfix_state sp-twin)"
+is "the failed run changed no existing row" "$TABLE_AFTER_UNKNOWN" "$(dump)"
 
 tl_summary

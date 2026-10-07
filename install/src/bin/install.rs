@@ -1568,6 +1568,9 @@ fn populate_phase(dry: bool) -> Result<(), String> {
         }
     })?;
     info(&format!("lifecycle population: {} bead(s) in the database, {} row(s) created, {} already present", counts.beads, counts.created, counts.present));
+    if let Some(w) = install::populate::unknown_repo_line(&counts.unknown_repo) {
+        eprintln!("install: WARNING: {w}");
+    }
     Ok(())
 }
 

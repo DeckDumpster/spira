@@ -45,8 +45,9 @@ struct Args {
     reclassify: bool,
     /// `--every-bead` (install's one-time population, sp-k62xz8): the roster is every bead in
     /// the database, not one repository's `repo:` label. A bead's own `repo:` label picks the
-    /// repository whose git evidence it is judged by; a bead with none is judged on bd and the
-    /// ledger alone; a label naming no configured repository is an error naming the bead.
+    /// repository whose git evidence it is judged by; a bead with none — or whose label names a
+    /// repository this config does not have (a beads DB from somewhere else) — is judged on bd
+    /// and the ledger alone, and the latter is listed in the report's `unknown_repo`.
     every_bead: bool,
     /// The configured ask-hold label (`schema.sh name ask`) — read by the caller, which can
     /// reach the accessor, and handed in rather than hardcoded here (law-schema-over-code).
@@ -113,6 +114,9 @@ struct Tally {
     batches_written: usize,
     reclassified: std::collections::BTreeMap<String, usize>,
     reclassify_refused: usize,
+    /// Beads classified without git evidence because their `repo:` label names a repository
+    /// the config does not have (--every-bead only).
+    unknown_repo: Vec<String>,
 }
 
 /// The repository a bead's own labels name: `Ok(None)` for a bead with no `repo:` label,
@@ -200,6 +204,7 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         "batches_written": t.batches_written,
         "reclassified": t.reclassified,
         "reclassify_refused": t.reclassify_refused,
+        "unknown_repo": t.unknown_repo,
         "contradictions": t.contradictions,
         "errors": t.errors,
     });
@@ -277,6 +282,12 @@ fn classify_one(
     let repo_name = match repo {
         Some(r) => Some(r.to_string()),
         None => match repo_label(&bd.labels) {
+            // A repository this config does not have: no git evidence to read, so the bead is
+            // judged like an unlabelled one, on bd and the ledger alone — and reported.
+            Ok(Some(r)) if !cfg.repos.contains_key(&r) => {
+                t.unknown_repo.push(id.to_string());
+                None
+            }
             Ok(r) => r,
             Err(e) => {
                 t.errors.push(format!("{id}: {e}"));
@@ -285,10 +296,6 @@ fn classify_one(
         },
     };
     if let Some(r) = &repo_name {
-        if !cfg.repos.contains_key(r) {
-            t.errors.push(format!("{id}: labelled repo:{r}, which {} does not configure — cannot read its landing evidence", cfg.source));
-            return;
-        }
         repo_ctx(conn, parsed, cfg, ctxs, t, r);
     }
     let ctx = repo_name.as_deref().and_then(|r| ctxs.get(r));

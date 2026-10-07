@@ -10,6 +10,9 @@
 //! Idempotent and non-destructive by the classifier's own contract: a bead that already has a
 //! row is counted as present and left untouched, bd is only read. Loud: a bead the classifier
 //! could not classify fails the phase, named — the report's `errors` are each `<id>: <why>`.
+//! A bead labelled with a repository this config does not have (a beads DB from somewhere
+//! else) is not an error: the classifier judges it on bd and the ledger alone, and install
+//! warns with the list (`unknown-repo: N (...)`).
 
 use serde_json::Value;
 
@@ -23,12 +26,30 @@ pub struct Inputs {
     pub ask_label: Option<String>,
 }
 
-/// The counts install reports: beads in the database, rows this run created, rows already there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The counts install reports: beads in the database, rows this run created, rows already
+/// there — and the beads classified without git evidence because their `repo:` label names a
+/// repository this config does not have.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Counts {
     pub beads: u64,
     pub created: u64,
     pub present: u64,
+    pub unknown_repo: Vec<String>,
+}
+
+/// How many unknown-repo bead ids the warning names before it says "and N more".
+pub const UNKNOWN_REPO_SHOWN: usize = 10;
+
+/// The warning line for beads whose `repo:` label names no configured repository, or `None`
+/// when there are none: `unknown-repo: N (sp-a, sp-b, ... and M more)`.
+pub fn unknown_repo_line(ids: &[String]) -> Option<String> {
+    if ids.is_empty() {
+        return None;
+    }
+    let shown = ids.iter().take(UNKNOWN_REPO_SHOWN).cloned().collect::<Vec<_>>().join(", ");
+    let more = ids.len().saturating_sub(UNKNOWN_REPO_SHOWN);
+    let tail = if more > 0 { format!(", and {more} more") } else { String::new() };
+    Some(format!("unknown-repo: {} ({shown}{tail}) — labelled with a repository this config does not have; classified on bd status and the ledger alone", ids.len()))
 }
 
 /// `spira-lc` argv (after the program name) for one population run.
@@ -65,7 +86,8 @@ pub fn interpret(rc: i32, out: &str) -> Result<Counts, String> {
         return Err(format!("spira-lc classify exited {rc}: {}", out.trim()));
     }
     let n = |k: &str| report.get(k).and_then(Value::as_u64).ok_or_else(|| format!("spira-lc classify's report has no {k:?} count"));
-    let c = Counts { beads: n("beads")?, created: n("classified")?, present: n("skipped_already_classified")? };
+    let unknown_repo = report.get("unknown_repo").and_then(Value::as_array).map(|a| a.iter().filter_map(|e| e.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let c = Counts { beads: n("beads")?, created: n("classified")?, present: n("skipped_already_classified")?, unknown_repo };
     if c.created + c.present != c.beads {
         return Err(format!("spira-lc classify saw {} bead(s) but accounts for {} created + {} present — refusing to call that complete", c.beads, c.created, c.present));
     }
@@ -106,13 +128,13 @@ mod tests {
     #[test]
     fn a_clean_report_gives_the_three_counts() {
         let out = r#"{"beads": 4, "classified": 3, "skipped_already_classified": 1, "errors": []}"#;
-        assert_eq!(interpret(0, out), Ok(Counts { beads: 4, created: 3, present: 1 }));
+        assert_eq!(interpret(0, out), Ok(Counts { beads: 4, created: 3, present: 1, unknown_repo: vec![] }));
     }
 
     #[test]
     fn a_second_run_reports_nothing_created() {
         let out = r#"{"beads": 4, "classified": 0, "skipped_already_classified": 4, "errors": []}"#;
-        assert_eq!(interpret(0, out), Ok(Counts { beads: 4, created: 0, present: 4 }));
+        assert_eq!(interpret(0, out), Ok(Counts { beads: 4, created: 0, present: 4, unknown_repo: vec![] }));
     }
 
     #[test]
@@ -122,8 +144,28 @@ mod tests {
     }
 
     #[test]
+    fn unknown_repo_beads_are_counts_not_errors() {
+        let out = r#"{"beads": 2, "classified": 2, "skipped_already_classified": 0, "unknown_repo": ["sp-a", "sp-b"], "errors": []}"#;
+        let c = interpret(0, out).unwrap();
+        assert_eq!(c.unknown_repo, vec!["sp-a".to_string(), "sp-b".to_string()]);
+        assert!(unknown_repo_line(&c.unknown_repo).unwrap().starts_with("unknown-repo: 2 (sp-a, sp-b)"));
+    }
+
+    #[test]
+    fn no_unknown_repo_beads_means_no_warning() {
+        assert_eq!(unknown_repo_line(&[]), None);
+    }
+
+    #[test]
+    fn the_unknown_repo_list_is_capped() {
+        let ids: Vec<String> = (0..13).map(|i| format!("sp-{i}")).collect();
+        let l = unknown_repo_line(&ids).unwrap();
+        assert!(l.starts_with("unknown-repo: 13 (sp-0,") && l.contains("sp-9, and 3 more)") && !l.contains("sp-10"), "{l}");
+    }
+
+    #[test]
     fn an_unclassifiable_bead_fails_naming_it() {
-        let out = r#"{"beads": 2, "classified": 1, "skipped_already_classified": 0, "errors": ["sp-x: labelled repo:gone, which the config does not name"]}"#;
+        let out = r#"{"beads": 2, "classified": 1, "skipped_already_classified": 0, "errors": ["sp-x: carries more than one repo: label (a, b)"]}"#;
         let e = interpret(2, out).unwrap_err();
         assert!(e.contains("sp-x") && e.contains("1 bead(s)"), "{e}");
     }
