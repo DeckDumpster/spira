@@ -176,6 +176,7 @@ chmod +x "$TMP/dolt"
 mkdir -p "$TMP/run" "$TMP/doctor-home"
 lc_facts_stub "$TMP/lc"
 touch "$TMP/run/cockpit.env"
+HOME="$TMP/doctor-home" timeout 5 dolt config --global --add metrics.disabled true >/dev/null 2>&1
 
 run_doctor() {
     # SPIRA_DB is registered too (doctor's RESOLVED_KEYS, confirmed in doctor/src/real.rs)
