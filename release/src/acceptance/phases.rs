@@ -140,17 +140,14 @@ impl Run<'_> {
     /// aged install, over real surviving state where units are already active, and failed
     /// the second restart deterministically enough under host load to make install.sh refuse.
     fn install_tarball(&self, tb: &Path) -> i32 {
-        // The release this binary runs from is named, never searched for (resolve.rs
-        // locate_home): `<release>/bin/release` -> `<release>`. A fresh-box install has no
-        // SPIRA_HOME or SPIRA_RELEASE of its own, so without this `release` refuses at once.
-        let release_dir = self.o.release_bin.parent().and_then(|b| b.parent()).map(Self::s).unwrap_or_default();
+        // A fresh box names no harness home and no release: install-tarball takes both from
+        // the tarball it installs, exactly as it must for an operator's first install.
         let c = Cmd::new(Self::s(&self.o.release_bin))
             .arg("install-tarball")
             .arg("--skip-restart")
             .arg(Self::s(tb))
             .arg("--answers")
             .arg(Self::s(&self.o.answers()))
-            .env("SPIRA_RELEASE", release_dir)
             .env("SPIRA_TOML", Self::s(&self.o.toml()))
             .env("SPIRA_RELEASES", Self::s(&self.o.releases()))
             .env("SPIRA_RUN", Self::s(&self.o.tmp.join("run")));

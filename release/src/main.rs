@@ -325,47 +325,65 @@ fn intake_cmd(env: &config::Env, rest: &[String]) -> Result<(), (u8, String)> {
     Ok(())
 }
 
-/// The config this install runs on: the file `SPIRA_TOML` names, else the canonical
-/// location — produced from `answers` (or a prompt on a terminal) when absent, every other
-/// key at the registered default of the release being installed (its own `spira/conf.d`,
-/// read out of `tarball`). When `SPIRA_TOML` was unset it names the file for the rest of this
-/// process, and the operator is told to export it for the steps that follow.
-fn ensure_config(env: &config::Env, tarball: &Path, answers: Option<&Path>) -> Result<(), String> {
+/// The installing release's own tree, unpacked to a scratch directory for as long as this
+/// process runs: removed on drop.
+struct Scratch(PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// `spira/` of the release in `tarball`, read out of it: its key registry is what a fresh
+/// box's config is written against, and what this process reads that config with.
+fn tarball_home(tarball: &Path) -> Result<(Scratch, PathBuf), String> {
+    let scratch = Scratch(std::env::temp_dir().join(format!("release-install-home-{}", std::process::id())));
+    std::fs::create_dir_all(&scratch.0).map_err(|e| format!("{}: {e}", scratch.0.display()))?;
+    // batch-job: tar reads one directory out of the tarball being installed
+    let st = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(tarball)
+        .arg("-C")
+        .arg(&scratch.0)
+        .args(["--wildcards", "*/spira/conf.d/*"])
+        .status()
+        .map_err(|e| format!("cannot run tar: {e}"))?;
+    if !st.success() {
+        return Err(format!("{} carries no spira/conf.d ({st})", tarball.display()));
+    }
+    let top = std::fs::read_dir(&scratch.0).map_err(|e| e.to_string())?.flatten().next().ok_or("empty extraction")?.path();
+    Ok((scratch, top.join("spira")))
+}
+
+/// Install-tarball is the first step of a fresh install, so it runs where nothing is set up:
+/// no harness home of its own (a `release` binary taken out of the tarball) and no config.
+/// The home is then the installing release's own tree; the config is the file `SPIRA_TOML`
+/// names, else the canonical location — produced from `answers` (or a prompt on a terminal)
+/// when absent, every other key at that release's registered default. When `SPIRA_TOML` was
+/// unset it names the file for the rest of this process, and the operator is told to export
+/// it for the steps that follow.
+fn ensure_install_env(env: &config::Env, tarball: &Path, answers: Option<&Path>) -> Result<Option<Scratch>, String> {
     use spira_config::init;
+    let own = spira_config::resolve::locate_home_for_process().ok().map(|h| spira_config::resolve::default_conf_d(&h)).filter(|d| d.is_dir());
+    let mut scratch = None;
+    let conf_d = match own {
+        Some(d) => d,
+        None => {
+            let (s, home) = tarball_home(tarball)?;
+            std::env::set_var("SPIRA_HOME", &home);
+            scratch = Some(s);
+            spira_config::resolve::default_conf_d(&home)
+        }
+    };
     let out = init::default_out(env)?;
-    if !out.exists() {
-        let scratch = std::env::temp_dir().join(format!("release-conf-d-{}", std::process::id()));
-        std::fs::create_dir_all(&scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
-        let got = (|| {
-            // batch-job: tar reads one directory out of the tarball being installed
-            let st = std::process::Command::new("tar")
-                .args(["-xzf"])
-                .arg(tarball)
-                .arg("-C")
-                .arg(&scratch)
-                .args(["--wildcards", "*/spira/conf.d/*"])
-                .status()
-                .map_err(|e| format!("cannot run tar: {e}"))?;
-            if !st.success() {
-                return Err(format!("{} carries no spira/conf.d ({st})", tarball.display()));
-            }
-            let top = std::fs::read_dir(&scratch).map_err(|e| e.to_string())?.flatten().next().ok_or("empty extraction")?.path();
-            match init::ensure_from_cli(Some(out.clone()), answers, &Default::default(), &top.join("spira/conf.d"))? {
-                init::Outcome::Written(p) => println!("release: wrote {} from the operator's answers", p.display()),
-                init::Outcome::Existing(_) => {}
-            }
-            Ok(())
-        })();
-        let _ = std::fs::remove_dir_all(&scratch);
-        got?;
-    } else {
-        init::ensure_from_cli(Some(out.clone()), None, &Default::default(), Path::new("/nonexistent"))?;
+    if let init::Outcome::Written(p) = init::ensure_from_cli(Some(out.clone()), answers, &Default::default(), &conf_d)? {
+        println!("release: wrote {} from the operator's answers", p.display());
     }
     if env.get("SPIRA_TOML").is_none_or(|t| t.is_empty()) {
         std::env::set_var("SPIRA_TOML", &out);
         println!("release: SPIRA_TOML names the one config — export SPIRA_TOML={} for the steps that follow", out.display());
     }
-    Ok(())
+    Ok(scratch)
 }
 
 fn run(argv: &[String]) -> Result<(), (u8, String)> {
@@ -438,9 +456,10 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
     // A fresh box has no config yet: install-tarball is the first step of an install, so it
     // PRODUCES the config from the operator's answers (per Ryan 2026-10-07) — before anything
     // reads config. An existing file is validated and used, never overwritten.
+    let mut _home = None;
     if cmd == "install-tarball" && !a.dry_run {
         let tb = rest.first().ok_or_else(|| usage("install-tarball takes 1 argument(s)".into()))?;
-        ensure_config(&env, Path::new(tb), a.answers.as_deref()).map_err(fail)?;
+        _home = ensure_install_env(&env, Path::new(tb), a.answers.as_deref()).map_err(fail)?;
     }
     let cfg = resolve_config(&a, &env, &cmd, rest).map_err(|e| (1, e))?;
     let repo = || release::repo::resolve(a.repo.as_deref().map(Path::new), &env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
