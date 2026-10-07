@@ -1223,9 +1223,9 @@ pub fn sending_keys() -> Kv {
 /// (bd content) falls inside the dedup lookback (`since`, `YYYY-MM-DD`); a bead with no
 /// lifecycle row is not live work and is not counted. A `duplicate-of:` bead is already
 /// accounted for.
-pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &str) -> HashMap<String, Vec<String>> {
+pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &str) -> std::collections::BTreeMap<String, Vec<String>> {
     // (id, created_at, closed_at when terminal)
-    let mut by_ref: HashMap<String, Vec<(String, String, Option<String>)>> = HashMap::new();
+    let mut grouped: std::collections::BTreeMap<String, Vec<(String, String, Option<String>)>> = std::collections::BTreeMap::new();
     for i in rows {
         let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
         if ref_.is_empty() {
@@ -1247,11 +1247,11 @@ pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &s
         } else {
             None
         };
-        by_ref.entry(ref_.to_string()).or_default().push((id, text("created_at"), closed));
+        grouped.entry(ref_.to_string()).or_default().push((id, text("created_at"), closed));
     }
     // A terminal bead closed before a sibling was created is a predecessor of a recurrence
     // (incident.sh files fresh once the predecessor is over), not a dedup failure.
-    by_ref
+    grouped
         .into_iter()
         .map(|(ref_, beads)| {
             let ids = beads
