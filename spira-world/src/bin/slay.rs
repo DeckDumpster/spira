@@ -224,7 +224,7 @@ fn main() {
         }
         let _ = std::fs::remove_file(&hold_pid_file);
         let _ = std::fs::remove_file(&hb_file);
-        let _ = spira_config::bounded::bounded("spira-lc").args(["unhold", id, "operator", "slay"]).output();
+        let _ = spira_config::bounded::bounded("spira-lc").args(["unhold", id, "manual", "slay"]).output();
         say(&format!(
             "hold: manual hold released for {id} (holder pid {}, heartbeat {})",
             if hpid.is_empty() { "?" } else { &hpid },

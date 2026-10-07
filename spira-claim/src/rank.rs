@@ -242,7 +242,7 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
         for h in holds_v.as_array().into_iter().flatten() {
             let s = h.as_str().unwrap_or("");
             // An unknown hold kind refuses the bead rather than being ignored.
-            holds.insert(HoldKind::from_str(s).unwrap_or(HoldKind::Operator));
+            holds.insert(HoldKind::from_str(s).unwrap_or(HoldKind::Manual));
         }
         let stack_depth = match r.get("stack_depth") {
             Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u32,
@@ -627,6 +627,20 @@ mod tests {
     }
 
     #[test]
+    fn a_blocker_landing_releases_its_dependent_with_no_hand_step_but_a_manual_hold_never_lifts() {
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let dep = blocked_on("B", "A");
+        for blocker in [BeadState::Working, BeadState::Submitted] {
+            let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", blocker, &[], 0)].into();
+            assert_eq!(claimable(&dep, &lc, &bd, 0), Verdict::Blocked("A".into()), "{blocker:?}");
+        }
+        let landed: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        assert_eq!(claimable(&dep, &landed, &bd, 0), Verdict::Claimable { depth: 0 });
+        let parked: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Manual], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        assert_eq!(claimable(&dep, &parked, &bd, 0), Verdict::Held(HoldKind::Manual));
+    }
+
+    #[test]
     fn blocker_epic_waits_for_close() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
         let open: HashMap<_, _> = [bdrec("E", "open", "epic", "spira")].into();
@@ -684,7 +698,7 @@ mod tests {
         let future = crate::ready::now_epoch() + 3600;
         assert_eq!(claimable(&b, &snooze_snapshot(future, "wait"), &bd, 4), Verdict::Snoozed(future));
         assert_eq!(claimable(&b, &snooze_snapshot(crate::ready::now_epoch() - 1, "wait"), &bd, 4), Verdict::Claimable { depth: 0 });
-        assert_eq!(claimable(&b, &snooze_snapshot(future, "operator"), &bd, 4), Verdict::Held(HoldKind::Operator), "only a wait hold snoozes");
+        assert_eq!(claimable(&b, &snooze_snapshot(future, "manual"), &bd, 4), Verdict::Held(HoldKind::Manual), "only a wait hold snoozes");
         assert!(crate::ready::lifecycle_ready_ids(&snooze_snapshot(future, "wait")).is_empty());
     }
 

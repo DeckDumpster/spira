@@ -90,7 +90,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
     match verb {
         "hold" => {
             if !need(2) {
-                return usage("hold <bead-id> <poison|ask|wait|operator> [cause] [actor]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"");
+                return usage("hold <bead-id> <poison|ask|wait|manual> [cause] [actor]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"");
             }
             let actor = actor_or(args.get(3), "sentinel");
             hold(m, &a(0), &a(1), &a(2), &actor)
@@ -331,7 +331,7 @@ fn hold_cause(k: HoldKind) -> HoldCause {
         HoldKind::Poison => HoldCause::AttemptsExhausted,
         HoldKind::Ask => HoldCause::OperatorQuestion,
         HoldKind::Wait => HoldCause::UnlandedBlocker,
-        HoldKind::Operator => HoldCause::ManualHold,
+        HoldKind::Manual => HoldCause::ManualHold,
     }
 }
 

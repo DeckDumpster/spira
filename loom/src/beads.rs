@@ -143,6 +143,25 @@ pub fn drop_closed(rows: Vec<Value>, lc: Option<&HashMap<String, lc_state::Row>>
     (kept, dropped)
 }
 
+/// The kinds a hold can take, in the order the page lists them.
+pub const HOLD_KINDS: [&str; 4] = ["wait", "manual", "ask", "poison"];
+
+/// Each served row's lifecycle holds, as `holds`: the state half of the picture the page
+/// cannot read off a bd label. A row with no lifecycle row, or no answer from the machine,
+/// carries an empty list.
+pub fn tag_holds(rows: &mut [Value], lc: Option<&HashMap<String, lc_state::Row>>) {
+    for r in rows.iter_mut() {
+        let id = r.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        let held: Vec<&str> = lc
+            .and_then(|m| m.get(&id))
+            .map(|row| HOLD_KINDS.iter().copied().filter(|k| row.held(k)).collect())
+            .unwrap_or_default();
+        if let Some(o) = r.as_object_mut() {
+            o.insert("holds".into(), Value::from(held));
+        }
+    }
+}
+
 /// Every row's `dependencies`, lifted into one list and removed from the rows.
 ///
 /// HOISTED RATHER THAN LEFT IN PLACE, so the payload has exactly one edge list. Left where it
@@ -237,6 +256,21 @@ mod tests {
         let ids: Vec<&str> = kept.iter().filter_map(|r| r["id"].as_str()).collect();
         assert_eq!((ids, dropped), (vec!["sp-b", "sp-c"], 1));
         assert_eq!(drop_closed(rows, None).1, 0);
+    }
+
+    #[test]
+    fn rows_carry_their_hold_kinds_with_manual_in_place_of_operator() {
+        let mut rows: Vec<Value> = serde_json::from_str(r#"[{"id":"sp-a"},{"id":"sp-b"},{"id":"sp-c"}]"#).unwrap();
+        let lc: HashMap<String, lc_state::Row> = [("sp-a", vec!["manual", "wait"]), ("sp-b", vec!["operator"])]
+            .into_iter()
+            .map(|(id, h)| (id.to_string(), lc_state::Row { bead_id: id.into(), state: "READY".into(), holds: h.into_iter().map(String::from).collect(), ..Default::default() }))
+            .collect();
+        tag_holds(&mut rows, Some(&lc));
+        assert_eq!(rows[0]["holds"], serde_json::json!(["wait", "manual"]));
+        assert_eq!(rows[1]["holds"], serde_json::json!([]), "the retired name is not a kind");
+        assert_eq!(rows[2]["holds"], serde_json::json!([]));
+        tag_holds(&mut rows, None);
+        assert_eq!(rows[0]["holds"], serde_json::json!([]));
     }
 
     #[test]

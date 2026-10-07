@@ -595,7 +595,7 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
         let files = ordered_files(&[dir.to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
-        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql"]);
+        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql"]);
         let steps = plan(&texts).unwrap();
         let adds: Vec<(String, String)> = steps
             .iter()
@@ -606,7 +606,7 @@ mod tests {
             .collect();
         assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into()), ("bead".into(), "persona".into())]);
         let plain = steps.iter().filter(|(_, s)| matches!(s, Stmt::Plain(_))).count();
-        assert_eq!(plain, 2, "0003's guarded UPDATE and 0004's CREATE INDEX run as written");
+        assert_eq!(plain, 4, "the guarded UPDATEs and 0004's CREATE INDEX run as written");
     }
 
     #[test]

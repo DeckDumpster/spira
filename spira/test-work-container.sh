@@ -279,7 +279,7 @@ seed_bead "$SBID"
 out="$(work_as "$SBID" superseded-by "$BID" 2>&1)"; rc=$?
 is "superseded-by: exits 0" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, holds, reason FROM bead WHERE bead_id='$SBID'" -r json 2>&1)"
-want   "superseded-by: an operator hold is recorded, not SUPERSEDED" "operator" "$row"
+want   "superseded-by: a manual hold is recorded, not SUPERSEDED" "manual" "$row"
 nowant "superseded-by: the bead itself is not moved to SUPERSEDED"   "\"state\":\"SUPERSEDED\"" "$row"
 want   "superseded-by: the request names the proposed successor"    "$BID" "$row"
 

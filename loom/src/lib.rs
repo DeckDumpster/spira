@@ -179,6 +179,7 @@ impl Loom {
             .ok()
             .flatten();
         let (mut rows, dropped_closed) = beads::drop_closed(rows, lc.as_ref());
+        beads::tag_holds(&mut rows, lc.as_ref());
         let edges = beads::take_edges(&mut rows);
         let live: HashSet<&str> = rows.iter().filter_map(|r| r["id"].as_str()).collect();
         let (edges, dropped_edges) = beads::drawable_edges(edges, &live);

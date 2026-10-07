@@ -76,7 +76,8 @@ pub enum HoldKind {
     Poison,
     Ask,
     Wait,
-    Operator,
+    #[serde(alias = "Operator")]
+    Manual,
 }
 
 impl HoldKind {
@@ -85,7 +86,7 @@ impl HoldKind {
             HoldKind::Poison => "poison",
             HoldKind::Ask => "ask",
             HoldKind::Wait => "wait",
-            HoldKind::Operator => "operator",
+            HoldKind::Manual => "manual",
         }
     }
 
@@ -95,7 +96,7 @@ impl HoldKind {
             "poison" => HoldKind::Poison,
             "ask" => HoldKind::Ask,
             "wait" => HoldKind::Wait,
-            "operator" => HoldKind::Operator,
+            "manual" => HoldKind::Manual,
             _ => return None,
         })
     }
@@ -243,6 +244,28 @@ fn awaiting_reply(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
     )
 }
 
+fn manual_reason_refusal(detail: Option<&str>) -> Option<Refusal> {
+    let reason = detail.map(str::trim).unwrap_or("");
+    let exit = if reason.is_empty() {
+        "a manual hold needs a reason: say who lifts it and how"
+    } else if is_bead_id(reason) {
+        "a hold whose whole reason is a bead waits on that bead: add the edge with `bead.sh dep add <id> <blocker>` and the graph releases it when the blocker lands"
+    } else if is_snooze_reason(reason) {
+        "a timed snooze is a wait hold: `spira-lc hold <id> wait snooze-until:<epoch>`"
+    } else {
+        return None;
+    };
+    Some(Refusal::ManualHoldReason { reason: reason.to_string(), exit: exit.to_string() })
+}
+
+fn is_bead_id(x: &str) -> bool {
+    x.len() > 3 && x[..3].eq_ignore_ascii_case("sp-") && x[3..].chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
+}
+
+fn is_snooze_reason(reason: &str) -> bool {
+    reason.starts_with("snooze-until:")
+}
+
 fn holds_ask(row: &BeadRow) -> bool {
     row.holds.contains(&HoldKind::Ask)
 }
@@ -364,6 +387,11 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         BeadEventKind::Hold { kind, cause, detail } => {
             if row.state.is_terminal() {
                 return terminal(row);
+            }
+            if *kind == HoldKind::Manual && *cause == HoldCause::ManualHold {
+                if let Some(refusal) = manual_reason_refusal(detail.as_deref()) {
+                    return Outcome::refuse(row.clone(), refusal);
+                }
             }
             let mut new = row.clone();
             new.holds.insert(*kind);
@@ -1457,11 +1485,43 @@ mod tests {
     fn every_hold_cause_holds_a_ready_bead_and_is_recorded() {
         for cause in ALL_HOLD_CAUSES {
             let r = row(BeadState::Ready);
-            let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Operator, cause, detail: None }));
+            let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Manual, cause, detail: Some("parked by hand".into()) }));
             assert!(out.applied, "{cause:?} should hold a READY bead");
-            assert!(out.row.holds.contains(&HoldKind::Operator));
-            assert_eq!(out.row.reason.as_deref(), Some(cause.as_str()));
+            assert!(out.row.holds.contains(&HoldKind::Manual));
+            assert_eq!(out.row.reason.as_deref(), Some("parked by hand"));
         }
+    }
+
+    #[test]
+    fn a_manual_hold_needs_a_reason_that_is_not_a_bead_id_or_a_snooze() {
+        let manual = |detail: Option<&str>| {
+            apply(
+                &row(BeadState::Ready),
+                &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::ManualHold, detail: detail.map(String::from) }),
+            )
+        };
+        for bad in [None, Some(""), Some("  "), Some("sp-abc12"), Some(" sp-abc12.3 "), Some("snooze-until:99")] {
+            let out = manual(bad);
+            assert!(!out.applied, "{bad:?} must be refused");
+            assert!(matches!(out.refusal, Some(Refusal::ManualHoldReason { .. })), "{bad:?}");
+            assert!(out.row.holds.is_empty());
+        }
+        let Some(Refusal::ManualHoldReason { exit, .. }) = manual(Some("sp-abc12")).refusal else { panic!() };
+        assert!(exit.contains("bead.sh dep add"), "{exit}");
+        assert!(manual(Some("waiting on sp-abc12 and the vendor")).applied);
+        assert!(manual(Some("repeat offender, parked by the Concierge")).applied);
+    }
+
+    #[test]
+    fn a_wait_hold_may_carry_a_bead_id_or_a_snooze_and_a_legacy_operator_event_still_replays() {
+        for d in ["sp-abc12", "snooze-until:99"] {
+            let out = apply(&row(BeadState::Ready), &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Wait, cause: HoldCause::UnlandedBlocker, detail: Some(d.into()) }));
+            assert!(out.applied, "{d}");
+        }
+        let old: BeadEventKind = serde_json::from_str(r#"{"Hold":{"kind":"Operator","cause":"manual-hold","detail":"x"}}"#).unwrap();
+        assert!(matches!(old, BeadEventKind::Hold { kind: HoldKind::Manual, .. }));
+        assert_eq!(HoldKind::from_str("manual"), Some(HoldKind::Manual));
+        assert_eq!(HoldKind::from_str("operator"), None);
     }
 
     #[test]
@@ -1475,7 +1535,7 @@ mod tests {
             &ev(
                 BeadState::Ready,
                 0,
-                BeadEventKind::Hold { kind: HoldKind::Operator, cause: HoldCause::SupersedeRequest, detail: Some("sp-9999".into()) },
+                BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::SupersedeRequest, detail: Some("sp-9999".into()) },
             ),
         );
         assert!(out.applied);

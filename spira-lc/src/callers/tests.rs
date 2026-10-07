@@ -134,10 +134,23 @@ fn every_verb_is_a_caller_verb_and_no_primitive_is() {
 // ---- holds -----------------------------------------------------------------------------
 
 #[test]
+fn a_manual_hold_with_a_bare_bead_id_or_no_reason_is_refused_and_a_snooze_is_a_wait_hold() {
+    let mut f = Fake::default();
+    f.bead("sp-m", BeadState::Ready);
+    for bad in ["sp-blocker1", "snooze-until:99"] {
+        assert_ne!(go(&mut f, "hold", &["sp-m", "manual", bad, "t"]).code, APPLIED, "{bad}");
+        assert_eq!(go(&mut f, "holds", &["sp-m"]).stdout, "");
+    }
+    assert_ne!(go(&mut f, "hold", &["sp-m", "manual", "", "t"]).code, APPLIED);
+    assert_eq!(go(&mut f, "hold", &["sp-m", "wait", "snooze-until:99", "t"]).code, APPLIED);
+    assert_eq!(go(&mut f, "holds", &["sp-m"]).stdout, "wait");
+}
+
+#[test]
 fn hold_suspends_without_moving_state_and_unhold_restores_it() {
     let mut f = Fake::default();
     f.bead("sp-h", BeadState::Working);
-    for kind in ["poison", "wait", "operator", "ask"] {
+    for kind in ["poison", "wait", "manual", "ask"] {
         assert_eq!(go(&mut f, "hold", &["sp-h", kind, "held for it", "t"]).code, APPLIED, "{kind}");
         assert_eq!(f.state("sp-h"), "WORKING");
         assert_eq!(go(&mut f, "holds", &["sp-h"]).stdout, kind);
@@ -915,8 +928,8 @@ fn reopen_refuses_a_terminal_row_and_a_missing_row_and_an_unreachable_machine() 
 fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
     let mut f = Fake::default();
     f.bead("sp-e", BeadState::Certified);
-    f.beads.get_mut("sp-e").unwrap().holds.insert(HoldKind::Operator);
+    f.beads.get_mut("sp-e").unwrap().holds.insert(HoldKind::Manual);
     assert_eq!(reopen_cmd(&v(&["sp-e", "eject"]), &mut f, &mut FakeBd::default()).code, APPLIED);
     assert_eq!(reopen_kinds(&f).last().unwrap(), r#"{"Returned":{"reason":"batch-ejected"}}"#);
-    assert!(f.beads["sp-e"].holds.contains(&HoldKind::Operator), "reopening is not an unhold");
+    assert!(f.beads["sp-e"].holds.contains(&HoldKind::Manual), "reopening is not an unhold");
 }

@@ -207,3 +207,15 @@ test('nothing pre-chewed survives in the shipped page', () => {
     }
     assert.deepEqual(missing, [], 'every id the painter addresses exists');
 });
+
+test('hold kinds are wait / manual / ask / poison and are counted from the rows', () => {
+    const raw = [
+        { id: 'h-1', status: 'open', holds: ['wait'] },
+        { id: 'h-2', status: 'open', holds: ['manual', 'wait'] },
+        { id: 'h-3', status: 'open', holds: ['operator'] },
+        { id: 'h-4', status: 'open' }
+    ];
+    const m = M.derive(raw, opts);
+    assert.deepEqual(m.stats.holds, { wait: 2, manual: 1, ask: 0, poison: 0 });
+    assert.deepEqual(m.beads['h-4'].holds, []);
+});

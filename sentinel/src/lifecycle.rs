@@ -21,7 +21,7 @@ pub fn hold_tag(kind: &str) -> Option<(&'static str, &'static str)> {
         "poison" => ("Poison", "attempts-exhausted"),
         "ask" => ("Ask", "operator-question"),
         "wait" => ("Wait", "unlanded-blocker"),
-        "operator" => ("Operator", "manual-hold"),
+        "manual" => ("Manual", "manual-hold"),
         _ => return None,
     })
 }
