@@ -334,8 +334,8 @@ impl Drop for Scratch {
     }
 }
 
-/// `spira/` of the release in `tarball`, read out of it: its key registry is what a fresh
-/// box's config is written against, and what this process reads that config with.
+/// `spira/` of the release in `tarball`, read out of it: its key registry and its personas
+/// (`chamber/`) are what a fresh box's config is written against, and what this process reads that config with.
 fn tarball_home(tarball: &Path) -> Result<(Scratch, PathBuf), String> {
     let scratch = Scratch(std::env::temp_dir().join(format!("release-install-home-{}", std::process::id())));
     std::fs::create_dir_all(&scratch.0).map_err(|e| format!("{}: {e}", scratch.0.display()))?;
@@ -345,11 +345,11 @@ fn tarball_home(tarball: &Path) -> Result<(Scratch, PathBuf), String> {
         .arg(tarball)
         .arg("-C")
         .arg(&scratch.0)
-        .args(["--wildcards", "*/spira/conf.d/*"])
+        .args(["--wildcards", "*/spira/conf.d/*", "*/spira/chamber/*"])
         .status()
         .map_err(|e| format!("cannot run tar: {e}"))?;
     if !st.success() {
-        return Err(format!("{} carries no spira/conf.d ({st})", tarball.display()));
+        return Err(format!("{} carries no spira/conf.d or spira/chamber ({st})", tarball.display()));
     }
     let top = std::fs::read_dir(&scratch.0).map_err(|e| e.to_string())?.flatten().next().ok_or("empty extraction")?.path();
     Ok((scratch, top.join("spira")))

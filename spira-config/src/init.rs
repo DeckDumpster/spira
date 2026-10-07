@@ -177,6 +177,29 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
             Err(e) => unset.push(format!("{path} = {v:?} ({e})")),
         }
     }
+    // The personas: one [persona.<name>] per `*.fayth` the release ships beside its registry
+    // (spira/chamber), read the way convert reads them, against the [spira] just written.
+    let chamber = reg.conf_d.parent().unwrap_or(Path::new("/")).join("chamber");
+    let mut fayths: Vec<PathBuf> = std::fs::read_dir(&chamber)
+        .map_err(|e| format!("no personas: {}: {e}", chamber.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "fayth"))
+        .collect();
+    fayths.sort();
+    if fayths.is_empty() {
+        return Err(format!("no personas: no *.fayth under {}", chamber.display()));
+    }
+    let spira_section = doc.spira.clone().unwrap_or_default();
+    let mut warnings = crate::convert::ConvertWarnings::default();
+    for f in &fayths {
+        let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let (name, section) = crate::convert::persona_section(&text, &spira_section, &mut warnings);
+        if name.is_empty() {
+            return Err(format!("{}: no FAYTH_NAME", f.display()));
+        }
+        doc.persona.insert(name, section);
+    }
     // A typed key with no registered default cannot be declared empty, and its readers need a
     // value: it is the operator's to answer, never this function's to invent.
     if !no_default.is_empty() {
@@ -353,8 +376,9 @@ mod tests {
         // The shipped registry gives every typed key a default; a registry that does not
         // (here, summon_lock_wait's default removed) must be answered, never invented.
         let d = testkit::TempDir::new("spira-config-init-nodefault");
-        let conf_d = d.path().join("conf.d");
+        let conf_d = d.path().join("spira/conf.d");
         std::fs::create_dir_all(&conf_d).unwrap();
+        std::os::unix::fs::symlink(reg().conf_d.parent().unwrap().join("chamber"), d.path().join("spira/chamber")).unwrap();
         for e in std::fs::read_dir(reg().conf_d).unwrap().flatten() {
             let mut t = std::fs::read_to_string(e.path()).unwrap();
             if e.file_name() == "SPIRA_SUMMON_LOCK_WAIT" {
@@ -384,6 +408,15 @@ mod tests {
         let none: BTreeMap<String, String> = [("HOME".to_string(), "/b/home".to_string()), ("PATH".to_string(), "/nonexistent".to_string())].into_iter().collect();
         let e = render(&a, &d.path().join("spira.toml"), &Registry { conf_d: reg().conf_d, env: &none }).unwrap_err();
         assert!(e.contains("no bd on PATH"), "{e}");
+    }
+
+    #[test]
+    fn every_shipped_persona_gets_its_table_with_a_model() {
+        let d = testkit::TempDir::new("spira-config-init-persona");
+        let text = render(&full(), &d.path().join("spira.toml"), &reg()).unwrap();
+        let doc = crate::validate(&text).unwrap();
+        assert!(doc.persona.contains_key("builder"), "{:?}", doc.persona.keys().collect::<Vec<_>>());
+        assert!(crate::get_path(&doc, "persona.builder.model").is_some_and(|m| !m.is_empty()));
     }
 
     #[test]
