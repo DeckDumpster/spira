@@ -452,7 +452,11 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
         slept.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     };
     let dry = mode == Mode::DryRun;
-    let cwd = std::env::current_dir().unwrap();
+    // Run chdirs the whole test process into its worktree (run.rs, teardown.rs), and parallel
+    // tests delete their fixtures, so the inherited cwd can already be gone: restore to a
+    // directory that always exists ("/") rather than panic in an unrelated test (a flip in every round since
+    // r-48: tests.rs:455 NotFound).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
     let code = {
         let mut run = Run {
             d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &launcher, sink: &sink, env: &env, clock: &clock, sleep: &sleep },
