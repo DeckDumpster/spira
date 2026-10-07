@@ -153,7 +153,7 @@ fn only_this_worlds_serve_command_line_matches() {
     assert_eq!(serve_argv(w), vec!["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock"]);
     for other in [
         line(&["/tmp/w2/release/bin/spira-lc", "serve", "/tmp/w2/lc.sock"]), // another world
-        line(&["/home/u/spira-releases/x/bin/spira-lc", "serve"]),            // production's
+        line(&["/opt/release/bin/spira-lc", "serve"]),                      // an installed release
         line(&["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock", "x"]),
         line(&["sleep", "30"]),
         Vec::new(), // a zombie's cmdline

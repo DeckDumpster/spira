@@ -68,13 +68,13 @@ in_world() {  # in_world <world> <cmd...> — as drive.rs runs a command: the wo
 serve_up() {  # serve_up <world> — the PID up recorded is this world's serve
     local w="$1" pid
     pid="$(cat "$w/lc-serve.pid" 2>/dev/null)"
-    [ -n "$pid" ] && [ "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" = "$w/release/bin/spira-lc serve $w/lc.sock " ]
+    [ -n "$pid" ] && [ "$(tr '\0' ' ' 2>/dev/null < "/proc/$pid/cmdline")" = "$w/release/bin/spira-lc serve $w/lc.sock " ]
 }
 
 serves_of() {  # serves_of <world> — PIDs whose command line names this world's socket (assertion only)
     local f
     for f in /proc/[0-9]*/cmdline; do
-        tr '\0' ' ' < "$f" 2>/dev/null | grep -qF -- "spira-lc serve $1/lc.sock" && basename "$(dirname "$f")"
+        tr '\0' ' ' 2>/dev/null < "$f" | grep -qF -- "spira-lc serve $1/lc.sock" && basename "$(dirname "$f")"
     done
 }
 
@@ -122,7 +122,7 @@ if world_up "$W"; then
     wantrc "down succeeds" 0 "$rc"
     [ "$rc" = 0 ] || printf '%s\n' "$out" | sed 's/^/# down: /'
     [ ! -e "$W" ] && ok "down removed the world" || bad "down removed the world" "$W exists"
-    left="$( [ -d "/proc/$PID" ] && tr '\0' ' ' < "/proc/$PID/cmdline" 2>/dev/null)"
+    left="$( [ -d "/proc/$PID" ] && tr '\0' ' ' 2>/dev/null < "/proc/$PID/cmdline")"
     case "$left" in *"serve $W/lc.sock"*) bad "the recorded serve PID is gone after down" "$PID: $left" ;;
                     *) ok "the recorded serve PID is gone after down" ;; esac
     is   "no serve process for that world survives down" "" "$(serves_of "$W")"
