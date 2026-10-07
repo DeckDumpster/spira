@@ -43,13 +43,11 @@ pub enum Outcome {
     Written(PathBuf),
 }
 
-/// Where a fresh box's config goes: the file `SPIRA_TOML` names when it names one file,
+/// Where a box's config is: the spec `SPIRA_TOML` names (one file, or base:override layers),
 /// else the canonical `${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml`.
 pub fn default_out(env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
     if let Some(t) = env.get("SPIRA_TOML").filter(|t| !t.is_empty()) {
-        if t.contains(':') {
-            return Err(format!("SPIRA_TOML names layers ({t}); a fresh config is one file — name it with --out"));
-        }
+        // One file, or base:override layers — the spec as named; [`ensure`] judges it.
         return Ok(PathBuf::from(t));
     }
     let base = match (env.get("XDG_CONFIG_HOME").filter(|v| !v.is_empty()), env.get("HOME").filter(|v| !v.is_empty())) {
@@ -231,11 +229,17 @@ pub fn ensure(
     ask: Option<&mut dyn FnMut(&str, &str, &str) -> Option<String>>,
     reg: &Registry<'_>,
 ) -> Result<Outcome, String> {
-    if out.exists() {
-        let text = std::fs::read_to_string(out).map_err(|e| format!("{}: {e}", out.display()))?;
-        let doc = crate::validate(&text).map_err(|e| format!("{}: {e}", out.display()))?;
-        crate::require_id_prefix(&doc).map_err(|e| format!("{}: {e}", out.display()))?;
+    // A layered spec (base:override) is a config already in force when every layer is there;
+    // it is validated as the reader loads it, layers and all. A fresh config is one file.
+    let spec = out.to_string_lossy().to_string();
+    let layers: Vec<&str> = spec.split(':').filter(|p| !p.is_empty()).collect();
+    if out.exists() || (layers.len() > 1 && layers.iter().all(|p| Path::new(p).is_file())) {
+        crate::load_strict(out).map_err(|e| format!("{spec}: {e}"))?;
         return Ok(Outcome::Existing(out.to_path_buf()));
+    }
+    if layers.len() > 1 {
+        let gone: Vec<&str> = layers.iter().copied().filter(|p| !Path::new(p).is_file()).collect();
+        return Err(format!("SPIRA_TOML names layers ({spec}) and {} is missing; a fresh config is one file", gone.join(", ")));
     }
     if let Some(ask) = ask {
         for (k, what) in REQUIRED {
@@ -472,6 +476,21 @@ mod tests {
     }
 
     #[test]
+    fn a_layered_spec_in_force_is_validated_and_used_and_one_with_a_missing_layer_refuses() {
+        let d = testkit::TempDir::new("spira-config-init-layers");
+        let base = d.path().join("base.toml");
+        let over = d.path().join("over.toml");
+        std::fs::write(&base, "[spira]\nid_prefix = \"zz\"\n").unwrap();
+        std::fs::write(&over, "[spira]\ninstance = \"t\"\n").unwrap();
+        let spec = PathBuf::from(format!("{}:{}", base.display(), over.display()));
+        assert_eq!(ensure(&spec, full(), None, &reg()).unwrap(), Outcome::Existing(spec.clone()));
+        assert_eq!(std::fs::read_to_string(&base).unwrap(), "[spira]\nid_prefix = \"zz\"\n", "never written");
+        let gone = PathBuf::from(format!("{}:{}", base.display(), d.path().join("nope.toml").display()));
+        let e = ensure(&gone, full(), None, &reg()).unwrap_err();
+        assert!(e.contains("nope.toml"), "{e}");
+    }
+
+    #[test]
     fn nobody_to_ask_refuses_naming_the_missing_inputs_and_writes_nothing() {
         let d = testkit::TempDir::new("spira-config-init-refuse");
         let out = d.path().join("spira.toml");
@@ -508,6 +527,6 @@ mod tests {
         assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a/s.toml"), ("HOME", "/h")])).unwrap(), PathBuf::from("/a/s.toml"));
         assert_eq!(default_out(&m(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")])).unwrap(), PathBuf::from("/x/spira/spira.toml"));
         assert_eq!(default_out(&m(&[("HOME", "/h")])).unwrap(), PathBuf::from("/h/.config/spira/spira.toml"));
-        assert!(default_out(&m(&[("SPIRA_TOML", "/a:/b")])).is_err());
+        assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a:/b")])).unwrap(), PathBuf::from("/a:/b"));
     }
 }
