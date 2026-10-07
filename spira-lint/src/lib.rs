@@ -669,7 +669,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
+        let contract = ["cockpit-no-bd", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();
