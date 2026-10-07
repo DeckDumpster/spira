@@ -248,6 +248,13 @@ impl World for Real {
     fn prune(&self, repo: &Path) {
         reap::prune_worktrees(&self.reaplog_path(), repo);
     }
+    fn lc_past_builder(&self, id: &str) -> bool {
+        let row = match self.claims.borrow().as_ref() {
+            Some(m) => m.get(id).cloned(),
+            None => spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin(), id).ok().flatten(),
+        };
+        row.is_some_and(|r| r.past_builder())
+    }
     fn lc_landed(&self, id: &str) -> bool {
         // Bounded like every other subprocess here: a hung record answers "not landed".
         Command::new("timeout")
