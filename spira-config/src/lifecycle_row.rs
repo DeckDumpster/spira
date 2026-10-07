@@ -23,6 +23,43 @@ pub fn created_id(stdout: &str) -> Option<String> {
     (!last.contains(char::is_whitespace)).then(|| last.to_string())
 }
 
+/// Every id a bead-creating verb printed, as JSON: `import` lists `ids`, `mol pour|wisp` an
+/// `id_mapping` of proto to new ids, `mol bond` a `result_id`. A bare id is accepted as `created_id` does.
+pub fn created_ids(stdout: &str) -> Vec<String> {
+    let text = stdout.trim();
+    if !text.starts_with('{') {
+        return created_id(text).into_iter().collect();
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return Vec::new() };
+    let mut ids: Vec<String> = Vec::new();
+    let mut push = |s: &str| {
+        if !ids.iter().any(|i| i == s) {
+            ids.push(s.to_string());
+        }
+    };
+    if let Some(a) = v.get("ids").and_then(|a| a.as_array()) {
+        a.iter().filter_map(|i| i.as_str()).for_each(&mut push);
+    }
+    if let Some(i) = v.get("new_epic_id").and_then(|i| i.as_str()) {
+        push(i);
+    }
+    if let Some(m) = v.get("id_mapping").and_then(|m| m.as_object()) {
+        m.values().filter_map(|i| i.as_str()).for_each(&mut push);
+    }
+    if let Some(i) = v.get("result_id").and_then(|i| i.as_str()) {
+        push(i);
+    }
+    if ids.is_empty() {
+        return created_id(text).into_iter().collect();
+    }
+    ids
+}
+
+pub fn ensure_rows_with(bin: &str, ids: &[String]) -> Result<(), String> {
+    let errs: Vec<String> = ids.iter().filter_map(|id| ensure_row_with(bin, id).err()).collect();
+    if errs.is_empty() { Ok(()) } else { Err(errs.join("; ")) }
+}
+
 /// `Ok(())`: the row exists now.
 pub fn ensure_row_with(bin: &str, id: &str) -> Result<(), String> {
     let out = Command::new("timeout")
@@ -186,6 +223,24 @@ pub fn reopen(id: &str, cause: &str, actor: &str) -> Result<(), String> {
     reopen_with(&lc_bin(), id, cause, actor)
 }
 
+/// `after_create` for a verb that may create many beads (`import`, `mol pour|wisp|bond`),
+/// which must have been run with `--json`.
+pub fn after_create_ids(who: &str, created_stdout: &str) -> Result<(), String> {
+    let ids = created_ids(created_stdout);
+    if ids.is_empty() {
+        let e = format!("cannot read any created bead id from {created_stdout:?}");
+        eprintln!("{who}: LIFECYCLE: {e}; the new beads have no lifecycle row and cannot be claimed");
+        return Err(e);
+    }
+    let errs: Vec<String> = ids.iter().filter_map(|id| ensure_row(id).err()).collect();
+    if errs.is_empty() {
+        return Ok(());
+    }
+    let e = errs.join("; ");
+    eprintln!("{who}: LIFECYCLE: some created beads have NO lifecycle row and cannot be claimed: {e}");
+    Err(e)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +259,29 @@ mod tests {
         assert_eq!(created_id("[{\"id\":\"sp-k\"}]").as_deref(), Some("sp-k"));
         assert_eq!(created_id("  \n"), None);
         assert_eq!(created_id("warning: something odd"), None);
+    }
+
+    #[test]
+    fn created_ids_reads_import_and_mol_json() {
+        let import = "{\"created\":2,\"ids\":[\"sp-a\",\"sp-b\"],\"skipped\":0}";
+        assert_eq!(created_ids(import), vec!["sp-a", "sp-b"]);
+        let pour = "{\"created\":2,\"id_mapping\":{\"p\":\"sp-mol-1\",\"p.c\":\"sp-mol-1.c\"},\"new_epic_id\":\"sp-mol-1\"}";
+        assert_eq!(created_ids(pour), vec!["sp-mol-1", "sp-mol-1.c"]);
+        let bond = "{\"result_id\":\"sp-x\",\"result_type\":\"compound_molecule\"}";
+        assert_eq!(created_ids(bond), vec!["sp-x"]);
+        assert_eq!(created_ids("sp-abc\n"), vec!["sp-abc"]);
+        assert!(created_ids("{\"error\":\"boom\"}").is_empty());
+        assert!(created_ids("Imported 2 issues").is_empty());
+    }
+
+    #[test]
+    fn after_create_ids_gives_every_id_a_row_and_reports_unreadable_output() {
+        let t = testkit::TempDir::new("lcrow-ids");
+        let bin = stub(t.path(), 0);
+        assert_eq!(ensure_rows_with(&bin, &["sp-a".into(), "sp-b".into()]), Ok(()));
+        let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
+        assert_eq!(calls, "create-bead sp-a\ncreate-bead sp-b\n");
+        assert!(after_create_ids("t", "no ids here").is_err());
     }
 
     #[test]

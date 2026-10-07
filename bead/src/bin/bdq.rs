@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_destructive, check_repo_label, check_schema_delete, creates_closed, czar_fence_class, is_create, json_count, json_only,
+    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms,
 };
 use spira_config::repos::Registry;
@@ -395,12 +395,13 @@ fn cmd_bdq(args: &[String]) -> i32 {
             }
         }
     }
-    let args = &call_args[..];
+    let id_args = id_bearing_args(&call_args);
+    let args = &id_args[..];
     let max_tries: u32 = env_nonempty("SPIRA_BDQ_CONN_RETRIES").and_then(|s| s.parse().ok()).unwrap_or(3);
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
-    let lc_row = is_create(args) && !creates_closed(args);
+    let lc_row = creates_beads(args) && !(is_create(args) && creates_closed(args));
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
         let (rc, err, out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row);
@@ -417,7 +418,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
         let _ = std::io::stdout().write_all(&created_out);
         let _ = std::io::stdout().flush();
         if rc == 0 {
-            if let Err(e) = spira_config::lifecycle_row::after_create("bdq", &String::from_utf8_lossy(&created_out)) {
+            if let Err(e) = spira_config::lifecycle_row::after_create_ids("bdq", &String::from_utf8_lossy(&created_out)) {
                 eprintln!("bdq: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
             }
         }
