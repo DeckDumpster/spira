@@ -599,11 +599,18 @@ fn an_uncountable_store_fails_phase_d_rather_than_reading_as_zero() {
 fn a_wrong_sidecar_fails_phase_b() {
     let b = Box_::new();
     let mut f = b.fake();
+    fs::write(b.root.join("config/spira/spira-lc.credential"), "x").unwrap();
+    fs::write(b.root.join("config/spira/spira-lc.credential-ro"), "x").unwrap();
+    fs::write(b.root.join("config/spira/conf"), "x").unwrap();
     f.sidecar_wrong = true;
     assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
     assert_eq!(b.fails(), vec!["phase B: .tag sidecar names spira-release-spira-20260930T000000Z: wanted [spira-release-spira-20260930T000000Z] got [spira-release-other]".to_string()]);
     // The first failure in a phase snapshots once.
     assert!(b.root.join("forensics/01-first-fail-phase-B/units.txt").is_file());
+    let snap = b.root.join("forensics/01-first-fail-phase-B");
+    assert!(snap.join("conf").is_file(), "the positive control: config files are still collected");
+    let leaked: Vec<_> = fs::read_dir(&snap).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.contains("credential")).collect();
+    assert!(leaked.is_empty(), "credential files collected: {leaked:?}");
 }
 
 #[test]

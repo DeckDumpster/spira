@@ -265,7 +265,7 @@ impl<'h> Run<'h> {
         let run = &self.o.spira_run;
         if run.is_dir() {
             put("run-listing.txt", Cmd::new("ls").arg("-laR").arg(run.display().to_string()));
-            for f in files_named(run, |n| n.ends_with(".log")) {
+            for f in files_named(run, |n| n.ends_with(".log") && !is_secret(n)) {
                 if let Some(n) = f.file_name() {
                     let _ = fs::copy(&f, dir.join(n));
                 }
@@ -276,7 +276,7 @@ impl<'h> Run<'h> {
         }
         // The instance's whole config directory (its conf and repository map), file by file.
         if let Ok(rd) = fs::read_dir(self.o.xdg_config.join("spira")) {
-            for e in rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())) {
+            for e in rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && !is_secret(&e.file_name().to_string_lossy())) {
                 let _ = fs::copy(e.path(), dir.join(e.file_name()));
             }
         }
@@ -288,6 +288,12 @@ impl<'h> Run<'h> {
         put("df.txt", Cmd::new("df").arg("-h"));
         println!("snapshot: {}", dir.display());
     }
+}
+
+/// A forensics snapshot is uploaded as an artifact, so a credential-named file is never collected.
+pub fn is_secret(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.contains("credential") || n.contains("password") || n.contains("secret") || n.contains("token") || n.ends_with(".key") || n.ends_with(".pem")
 }
 
 /// The first whitespace-separated field of every non-empty line.
