@@ -339,3 +339,13 @@ fn a_full_pass_whose_runner_stays_silent_is_a_sweep_fault_naming_admission() {
     assert_eq!(rc, 1);
     assert!(out.contains("SWEEP FAULT") && out.contains("no-verdict") && out.contains("9 waiting"), "{out}");
 }
+
+#[test]
+fn the_runner_is_bound_to_the_start_deadline_for_its_own_acquire_wait() {
+    let fx = Fx::new();
+    let p = fx.d.path();
+    let seen = p.join("seen");
+    write_exe(p.join("bin/round-vm"), &format!("#!/bin/sh\necho \"$SPIRA_ROUND_VM_ACQUIRE_DEADLINE\" > {}\nexit 1\n", seen.display()));
+    fx.cert(&["pass", "--mode", "full", "--tree", &p.join("tree").display().to_string(), "--start-deadline", "7"]);
+    assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "7");
+}

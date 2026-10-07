@@ -233,7 +233,7 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
     }
     let picks = if mode == "full" { all } else { pick_subset(&all, num(f, "subset-div", 4)? as usize, now() ^ u64::from(std::process::id()) << 32) };
     let start = now();
-    let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0) };
+    let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0), vm_cut: std::cell::Cell::new(false) };
 
     let (outcomes, text) = rt.run(&tip, &picks, start)?;
     if outcomes.is_empty() {
@@ -323,13 +323,19 @@ struct Rt<'a> {
     repo: &'a str,
     mode: &'a str,
     seq: std::cell::Cell<u64>,
+    vm_cut: std::cell::Cell<bool>,
 }
 
 impl Rt<'_> {
     /// The pass's own runner, so a rerun sees the environment the red was seen in.
     fn run(&self, commit: &str, picks: &[String], start: u64) -> Result<(Vec<Outcome>, String), String> {
         if self.mode == "full" {
-            run_on_vm(self.f, self.run, self.repo, commit, picks, start, self.seq.replace(self.seq.get() + 1))
+            if self.vm_cut.get() {
+                return Err("the round VM gave no verdict earlier in this pass; not waiting on it again".into());
+            }
+            let r = run_on_vm(self.f, self.run, self.repo, commit, picks, start, self.seq.replace(self.seq.get() + 1))?;
+            self.vm_cut.set(r.0.is_empty());
+            Ok(r)
         } else {
             run_on_host(self.f, self.repo, commit, picks)
         }
@@ -432,6 +438,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
     let mut child = Command::new("round-vm")
         .args(["run", tree, "--maxpar", &num(f, "maxpar", 16)?.to_string(), "--suites", &picks.join(","), "--results-dir"])
         .arg(&rd)
+        .env("SPIRA_ROUND_VM_ACQUIRE_DEADLINE", num(f, "start-deadline", 900)?.to_string())
         .stdout(fs::File::create(&log).map_err(|e| e.to_string())?)
         .stderr(Stdio::inherit())
         .spawn()
