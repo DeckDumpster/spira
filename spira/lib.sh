@@ -609,7 +609,7 @@ release_own_claim() {
 #
 # PARK, NOT RELEASE. release_own_claim alone puts the bead back on the ready queue, where
 # the sentinel re-summons an aeon within two minutes — an infinite loop burning the pool.
-# Adding the ask label first makes every fayth's --exclude-label filter skip it, so the
+# The ask hold makes the machine leave it out of every fayth's claimable set, so the
 # bead sits open but unclaimed until a human corrects the label or the repo-map. Scar:
 # sp-nlhy accumulated four identical notes, one per summon, before a keyboard session
 # fixed the label by hand. (sp-4l0d)
@@ -617,12 +617,10 @@ release_own_claim() {
 # from every fayth predicate and invisible to the operator.
 park_unmapped() {
     local id="$1" repo_name="$2"
-    bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
     bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
-    # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
-    # fayth's dispatch exclusion reads until that reader is cut over in the same round.
+    # The hold alone (sp-psztcc): a label standing in for it outlived every withdrawal.
     spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
-    bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
+    bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Held with an ask (and labelled overseer) — no aeon will claim it again until a human corrects the label or adds the repo to the map and withdraws the ask (spira-lc withdraw-ask $id). Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
     release_own_claim "$id"
 }
 

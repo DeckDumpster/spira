@@ -371,7 +371,6 @@ impl Run<'_> {
                 let unproven = trace::groom_claims_verified(&new, &aj, self.s.session_epoch);
                 if !unproven.is_empty() {
                     self.refuse(submitted, "no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
-                    let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
                     let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "poison", &format!("groom log claimed ESCALATED for {unproven} with no ask bead"), &f]), None, None);
                     self.ts_print(&format!("{f}: {id} REOPENED and POISONED — groom log claimed ESCALATED for {unproven} but no ask bead found in this session"));
                     groom_silent = true;

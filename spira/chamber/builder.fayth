@@ -19,7 +19,10 @@ FAYTH_DESC="Guardian — the DPS: claims ready Spira plan beads and implements t
 # "ready work for a builder" — a literal in five files is how five programs come to disagree
 # (law-schema-over-code).
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_PLAN_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL,qa-proposed"
+# No hold here: poison and ask are lifecycle holds, which the claim already refuses
+# (spira-claim's machine_claimable reads the row) — a label standing in for one went stale the
+# moment the hold was withdrawn and hid claimable work (sp-psztcc).
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL,qa-proposed"
 
 # Statutes only. SOPs are runbooks for production incidents; a builder will never execute
 # one, and a shelf of them would push the law it does have to obey off the end of the

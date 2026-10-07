@@ -37,6 +37,8 @@ pub trait Seam {
     /// `spira-lc held <id> poison` — whether the lifecycle machine already holds this
     /// bead's poison lock.
     fn lc_held_poison(&self, id: &str) -> bool;
+    /// `spira-lc unhold <id> <kind> groomer` — lift a hold on the bead's lifecycle row.
+    fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String>;
 }
 
 pub struct LibSeam {
@@ -171,6 +173,11 @@ impl Seam for LibSeam {
     fn lc_held_poison(&self, id: &str) -> bool {
         Command::new("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
     }
+
+    fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String> {
+        let st = Command::new("spira-lc").args(["unhold", id, kind, "groomer"]).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|e| format!("spira-lc unhold: {e}"))?;
+        if st.success() { Ok(()) } else { Err(format!("spira-lc unhold {id} {kind} exited {}", st.code().unwrap_or(-1))) }
+    }
 }
 
 /// `SPIRA_HOME` from the environment, else the first directory holding `lib.sh` among the
@@ -265,6 +272,14 @@ pub mod fake {
 
         fn lc_held_poison(&self, id: &str) -> bool {
             self.held_poison.borrow().contains(id)
+        }
+
+        fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("lc_unhold {id} {kind}"));
+            if kind == "poison" {
+                self.held_poison.borrow_mut().remove(id);
+            }
+            Ok(())
         }
     }
 }

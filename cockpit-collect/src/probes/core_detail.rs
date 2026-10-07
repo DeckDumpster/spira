@@ -42,7 +42,6 @@ pub fn core_detail_keys(cfg: &Cfg) -> Kv {
 // ---------------------------------------------------------------------------------------
 
 fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
-    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let ci_label = &cfg.ci_label;
     let queue_wait = &cfg.queue_wait_label;
 
@@ -56,7 +55,9 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
     let mut seen: HashSet<String> = HashSet::new();
     let mut refused = false;
     for (labels, name) in part_map {
-        let mut excl = format!("spira-poison,{ask},{ci_label}");
+        // Poison and ask are lifecycle holds, already left out of the machine's claimable set;
+        // only the labels that are not holds remain (sp-psztcc).
+        let mut excl = ci_label.to_string();
         if !queue_wait.is_empty() {
             excl = format!("{excl},{queue_wait}");
         }

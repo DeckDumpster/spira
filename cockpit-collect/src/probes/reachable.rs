@@ -26,9 +26,10 @@ pub struct Bead {
     pub blocked_by: HashSet<String>,
 }
 
-fn is_stopper(b: &Bead, ask: &str, suspended: &[LabelSet], live: &[LabelSet]) -> bool {
+fn is_stopper(b: &Bead, suspended: &[LabelSet], live: &[LabelSet]) -> bool {
     let labels = &b.labels;
-    if labels.contains(ask) || labels.contains("spira-poison") || b.holds.iter().any(|h| h == "poison" || h == "ask") {
+    // A stopper is the row's hold, never a label standing in for one (sp-psztcc).
+    if b.holds.iter().any(|h| h == "poison" || h == "ask") {
         return true;
     }
     if suspended.iter().any(|s| s.iter().all(|l| labels.contains(l))) {
@@ -73,7 +74,7 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
         if !all_ids.contains(&b.id) {
             continue;
         }
-        if is_stopper(b, ask, suspended, live) {
+        if is_stopper(b, suspended, live) {
             continue;
         }
         let blockers_empty = blocker_of.get(&b.id).map(|s| s.is_empty()).unwrap_or(true);
@@ -90,7 +91,7 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
                 continue;
             }
             let dn_bead = by_id[&dn];
-            if is_stopper(dn_bead, ask, suspended, live) {
+            if is_stopper(dn_bead, suspended, live) {
                 continue;
             }
             let all_blockers_reachable = blocker_of.get(&dn).map(|s| s.iter().all(|b| reachable.contains(b))).unwrap_or(true);
@@ -244,9 +245,13 @@ mod tests {
 
     #[test]
     fn poisoned_bead_counts_as_stuck_work_not_reachable() {
-        let beads = vec![bead("sp-1", "open", &["plan", "spira-poison"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
+        let mut b = bead("sp-1", "open", &["plan"], &[]);
+        b.holds = vec!["poison".into()];
+        let (reach, total) = reachable_bfs(&[b], "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 1));
+        // A stale poison LABEL with no hold is not a stopper (sp-psztcc).
+        let beads = vec![bead("sp-2", "open", &["plan", "spira-poison"], &[])];
+        assert_eq!(reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]), (1, 1)); // literal-ok: fixture/fallback
     }
 
     #[test]

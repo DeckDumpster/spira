@@ -74,13 +74,19 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
 
-    let working: std::collections::HashSet<String> = match spira_config::lc_state::list() {
-        Ok(rows) => rows.into_iter().filter(|r| r.working()).map(|r| r.bead_id).collect(),
+    let lc_rows = match spira_config::lc_state::list() {
+        Ok(rows) => rows,
         Err(e) => {
-            warn(&format!("WARN the lifecycle rows could not be read ({e}) — no bead is counted as moving by WORKING"));
-            Default::default()
+            warn(&format!("WARN the lifecycle rows could not be read ({e}) — no bead is counted as moving by WORKING, parked or poisoned"));
+            Vec::new()
         }
     };
+    let ids = |f: &dyn Fn(&spira_config::lc_state::Row) -> bool| -> std::collections::HashSet<String> {
+        lc_rows.iter().filter(|r| f(r)).map(|r| r.bead_id.clone()).collect()
+    };
+    let working = ids(&|r| r.working());
+    let held_ask = ids(&|r| r.held("ask"));
+    let held_poison = ids(&|r| r.held("poison"));
     let mut rows = Vec::new();
     let mut watching = Vec::new();
     for (labels, excl, fayths) in parts {
@@ -103,6 +109,8 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             labels: need.iter().map(|s| s.to_string()).collect(),
             ready,
             working: working.clone(),
+            held_ask: held_ask.clone(),
+            held_poison: held_poison.clone(),
             vocab: &cfg.vocab,
             facts: &facts,
         };

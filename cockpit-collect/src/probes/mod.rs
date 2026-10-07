@@ -631,7 +631,6 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
 
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0", "--label", &label]));
     match rows.zip(lc_rows.as_ref()) {
         None => {
@@ -656,7 +655,7 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
                     }
                 })
                 .collect();
-            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, lc, &ask);
+            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, lc);
             push(&mut out, "SP_OPEN", open_n.to_string());
             push(&mut out, "SP_INPROG", inprog_n.to_string());
             push(&mut out, "SP_NEEDSOP", needsop_n.to_string());
@@ -1259,7 +1258,7 @@ pub fn poison_count(lc: &HashMap<String, lc::Row>) -> usize {
 /// no lifecycle row: it is a coordination bead, whose bd status is its only state
 /// (spira_config::nonwork). Any other item with no row is not counted: the machine cannot
 /// tell its state, and a rowless bead can never be claimed (CHECK-ROWLESS reports it).
-pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>, ask: &str) -> (usize, usize, usize) {
+pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>) -> (usize, usize, usize) {
     let has = |i: &Value, lab: &str| {
         i.get("labels")
             .and_then(Value::as_array)
@@ -1279,7 +1278,8 @@ pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>, ask: &str) 
         };
         open_n += usize::from(open);
         inprog_n += usize::from(working);
-        needsop_n += usize::from(open && has(i, ask));
+        // Needs the operator = the row's ask hold (sp-psztcc), not the label.
+        needsop_n += usize::from(open && lc.get(id).is_some_and(|r| r.held("ask")));
     }
     (open_n, inprog_n, needsop_n)
 }
@@ -1346,12 +1346,12 @@ mod tests {
         )
         .unwrap();
         let work: Vec<&Value> = rows.iter().collect();
-        let lc = lcmap(&[("a", "REWORK", &[]), ("b", "LANDED", &[]), ("c", "SUBMITTED", &[])]);
-        // a: open (REWORK) and needs-op; b: over; c: open, not WORKING; d: rowless, not
-        // counted; e: an epic, open by bd.
-        assert_eq!(sphere_counts(&work, &lc, "ask"), (3, 0, 1));
+        let lc = lcmap(&[("a", "REWORK", &[]), ("b", "LANDED", &[]), ("c", "SUBMITTED", &["ask"])]);
+        // a: open (REWORK), and its ask LABEL is not a hold (sp-psztcc); b: over; c: open, not
+        // WORKING, needs-op by its ask hold; d: rowless, not counted; e: an epic, open by bd.
+        assert_eq!(sphere_counts(&work, &lc), (3, 0, 1));
         let lc = lcmap(&[("d", "WORKING", &[])]);
-        assert_eq!(sphere_counts(&work, &lc, "ask"), (2, 1, 0));
+        assert_eq!(sphere_counts(&work, &lc), (2, 1, 0));
     }
 
     #[test]

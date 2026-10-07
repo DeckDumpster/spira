@@ -7,7 +7,7 @@ FAYTH_DESC="Warden — judges whether landed work is in force and attributes une
 # The partition is the sweep label alone: a warden that matched the plan label would be a
 # second builder.
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_WARDEN_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 FAYTH_MEMORY_PREFIXES="law-"
 # law-a-concierge-duty-is-a-missing-mechanism dropped (sp-crr3n): not shipped in

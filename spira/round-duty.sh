@@ -46,6 +46,14 @@ _rd_asks() {
     done < <(printf '%s' "$json" | tr -d '\n' \
         | grep -oE '"id": *"[^"]+", *"title": *"([^"\\]|\\.)*"' \
         | sed -E 's/^"id": *"([^"]+)", *"title": *"(.*)"$/\1\t\2/' | cut -c1-170)
+    # A work bead parked by the machine carries the ask as a hold on its row, never a label
+    # (sp-psztcc), so the label listing above cannot see it.
+    while read -r id; do
+        [ -n "$id" ] || continue
+        [ -n "${_rd_asks_seen[$id]:-}" ] && continue
+        _rd_asks_seen[$id]=1
+        [ "$_rd_asks_seeded" -eq 1 ] && _rd_say "NEW ASK HOLD $id (spira-lc show $id names why)"
+    done < <(spira-lc list-held ask 2>/dev/null)
     _rd_asks_seeded=1
 }
 

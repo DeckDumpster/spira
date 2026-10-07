@@ -253,8 +253,12 @@ pub fn detect_livelocked(cfg: &Config) -> String {
 
         if reg.map_present() {
             let valid: HashSet<String> = reg.names().into_iter().collect();
+            // Held is the lifecycle row's ask/poison hold, never a label (sp-psztcc).
+            let held: HashSet<String> = spira_config::lc_state::list()
+                .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
+                .unwrap_or_default();
             for b in list_beads(cfg, &[]) {
-                if b.has(&cfg.vocab.ask) || b.has(&cfg.groom_ask_label) || b.has(&cfg.vocab.poison) {
+                if held.contains(&b.id) || b.has(&cfg.groom_ask_label) {
                     continue;
                 }
                 let repo_labels: Vec<&str> = b.labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();
