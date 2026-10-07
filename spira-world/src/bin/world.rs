@@ -244,13 +244,49 @@ fn bead_of_pidfile(path: &std::path::Path) -> String {
     }
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}";
+fn mail_root_or_die() -> PathBuf {
+    spira_config::process::cfg("SPIRA_MAIL").map(PathBuf::from).unwrap_or_else(|e| die(&e))
+}
+
+fn live_beads() -> Vec<String> {
+    let mut v = Vec::new();
+    for pf in aeon_pidfiles() {
+        let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
+        let bead = bead_of_pidfile(&pf);
+        if !pid.is_empty() && !bead.is_empty() && std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
+            v.push(bead);
+        }
+    }
+    v
+}
+
+fn deadline_utc(secs_from_now: u64) -> String {
+    spira_config::bounded::bounded("date")
+        .args(["-u", "-d", &format!("+{secs_from_now} seconds"), "+%H:%M:%SZ"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+fn notify_aeons(notifier: &mut spira_world::notice::Notifier, what: &str, elapsed: u64, limit: u64, live: &[String]) {
+    let mail = mail_root_or_die();
+    notifier.tick(elapsed, limit, live, |bead, stage, remaining| {
+        let body = spira_world::notice::message(stage, what, remaining, &deadline_utc(remaining));
+        if spira_world::notice::send(&mail, bead, &body) {
+            println!("  noticed {bead}: {remaining}s remain");
+        }
+    });
+}
+
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
     let planes = selected_planes(args, &[Plane::Work]);
     let halts_work = planes.contains(&Plane::Work);
     let mut round_drain = false;
+    let mut grace: u64 = 0;
     // batch-job: the drain waits for in-flight round work to finish
     let mut round_drain_timeout = std::time::Duration::from_secs(1800);
     let mut i = 0;
@@ -258,6 +294,10 @@ fn cmd_stop(args: &[String]) -> i32 {
         match args[i].as_str() {
             "--why" => {
                 why = args.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+            }
+            "--grace" => {
+                grace = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
                 i += 2;
             }
             "--round-drain" => {
@@ -321,6 +361,25 @@ fn cmd_stop(args: &[String]) -> i32 {
     let _ = std::fs::create_dir_all(&run);
     for plane in &planes {
         let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
+    }
+
+    if halts_work && grace > 0 {
+        let mut notifier = spira_world::notice::Notifier::default();
+        let mut elapsed = 0;
+        loop {
+            let live = live_beads();
+            if live.is_empty() {
+                break;
+            }
+            notify_aeons(&mut notifier, "stopping", elapsed, grace, &live);
+            if elapsed >= grace {
+                println!("spira: grace of {grace}s elapsed — slaying what remains");
+                break;
+            }
+            let step = (grace - elapsed).min(10);
+            std::thread::sleep(std::time::Duration::from_secs(step));
+            elapsed += step;
+        }
     }
 
     for t in &timers {
@@ -614,6 +673,8 @@ fn cmd_drain(args: &[String]) -> i32 {
     ];
     let aeon_path_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
 
+    let limit = if dslay { dtimeout } else { dfor };
+    let mut notifier = spira_world::notice::Notifier::default();
     let mut waited: u64 = 0;
     loop {
         let procs = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |_| String::new()).len() as u64;
@@ -621,6 +682,7 @@ fn cmd_drain(args: &[String]) -> i32 {
         if n == 0 {
             break;
         }
+        notify_aeons(&mut notifier, "draining", waited, limit, &live_beads());
         if waited >= dtimeout {
             if dslay {
                 eprintln!("spira: drain deadline reached — slaying {n} aeon(s)");

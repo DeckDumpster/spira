@@ -7,6 +7,7 @@
 //! in Rust they are one function each, called from three binaries.
 
 pub mod fleet;
+pub mod notice;
 pub mod proc;
 pub mod round;
 pub mod seam;
