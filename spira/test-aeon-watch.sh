@@ -42,7 +42,9 @@ printf 'guardian/ifrit: claimed sp-test1\n' > "$TMP/claims"
 : > "$TMP/run/sp-test1.log"
 
 run() {
+    tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$TMP/bin:$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" AEON_WATCH_PROC="$TMP/proc" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         STUB_UNITS="$STUB_UNITS" STUB_CLAIMS="$STUB_CLAIMS" STUB_JOURNAL="$STUB_JOURNAL" STUB_PS="$STUB_PS" \
         bash "$HERE/aeon-watch.sh" "$@" 2>&1
 }
