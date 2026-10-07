@@ -793,7 +793,7 @@ fn main() -> ExitCode {
                 let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             } else {
                 // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if spira_config::bounded::bounded("bd").current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
+                if bd_init_bounded().current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
                     eprintln!("install: phase database failed — bd init failed");
                     return ExitCode::from(2);
                 }
@@ -1282,6 +1282,16 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
     }
 }
 
+/// `bd`, bounded for `bd init`: creating a fresh database's schema takes far longer than the
+/// 5 s a call that must merely answer gets — under that bound `bd init` was killed mid-schema
+/// on every fresh install ("failed to initialize schema: context canceled").
+const BD_INIT_SECS: &str = "300";
+fn bd_init_bounded() -> Command {
+    let mut c = Command::new("timeout");
+    c.arg(BD_INIT_SECS).arg("bd");
+    c
+}
+
 /// Runs `bd <args>` with `db` as cwd, not `-C db` — `bd init`'s own remote-less repository
 /// is allowed (db_git_guard, above), and `-C` makes a fresh `bd init` look inside a
 /// directory that does not have a beads project yet, which is exactly what `bd` refuses
@@ -1289,7 +1299,7 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
 /// retirement). Only the init call needs this; every other `bd` call in this binary keeps
 /// `-C` for the already-initialised database it is allowed to name from outside.
 fn bd_output(db: &str, args: &[&str]) -> (i32, String) {
-    let mut c = spira_config::bounded::bounded("bd");
+    let mut c = bd_init_bounded();
     c.current_dir(db).args(args).env("BD_NON_INTERACTIVE", "1");
     match c.output() {
         Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
