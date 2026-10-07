@@ -603,13 +603,15 @@ impl Scripts for RealScripts {
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run release: {e}") },
         }
     }
-    fn round_vm(&self, tree: &Path, results: &Path, wall_secs: u64) -> RunOut {
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut {
         // batch-job: the round's full suite on the round VM, bounded by the round wall (900 s cap).
         match Command::new("timeout")
             .args(["-k", "10", &wall_secs.to_string(), "round-vm", "run"])
             .arg(tree)
             .arg("--results-dir")
             .arg(results)
+            .arg("--base")
+            .arg(base)
             .stdin(Stdio::null())
             .output()
         {

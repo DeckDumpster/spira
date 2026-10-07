@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -32,6 +32,9 @@ pub struct RunArgs {
     pub results_dir: Option<PathBuf>,
     /// DESIGN.md §2.2a: stream results while the corpus runs, and serve attribution reruns.
     pub attr_spool: Option<PathBuf>,
+    /// The landing ref the round is judged against: the VM runs `spira-lint --base` on it and
+    /// attributes a hit to the member whose diff touches the file. Absent: no lint step.
+    pub base: Option<String>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -54,6 +57,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--toolchain" => r.toolchain = Some(val()?).filter(|v| !v.is_empty()),
             "--results-dir" => r.results_dir = Some(PathBuf::from(val()?)),
             "--attr-spool" => r.attr_spool = Some(PathBuf::from(val()?)),
+            "--base" => r.base = Some(val()?).filter(|v| !v.is_empty()),
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -87,6 +91,8 @@ pub struct BatchJob {
     pub testenv_registry: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
     pub setup_alarm_secs: u64,
+    /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
+    pub lint: bool,
 }
 
 /// The VM side, reached only by address.
@@ -116,7 +122,7 @@ pub fn shell_quote(s: &str) -> String {
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" lint="$9"
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
@@ -220,6 +226,38 @@ cpu_now() { awk '/^cpu /{t=0; for(i=2;i<=9;i++) t+=$i; print t, $6, $9}' /proc/s
 ) &
 sampler_pid=$!
 set +e
+# THE ROUND'S LINT: the full spira-lint on the merged tree against the landing ref, before the suites.
+# A hit is a red round, named for the member whose diff touches the file (a hit in a file no
+# member touched is the base's own). Recorded as a suite result after the suites, so a certifier reading results sees it.
+lint_rc=0
+lint_secs=0
+if [ -n "$lint" ]; then
+    t_lint=$(date +%s)
+    "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base > ~/round-lint.out 2> ~/round-lint.err
+    lint_rc=$?
+    lint_secs=$(( $(date +%s) - t_lint ))
+    if [ "$lint_rc" -ne 0 ]; then
+        {
+            while IFS= read -r finding; do
+                path="${finding#*: }"; path="${path%%:*}"
+                who="the base itself (no member's diff touches $path)"
+                for c in $(git -C "$HOME/round-work" rev-list --first-parent --reverse origin/base..HEAD); do
+                    if git -C "$HOME/round-work" diff --name-only "$c^1" "$c" | grep -qxF -- "$path"; then
+                        subj="$(git -C "$HOME/round-work" log -1 --format=%s "$c")"
+                        who="$(printf '%s\n' "$subj" | sed -n 's/.*merge \([^ ]*\) .*/\1/p')"
+                        who="${who:-commit ${c:0:12} $subj}"
+                        break
+                    fi
+                done
+                echo "member=$who $finding"
+            done < ~/round-lint.out
+            cat ~/round-lint.err
+        } > ~/round-lint.report
+        echo "round-vm: LINT: RED (spira-lint rc=$lint_rc)" >&2
+        head -60 ~/round-lint.report >&2
+    fi
+    echo "round-vm: LINT: ${lint_secs}s of the 900s cap (rc=$lint_rc)" >&2
+fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
 # They run beside the suites, on the build above; a red here makes the round red.
 # A SCRUBBED ENVIRONMENT: the launcher's SPIRA_RELEASE/SPIRA_REPO/PATH exported above leak
@@ -239,6 +277,15 @@ else
 fi
 rc=$?
 wait "$unit_pid"; unit_rc=$?
+if [ "$lint_rc" -ne 0 ]; then
+    rdir="$HOME/round-work/.runtime/spira/batch-results"
+    leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
+    leaf="${leaf:-$rdir}"
+    mkdir -p "$leaf"
+    cp ~/round-lint.report "$leaf/spira-lint.out"
+    echo "red 1 $lint_secs - - - $lint_rc" > "$leaf/spira-lint.result"
+    [ "$rc" -eq 0 ] && rc=1
+fi
 if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
 else
@@ -274,6 +321,7 @@ pub fn remote_command(job: &BatchJob) -> String {
         job.cache_home.clone().unwrap_or_default(),
         job.testenv_registry.clone().unwrap_or_default(),
         job.setup_alarm_secs.to_string(),
+        if job.lint { "1" } else { "" }.to_string(),
     ];
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
@@ -518,7 +566,7 @@ impl Host for GitHost {
 
     fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String> {
         let m = self.state_dir.join("mirror.git").to_string_lossy().to_string();
-        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+refs/heads/{branch}:refs/heads/{as_ref}")]).map(|_| ())
+        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+{branch}:refs/heads/{as_ref}")]).map(|_| ())
     }
 }
 
@@ -696,6 +744,12 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         eprintln!("round-vm run: cannot prepare the mirror from {}: {e}", args.tree_dir.display());
         return 2;
     }
+    if let Some(base) = &args.base {
+        if let Err(e) = env.host.mirror_ref(&args.tree_dir, base, "base") {
+            eprintln!("round-vm run: cannot mirror the base {base}: {e}");
+            return 2;
+        }
+    }
     let (vm, mode) = match env.pool.acquire(env.deps, Some(ProcId::current())) {
         Ok(v) => v,
         Err(e) => {
@@ -761,6 +815,7 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         cache_home: cfg.cache_home.clone(),
         testenv_registry: cfg.testenv_registry.clone(),
         setup_alarm_secs: cfg.setup_alarm_secs,
+        lint: args.base.is_some(),
     };
     let t0 = Instant::now();
     let Some(spool_dir) = args.attr_spool.clone() else {
@@ -1066,6 +1121,81 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
     }
 
+    fn sh(home: &Path, script: &str) -> std::process::Output {
+        std::process::Command::new("bash").arg("-c").arg(script).env_clear().env("HOME", home).env("PATH", "/usr/bin:/bin")
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
+            .output().unwrap()
+    }
+
+    fn lint_segments() -> (String, String) {
+        let a = REMOTE_SCRIPT.find("lint_rc=0\nlint_secs=0").unwrap();
+        let b = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN UNIT TESTS").unwrap();
+        let c = REMOTE_SCRIPT.find("if [ \"$lint_rc\" -ne 0 ]; then\n    rdir=").unwrap();
+        let d = c + REMOTE_SCRIPT[c..].find("\nfi\n").unwrap() + 4;
+        (REMOTE_SCRIPT[a..b].to_string(), REMOTE_SCRIPT[c..d].to_string())
+    }
+
+    /// A round of two members on a base; the stub lint reports `hit` (exit 1) or nothing (exit 0).
+    fn lint_fixture(d: &TempDir, hit: Option<&str>) -> std::process::Output {
+        let home = d.path();
+        let w = home.join("round-work");
+        fs::create_dir_all(w.join("target/release")).unwrap();
+        let stub = match hit {
+            Some(h) => format!("#!/bin/sh\necho '{h}'\nexit 1\n"),
+            None => "#!/bin/sh\nexit 0\n".to_string(),
+        };
+        testkit::write_exe(w.join("target/release/spira-lint"), &stub);
+        let (lint, post) = lint_segments();
+        let script = format!(
+            "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
+             git update-ref refs/remotes/origin/base HEAD; \
+             echo 1 > ok.rs; git add ok.rs; git commit -qm 'spira: round r-1: merge sp-clean (aaa)'; \
+             echo 2 > bad.rs; git add bad.rs; git commit -qm 'spira: round r-1: merge sp-dirty (bbb)'; \
+             set +e; rc=0; lint=1; {lint}\n{post}\necho rc=$rc"
+        );
+        sh(home, &script)
+    }
+
+    #[test]
+    fn a_round_whose_member_adds_a_lint_hit_goes_red_naming_that_member() {
+        let d = TempDir::new();
+        let (lint, _) = lint_segments();
+        assert!(lint.contains("--base origin/base"), "the lint is judged against the mirrored landing ref");
+        let o = lint_fixture(&d, Some("call-deadline: bad.rs:3: a call without a deadline"));
+        let err = String::from_utf8_lossy(&o.stderr);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(out.contains("rc=1"), "{out}{err}");
+        assert!(err.contains("member=sp-dirty call-deadline: bad.rs:3"), "{err}");
+        assert!(!err.contains("member=sp-clean"), "{err}");
+        let res = fs::read_to_string(d.path().join("round-work/.runtime/spira/batch-results/spira-lint.result")).unwrap();
+        assert!(res.starts_with("red "), "{res}");
+        assert!(err.contains("of the 900s cap"), "the lint's wall time is reported: {err}");
+    }
+
+    #[test]
+    fn a_hit_in_a_file_no_member_touched_is_the_bases_own() {
+        let d = TempDir::new();
+        let o = lint_fixture(&d, Some("call-deadline: base.txt:1: old"));
+        assert!(String::from_utf8_lossy(&o.stderr).contains("member=the base itself"), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+
+    #[test]
+    fn a_clean_round_is_unaffected_by_the_lint() {
+        let d = TempDir::new();
+        let o = lint_fixture(&d, None);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(out.contains("rc=0"), "{out}{}", String::from_utf8_lossy(&o.stderr));
+        assert!(!d.path().join("round-work/.runtime").exists());
+        assert!(String::from_utf8_lossy(&o.stderr).contains("of the 900s cap"));
+    }
+
+    #[test]
+    fn base_is_parsed_and_asks_the_job_to_lint() {
+        let a = parse_run_args(&["/t".into(), "--base".into(), "local/main".into()]).unwrap();
+        assert_eq!(a.base.as_deref(), Some("local/main"));
+        assert!(parse_run_args(&["/t".into()]).unwrap().base.is_none());
+    }
+
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&BatchJob {
@@ -1077,8 +1207,9 @@ mod tests {
             cache_home: Some("/opt/spira/cargo".into()),
             testenv_registry: Some("registry.example/spira".into()),
             setup_alarm_secs: 45,
+            lint: false,
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45'");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' ''");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -1500,7 +1631,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo' '' '180'"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo' '' '180' ''"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]

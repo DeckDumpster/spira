@@ -30,7 +30,7 @@ means the same thing.
 | `round-vm teardown` | — | 0; stops the mirror daemon for the state dir (nothing running is success) |
 | `round-vm acquire` | `<handle> <addr> <warm\|cold>` | 0 success; 1 gave up (only when `SPIRA_ROUND_VM_MAX_RETRIES` > 0) |
 | `round-vm release <handle>` | nothing | 0 destroyed and verified gone; 1 failed; 2 usage |
-| `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D]` | the remote batch's own output | see 2.2 |
+| `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
 | `round-vm template <tree-dir>` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
@@ -92,6 +92,14 @@ fault: **2**, with the remote code named on stderr. A panic anywhere in round-vm
 code, because testenv had grown a second binary (`bd-meter`) and the remote `cargo run -p
 testenv` could no longer choose one. Every remote `cargo run` names `--bin testenv`, and
 testenv declares `default-run`.
+
+**The lint step.** With `--base <ref>` the host mirrors that ref as `base`, and the VM runs the
+tree's own `spira-lint --base origin/base` before the suites. A hit makes the round red: a
+`spira-lint.result` (status `red`) and `spira-lint.out` land in the results beside the suites,
+each finding is printed as `member=<bead> <finding>` for the first member commit (first-parent
+walk of `base..HEAD`) whose diff touches the file — `the base itself` when none does — and the
+step's wall time is reported as `LINT: <n>s of the 900s cap`. Without `--base` no lint runs.
+`queue round certify` and `batcher-cut` both pass it.
 
 ### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
 
