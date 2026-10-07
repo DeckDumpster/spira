@@ -141,6 +141,10 @@ impl BeadRow {
     }
 }
 
+/// Recorded in `reason` when a SUBMITTED bead enters delivery, so a requeue returns it to
+/// SUBMITTED and never promotes it to CERTIFIED.
+pub const FROM_SUBMITTED: &str = "delivered-from-submitted";
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BeadEventKind {
     /// `stack`/`stack_depth` are the caller's already-computed proposal (design §1: "stack
@@ -573,6 +577,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Deliver => {
                 let mut new = row.clone();
                 new.state = BeadState::InDelivery;
+                new.reason = Some(FROM_SUBMITTED.to_string());
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -612,6 +617,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Deliver => {
                 let mut new = row.clone();
                 new.state = BeadState::InDelivery;
+                new.reason = None;
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -673,7 +679,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 // does not resurrect CERTIFIED — it voids the certification the same
                 // way a live tip change would, and returns to SUBMITTED instead.
                 let mut new = row.clone();
-                new.state = if row.tip.as_deref() == Some(tip.as_str()) { BeadState::Certified } else { BeadState::Submitted };
+                let certified_before = row.reason.as_deref() != Some(FROM_SUBMITTED);
+                new.state = if certified_before && row.tip.as_deref() == Some(tip.as_str()) { BeadState::Certified } else { BeadState::Submitted };
+                new.reason = None;
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -1050,6 +1058,21 @@ mod tests {
         let out = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Requeued { tip: "abc123".into() }));
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Certified);
+    }
+
+    #[test]
+    fn a_requeue_returns_each_member_to_the_state_it_was_delivered_from() {
+        for (from, back) in [(BeadState::Submitted, BeadState::Submitted), (BeadState::Certified, BeadState::Certified)] {
+            let mut r = row(from);
+            r.tip = Some("abc123".into());
+            let delivered = apply(&r, &ev(from, r.version, BeadEventKind::Deliver));
+            assert!(delivered.applied);
+            let d = delivered.row;
+            let out = apply(&d, &ev(BeadState::InDelivery, d.version, BeadEventKind::Requeued { tip: "abc123".into() }));
+            assert!(out.applied);
+            assert_eq!(out.row.state, back);
+            assert_eq!(out.row.reason, None);
+        }
     }
 
     #[test]

@@ -130,6 +130,19 @@ fn abandon_returns_the_members_and_closes_the_round() {
 }
 
 #[test]
+fn abandon_requeues_a_member_the_batch_abandon_left_in_delivery() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == "sp-a") {
+        r.state = "IN_DELIVERY".into();
+    }
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(t.lc.has("event bead sp-a IN_DELIVERY 7 {\"Requeued\":{\"tip\":\"ta\"}}"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.lc.has("event bead sp-b"), "a member not in delivery is left alone");
+}
+
+#[test]
 fn open_skips_what_is_not_certified_or_does_not_merge() {
     let t = round_world();
     t.lc_row("sp-d", "REWORK", "td", 100);

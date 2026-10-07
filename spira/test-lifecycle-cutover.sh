@@ -535,6 +535,38 @@ out="$(_lc_abandon_batch batch-q-never-cut queue "no such batch")"
 rc=$?
 wantrc "_lc_abandon_batch fails closed when the batch row does not exist" 1 $rc
 
+# ── an abandon returns each member to the state it entered delivery from ───────────────────
+submit sp-lc-o-sub tipOS
+certify sp-lc-o-cer tipOC
+lc cut batch-q-prior --repo fixture-repo --head headO --base baseO \
+    --members "sp-lc-o-sub:tipOS,sp-lc-o-cer:tipOC" --actor test >/dev/null
+out="$(_lc_abandon_batch batch-q-prior queue "prior state")"
+wantrc "abandoning a mixed round applies" 0 $?
+is "a SUBMITTED member returns to SUBMITTED, never promoted" "SUBMITTED" "$(member_field sp-lc-o-sub bead state)"
+is "a CERTIFIED member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-o-cer bead state)"
+
+# ── an IN_DELIVERY bead no open batch names is requeued by the invariant ───────────────────
+# POSITIVE CONTROL: the planted orphan is seen first, then a bead held by an open batch is not.
+submit sp-lc-orph-sub tipPS
+certify sp-lc-orph-cer tipPC
+certify sp-lc-held tipPH
+lc cut batch-orph --repo fixture-repo --head headP --base baseP \
+    --members "sp-lc-orph-sub:tipPS,sp-lc-orph-cer:tipPC" --actor test >/dev/null
+lc cut batch-held --repo fixture-repo --head headH --base baseH --members "sp-lc-held:tipPH" --actor test >/dev/null
+v="$(batch_field batch-orph version)"
+lc event batch batch-orph --expect OPEN --version "$v" --actor test --kind '{"Abandon":{"reason":"planted"}}' >/dev/null
+is "the planted orphans are stranded IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-orph-sub bead state)"
+out="$(lc requeue-orphans --actor test)"
+want "a dry run names the SUBMITTED orphan" 'sp-lc-orph-sub' "$out"
+want "a dry run names the CERTIFIED orphan" 'sp-lc-orph-cer' "$out"
+nowant "a bead held by an open batch is not an orphan" 'sp-lc-held' "$out"
+is "a dry run changes nothing" "IN_DELIVERY" "$(member_field sp-lc-orph-sub bead state)"
+out="$(lc requeue-orphans --actor test --apply)"
+wantrc "requeue-orphans --apply succeeds" 0 $?
+is "the SUBMITTED orphan returns to SUBMITTED" "SUBMITTED" "$(member_field sp-lc-orph-sub bead state)"
+is "the CERTIFIED orphan returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-orph-cer bead state)"
+is "the held member stays IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-held bead state)"
+
 # ── criterion 6, hand half (sp-f3af9): queue.sh's own eject cascades identically ─────────
 # A hand eject through _lc_eject_member (the same call queue.sh's cmd_eject makes) must
 # cascade to a stacked dependent exactly as settle's own CI-driven eject does above: the
