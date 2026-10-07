@@ -30,7 +30,10 @@ printf 'fixture | %s | push | origin/trunk | sp | |\n' "$REPO" > "$TMP/rmap"
 printf '#!/bin/sh\necho "$@" >> "%s/dispatch.calls"\n' "$TMP" > "$TMP/bin/bdq"; chmod +x "$TMP/bin/bdq"
 
 dispatch() {
-    env -i PATH="$TMP/bin:$PATH" HOME="$HOME" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+    # env -i drops testlib's SPIRA_TOML: hand release.sh this suite's config layers explicitly,
+    # with the run dir and repo map declared in a per-call layer.
+    local toml; toml="$(tl_layer SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$TMP/rmap" SPIRA_ID_PREFIX=sp)" || return 1
+    env -i PATH="$TMP/bin:$PATH" HOME="$HOME" SPIRA_TOML="$toml" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$TMP/rmap" SPIRA_REPO="$SH" SPIRA_ID_PREFIX=sp "$@" \
         bash "$SH/release.sh" cut fixture --dispatch 2>&1
 }
