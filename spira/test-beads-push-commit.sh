@@ -76,10 +76,10 @@ _count_in_remote() {
     local d; d="$(mktemp -d)"
     mkdir -p "$d/.beads"
     printf 'sync.remote: "%s"\n' "$url" > "$d/.beads/config.yaml"
-    BD_NON_INTERACTIVE=1 bd -C "$d" bootstrap --yes >/dev/null 2>&1 \
+    BD_NON_INTERACTIVE=1 timeout 5 bd -C "$d" bootstrap --yes >/dev/null 2>&1 \
         || { rm -rf "$d"; printf '?'; return; }
     local count
-    count="$(bd -C "$d" memories --json 2>/dev/null \
+    count="$(timeout 5 bd -C "$d" memories --json 2>/dev/null \
         | python3 -c '
 import json, sys
 try:
@@ -102,14 +102,14 @@ REMOTE="$TMP/remote"
 mkdir -p "$REMOTE"
 
 # Add a Dolt remote named "beads" — the name beads-push.sh hardcodes.
-bd -C "$SPIRA_DB" dolt remote add beads "file://$REMOTE" 2>/dev/null || {
+timeout 5 bd -C "$SPIRA_DB" dolt remote add beads "file://$REMOTE" 2>/dev/null || {
     bad "setup: add remote" "bd dolt remote add failed"; exit 1; }
 
 # beads-push.sh gate: presence of sync.remote: in config.yaml.
 printf '\nsync.remote: beads\n' >> "$SPIRA_DB/.beads/config.yaml"
 
 # Seed the remote with the current state so future pushes are incremental.
-bd -C "$SPIRA_DB" dolt push --remote beads >/dev/null 2>&1 || {
+timeout 5 bd -C "$SPIRA_DB" dolt push --remote beads >/dev/null 2>&1 || {
     bad "setup: seed push" "initial dolt push failed"; exit 1; }
 ok "setup: seed push"
 
@@ -120,12 +120,12 @@ ok "setup: seed push"
 echo
 echo "positive control — push without commit does not include dirty statute:"
 
-bd -C "$SPIRA_DB" --dolt-auto-commit off \
+timeout 5 bd -C "$SPIRA_DB" --dolt-auto-commit off \
     remember --key "law-push-test" "Push test statute." >/dev/null 2>&1 || {
     bad "positive control: write statute" "bd remember failed"; exit 1; }
 
 # Simulate old beads-push.sh: push directly, skipping the commit step.
-bd -C "$SPIRA_DB" dolt push --remote beads >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" dolt push --remote beads >/dev/null 2>&1
 
 count_pc="$(_count_in_remote "law-push-test" "file://$REMOTE")"
 is "positive control: dirty statute absent from clone without commit" "0" "$count_pc"

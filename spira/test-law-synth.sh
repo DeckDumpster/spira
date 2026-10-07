@@ -74,7 +74,7 @@ echo "=== law-synth.sh: wrong-database guard ==="
 # assert a refusal law-synth.sh is right to make. It went unseen while this suite was a T4
 # host case that every container run skipped.
 for i in $(seq 1 10); do
-    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-seed-$i" "Seed statute $i." >/dev/null 2>&1
+    timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-seed-$i" "Seed statute $i." >/dev/null 2>&1
 done
 
 # POSITIVE CONTROL: pointed at real book.
@@ -102,7 +102,7 @@ is "law-synth: empty database: page untouched" "$page_before_negative" "$page_af
 
 # NEGATIVE CONTROL 2: pointed at a database with far fewer laws than the committed page.
 for i in 1 2 3; do
-    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-floor-test-$i" \
+    timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-floor-test-$i" \
         "Floor test statute $i." >/dev/null 2>&1 || true
 done
 out_synth_floor=$(run_synth); rc_synth_floor=$?
@@ -126,7 +126,7 @@ nowant "statute_keys: mismatch → SP_STATUTE_SKEW is not OK"         "SKEW=OK" 
 
 # Add 8 more law- entries so the db has 11 (>= 10/2 = 5, and exceeds the page).
 for i in $(seq 4 11); do
-    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-ok-test-$i" \
+    timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-ok-test-$i" \
         "OK test statute $i." >/dev/null 2>&1 || true
 done
 out_ok=$(run_statute_keys)

@@ -55,18 +55,18 @@ lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 # TWO REPOS: the home repo the harness is installed in, and the "second" repo that the
 # bead's repo: label names. A bead for "second" must never touch the home repo.
 HOME_ORIGIN="$TMP/home-origin.git"; git init -q --bare -b main "$HOME_ORIGIN"
-HOME_REPO="$TMP/home"; git clone -q "$HOME_ORIGIN" "$HOME_REPO" 2>/dev/null
+HOME_REPO="$TMP/home"; timeout 5 git clone -q "$HOME_ORIGIN" "$HOME_REPO" 2>/dev/null
 git -C "$HOME_REPO" config user.email t@t; git -C "$HOME_REPO" config user.name t
 printf 'home-seed\n' > "$HOME_REPO/home.txt"
 git -C "$HOME_REPO" add home.txt; git -C "$HOME_REPO" commit -qm "home seed"
-git -C "$HOME_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$HOME_REPO" push -q origin main 2>/dev/null
 
 SECOND_ORIGIN="$TMP/second-origin.git"; git init -q --bare -b main "$SECOND_ORIGIN"
-SECOND_REPO="$TMP/second"; git clone -q "$SECOND_ORIGIN" "$SECOND_REPO" 2>/dev/null
+SECOND_REPO="$TMP/second"; timeout 5 git clone -q "$SECOND_ORIGIN" "$SECOND_REPO" 2>/dev/null
 git -C "$SECOND_REPO" config user.email t@t; git -C "$SECOND_REPO" config user.name t
 printf 'second-seed\n' > "$SECOND_REPO/second.txt"
 git -C "$SECOND_REPO" add second.txt; git -C "$SECOND_REPO" commit -qm "second seed"
-git -C "$SECOND_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$SECOND_REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
@@ -147,7 +147,7 @@ aeon_fixture_agent "$BIN/claude"
 SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
 tl_config SPIRA_HOME_REPO="$SPIRA_HOME_REPO" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
     SPIRA_REPO="$HOME_REPO" \

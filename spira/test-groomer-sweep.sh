@@ -64,13 +64,13 @@ run_sweep() {
 }
 
 status_of() {
-    bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
+    timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
 import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("status",""))' 2>/dev/null
 }
 
 labels_of() {
-    bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '
+    timeout 5 bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '
 }
 
 echo "test-groomer-sweep.sh"
@@ -142,7 +142,7 @@ nowant "real: awaiting-ci removed from ci-stuck bead" "awaiting-ci" "$(labels_of
 is "real: litter bead closed" "closed" "$(status_of sp-sw-lit)"
 
 # litter close reason names the predicate facts
-reason_lit="$(bd -C "$SPIRA_DB" show sp-sw-lit --json 2>/dev/null | python3 -c '
+reason_lit="$(timeout 5 bd -C "$SPIRA_DB" show sp-sw-lit --json 2>/dev/null | python3 -c '
 import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("close_reason","") or "")' 2>/dev/null)"
 want "real: litter close reason names predicate"     "litter"         "$reason_lit"

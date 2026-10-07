@@ -35,7 +35,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" commit -q --allow-empty -m base
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
 
 remote_has() { git -C "$REMOTE" show-ref --verify -q "refs/heads/$1" 2>/dev/null; }
@@ -48,7 +48,7 @@ make_and_push() {
     printf '%s\n' "$br" > "$REPO/${br//\//_}.txt"
     git -C "$REPO" add "${br//\//_}.txt"
     git -C "$REPO" commit -q -m "$br: work"
-    git -C "$REPO" push -q origin "$br"
+    timeout 5 git -C "$REPO" push -q origin "$br"
     git -C "$REPO" checkout -q main
 }
 
@@ -57,7 +57,7 @@ make_and_push() {
 land_via_merge() {
     local br="$1"
     git -C "$REPO" merge -q --ff-only "$br"
-    git -C "$REPO" push -q origin main "$br"
+    timeout 5 git -C "$REPO" push -q origin main "$br"
 }
 
 # ======================================================================================

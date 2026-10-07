@@ -50,7 +50,7 @@ recur_event()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 reclaim_event() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
 
 CENSUS="$(command -v census)"
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 REMEDY_LABEL=maechen-remedy
 
 # A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census lists the covers:
@@ -139,7 +139,7 @@ testdb_reset
 bid_g="$(plant_bead "reopen-cause-bead")"
 bead_reopen "$bid_g" gate-red "Reopened by test: sp-0wwcn" >/dev/null 2>&1
 
-_ev_cause="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+_ev_cause="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
     "SELECT COALESCE(new_value,'') FROM events WHERE issue_id='$bid_g' AND event_type='reopen'" \
     2>/dev/null | sed -n '3p' | tr -d ' ')"
 is "bead_reopen writes event_type=reopen with cause in new_value" "gate-red" "$_ev_cause"
@@ -184,7 +184,7 @@ echo "3. since-filter reaches the real SQL (watermark narrows the query)"
 testdb_reset
 bid_stale="$(plant_bead "stale-watermark-bead")"
 _uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
-"${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
     "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$_uuid', '$bid_stale', 'recurred', 'harness', 'stale-class', FROM_UNIXTIME(1000000000))" \
     >/dev/null 2>&1
 

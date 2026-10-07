@@ -51,7 +51,7 @@ log() { :; }                        # suppress log noise
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 labels_of() {
     B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys

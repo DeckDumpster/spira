@@ -50,10 +50,10 @@ testdb_up aeonwtcollision || { echo "test-aeon-worktree-collision: could not bui
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
@@ -125,7 +125,7 @@ run_aeon
 # THE PLANTED OFFENDER: bead B's branch: label names bead A's branch — exactly what `bd
 # create --parent` hands a child that inherits its parent's label (bead.sh lint, groomer).
 seed sp-cw-b
-bd -C "$SPIRA_DB" set-state sp-cw-b "branch=spira/sp-cw-a" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" set-state sp-cw-b "branch=spira/sp-cw-a" >/dev/null 2>&1
 run_aeon
 out2="$(cat "$TMP/out" 2>/dev/null)"
 
@@ -149,7 +149,7 @@ is   "case 1: bead B's summon reached the model and finished the bead (SUBMITTED
      "SUBMITTED" "$b_row"
 want "case 1: and bead B's session was handed bead B" "work sp-cw-b " "$(cat "$TMP/prompt" 2>/dev/null)"
 
-b_branch="$(bd -C "$SPIRA_DB" state sp-cw-b branch 2>/dev/null)"
+b_branch="$(timeout 5 bd -C "$SPIRA_DB" state sp-cw-b branch 2>/dev/null)"
 is "case 1: bead B's recorded branch was corrected to its own" "spira/sp-cw-b" "$b_branch"
 
 # The other bead's worktree must be untouched — correction, not repair-in-place of A's.

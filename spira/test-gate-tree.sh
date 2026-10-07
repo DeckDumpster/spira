@@ -52,7 +52,7 @@ git init -q -b main "$REPO"
 printf 'base\n' > "$REPO/marker"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 
 # Two branches, each touching its own file — distinguishable in the tree at trial time.
 for i in 1 2; do

@@ -55,7 +55,7 @@ mkdir -p "$NOT_SPIRA"
 bash "$SCRIPT" "$NOT_SPIRA" >/dev/null 2>&1
 wantrc "tree with no spira/build-tarball.sh -> exit 2" "2" "$?"
 
-podman container exists "$CNAME" 2>/dev/null \
+timeout 5 podman container exists "$CNAME" 2>/dev/null \
     && bad "usage errors never start a container" "container $CNAME exists" \
     || ok "usage errors never start a container"
 
@@ -194,7 +194,7 @@ echo
 echo "7. Container is torn down after the run either way"
 # ===========================================================================
 
-podman container exists "$CNAME" 2>/dev/null \
+timeout 5 podman container exists "$CNAME" 2>/dev/null \
     && bad "container torn down after a FAIL run" "container $CNAME still exists" \
     || ok "container torn down after a FAIL run"
 

@@ -62,8 +62,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
 # A repo's base is no longer derived (no remote-HEAD auto-detection to fall back on) — the
@@ -151,7 +151,7 @@ stub gh 'exit 1'
 # can restore it.
 cp "$SH/gate.sh" "$TMP/gate-full.sh"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -293,7 +293,7 @@ tl_config SPIRA_VERDICT_TTL=86400   # restore the fixture's own default for the 
 seed; branch sp-clash shared.txt "from the branch"
 printf '%s\n' "from the base" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 out="$(landing)"
 want "a branch that truly conflicts is reopened"   "reopened sp-clash" "$out"
 is   "and its bead goes back to open"              open "$(status_of sp-clash)"
@@ -309,7 +309,7 @@ drop_branch sp-clash
 # --------------------------------------------------------------------------------------
 seed; branch sp-zzz; out="$(landing)"
 want "the branch lands on the first pass" "landed spira/sp-zzz" "$out"
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 zzz_tip="$(git -C "$REPO" rev-parse spira/sp-zzz)"
 git -C "$REPO" merge-base --is-ancestor "$zzz_tip" origin/main \
     && ok  "and its commit is on the base before the second pass begins" \
@@ -515,7 +515,7 @@ drop_branch sp-dupa; drop_branch sp-dupb
 seed; branch sp-mine shared.txt "my version"
 printf '%s\n' "an unrelated edit by nobody" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base edits shared.txt (no bead id)"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 out="$(landing)"
 want "a conflict with no bead on the base reopens normally" "reopened sp-mine" "$out"
 notes="$(notes_of sp-mine)"

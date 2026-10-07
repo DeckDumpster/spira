@@ -222,7 +222,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-g4","title":"cause row test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
 bead_reopen "sp-g4" rebase-conflict "Reopened: conflict" >/dev/null 2>&1
-_ev_cause="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
+_ev_cause="$(timeout 5 "${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
     "SELECT COALESCE(new_value,'') FROM events WHERE issue_id='sp-g4' AND event_type='reopen'" \
     2>/dev/null | sed -n '3p' | tr -d ' ')"
 is "bead_reopen writes event_type=reopen with cause in new_value" "rebase-conflict" "$_ev_cause"
@@ -270,7 +270,7 @@ want "reopen.log names a caller field" "caller=" "$_rt_line"
 
 # COUNTS MUST MATCH EXACTLY (the bead's own acceptance criterion): one events-table row
 # with event_type='reopen', and exactly one matching reopen.log line — not two, not zero.
-_rt_evcount="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
+_rt_evcount="$(timeout 5 "${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
     "SELECT COUNT(*) FROM events WHERE issue_id='sp-h1' AND event_type='reopen' AND new_value='batch-eject'" \
     2>/dev/null | sed -n '3p' | tr -d ' ')"
 _rt_logcount="$(grep -Fc 'reopen sp-h1 cause=batch-eject' "$_rt_log" 2>/dev/null || true)"
@@ -402,11 +402,11 @@ _insert_event_at() {   # _insert_event_at <bead_id> <event_type> <cause_or_empty
     local id="$1" etype="$2" cause="$3" ts="$4" uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
     if [ -n "$cause" ]; then
-        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+        timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
             "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'harness', '$cause', '$ts')" \
             >/dev/null 2>&1
     else
-        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+        timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
             "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'harness', NULL, '$ts')" \
             >/dev/null 2>&1
     fi

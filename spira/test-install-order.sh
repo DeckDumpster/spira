@@ -42,8 +42,8 @@ git init -q --bare -b main "$FAKE_ORIGIN" 2>/dev/null
 git init -q -b main "$FAKE_REPO" 2>/dev/null
 git -C "$FAKE_REPO" config user.email t@t; git -C "$FAKE_REPO" config user.name test
 printf 'seed\n' > "$FAKE_REPO/f"; git -C "$FAKE_REPO" add f; git -C "$FAKE_REPO" commit -qm seed 2>/dev/null
-git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"; git -C "$FAKE_REPO" push -q origin main 2>/dev/null
-git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
+git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"; timeout 5 git -C "$FAKE_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
 git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 for _s in concierge.sh beads-push.sh; do
     [ -f "$REAL_REPO/$_s" ] && ln -sf "$REAL_REPO/$_s" "$FAKE_REPO/$_s"

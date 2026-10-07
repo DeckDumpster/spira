@@ -103,9 +103,9 @@ git init -q -b main "$PROBE_REPO"
 git -C "$PROBE_REPO" commit -q --allow-empty -m base
 # A local bare clone stands in for the forge remote (never `git push` from an aeon
 # session — law-tests-run-only-through-testenv's spirit applies to any real push path).
-git clone -q --bare "$PROBE_REPO" "$PROBE_REMOTE"
+timeout 5 git clone -q --bare "$PROBE_REPO" "$PROBE_REMOTE"
 git -C "$PROBE_REPO" remote add origin "$PROBE_REMOTE"
-git -C "$PROBE_REPO" fetch -q origin
+timeout 5 git -C "$PROBE_REPO" fetch -q origin
 git -C "$PROBE_REPO" branch -q spira/sp-probe1 main
 printf 'probe-repo | %s | pr | origin/main\n' "$PROBE_REPO" > "$TMP/real-map"
 

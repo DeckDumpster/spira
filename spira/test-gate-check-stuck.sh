@@ -47,7 +47,7 @@ testdb_require test-gate-check-stuck
 trap 'testdb_drop' EXIT INT TERM
 testdb_up gate_check_stuck || { echo "test-gate-check-stuck: could not build fixture"; exit 1; }
 
-B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM

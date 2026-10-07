@@ -125,7 +125,7 @@ else
 
     # Emit tab-separated <id> <repo-name> for open beads that carry a repo: label.
     _bead_repos() {
-        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list \
+        timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list \
             --status open --flat --limit 0 2>/dev/null \
         | while IFS= read -r line; do
             bead="$(printf '%s' "$line" | awk '{print $2}')"

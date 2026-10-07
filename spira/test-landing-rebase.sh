@@ -39,8 +39,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
 
@@ -95,7 +95,7 @@ cat > "$SH/repo-map" <<MAP
 $REPONAME | $REPO | push | origin/main | |
 MAP
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -213,7 +213,7 @@ branch_two_commits sp-recut2
 printf 'main version\n' > "$REPO/shared-recut.txt"
 git -C "$REPO" add shared-recut.txt
 git -C "$REPO" commit -q -m "main writes shared-recut.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 : > "$EMITTED"
 tl_config SPIRA_REBASE_DECOMPOSE_FILES=1
 out="$(landing)"
@@ -294,8 +294,8 @@ seed; reset_repo
 printf 'clean\n' > "$REPO/tracked.txt"
 git -C "$REPO" add tracked.txt
 git -C "$REPO" commit -q -m "add tracked file"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 advance_base
 printf 'dirty\n' >> "$REPO/tracked.txt"
 before="$(checkout_current)"
@@ -341,11 +341,11 @@ want "and the decline names the branch" "not main" "$out"
 #   FAIL  and fires the escalation ask: wanted [rebase loop] in []
 # --------------------------------------------------------------------------------------
 echo
-seed; git -C "$REPO" fetch -q origin; reset_repo
+seed; timeout 5 git -C "$REPO" fetch -q origin; reset_repo
 branch sp-escl shared-escl.txt "from-escalate"
 printf 'base-content\n' > "$REPO/shared-escl.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared-escl.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 # Pre-bump the lifetime requeue counter to AT-1 so the pass's own bump (below) brings it
 # to AT on the FIRST sighting of this conflict — land_state is not yet RED, so the
 # RED-recurring guard does not intercept it first.

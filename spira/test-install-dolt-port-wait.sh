@@ -256,7 +256,7 @@ rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
 
 # A fresh db is needed so phase 3 runs bd init (which checks port open).
 # Start nc briefly so phase 3's bd init can proceed, then stop it so phase 4 times out.
-nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init=$!
+nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 sleep 0.1
 
 _timeout_out="$(run_install prod -- \
@@ -280,10 +280,10 @@ echo "2. PORT-OPEN WAIT — port opens within the window: reaches phase 7:"
 # nc starts after 3s. SPIRA_INSTALL_DOLT_WAIT=10 gives it room.
 rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
 
-nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init2=$!
+nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init2=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 sleep 0.1
 
-{ sleep 3; nc -lk "$_dolt_port" >/dev/null 2>&1; } & _nc_delayed=$!
+{ sleep 3; nc -lk "$_dolt_port" >/dev/null 2>&1; } & _nc_delayed=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 
 _wait_out="$(run_install prod -- \
     "SPIRA_DOLT_DATA=$_dolt_data" \
@@ -333,7 +333,7 @@ DOLTMOCK
 chmod +x "$MOCK_BIN/dolt"
 
 # After 2s the mock dolt's nc will have closed; start a new nc to simulate the unit.
-{ sleep 4; nc -lk "$_nc_port2" >/dev/null 2>&1; } & _nc_unit=$!
+{ sleep 4; nc -lk "$_nc_port2" >/dev/null 2>&1; } & _nc_unit=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 
 _close_out="$(run_install prod -- \
     "SPIRA_DOLT_DATA=$_dolt_data" \

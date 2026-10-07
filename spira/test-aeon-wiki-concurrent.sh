@@ -43,13 +43,13 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 # ---- shared wiki repo -----------------------------------------------------------------
 WIKI_ORIGIN="$TMP/wiki.git"; git init -q --bare -b main "$WIKI_ORIGIN"
-WIKI="$TMP/wiki"; git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
+WIKI="$TMP/wiki"; timeout 5 git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
 git -C "$WIKI" config user.email t@t; git -C "$WIKI" config user.name t
 mkdir -p "$WIKI/wiki"
 printf 'seed\n' > "$WIKI/wiki/seed.md"
 git -C "$WIKI" add wiki/seed.md
 git -C "$WIKI" commit -qm "seed"
-git -C "$WIKI" push -q origin main 2>/dev/null
+timeout 5 git -C "$WIKI" push -q origin main 2>/dev/null
 SEED_SHA="$(git -C "$WIKI" rev-parse HEAD)"
 
 echo "test-aeon-wiki-concurrent.sh"

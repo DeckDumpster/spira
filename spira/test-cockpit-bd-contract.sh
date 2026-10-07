@@ -123,7 +123,7 @@ echo
 echo "bare memories (sop_keys' shape) — the shelf is a JSON object, not an array:"
 # ======================================================================================
 testdb_reset
-"${SPIRA_BD:-bd-embedded}" -C "$SPIRA_DB" remember --key sop-contract-row "MATCH: contract test" >/dev/null 2>&1
+timeout 5 "${SPIRA_BD:-bd-embedded}" -C "$SPIRA_DB" remember --key sop-contract-row "MATCH: contract test" >/dev/null 2>&1
 out="$(run_probe sops SPIRA_SOP_LEDGER="$TMP/no-ledger.jsonl")"
 never_fired="$(field "$out" SP_SOP_NEVER_FIRED)"
 if [ "$never_fired" != "?" ] && [ -n "$never_fired" ]; then
@@ -203,7 +203,7 @@ else
 {"id":"sp-cbloom1","title":"a bead that blocks another","status":"open","issue_type":"task","labels":["repo:alpha"],"updated_at":"2026-09-08T00:00:00Z"}
 {"id":"sp-cbloom2","title":"the bead it blocks","status":"open","issue_type":"task","labels":["repo:alpha"],"updated_at":"2026-09-08T00:00:00Z","dependencies":[{"issue_id":"sp-cbloom2","depends_on_id":"sp-cbloom1","type":"blocks"}]}
 JSONL
-    "${SPIRA_BD:-bd-embedded}" -C "$SPIRA_DB" list --limit 0 --json > "$TMP/live.json" 2>/dev/null
+    timeout 5 "${SPIRA_BD:-bd-embedded}" -C "$SPIRA_DB" list --limit 0 --json > "$TMP/live.json" 2>/dev/null
     R="$("$NODE" -e '
 const M = require(process.argv[1] + "/model.js");
 const m = M.derive(JSON.parse(require("fs").readFileSync(process.argv[2], "utf8")), {});

@@ -172,8 +172,8 @@ git -c user.email=t@t -c user.name=t init -q -b main "$GIT_REPO"
 git -C "$GIT_REPO" -c user.email=t@t -c user.name=t \
     commit -q --allow-empty -m base
 git -C "$GIT_REPO" remote add origin "$GIT_REMOTE"
-git -C "$GIT_REPO" push -q origin main
-git -C "$GIT_REPO" fetch -q origin
+timeout 5 git -C "$GIT_REPO" push -q origin main
+timeout 5 git -C "$GIT_REPO" fetch -q origin
 
 # SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6); the release tarball's real

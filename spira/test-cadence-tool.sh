@@ -65,7 +65,7 @@ ok "user systemd running in container"
 # HOST SNAPSHOT — before any container work, so a diff after proves no host contamination.
 snap_before="$(ls -1 "$HOME/.config/systemd/user/" 2>/dev/null | sort || true)"
 
-CEXEC=(podman exec --user spirauser
+CEXEC=(timeout 5 podman exec --user spirauser
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
 )
@@ -76,7 +76,7 @@ CEXEC=(podman exec --user spirauser
 # repo map with all checkouts under SPIRA_WORKSPACES, which a cadence test does not need.
 CADENCE=(bash /workspace/spira/cadence.sh)
 SPIRA_RUN_CTR="/tmp/spira-cadtool-$$"
-SC=(podman exec --user spirauser
+SC=(timeout 5 podman exec --user spirauser
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
     "$CNAME" systemctl --user)

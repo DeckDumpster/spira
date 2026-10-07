@@ -90,7 +90,7 @@ _insert_event_at() {   # _insert_event_at <bead_id> <event_type> <cause> <utc_ts
     local id="$1" etype="$2" cause="$3" ts="$4"
     local uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+    timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
         "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'harness', '$cause', '$ts')" \
         >/dev/null 2>&1
 }
@@ -132,7 +132,7 @@ _now_count="$(grep -c "created_at) VALUES.*NOW())" "$HERE/lib.sh" || true)"
 is "no write-side event INSERT uses NOW()" "0" "$_now_count"
 
 bump_requeue "sp-tz1" "tz-write-check"
-_lag="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+_lag="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
     "SELECT ABS(TIMESTAMPDIFF(SECOND, MAX(created_at), MAX(UTC_TIMESTAMP()))) FROM events WHERE issue_id='sp-tz1' AND event_type='requeued' AND new_value='tz-write-check'" \
     2>/dev/null | sed -n '3p' | tr -d ' ')"
 if [ -n "$_lag" ] && [ "$_lag" -le 5 ] 2>/dev/null; then

@@ -15,8 +15,8 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 CHECK="$HERE/chamber-core-check.sh"
-"$SPIRA_BD" -C "$SPIRA_DB" remember --key law-chamber-core-a "A." >/dev/null 2>&1
-"$SPIRA_BD" -C "$SPIRA_DB" remember --key law-chamber-core-b "B." >/dev/null 2>&1
+timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key law-chamber-core-a "A." >/dev/null 2>&1
+timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key law-chamber-core-b "B." >/dev/null 2>&1
 
 mkdir -p "$TMP/good" "$TMP/bad"
 printf 'FAYTH_NAME=x\nFAYTH_STATUTE_CORE="law-chamber-core-a, law-chamber-core-b"\n' > "$TMP/good/x.fayth"

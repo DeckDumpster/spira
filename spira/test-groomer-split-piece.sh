@@ -37,7 +37,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-labels_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
+labels_of() { timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -68,13 +68,13 @@ echo
 echo "PLANT THE OFFENDER: a bare 'bd create --parent' inherits the parent's branch:"
 # ======================================================================================
 seed sp-tgsp-bare "parent, split by hand"
-bd -C "$SPIRA_DB" set-state sp-tgsp-bare "branch=spira/sp-tgsp-bare" >/dev/null 2>&1
-bd -C "$SPIRA_DB" label add sp-tgsp-bare "delivers:beads" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" set-state sp-tgsp-bare "branch=spira/sp-tgsp-bare" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" label add sp-tgsp-bare "delivers:beads" >/dev/null 2>&1
 
-bare_child="$(bd -C "$SPIRA_DB" create --parent sp-tgsp-bare --title "bare piece" --type task \
+bare_child="$(timeout 5 bd -C "$SPIRA_DB" create --parent sp-tgsp-bare --title "bare piece" --type task \
     -l "plan,repo:fixture" --silent 2>/dev/null)"
 [ -n "$bare_child" ] || { echo "test-groomer-split-piece: setup failed: bd create --parent returned no id" >&2; exit 1; }
-bare_branch="$(bd -C "$SPIRA_DB" state "$bare_child" branch 2>/dev/null)"
+bare_branch="$(timeout 5 bd -C "$SPIRA_DB" state "$bare_child" branch 2>/dev/null)"
 is "offender: bare create --parent hands the child the PARENT's branch" \
    "spira/sp-tgsp-bare" "$bare_branch"
 case " $(labels_of "$bare_child") " in
@@ -87,15 +87,15 @@ echo
 echo "split-piece gives the new piece its OWN branch, derived from its own id:"
 # ======================================================================================
 seed sp-tgsp-orig "parent, split via split-piece"
-bd -C "$SPIRA_DB" set-state sp-tgsp-orig "branch=spira/sp-tgsp-orig" >/dev/null 2>&1
-bd -C "$SPIRA_DB" label add sp-tgsp-orig "delivers:beads" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" set-state sp-tgsp-orig "branch=spira/sp-tgsp-orig" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" label add sp-tgsp-orig "delivers:beads" >/dev/null 2>&1
 
 child="$(groomer split-piece sp-tgsp-orig --title "piece one" --type task -l "plan,repo:fixture" 2>"$TMP/err")"
 rc=$?
 is "split-piece exits 0" "0" "$rc"
 [ -n "$child" ] || { echo "test-groomer-split-piece: split-piece returned no id" >&2; exit 1; }
 
-child_branch="$(bd -C "$SPIRA_DB" state "$child" branch 2>/dev/null)"
+child_branch="$(timeout 5 bd -C "$SPIRA_DB" state "$child" branch 2>/dev/null)"
 is "split-piece: child's branch is its OWN, spira/<child-id> (positive control)" \
    "spira/$child" "$child_branch"
 [ "$child_branch" != "spira/sp-tgsp-orig" ] \
@@ -108,7 +108,7 @@ case " $(labels_of "$child") " in
 esac
 
 # The child must actually be a child of the original (--parent honoured).
-parent_of_child="$(bd -C "$SPIRA_DB" children sp-tgsp-orig 2>/dev/null)"
+parent_of_child="$(timeout 5 bd -C "$SPIRA_DB" children sp-tgsp-orig 2>/dev/null)"
 case "$parent_of_child" in
     *"$child"*) ok "split-piece: the new piece is recorded as a child of the original" ;;
     *) bad "split-piece: the new piece is recorded as a child of the original" "not found in: $parent_of_child" ;;

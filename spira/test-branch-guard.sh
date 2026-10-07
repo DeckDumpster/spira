@@ -50,8 +50,8 @@ GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
 git -C "$REPO" commit -q -m "initial"
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 # Cache origin/HEAD so spira_landref finds the base without a network call.
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
@@ -163,7 +163,7 @@ want "check: reports SHARED CHECKOUT AHEAD" "SHARED CHECKOUT AHEAD" "$check_out"
 # After pushing, the checkout is no longer ahead. The aeon commit is still the tip on
 # both sides, so AEON COMMIT is still reported but SHARED CHECKOUT AHEAD is not.
 # ---------------------------------------------------------------------------------------
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 
 check_out="$(run_check)"; check_rc=$?
 is   "check: still exits 1 (aeon is still the tip)" 1 "$check_rc"
@@ -180,7 +180,7 @@ git -C "$REPO" add -A
 GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
 git -C "$REPO" commit -q -m "chore: operator commit restoring a clean tip"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 
 check_out="$(run_check)"; check_rc=$?
 is   "check: exits 0 after operator commit" 0 "$check_rc"
@@ -314,7 +314,7 @@ git -C "$HREPO" commit -q -m "seed: harness-shaped clone"
 HREMOTE="$TMP/hrepo-remote.git"
 git init -q --bare -b main "$HREMOTE"
 git -C "$HREPO" remote add origin "$HREMOTE"
-git -C "$HREPO" push -q origin main
+timeout 5 git -C "$HREPO" push -q origin main
 git -C "$HREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 install_out="$(bash "$HREPO/exclude.sh" install "$HREPO" 2>&1)"; install_rc=$?

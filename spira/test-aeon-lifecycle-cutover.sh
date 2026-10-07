@@ -74,18 +74,18 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         up=1; break
     fi
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
 # spira-lc and work are the tree's own build, invoked by name on the suite's PATH (sp-gypjk).
 for _t in spira-lc work; do command -v "$_t" >/dev/null 2>&1 || bail "$_t is not on PATH"; done
@@ -239,10 +239,10 @@ echo
 echo "End to end through the real aeon.sh: no bd on the model's PATH, WORKING until work submit:"
 # ===========================================================================
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-FREPO="$TMP/repo"; git clone -q "$ORIGIN" "$FREPO" 2>/dev/null
+FREPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$FREPO" 2>/dev/null
 git -C "$FREPO" config user.email t@t; git -C "$FREPO" config user.name t
 printf 'seed\n' > "$FREPO/f"
-git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; git -C "$FREPO" push -q origin main 2>/dev/null
+git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; timeout 5 git -C "$FREPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 # work-env.sh is retired (sp-zpaq0): the aeon binary builds its own restricted environment.
@@ -308,7 +308,7 @@ is "work submit exited 0 (applied)" "0" "$(cat "$TMP/work-submit-rc" 2>/dev/null
 want "the machine's row: WORKING (claimed) then SUBMITTED (work submit) — never closed" \
     '"state":"SUBMITTED"' "$(row_json "$BID")"
 
-bstatus="$(bd -C "$SPIRA_DB" show "$BID" --json 2>/dev/null | python3 -c '
+bstatus="$(timeout 5 bd -C "$SPIRA_DB" show "$BID" --json 2>/dev/null | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null)"
