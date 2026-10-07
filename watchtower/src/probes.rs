@@ -37,7 +37,7 @@ fn sha_of(path: &str) -> &str {
 
 // ---- (a) units whose rendered release is not current -------------------------------
 
-pub fn units_off_current(show: &str, current: &str) -> Vec<(String, String)> {
+pub fn units_off_current(show: &str, current: &str, running: &dyn Fn(u32) -> Option<String>) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for block in show.split("\n\n") {
         let id = block.lines().find_map(|l| l.strip_prefix("Id="));
@@ -48,12 +48,25 @@ pub fn units_off_current(show: &str, current: &str) -> Vec<(String, String)> {
             .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="));
         if let (Some(id), Some(r)) = (id, release) {
             let sha = sha_of(r);
-            if sha != "current" && sha != current {
-                out.push((id.to_string(), sha.to_string()));
+            let started = if sha == "current" {
+                let pid = block.lines().find_map(|l| l.strip_prefix("MainPID=")).and_then(|p| p.trim().parse::<u32>().ok()).filter(|p| *p != 0);
+                pid.and_then(running)
+            } else {
+                Some(sha.to_string())
+            };
+            if let Some(started) = started.filter(|s| s != current) {
+                out.push((id.to_string(), started));
             }
         }
     }
     out
+}
+
+fn process_release(releases: &str, pid: u32) -> Option<String> {
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let canon_root = std::fs::canonicalize(releases).ok()?;
+    let rest = exe.strip_prefix(&canon_root).ok().or_else(|| exe.strip_prefix(releases).ok())?;
+    rest.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned())
 }
 
 pub fn release_currency(cfg: &Cfg) -> Reading {
@@ -61,9 +74,9 @@ pub fn release_currency(cfg: &Cfg) -> Reading {
     let Some(current) = std::fs::read_link(Path::new(rel).join("current")).ok().map(|t| sha_of(&t.to_string_lossy()).to_string()) else {
         return Reading::Unknown;
     };
-    let Some(show) = systemctl_show(cfg, &[&cfg.unit_glob, "-p", "Id", "-p", "Environment"]) else { return Reading::Unknown };
+    let Some(show) = systemctl_show(cfg, &[&cfg.unit_glob, "-p", "Id", "-p", "Environment", "-p", "MainPID"]) else { return Reading::Unknown };
     Reading::Standing(
-        units_off_current(&show, &current)
+        units_off_current(&show, &current, &|pid| process_release(rel, pid))
             .into_iter()
             .map(|(unit, sha)| Cond {
                 key: unit.clone(),
@@ -397,14 +410,21 @@ mod tests {
     #[test]
     fn units_off_current_names_only_units_rendering_another_release() {
         let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/x\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-c-prod.service\nEnvironment=\n";
-        assert_eq!(units_off_current(show, "bbb"), vec![("spira-a-prod.service".to_string(), "aaa".to_string())]);
-        assert!(units_off_current(show, "aaa").iter().any(|(u, _)| u == "spira-b-prod.service"));
+        assert_eq!(units_off_current(show, "bbb", &|_| None), vec![("spira-a-prod.service".to_string(), "aaa".to_string())]);
+        assert!(units_off_current(show, "aaa", &|_| None).iter().any(|(u, _)| u == "spira-b-prod.service"));
     }
 
     #[test]
     fn units_rendering_the_current_symlink_are_current() {
         let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/current/\n\nId=spira-c-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa\n";
-        assert_eq!(units_off_current(show, "bbb"), vec![("spira-c-prod.service".to_string(), "aaa".to_string())]);
+        assert_eq!(units_off_current(show, "bbb", &|_| None), vec![("spira-c-prod.service".to_string(), "aaa".to_string())]);
+    }
+
+    #[test]
+    fn a_unit_rendering_current_is_stale_only_when_its_process_started_from_another_release() {
+        let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=11\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=22\n\nId=spira-c-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=0\n\nId=spira-d-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=33\n";
+        let running = |pid: u32| match pid { 11 => Some("old".to_string()), 22 => Some("new".to_string()), _ => None };
+        assert_eq!(units_off_current(show, "new", &running), vec![("spira-a-prod.service".to_string(), "old".to_string())]);
     }
 
     fn run(state: &str, inv: &str) -> Run {

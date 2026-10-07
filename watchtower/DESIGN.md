@@ -133,7 +133,7 @@ duplication is exactly what let a timer added after a hand list was written esca
   incident bead per condition, closes it when the condition clears, and does nothing for a probe
   that could not read. Standing across passes files no second bead (an open bead for the ref
   holds it); a `sustain` window counts from the latest crossing.
-- Probes: a `SPIRA_RELEASE_CURRENCY_UNITS` unit rendering a release other than `current` for
+- Probes: a `SPIRA_RELEASE_CURRENCY_UNITS` unit rendering a pinned release other than `current`, or rendering `current` while its MainPID runs from another release, for
   `SPIRA_RELEASE_STALE_SECS`; a spira unit failed `SPIRA_FAILED_UNIT_RUNS` consecutive
   invocations (shares `incident:failed-unit-<unit>` with the sweep, so the two never double-file);
   `/tmp` free under `SPIRA_TMPFS_SHED_FREE_MIB`, root free under `SPIRA_DISK_FLOOR_PCT`, io/memory
