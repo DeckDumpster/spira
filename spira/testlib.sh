@@ -722,7 +722,8 @@ except Exception: print("")' 2>/dev/null
 #   else a claim this stand-in applied ($SPIRA_RUN/lc-claim/<id>, the holder) → WORKING;
 #   else bd in_progress → WORKING (holder = assignee); anything else → READY.
 # A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
-# Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0), `hold <id> <kind> <reason>`
+# Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0),
+# `reopen <id> <cause>` (row pinned REWORK, claim dropped, bd reopened), `hold <id> <kind> <reason>`
 # (appended to $SPIRA_RUN/lc-holds.log, exit 0),
 # `unclaim <id> <actor>` (spira-lc's own rule: a WORKING row is released only by its holder,
 # else exit 1; any other state is already released, 0), and
@@ -739,6 +740,13 @@ lc_aeon_mirror() {
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
     hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"; exit 0 ;;
+    reopen)
+        # sp-swh8b8: the row moves to REWORK first, then the store follows (open, unassigned),
+        # exactly as spira-lc's own reopen door does; the claim this stand-in recorded is dropped.
+        mkdir -p "${SPIRA_RUN:?}/lc-row"; printf 'REWORK %s\n' "${3:-reopen}" > "$SPIRA_RUN/lc-row/${2:?}"
+        rm -f "$SPIRA_RUN/lc-claim/$2"
+        BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" update "$2" --status open --assignee "" >/dev/null 2>&1
+        exit 0 ;;
     *) for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
 esac
 [ "$1" = create-bead ] && exit 0
