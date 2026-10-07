@@ -152,12 +152,40 @@ fn now_iso() -> String {
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
 }
 
+/// A row is one whole line: a JSON object with no newline inside it. Refused before any byte
+/// reaches the file, so a malformed row can never be the torn line a reader trips over.
+fn check_line(line: &str) -> Result<(), String> {
+    if line.contains('\n') || line.contains('\r') {
+        return Err("row contains a line break".to_string());
+    }
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(serde_json::Value::Object(_)) => Ok(()),
+        Ok(_) => Err("row is not a JSON object".to_string()),
+        Err(e) => Err(format!("row is not valid JSON: {e}")),
+    }
+}
+
+/// True when the file's last byte is not a newline — an earlier writer died mid-line.
+fn tail_is_torn(f: &mut fs::File) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let len = f.metadata()?.len();
+    if len == 0 {
+        return Ok(false);
+    }
+    f.seek(SeekFrom::Start(len - 1))?;
+    let mut b = [0u8; 1];
+    f.read_exact(&mut b)?;
+    Ok(b[0] != b'\n')
+}
+
 fn append_line(path: &Path, line: &str) -> Result<(), String> {
+    check_line(line).map_err(|e| format!("{}: refused: {e}", path.display()))?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let mut f = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -165,7 +193,16 @@ fn append_line(path: &Path, line: &str) -> Result<(), String> {
     if unsafe { flock(fd, LOCK_EX) } != 0 {
         return Err(format!("{}: flock failed", path.display()));
     }
-    let result = writeln!(f, "{line}").map_err(|e| format!("{}: {e}", path.display()));
+    let result = (|| {
+        let mut buf = Vec::with_capacity(line.len() + 2);
+        if tail_is_torn(&mut f)? {
+            buf.push(b'\n');
+        }
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(b'\n');
+        f.write_all(&buf)
+    })()
+    .map_err(|e| format!("{}: {e}", path.display()));
     let _ = unsafe { flock(fd, LOCK_UN) };
     result
 }
@@ -173,6 +210,31 @@ fn append_line(path: &Path, line: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_torn_or_multiline_row_is_refused_and_writes_nothing() {
+        let dir = testkit::TempDir::new("tsd-torn-refused");
+        let path = dir.join("tsd").join("f.jsonl");
+        for bad in ["{\"ts\":\"2026", "{\"a\":1}\n{\"b\":2}", "[1]", "", "plain"] {
+            assert!(append_line(&path, bad).is_err(), "{bad:?}");
+        }
+        assert!(!path.exists() || fs::read_to_string(&path).unwrap().is_empty());
+        append_line(&path, "{\"a\":1}").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\":1}\n");
+    }
+
+    #[test]
+    fn a_row_after_a_planted_torn_tail_is_not_fused_to_it() {
+        let dir = testkit::TempDir::new("tsd-torn-tail");
+        let path = dir.join("tsd").join("f.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "{\"a\":1}\n{\"ts\":\"20").unwrap();
+        append_line(&path, "{\"b\":2}").unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let last = text.lines().last().unwrap();
+        assert_eq!(last, "{\"b\":2}");
+        assert!(text.ends_with('\n'));
+    }
 
     #[test]
     fn escape_row_with_a_known_class_appends_one_row() {

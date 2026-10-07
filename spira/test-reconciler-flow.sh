@@ -39,7 +39,7 @@
 #
 # defect: sp-rh0x3
 # tier: T3
-# covers: reconciler-flow/src/**.rs spira/conf.sh spira/build-tarball.sh
+# covers: reconciler-flow/src/**.rs tsd/src/**.rs spira/conf.sh spira/build-tarball.sh
 #         systemd/spira-reconciler-flow.service systemd/spira-reconciler-flow.timer
 #         install/src/manifest.rs install/src/bin/units_install.rs
 set -uo pipefail
@@ -95,6 +95,19 @@ exit 1
 STUB
 chmod +x "$T/mail"
 export SPIRA_MAIL_SH="$T/mail"
+
+# Stub exporter: stands for tsd-lifecycle-export, which the pass must run itself. It counts its
+# calls and fails on demand ($T/export-fail), so "the pass ran it" and "a failed export blinds
+# the stage invariants" are both observable.
+EXPORT_LOG="$T/export-calls.log"
+cat > "$T/export" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$EXPORT_LOG"
+[ -e "$T/export-fail" ] && { echo "dolt unreachable" >&2; exit 1; }
+exit 0
+STUB
+chmod +x "$T/export"
+export SPIRA_TSD_LIFECYCLE_EXPORT_BIN="$T/export"
 
 # THE CLOCK. Grace periods are judged against reconciler-flow's own clock, which honours
 # SPIRA_NOW: `advance N` moves it N seconds ahead of the wall instead of sleeping N seconds.
@@ -629,6 +642,46 @@ is "exactly one alert fired" "1" "$(mail_count_for flow:dwell-regression:working
 run_pass
 is "the same unresolved streak does not alert again" "1" "$(mail_count_for flow:dwell-regression:working)"
 is "a state with no transitions of its own stays satisfied" satisfied "$(status_of flow:dwell-regression:ready status)"
+
+# ============================================================================
+echo
+echo "14. The pass runs the exporter itself; a failed export blinds every bead-stage invariant"
+# ============================================================================
+reset_env
+: > "$EXPORT_LOG"
+run_pass
+is "the pass ran the exporter in lifecycle mode, once" "lifecycle" "$(cat "$EXPORT_LOG")"
+
+reset_env
+for h in 2 4 6 8 10 12 14 16 18 20 22 24; do emit_landed "rcf-base-$h" $((h*3600)); done
+emit_landed rcf-recent 60
+run_pass
+is "positive control: with a good export velocity is observed" satisfied "$(status_of flow:velocity:queue status)"
+touch "$T/export-fail"
+run_pass
+is "a failing export makes velocity unobservable" unobservable "$(status_of flow:velocity:queue status)"
+is "a failing export makes rework unobservable"   unobservable "$(status_of flow:rework status)"
+is "a failing export makes round-health unobservable" unobservable "$(status_of flow:round-health status)"
+is "the backlog does not read bead-stage and is unaffected" satisfied "$(status_of flow:backlog status)"
+rm -f "$T/export-fail"
+
+# ============================================================================
+echo
+echo "15. tsd-write never fuses a row onto a torn tail"
+# ============================================================================
+TSD_RUN="$T/tsd-run"; mkdir -p "$TSD_RUN/tsd"
+tsd-write --family torn-probe --root "$TSD_RUN" --field n=1
+printf '{"ts":"2026-10' >> "$TSD_RUN/tsd/torn-probe.jsonl"
+tsd-write --family torn-probe --root "$TSD_RUN" --field n=2
+bad_lines="$(python3 -c '
+import json, sys
+n = 0
+for l in open(sys.argv[1]):
+    try: json.loads(l)
+    except Exception: n += 1
+print(n)' "$TSD_RUN/tsd/torn-probe.jsonl")"
+is "the planted torn fragment is isolated on its own line, not fused to the next row" "1" "$bad_lines"
+is "the row after it is whole" "2" "$(tail -n1 "$TSD_RUN/tsd/torn-probe.jsonl" | python3 -c 'import json,sys; print(json.load(sys.stdin)["n"])')"
 
 # ============================================================================
 tl_summary
