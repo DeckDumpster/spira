@@ -182,7 +182,11 @@ b1="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --ty
 [ -n "$b1" ] || { bad "case 0 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
-nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$(lc_row_state "$b1")"
+st0="$(lc_row_state "$b1")"
+nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$st0"
+# When it is not refused, say why: the row's own history and the aeon's last ledger lines.
+[ "$st0" = SUBMITTED ] && { spira-lc history "$b1" 2>&1 | tail -c 1500; tail -5 "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null; } | sed 's/^/# /'
+
 note1="$(latest_note "$b1")"
 want "own-dirty: note names the modified path" "f" "$note1"
 want "own-dirty: note names the override variable" "SPIRA_ALLOW_PROD_DIRTY" "$note1"
