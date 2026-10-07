@@ -37,7 +37,7 @@ chmod +x "$BIN"/*
 
 out="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$T" SPIRA_TOML="$(tl_layer SPIRA_RUN="$T/run")" SPIRA_HOME="$HERE/.." \
     bash "$HERE/disk-remedy.sh" 2>&1)"
-got="$(cat "$DESTROYED")"; [ -n "$got" ] || echo "# remedy output: $out" >&2
+got="$(cat "$DESTROYED")"; [ -n "$got" ] || echo "# remedy output: $out" | head -c 600 >&2
 
 want "a landed bead's worktree is destroyed (bd says closed for every bead, so only the row can have decided)" "sp-done" "$got"
 nowant "a working bead's worktree is kept though bd says closed" "sp-live" "$got"
