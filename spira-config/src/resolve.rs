@@ -569,6 +569,23 @@ pub fn lc_credential_default(env: &BTreeMap<String, String>) -> String {
     format!("{}/spira/spira-lc.credential", xdg_config_home(env))
 }
 
+/// Where the Dolt admin (root) password lives: the operator's config dir, beside the
+/// service credential but never one of its siblings, so nothing that is handed the service
+/// credential is handed this.
+pub fn lc_admin_credential_default(env: &BTreeMap<String, String>) -> String {
+    format!("{}/spira/spira-lc-admin.credential", xdg_config_home(env))
+}
+
+/// The admin password file when one exists (`SPIRA_LC_ADMIN_PASSWORD_FILE`, else the default
+/// path), else `None`.
+pub fn lc_admin_password_file(env: &BTreeMap<String, String>) -> Option<String> {
+    let path = match env.get("SPIRA_LC_ADMIN_PASSWORD_FILE") {
+        Some(v) if !v.is_empty() => v.clone(),
+        _ => lc_admin_credential_default(env),
+    };
+    Path::new(&path).is_file().then_some(path)
+}
+
 /// The credential file a process authenticates to spira-lc with: a non-empty
 /// `SPIRA_LC_PASSWORD_FILE` in `env`, else the default path when a file is there, else empty.
 /// A caller resolves this itself rather than inheriting it from a unit template, which a

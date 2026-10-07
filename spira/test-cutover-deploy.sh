@@ -133,7 +133,7 @@ run_deploy() {
         SPIRA_HOME="$FIX" \
         SPIRA_CONF="$CONF" SPIRA_CONFIG_HOME="${CFGHOME_OVERRIDE:-$CFGHOME}" \
         SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" \
-        SPIRA_LC_ADMIN_USER=root SPIRA_LC_ADMIN_PASSWORD="" \
+        SPIRA_LC_ADMIN_USER=root SPIRA_LC_ADMIN_PASSWORD="$ROOT_PW" \
         bash "$HERE/cutover-deploy.sh" --repo demo "$@"
 }
 

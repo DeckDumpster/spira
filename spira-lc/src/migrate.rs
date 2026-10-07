@@ -496,6 +496,27 @@ pub fn admin_from_env(get: impl Fn(&str) -> Option<String>) -> Result<Option<(St
     Ok(Some((user, password)))
 }
 
+/// The admin credential spira-install provisioned: user `root`, the password in
+/// `spira_config::resolve::lc_admin_password_file`. `None` when install has not written one.
+pub fn provisioned_admin(env: &std::collections::BTreeMap<String, String>) -> Result<Option<(String, String)>, String> {
+    let Some(path) = spira_config::resolve::lc_admin_password_file(env) else {
+        return Ok(None);
+    };
+    let password = std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?;
+    Ok(Some(("root".to_string(), password.trim().to_string())))
+}
+
+/// The database admin as a connection: the environment's `SPIRA_LC_ADMIN_*`, else what
+/// spira-install provisioned. `None` when neither names one.
+pub fn admin_conn(conn: &Conn) -> Result<Option<Conn>, String> {
+    let from_env = admin_from_env(|k| std::env::var(k).ok())?;
+    let admin = match from_env {
+        Some(a) => Some(a),
+        None => provisioned_admin(&std::env::vars().collect())?,
+    };
+    Ok(admin.map(|(user, password)| conn.as_user(user, password)))
+}
+
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let args = strip_retired_flags(args);
     let args = &args[..];
@@ -518,16 +539,33 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(s) => s,
         Err(e) => return (2, format!("admin-migrate: {e}")),
     };
-    let admin = match admin_from_env(|k| std::env::var(k).ok()) {
-        Ok(a) => a.map(|(user, password)| conn.as_user(user, password)),
+    let admin = match admin_conn(conn) {
+        Ok(a) => a,
         Err(e) => return (2, format!("admin-migrate: the admin password file (SPIRA_LC_ADMIN_PASSWORD_FILE): {e}")),
     };
-    migrate(&steps, conn, admin.as_ref().map(|a| a as &dyn Sql))
+    // spira-install runs this with the admin as the connection's own user; the service
+    // password file is not what that user authenticates with.
+    let probe = match &admin {
+        Some(a) if a.user == conn.user => a,
+        _ => conn,
+    };
+    migrate(&steps, probe, admin.as_ref().map(|a| a as &dyn Sql))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_provisioned_admin_is_root_with_the_password_file_and_absent_without_one() {
+        let d = testkit::TempDir::new("lc-admin-file");
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("XDG_CONFIG_HOME".to_string(), d.path().to_string_lossy().to_string());
+        assert_eq!(provisioned_admin(&env).unwrap(), None);
+        std::fs::create_dir_all(d.path().join("spira")).unwrap();
+        std::fs::write(d.path().join("spira/spira-lc-admin.credential"), "s3cret\n").unwrap();
+        assert_eq!(provisioned_admin(&env).unwrap(), Some(("root".into(), "s3cret".into())));
+    }
 
     #[test]
     fn files_apply_in_filename_order_whatever_order_they_are_named_in() {

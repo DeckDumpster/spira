@@ -25,4 +25,15 @@ is "prose in a heredoc body to bd close is allowed" ALLOW \
 is "a command after the heredoc terminator is still checked" BLOCK \
     "$(fence $'cat <<R\nprose\nR\nlanding.sh go')"
 
+fence_read() {   # fence_read <file> -> BLOCK or ALLOW for the Read tool
+    local out
+    out="$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"tool_name":"Read","tool_input":{"file_path":sys.stdin.read()}}))' \
+        | env -i PATH="$PATH" SPIRA_AEON=t BEAD_ID=t bash "$HERE/hooks/aeon-fence.sh" 2>/dev/null)"
+    case "$out" in *'"decision":"block"'*) echo BLOCK ;; *) echo ALLOW ;; esac
+}
+
+is "the admin credential cannot be read with the Read tool" BLOCK "$(fence_read /cfg/spira/spira-lc-admin.credential)"
+is "the admin credential cannot be catted" BLOCK "$(fence 'cat ~/.config/spira/spira-lc-admin.credential')"
+is "the service credential is not the admin credential's fence" ALLOW "$(fence_read /cfg/spira/spira-lc.credential)"
+
 tl_summary
