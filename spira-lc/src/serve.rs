@@ -90,8 +90,47 @@ fn handle(stream: UnixStream, conn: &Conn) {
             return;
         }
     };
-    let (code, out) = crate::dispatch(&argv, conn);
+    let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
+    let (code, out) = match crate::work::bind_peer(&argv, peer_uid(&stream), &map) {
+        Ok(argv) => crate::dispatch(&argv, conn),
+        Err(refusal) => refusal,
+    };
     let _ = write_response(&stream, code, &out);
+}
+
+/// Beside the socket, so the one configured socket path locates it: `<uid> <persona>` lines.
+fn personas_path() -> String {
+    format!("{}.personas", spira_config::process::cfg("SPIRA_LC_SOCKET").unwrap_or_default())
+}
+
+#[repr(C)]
+struct Ucred {
+    pid: i32,
+    uid: u32,
+    gid: u32,
+}
+
+extern "C" {
+    fn getsockopt(fd: i32, level: i32, name: i32, val: *mut Ucred, len: *mut u32) -> i32;
+}
+
+pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    const SOL_SOCKET: i32 = 1;
+    const SO_PEERCRED: i32 = 17;
+    let mut cred = Ucred { pid: 0, uid: 0, gid: 0 };
+    let mut len = std::mem::size_of::<Ucred>() as u32;
+    (unsafe { getsockopt(stream.as_raw_fd(), SOL_SOCKET, SO_PEERCRED, &mut cred, &mut len) } == 0).then_some(cred.uid)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn peer_uid_reads_the_connecting_process() {
+        let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let me = std::fs::metadata("/proc/self").unwrap();
+        assert_eq!(super::peer_uid(&a), Some(std::os::unix::fs::MetadataExt::uid(&me)));
+    }
 }
 
 fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str) -> std::io::Result<()> {
