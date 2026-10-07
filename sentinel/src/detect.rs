@@ -281,9 +281,11 @@ impl<'a> Sentinel<'a> {
         let Some(rows) = self.state_rows() else {
             return Vec::new();
         };
+        // Claimable = READY/REWORK with no ask or poison hold: a parked bead is the row's hold,
+        // never a label (sp-psztcc), and it is not re-detected on the next pass.
         let claimable: std::collections::HashSet<&str> = rows
             .iter()
-            .filter(|r| lc_state::is_claimable(&r.state))
+            .filter(|r| lc_state::is_claimable(&r.state) && !r.holds.iter().any(|h| h == "ask" || h == "poison"))
             .map(|r| r.bead_id.as_str())
             .collect();
         let args = vec![
