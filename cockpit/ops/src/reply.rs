@@ -21,6 +21,12 @@ pub trait Commenter {
     fn comment(&self, db: &Path, id: &str, text: &str) -> BdResult;
 }
 
+/// What an answer does beyond recording itself: lift the ask hold, reach the live holder.
+pub trait Follow {
+    fn lift_hold(&self, id: &str, message_id: &str) -> Result<(), String>;
+    fn deliver(&self, id: &str, text: &str);
+}
+
 pub enum Outcome {
     Replied(String),
     Failed(String),
@@ -32,8 +38,15 @@ pub fn usage_error(id: &str, text: &str) -> bool {
 
 pub const USAGE: &str = "usage: reply <bead-id> \"<text>\"   (or - to read stdin)";
 
-pub fn run(id: &str, text: &str, db: &Path, commenter: &dyn Commenter) -> Outcome {
+pub fn run(id: &str, text: &str, db: &Path, commenter: &dyn Commenter, follow: &dyn Follow) -> Outcome {
     let r = commenter.comment(db, id, text);
+    if r.success {
+        let message_id = format!("answer-{id}");
+        if let Err(e) = follow.lift_hold(id, &message_id) {
+            eprintln!("reply: ask hold on {id} not lifted: {e}");
+        }
+        follow.deliver(id, text);
+    }
     let db_name = db
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -71,6 +84,36 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct Rec {
+        calls: std::cell::RefCell<Vec<String>>,
+    }
+    impl Follow for Rec {
+        fn lift_hold(&self, id: &str, m: &str) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("lift {id} {m}"));
+            Ok(())
+        }
+        fn deliver(&self, id: &str, text: &str) {
+            self.calls.borrow_mut().push(format!("deliver {id} {text}"));
+        }
+    }
+
+    #[test]
+    fn an_answer_lifts_the_hold_and_reaches_the_holder_in_one_call() {
+        let c = Fake { success: true, combined: "" };
+        let f = Rec::default();
+        run("sp-abc", "use A", Path::new("/db"), &c, &f);
+        assert_eq!(*f.calls.borrow(), vec!["lift sp-abc answer-sp-abc", "deliver sp-abc use A"]);
+    }
+
+    #[test]
+    fn a_failed_comment_neither_lifts_nor_delivers() {
+        let c = Fake { success: false, combined: "no" };
+        let f = Rec::default();
+        run("sp-abc", "use A", Path::new("/db"), &c, &f);
+        assert!(f.calls.borrow().is_empty());
+    }
+
     #[test]
     fn usage_error_when_id_or_text_missing() {
         assert!(usage_error("", "hi"));
@@ -81,7 +124,7 @@ mod tests {
     #[test]
     fn success_message_names_id_and_db_basename() {
         let c = Fake { success: true, combined: "" };
-        let out = run("sp-abc", "an answer", Path::new("/var/spira/db"), &c);
+        let out = run("sp-abc", "an answer", Path::new("/var/spira/db"), &c, &Rec::default());
         match out {
             Outcome::Replied(s) => assert_eq!(s, "replied on sp-abc (db)"),
             Outcome::Failed(s) => panic!("expected Replied, got Failed({s})"),
@@ -94,7 +137,7 @@ mod tests {
             success: false,
             combined: "refused: no such bead",
         };
-        let out = run("sp-abc", "an answer", Path::new("/db"), &c);
+        let out = run("sp-abc", "an answer", Path::new("/db"), &c, &Rec::default());
         match out {
             Outcome::Failed(s) => {
                 assert!(s.starts_with("reply: failed to comment on sp-abc in /db\n"));
