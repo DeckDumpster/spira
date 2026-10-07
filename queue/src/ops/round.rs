@@ -198,11 +198,15 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     for m in wanted {
         match w.lc.bead_row(&m.id) {
             None => skips.push(format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id)),
-            Some(r) if r.state != "CERTIFIED" => skips.push(format!("{}: lifecycle state={} (not CERTIFIED) — not admitted", m.id, r.state)),
+            // SUBMITTED or CERTIFIED (law-a-round-is-feature-first-then-catch-all): the round's own
+            // full suite is the certification, so a submitted tip need not pass a per-bead gate first.
+            Some(r) if r.state != "CERTIFIED" && r.state != "SUBMITTED" => {
+                skips.push(format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state))
+            }
             Some(r) => match r.tip.filter(|t| !t.is_empty()) {
                 Some(tip) if tip.starts_with(&m.tip) => admitted.push(Member { id: m.id, tip }),
-                Some(tip) => skips.push(format!("{}: {} is not its certified tip {tip} — not admitted", m.id, m.tip)),
-                None => skips.push(format!("{}: no certified tip — not admitted", m.id)),
+                Some(tip) => skips.push(format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip)),
+                None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
             },
         }
     }

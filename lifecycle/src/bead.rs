@@ -567,6 +567,15 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            // A round takes SUBMITTED beads directly (law-a-round-is-feature-first-then-catch-all):
+            // the round's full suite on the merged tree is the certification, so a submitted tip
+            // enters delivery without a per-bead gate first. The tip stays the submitted one.
+            Deliver => {
+                let mut new = row.clone();
+                new.state = BeadState::InDelivery;
+                new.version += 1;
+                Outcome::applied(new)
+            }
             GateInfra { tip } => {
                 if row.tip.as_deref() != Some(tip.as_str()) {
                     return tip_mismatch(row, tip);
@@ -594,7 +603,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Claim { .. } | Release | HolderDead | Done { .. } | Deliver | Delivered { .. }
+            Claim { .. } | Release | HolderDead | Done { .. } | Delivered { .. }
             | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
         },
@@ -987,6 +996,20 @@ mod tests {
             assert_eq!(out.row.state, BeadState::Ready);
             assert_eq!(out.row.holder, None);
         }
+    }
+
+    #[test]
+    fn a_round_delivers_a_submitted_tip_without_a_per_bead_gate() {
+        // law-a-round-is-feature-first-then-catch-all: the round's full suite is the certification.
+        let mut r = row(BeadState::Submitted);
+        r.tip = Some("abc123".into());
+        let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::Deliver));
+        assert!(out.applied, "{:?}", out.refusal);
+        assert_eq!(out.row.state, BeadState::InDelivery);
+        assert_eq!(out.row.tip.as_deref(), Some("abc123"), "the submitted tip is the one delivered");
+        assert_eq!(out.row.version, r.version + 1);
+        // Still refused from a state a round never takes.
+        assert!(!apply(&row(BeadState::Rework), &ev(BeadState::Rework, 0, BeadEventKind::Deliver)).applied);
     }
 
     #[test]

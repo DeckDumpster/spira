@@ -141,7 +141,7 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "cut: --members must name at least one bead".into());
     }
 
-    let bead_rows = match fetch_certified_members(conn, &members) {
+    let bead_rows = match fetch_certified_members(conn, &members, true) {
         Ok(r) => r,
         Err(early) => return early,
     };
@@ -221,7 +221,7 @@ pub fn cmd_stack(args: &[String], conn: &Conn) -> (i32, String) {
         return (REFUSED, format!("refused: {batch_id} is {} not OPEN", batch_row.state.as_str()));
     }
 
-    let bead_rows = match fetch_certified_members(conn, &members) {
+    let bead_rows = match fetch_certified_members(conn, &members, false) {
         Ok(r) => r,
         Err(early) => return early,
     };
@@ -259,7 +259,9 @@ pub fn cmd_stack(args: &[String], conn: &Conn) -> (i32, String) {
 /// Every named member must currently be CERTIFIED at exactly the given tip — checked
 /// before anything is written, so a stale caller (`cut` or `stack` alike) refuses
 /// cleanly instead of admitting a member with the wrong content.
-fn fetch_certified_members(conn: &Conn, members: &[(String, String)]) -> Result<Vec<bead::BeadRow>, (i32, String)> {
+/// `cut` passes `allow_submitted`: a round takes SUBMITTED beads directly, its own full suite
+/// being the certification (law-a-round-is-feature-first-then-catch-all); `stack` does not.
+fn fetch_certified_members(conn: &Conn, members: &[(String, String)], allow_submitted: bool) -> Result<Vec<bead::BeadRow>, (i32, String)> {
     let mut bead_rows = Vec::new();
     for (id, tip) in members {
         let row = match rows::fetch_bead(conn, id) {
@@ -267,8 +269,10 @@ fn fetch_certified_members(conn: &Conn, members: &[(String, String)]) -> Result<
             Ok(None) => return Err((REFUSED, format!("refused: no bead row for {id}"))),
             Err(e) => return Err(cannot_tell(e)),
         };
-        if row.state != bead::BeadState::Certified {
-            return Err((REFUSED, format!("refused: {id} is {} not CERTIFIED", row.state.as_str())));
+        let admitted = row.state == bead::BeadState::Certified || (allow_submitted && row.state == bead::BeadState::Submitted);
+        if !admitted {
+            let want = if allow_submitted { "SUBMITTED or CERTIFIED" } else { "CERTIFIED" };
+            return Err((REFUSED, format!("refused: {id} is {} not {want}", row.state.as_str())));
         }
         if row.tip.as_deref() != Some(tip.as_str()) {
             return Err((REFUSED, format!("refused: {id}'s certified tip does not match {tip}")));
@@ -329,7 +333,7 @@ fn member_added_steps(
         batch_row = outcome.row;
 
         let deliver_ev = bead::BeadEvent {
-            expect: bead::BeadState::Certified,
+            expect: bead_row.state,
             version: bead_row.version,
             kind: bead::BeadEventKind::Deliver,
             actor: actor.to_string(),
