@@ -103,6 +103,33 @@ pub fn closed(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<(String, Str
     Ok(rows.iter().filter(|r| field(r, "status") == "closed").map(|r| (field(r, "id"), field(r, "close_reason"))).filter(|(id, _)| !id.is_empty()).collect())
 }
 
+/// The subset of `ids` bd has a bead for, in any status.
+pub fn known(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<String>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut cmd = Command::new("timeout");
+    cmd.args(["5", bd_bin]);
+    if !db.is_empty() {
+        cmd.args(["-C", db]);
+    }
+    let out = cmd
+        .args(["list", "--id", &ids.join(","), "--all", "--limit", "0", "--json"])
+        .output()
+        .map_err(|e| format!("running bd list: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    if !out.status.success() {
+        return Err(format!("{text}{}", String::from_utf8_lossy(&out.stderr)));
+    }
+    let start = text.find(['[', '{']).ok_or("bd list: no JSON")?;
+    let v: serde_json::Value = serde_json::from_str(&text[start..]).map_err(|e| format!("bd list --json: {e}"))?;
+    let rows = match v {
+        serde_json::Value::Array(a) => a,
+        o => vec![o],
+    };
+    Ok(rows.iter().filter_map(|r| r.get("id").and_then(|x| x.as_str())).map(str::to_string).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -576,6 +576,8 @@ pub trait Bd {
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String>;
     /// `(id, close_reason)` for each of `ids` whose bd status is closed.
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String>;
+    /// The subset of `ids` that bd has a bead for, in any status.
+    fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String>;
 }
 
 /// The terminal event a bead closed in bd with `reason` earns on its lifecycle row:
@@ -649,6 +651,65 @@ pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -
         }
     }
     lines.push(format!("reconcile-closed: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
+    Answer::out(code, lines.join("\n"))
+}
+
+/// `drop-orphans [--apply] [<id>...]` — move the READY lifecycle row of every key bd has no
+/// bead for to DROPPED. Dry run unless `--apply`. A row is never deleted (spira_lc holds no
+/// DELETE); DROPPED takes it off READY and keeps its history. Without ids, a bd that knows
+/// none of the READY rows is read as bd misreading, not as every row being an orphan.
+///
+/// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused.
+pub fn drop_orphans(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let apply = args.iter().any(|a| a == "--apply");
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
+        return usage(&format!("drop-orphans [--apply] [<bead-id>...] (unknown flag {bad})"));
+    }
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-orphans: {why}\n"), ..Default::default() };
+    let (rc, out) = m.call(&["list".into()]);
+    if rc != 0 {
+        return cannot(format!("lifecycle list failed: {}", out.trim()));
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return cannot("lifecycle list is not a JSON array".into());
+    };
+    let ready: Vec<&Value> = rows.iter().filter(|r| s(r, "state") == "READY" && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))).collect();
+    let ids: Vec<String> = ready.iter().map(|r| s(r, "bead_id")).collect();
+    let mut known = std::collections::BTreeSet::new();
+    for chunk in ids.chunks(RECONCILE_CHUNK) {
+        match bd.known(chunk) {
+            Ok(v) => known.extend(v),
+            Err(e) => return cannot(format!("bd unreadable: {}", e.trim())),
+        }
+    }
+    if only.is_empty() && !ids.is_empty() && known.is_empty() {
+        return cannot("bd knows none of the READY rows; refusing to drop them all".into());
+    }
+    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    for r in ready {
+        let id = s(r, "bead_id");
+        if known.contains(&id) {
+            continue;
+        }
+        if !apply {
+            lines.push(format!("would move {id} READY -> DROPPED (no bead in the store)"));
+            done += 1;
+            continue;
+        }
+        let (version, kind_json) = (s(r, "version"), serde_json::to_string(&BeadEventKind::Drop { reason: DropReason::ClosedNoBranch }).unwrap_or_default());
+        match event(m, "bead", &id, "READY", &version, "drop-orphans", &kind_json).0 {
+            APPLIED => {
+                lines.push(format!("moved {id} READY -> DROPPED (no bead in the store)"));
+                done += 1;
+            }
+            rc => {
+                lines.push(format!("refused {id}: event exit {rc}"));
+                code = REFUSED;
+            }
+        }
+    }
+    lines.push(format!("drop-orphans: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
     Answer::out(code, lines.join("\n"))
 }
 

@@ -480,6 +480,12 @@ impl Bd for FakeBd {
         }
         Ok(ids.iter().filter_map(|i| self.reasons.get(i).map(|r| (i.clone(), r.clone()))).collect())
     }
+    fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        Ok(ids.iter().filter(|i| self.rows.contains_key(*i)).cloned().collect())
+    }
 }
 
 #[test]
@@ -633,6 +639,44 @@ fn reconcile_closed_reports_an_ask_hold_as_refused() {
     let ans = reconcile_closed(&v(&["--apply", "sp-h"]), &mut f, &mut b);
     assert_eq!(ans.code, REFUSED, "{}", ans.stdout);
     assert_eq!(f.state("sp-h"), "READY");
+}
+
+// ---- drop-orphans (sp-b411iv) ------------------------------------------------------------
+
+#[test]
+fn drop_orphans_moves_only_ready_rows_bd_has_no_bead_for() {
+    let mut f = Fake::default();
+    f.bead("sp-real", BeadState::Ready);
+    f.bead("sp-gone", BeadState::Ready);
+    f.bead("sp-work", BeadState::Working);
+    let mut b = FakeBd::default();
+    b.rows.insert("sp-real".into(), ("task".into(), None));
+
+    let dry = drop_orphans(&[], &mut f, &mut b);
+    assert_eq!(dry.code, APPLIED, "{}", dry.stderr);
+    assert!(dry.stdout.contains("would move sp-gone READY -> DROPPED"), "{}", dry.stdout);
+    assert!(f.events.is_empty(), "a dry run writes nothing");
+
+    assert_eq!(drop_orphans(&v(&["--apply"]), &mut f, &mut b).code, APPLIED);
+    assert_eq!(f.state("sp-gone"), "DROPPED");
+    assert_eq!(f.state("sp-real"), "READY", "bd has it: untouched");
+    assert_eq!(f.state("sp-work"), "WORKING", "only READY rows are rewritten");
+}
+
+#[test]
+fn drop_orphans_cannot_tell_when_bd_is_down_or_knows_nothing() {
+    let mut f = Fake::default();
+    f.bead("sp-a", BeadState::Ready);
+    let mut b = FakeBd::default();
+    assert_eq!(drop_orphans(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL, "bd knowing nothing is a misread");
+    assert_eq!(f.state("sp-a"), "READY");
+    assert_eq!(drop_orphans(&v(&["--apply", "sp-a"]), &mut f, &mut b).code, APPLIED, "named explicitly it is dropped");
+    assert_eq!(f.state("sp-a"), "DROPPED");
+    b.down = true;
+    assert_eq!(drop_orphans(&[], &mut f, &mut b).code, APPLIED, "nothing READY left: nothing to ask bd");
+    f.bead("sp-b", BeadState::Ready);
+    assert_eq!(drop_orphans(&[], &mut f, &mut b).code, CANNOT_TELL);
+    assert_eq!(drop_orphans(&v(&["--bogus"]), &mut f, &mut b).code, 2);
 }
 
 #[test]
