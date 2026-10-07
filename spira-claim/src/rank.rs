@@ -299,6 +299,16 @@ pub enum Verdict {
     TooDeep { depth: u32, max: u32 },
 }
 
+/// An incident waits for its fix to land: a certified-only fix is not a reason to summon Ops,
+/// so an incident-labelled candidate never stacks.
+pub fn stack_cap(cand: &ReadyRow, incident_label: &str, stack_max_depth: u32) -> u32 {
+    if !incident_label.is_empty() && cand.labels.iter().any(|l| l == incident_label) {
+        0
+    } else {
+        stack_max_depth
+    }
+}
+
 pub fn claimable(
     cand: &ReadyRow,
     lc: &HashMap<String, LifecycleRow>,
@@ -559,6 +569,19 @@ mod tests {
         r.issue_type = Some(ty.into());
         r.labels = vec![format!("repo:{repo}")];
         (id.into(), r)
+    }
+
+    #[test]
+    fn an_incident_never_stacks_on_a_certified_fix_but_claims_once_it_lands() {
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let mut inc = blocked_on("B", "A");
+        inc.labels.push("incident".into());
+        let certified: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        let cap = stack_cap(&inc, "incident", 4);
+        assert_eq!(claimable(&inc, &certified, &bd, cap), Verdict::Blocked("A".into()));
+        assert_eq!(claimable(&blocked_on("B", "A"), &certified, &bd, stack_cap(&blocked_on("B", "A"), "incident", 4)), Verdict::Claimable { depth: 1 }, "a non-incident still stacks");
+        let landed: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        assert_eq!(claimable(&inc, &landed, &bd, cap), Verdict::Claimable { depth: 0 });
     }
 
     #[test]

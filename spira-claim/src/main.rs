@@ -498,7 +498,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(r) => rank::index_rows(r),
             Err(e) => return Outcome::cannot_tell(format!("{fayth}: blocker records: {e}")),
         };
-        rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, stack_max), Verdict::Claimable { .. }));
+        rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
         machine_lc = Some(lc);
     }
 
@@ -589,7 +589,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => rank::index_rows(r),
         Err(e) => return Outcome::cannot_tell(format!("{bead}: blocker records: {e}")),
     };
-    match rank::stack_plan(&cand, &lc, &bd, stack_max) {
+    match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, stack_max)) {
         Ok((stack, depth)) => {
             let v = serde_json::json!({"claimable": true, "stack": stack, "stack_depth": depth, "stack_max_depth": stack_max});
             Outcome::ok(format!("{}\n", v))
@@ -844,7 +844,7 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let recs = if wanted.is_empty() { Vec::new() } else { st.list_by_ids(&wanted)? };
     let bd = rank::index_rows(recs);
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
-    Ok(rows.into_iter().filter(|r| matches!(rank::claimable(r, &lc, &bd, stack_max), Verdict::Claimable { .. })).collect())
+    Ok(rows.into_iter().filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. })).collect())
 }
 
 /// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of FOUR things

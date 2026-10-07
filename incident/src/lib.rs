@@ -5,5 +5,7 @@
 pub mod decide;
 pub mod ports;
 pub mod real;
+pub mod settle;
+pub mod settle_real;
 pub mod spool;
 pub mod run;
