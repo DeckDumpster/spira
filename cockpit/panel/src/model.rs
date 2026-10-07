@@ -364,17 +364,11 @@ pub fn work_beads(item: &Item) -> Vec<&str> {
 /// else is written to the ask bead, like a failed mail, rather than swallowed.
 fn lift_work_holds(db: &str, item: &Item, actor: &str, cfg: &Cfg) {
     for w in work_beads(item) {
-        let out = Command::new("timeout")
-            .arg("5")
-            .arg(crate::store::bin("spira-lc", cfg))
-            .args(["reply", w, &item.id, actor])
-            .env("PATH", crate::store::child_path(cfg))
-            .stdin(std::process::Stdio::null())
-            .output();
-        let failed = match out {
-            Ok(o) if matches!(o.status.code(), Some(0) | Some(1) | Some(3)) => None,
-            Ok(o) => Some(format!("exit {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim())),
-            Err(e) => Some(e.to_string()),
+        let mut c = Command::new(crate::store::bin("spira-lc", cfg));
+        c.args(["reply", w, &item.id, actor]).env("PATH", crate::store::child_path(cfg));
+        let failed = match spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT) {
+            (0 | 1 | 3, _) => None,
+            (code, out) => Some(format!("exit {code}: {}", out.trim())),
         };
         if let Some(e) = failed {
             let _ = run_as("bd", &["-C", db, "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor), cfg);

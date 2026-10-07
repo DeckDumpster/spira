@@ -55,14 +55,21 @@ pub fn run(id: &str, reason: &str, db: &Path, closer: &dyn Closer) -> Outcome {
         // follow-up): the agent established it, or moot-sweep found its condition cleared.
         // `work ask` held the asking bead and only a Reply or an AskWithdrawn lifts it, so a
         // resolve emits withdraw-ask for every work bead the ask names. Exit 1 (no row) and 3
-        // (no ask hold) are not failures; a cannot-tell is reported, the close still stands.
+        // (no ask hold) are not failures; a cannot-tell fails the resolve: the ask is closed but the bead is still held.
         let mut msg = format!("resolved {id} ({db_name})");
+        let mut unlifted = false;
         for w in work_beads(&closer.show_json(db, id)) {
             match closer.withdraw_ask(&w) {
                 (0, _) => msg.push_str(&format!("\nwithdrew the ask hold on {w}")),
                 (1, _) | (3, _) => {}
-                (code, out) => msg.push_str(&format!("\nWARNING: the ask hold on {w} was not lifted (spira-lc withdraw-ask exit {code}): {}", out.trim())),
+                (code, out) => {
+                    unlifted = true;
+                    msg.push_str(&format!("\nFAILED: the ask hold on {w} was not lifted (spira-lc withdraw-ask exit {code}): {}", out.trim()));
+                }
             }
+        }
+        if unlifted {
+            return Outcome::Failed(msg);
         }
         Outcome::Closed(msg)
     } else {
@@ -133,8 +140,8 @@ mod tests {
         let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!() };
         assert_eq!(s, "resolved sp-ask1 (db)");
         let c = AskFake { labels: r#""work-bead:sp-w1""#, code: 2, withdrawn: Default::default() };
-        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!() };
-        assert!(s.contains("WARNING: the ask hold on sp-w1 was not lifted"), "{s}");
+        let Outcome::Failed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!("a hold left in place is a failed resolve") };
+        assert!(s.contains("FAILED: the ask hold on sp-w1 was not lifted"), "{s}");
         let c = AskFake { labels: r#""overseer""#, code: 0, withdrawn: Default::default() };
         run("sp-ask1", "moot", Path::new("/db"), &c);
         assert!(c.withdrawn.borrow().is_empty());

@@ -11,24 +11,20 @@
 //! another bead, a stale answer to an ask already lifted) has no ask hold to lift, and the
 //! machine says so with exit 3 (or 1, no row). Only "cannot tell" is worth a warning.
 
-use std::process::{Command, Stdio};
-
 /// `spira-lc <args>` → (exit code, combined output).
 pub trait Lc {
     fn call(&self, args: &[String]) -> (i32, String);
 }
 
-/// The live service, by bare name on the launcher's PATH (sp-gypjk), bounded at 5 s: a
-/// stalled machine must not hold an answer's delivery (`timeout`'s 124 reads as cannot-tell).
+/// The live service: `spira-lc` found without the caller's PATH, bounded at 5 s here so a
+/// stalled machine cannot hold an answer's delivery (124 reads as cannot-tell).
 pub struct LcCli;
 
 impl Lc for LcCli {
     fn call(&self, args: &[String]) -> (i32, String) {
-        let out = Command::new("timeout").args(["5", "spira-lc"]).args(args).stdin(Stdio::null()).output();
-        match out {
-            Ok(o) => (o.status.code().unwrap_or(2), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
-            Err(e) => (2, format!("running spira-lc: {e}")),
-        }
+        let mut c = std::process::Command::new(spira_config::lc_call::lc_bin());
+        c.args(args);
+        spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
     }
 }
 
