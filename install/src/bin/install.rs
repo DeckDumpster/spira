@@ -8,8 +8,10 @@
 //! them are this bead's scope.
 //!
 //! usage: spira-install [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build]
-//!                       [--no-session-hook] [--system-user]
+//!                       [--no-session-hook] [--system-user] [--populate-lifecycle]
 //!   --system-user is standalone: root, phase 6.5 only.
+//!   --populate-lifecycle is standalone: phase 4.6 only (the one-time lifecycle population,
+//!   idempotent — the same step every full install runs after the lifecycle store).
 
 use install::bootstrap::{self, nonempty_env};
 use install::checks;
@@ -28,10 +30,11 @@ struct Opts {
     skip_build: bool,
     no_session_hook: bool,
     system_user: bool,
+    populate_lifecycle: bool,
 }
 
 fn parse_args() -> Result<Opts, String> {
-    let mut o = Opts { instance: None, dry: false, ephemeral: false, laptop: false, skip_build: false, no_session_hook: false, system_user: false };
+    let mut o = Opts { instance: None, dry: false, ephemeral: false, laptop: false, skip_build: false, no_session_hook: false, system_user: false, populate_lifecycle: false };
     for a in std::env::args().skip(1) {
         match a.as_str() {
             "--dry-run" => o.dry = true,
@@ -40,6 +43,7 @@ fn parse_args() -> Result<Opts, String> {
             "--skip-build" => o.skip_build = true,
             "--no-session-hook" => o.no_session_hook = true,
             "--system-user" => o.system_user = true,
+            "--populate-lifecycle" => o.populate_lifecycle = true,
             s if s.starts_with("--") => return Err(format!("unknown flag: {s}")),
             s if o.instance.is_none() => o.instance = Some(s.to_string()),
             s => return Err(format!("extra argument: {s}")),
@@ -536,6 +540,16 @@ fn main() -> ExitCode {
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
     }
+    if opts.populate_lifecycle {
+        phase("phase 4.6: lifecycle population");
+        return match populate_phase(opts.dry) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("install: phase lifecycle population failed — {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
 
     // ---- phase -1: dependencies ----------------------------------------------------------
     // Install provides what its own doctor demands BEFORE the preflight judges the host
@@ -987,14 +1001,26 @@ fn main() -> ExitCode {
         info("lifecycle store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set (a fixture with no real Dolt server); spira-lc will not answer until install runs without it");
     } else if opts.dry {
         would("apply lifecycle/schema.sql, lifecycle/migrations/*.sql (spira-lc admin-migrate) and lifecycle/grants.sql as the Dolt admin");
+        if let Err(e) = populate_phase(true) {
+            eprintln!("install: phase lifecycle population failed — {e}");
+            return ExitCode::from(2);
+        }
     } else {
-        let port = nonempty_env("SPIRA_LC_PORT").and_then(|p| p.parse().ok()).or_else(|| dolt_data.as_ref().and_then(|dd| read_yaml_port(&format!("{dd}/dolt-server.yaml")))).unwrap_or(3307);
+        let port = lc_port(dolt_data.as_deref());
         match lifecycle_store_phase(port) {
             Ok(lines) => {
                 for l in lines {
                     info(&l);
                 }
                 changes += 1;
+                // ---- phase 4.6: lifecycle population (sp-k62xz8) --------------------------
+                // The store now exists and its user can write: every bead already in the
+                // beads database gets its row, once — before lc-serve starts answering for it.
+                phase("phase 4.6: lifecycle population");
+                if let Err(e) = populate_phase(false) {
+                    eprintln!("install: phase lifecycle population failed — {e}");
+                    return ExitCode::from(2);
+                }
                 // lc-serve.service was enabled in phase 4, before this store existed, and may
                 // have given up (StartLimitBurst): restart it now and require it to be active —
                 // fail closed, since an aeon cannot claim without it (sp-xfqnr).
@@ -1524,6 +1550,51 @@ fn same_user_credential_path() -> String {
         let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         spira_config::resolve::lc_credential_default(&env_map)
     })
+}
+
+/// The port the lifecycle store's Dolt listens on: `SPIRA_LC_PORT`, else the beads Dolt's own
+/// `dolt-server.yaml` (the store shares that server), else 3307.
+fn lc_port(dolt_data: Option<&str>) -> u16 {
+    nonempty_env("SPIRA_LC_PORT").and_then(|p| p.parse().ok()).or_else(|| dolt_data.and_then(|dd| read_yaml_port(&format!("{dd}/dolt-server.yaml")))).unwrap_or(3307)
+}
+
+/// Phase 4.6 (sp-k62xz8): the one-time lifecycle population — every bead in the beads
+/// database with no lifecycle row gets one, by spira-lc's own classifier
+/// (`install::populate`). Runs as the lifecycle user every other spira-lc caller connects as,
+/// over a direct connection (classify is never forwarded to lc-serve). Idempotent: a second
+/// run creates nothing. `SPIRA_INSTALL_LC_POPULATE_CONSIDERED` skips it, saying so.
+fn populate_phase(dry: bool) -> Result<(), String> {
+    if nonempty_env("SPIRA_INSTALL_LC_POPULATE_CONSIDERED").is_some() {
+        info("lifecycle population NOT run — SPIRA_INSTALL_LC_POPULATE_CONSIDERED is set; beads already in the database have no lifecycle row until install runs without it");
+        return Ok(());
+    }
+    let need = |k: &str| bootstrap::declared(k).ok_or_else(|| format!("{k} is declared empty — cannot locate what the population reads"));
+    let run_dir = need("SPIRA_RUN")?;
+    let inputs = install::populate::Inputs {
+        bd_bin: bootstrap::declared("SPIRA_BD").unwrap_or_else(|| "bd".into()),
+        bd_db: need("SPIRA_DB")?,
+        landstate_dir: format!("{run_dir}/landstate"),
+        queue_dir: need("SPIRA_QUEUE_DIR")?,
+        ask_label: bootstrap::declared("SPIRA_ASK_LABEL"),
+    };
+    if dry {
+        would(&format!("run: spira-lc {}", install::populate::args(&inputs).join(" ")));
+        return Ok(());
+    }
+    let port = lc_port(bootstrap::declared("SPIRA_DOLT_DATA").as_deref());
+    let counts = install::populate::run(&inputs, |args| {
+        // batch-job: one-time install population of the lifecycle store; bounded at 600 s by timeout(1).
+        let out = Command::new("timeout").arg("600").arg("spira-lc").args(args).env("SPIRA_LC_PORT", port.to_string()).stdin(Stdio::null()).output();
+        match out {
+            Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (127, format!("cannot run spira-lc: {e}")),
+        }
+    })?;
+    info(&format!("lifecycle population: {} bead(s) in the database, {} row(s) created, {} already present", counts.beads, counts.created, counts.present));
+    if let Some(w) = install::populate::unknown_repo_line(&counts.unknown_repo) {
+        eprintln!("install: WARNING: {w}");
+    }
+    Ok(())
 }
 
 /// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
