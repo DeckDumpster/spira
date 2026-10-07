@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use spira_config::lc_state;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::host::{Io, Spec};
 use crate::lifecycle::{hold_event, unhold_event};
@@ -219,6 +219,30 @@ impl<'a> Sentinel<'a> {
         })
     }
 
+    fn poison_tip_dir(&self) -> PathBuf {
+        self.cfg.run.join("poison-tip")
+    }
+
+    fn branch_tip(&self, id: &str, labels: &str) -> Option<String> {
+        let root = self.repo_root(&self.repo_of(labels))?;
+        let o = self.git(&root, &["rev-parse", "--verify", "-q", &format!("refs/heads/spira/{id}")]);
+        o.ok().then(|| o.stdout.trim().to_string()).filter(|t| !t.is_empty())
+    }
+
+    fn poison_tip_record(&self, id: &str, labels: &str) {
+        let Some(tip) = self.branch_tip(id, labels) else { return };
+        let dir = self.poison_tip_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(id), format!("{tip}\n"));
+    }
+
+    /// The tip the bead was poisoned at, when its branch has moved since.
+    fn poison_tip_moved(&self, id: &str, labels: &str) -> Option<(String, String)> {
+        let was = std::fs::read_to_string(self.poison_tip_dir().join(id)).ok()?.trim().to_string();
+        let now = self.branch_tip(id, labels)?;
+        (!was.is_empty() && was != now).then_some((was, now))
+    }
+
     fn poison_write(&self, id: &str, n: u32) {
         let ev = hold_event(
             "poison",
@@ -347,6 +371,7 @@ impl<'a> Sentinel<'a> {
                 let shown = Some(shown);
                 if tok.contains("poison") {
                     self.poison_write(id, n);
+                    self.poison_tip_record(id, labels);
                     let note = format!(
                         "Poisoned after {n} in_progress transition(s) without landing. {POISON_NOTE}hold stands.",
                     );
@@ -531,6 +556,21 @@ impl<'a> Sentinel<'a> {
         }
         let counts = self.claim_counts(&held);
         for id in held {
+            let labels = snap.get(id).map(|b| b.labels_csv()).unwrap_or_default();
+            if let Some((was, now)) = self.poison_tip_moved(id, &labels) {
+                let cause = format!("tip-changed: {} -> {}", &was[..was.len().min(12)], &now[..now.len().min(12)]);
+                let o = self.h.run(Spec::args_owned(
+                    self.cfg.claim_bin.clone(),
+                    vec!["unpoison".into(), "--bead".into(), id.into(), "--cause".into(), cause.clone()],
+                ).err(Io::Inherit));
+                if o.ok() {
+                    let _ = std::fs::remove_file(self.poison_tip_dir().join(id));
+                    self.progress(&format!("CHECK4 {id}: poison lifted — {cause}"));
+                } else {
+                    self.log(&format!("CHECK4 {id}: tip moved but unpoison failed (rc={}) — retries next pass", o.rc));
+                }
+                continue;
+            }
             let n = match &counts {
                 Ok(c) => c.get(id).map(|c| c.attempts).unwrap_or(0),
                 Err(_) => {

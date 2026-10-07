@@ -312,12 +312,12 @@ impl drive::RoundOps for LiveOps<'_> {
         suspects_in(self.wt, &self.changed, suite, members)
     }
 
-    fn eject(&mut self, member: &Member, suites: &[String]) {
+    fn eject(&mut self, member: &Member, suites: &[String], owner: bool) {
         let fails: Vec<(String, String)> = suites
             .iter()
             .filter_map(|s| io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l)))
             .collect();
-        io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails);
+        io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails, owner);
         println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
     }
 
@@ -545,7 +545,7 @@ fn install_fault_outcome(repo: &Repo, ops: &mut LiveOps, members: &[Member], fau
         InstallFault::Owner(id) => {
             println!("batcher {}: install fault → owner {id}", repo.name);
             if let Some(m) = members.iter().find(|m| &m.id == id) {
-                ops.eject(m, &install);
+                ops.eject(m, &install, true);
             }
         }
         InstallFault::Base => {

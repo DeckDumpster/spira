@@ -2550,3 +2550,39 @@ fn check4_stale_clear_reads_the_lifecycle_row_not_bd_status() {
     assert!(r.find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-h").is_none(), "{:#?}", r.lines());
     assert!(!sink.has("stale poison cleared"), "{}", sink.text());
 }
+
+fn tip_world(tag: &str, recorded: &str, now: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
+    let (w, r, sink, clock) = audit_world(tag);
+    std::fs::create_dir_all(w.run.join("poison-tip")).unwrap();
+    std::fs::write(w.run.join("poison-tip/sp-h"), format!("{recorded}\n")).unwrap();
+    let now = now.to_string();
+    r.on(move |s| {
+        if s.prog == "git" && s.args.iter().any(|a| a == "rev-parse") && s.args.iter().any(|a| a == "refs/heads/spira/sp-h") {
+            ok(&format!("{now}\n"))
+        } else if s.prog == "spira-claim" && s.args[0] == "unpoison" {
+            ok("")
+        } else {
+            None
+        }
+    });
+    (w, r, sink, clock)
+}
+
+#[test]
+fn a_poison_is_lifted_with_its_cause_when_the_beads_tip_has_moved() {
+    let (w, r, sink, clock) = tip_world("c4tip-moved", "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb");
+    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[("SPIRA_SKIP_RECLAIM", "1")], Some(&["spira\t/src/spira\torigin/main\t0"]));
+    let un = r.find(|s| s.prog == "spira-claim" && s.args[0] == "unpoison").expect("no unpoison call");
+    assert!(un.args.iter().any(|a| a == "sp-h"), "{:?}", un.args);
+    assert!(un.args.iter().any(|a| a.starts_with("tip-changed: aaaaaaaaaaaa -> bbbbbbbbbbbb")), "{:?}", un.args);
+    assert!(sink.has("CHECK4 sp-h: poison lifted — tip-changed"), "{}", sink.text());
+    assert!(!w.run.join("poison-tip/sp-h").exists());
+}
+
+#[test]
+fn a_poison_whose_tip_has_not_moved_is_not_lifted_by_the_tip_rule() {
+    let (w, r, sink, clock) = tip_world("c4tip-same", "aaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa");
+    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[("SPIRA_SKIP_RECLAIM", "1")], Some(&["spira\t/src/spira\torigin/main\t0"]));
+    assert!(r.find(|s| s.prog == "spira-claim" && s.args[0] == "unpoison").is_none());
+    assert!(!sink.has("poison lifted — tip-changed"));
+}
