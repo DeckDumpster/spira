@@ -34,7 +34,7 @@ nowant "a baseline ask is not announced" "NEW ASK sp-old" "$out"
 want "the ask is appended to the inbox" "[watch:asks] NEW ASK sp-new: decide X" "$(cat "$INBOX")"
 is "the cursor is moved past the delivered line" "1" "$(cat "$CUR" 2>/dev/null)"
 
-rm -f "$CUR" "$TMP/run/watchd/asks.health"
+rm -f "$LOG" "$CUR" "$TMP/run/watchd/asks.health"
 echo '[{"id":"sp-old","title":"already open"}]' > "$ASKS"
 (WINBOX="$TMP" arun watch --interval 1 --ticks 6 >> "$LOG") &
 wpid=$!
