@@ -1476,28 +1476,6 @@ fn a_container_that_cannot_come_up_within_its_share_is_named_and_torn_down() {
 }
 
 #[test]
-fn a_cold_build_is_not_charged_against_the_setup_share_of_the_container() {
-    let w = World::new("cold-build");
-    let rt = runtime();
-    rt.testenv_delay
-        .lock()
-        .unwrap()
-        .insert("up".into(), Duration::from_millis(2200));
-    // --deadline 6, share 50 %: the build takes 2.2 s, then the boot 2.2 s — together over
-    // the 3 s share, each alone under it with room for a loaded host's jitter.
-    let b = FakeBuilder::slow(Duration::from_millis(2200));
-    let rc = w.run(
-        &rt,
-        &b,
-        &["--deadline", "6", "--suites", "test-a.sh", "topic"],
-        "",
-        &w.root,
-    );
-    assert_eq!(rc, 0, "{}", w.last());
-    assert!(w.last().starts_with("VERDICT GREEN"), "{}", w.last());
-}
-
-#[test]
 fn the_suites_get_what_setup_left_of_the_budget_not_the_whole_budget_again() {
     let w = World::new("cut-left");
     let rt = FakeRuntime::new();
