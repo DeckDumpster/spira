@@ -2202,9 +2202,9 @@ fn a_landed_submitted_member_is_closed_citing_the_sha_and_its_branch_reaped() {
 }
 
 #[test]
-fn close_on_land_leaves_a_closed_or_never_submitted_bead_alone() {
+fn close_on_land_leaves_a_never_submitted_bead_alone_whatever_bd_status_says() {
     for row in [
-        BeadRow { id: "sp-a".into(), status: Some("closed".into()), labels: vec!["spira-submitted".into()], ..Default::default() }, // literal-ok: fixture vocabulary
+        BeadRow { id: "sp-a".into(), status: Some("closed".into()), labels: vec!["repo:spira".into()], ..Default::default() }, // literal-ok: fixture vocabulary
         BeadRow { id: "sp-a".into(), status: Some("open".into()), labels: vec!["repo:spira".into()], ..Default::default() },
     ] {
         let t = T::new(LandMode::Push);

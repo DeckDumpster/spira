@@ -74,10 +74,6 @@ fn superseded(b: &Value) -> bool {
     })
 }
 
-fn status(b: &Value) -> Option<&str> {
-    b.get("status").and_then(Value::as_str)
-}
-
 pub struct Ctx<'a> {
     pub w: &'a dyn World,
     pub repo: &'a Path,
@@ -110,7 +106,7 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
 
     // SQUASH-MERGED: a merged PR whose head is still the branch tip captured every commit.
     // The network call, reached only here.
-    if b.is_some_and(|b| status(b) == Some("closed") || labels(b).iter().any(|l| l == c.submitted_label)) {
+    if b.is_some_and(|b| labels(b).iter().any(|l| l == c.submitted_label)) || (b.is_some() && c.w.lc_past_builder(id)) {
         let tip = g.rev_parse(br);
         if let Some(pr) = c.w.pr_merged_tip(c.repo, br) {
             if !pr.is_empty() && tip.as_deref() == Some(pr.as_str()) {
@@ -130,7 +126,7 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
         return Disp::SendOtherPr;
     }
 
-    if b.is_some_and(|b| b.get("status").is_some()) {
+    if b.is_some() {
         return Disp::KeepUnlanded;
     }
     // No bead, and not an ancestor (that one was sent at the first check): real commits

@@ -235,7 +235,7 @@ impl Seam for Fake {
                 .borrow()
                 .get(id)
                 .cloned()
-                .unwrap_or_else(|| "open".into()),
+                .unwrap_or_else(|| "READY".into()),
         )
     }
     fn reopen(&self, id: &str, cause: &str, note: &str) {
@@ -555,8 +555,8 @@ fn a_live_holder_blocks_in_progress_lease() {
     let seam = fx.seam();
     seam.status
         .borrow_mut()
-        .insert("sp-ll".into(), "in_progress".into());
-    assert_busy(&fx, &seam, "sp-ll", &old, "in_progress");
+        .insert("sp-ll".into(), "WORKING".into());
+    assert_busy(&fx, &seam, "sp-ll", &old, "WORKING");
 }
 
 #[test]
@@ -707,10 +707,10 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     // testkit::write_exe, never write + chmod: a write descriptor held while another test
     // thread forks makes the exec fail with ETXTBSY (testkit/DESIGN.md).
     testkit::write_exe(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
-    let bd = fx.root.join("bd");
-    testkit::write_exe(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
+    let lc = fx.root.join("spira-lc");
+    testkit::write_exe(&lc, "#!/bin/sh\ncase \"$2\" in sp-ip) echo '{\"bead\":{\"bead_id\":\"sp-ip\",\"state\":\"WORKING\"}}';; *) exit 1;; esac\n");
 
-    let mut s = LibSeam::new(home.clone(), Some(fx.root.to_path_buf()), bd.to_string_lossy().into(), fx.run.clone());
+    let mut s = LibSeam::new(home.clone(), lc.to_string_lossy().into(), fx.run.clone());
     s.queue_bin = queue;
     let note = "multi\nline $(not expanded) 'quoted'";
     s.reopen("sp-1", "rebase-conflict", note);
@@ -729,8 +729,8 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     testkit::write_exe(&s.queue_bin, "#!/bin/sh\nexit 0\n");
     assert_eq!(s.submit("spira/sp-1", "fixture").0, Gate::Green);
 
-    assert_eq!(s.bead_status("sp-ip"), BeadStatus::Known("in_progress".into()));
+    assert_eq!(s.bead_status("sp-ip"), BeadStatus::Known("WORKING".into()));
     assert_eq!(s.bead_status("sp-unknown"), BeadStatus::Known(String::new()));
-    let dead = LibSeam::new(home, Some(fx.root.to_path_buf()), "/nonexistent/bd".into(), fx.run.clone());
-    assert_eq!(dead.bead_status("sp-ip"), BeadStatus::Unreachable, "no positive control, no absence");
+    let dead = LibSeam::new(home, "/nonexistent/spira-lc".into(), fx.run.clone());
+    assert_eq!(dead.bead_status("sp-ip"), BeadStatus::Unreachable, "a machine that cannot answer proves no absence");
 }

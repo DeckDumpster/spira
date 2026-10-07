@@ -47,6 +47,8 @@ struct Fake {
     prs: BTreeMap<String, String>,
     /// Beads the lifecycle record has LANDED (`spira-lc state`).
     lc_landed: BTreeSet<String>,
+    /// Beads whose lifecycle row is past the builder (SUBMITTED or later).
+    lc_past: BTreeSet<String>,
     base: Option<Base>,
     wts: PathBuf,
     destroy_fails: bool,
@@ -115,6 +117,9 @@ impl World for Fake {
     }
     fn prune(&self, _repo: &Path) {
         self.call("prune".into());
+    }
+    fn lc_past_builder(&self, id: &str) -> bool {
+        self.lc_past.contains(id) || self.lc_landed.contains(id)
     }
     fn lc_landed(&self, id: &str) -> bool {
         self.lc_landed.contains(id)
@@ -195,7 +200,8 @@ fn fixture() -> (Fx, Fake) {
     git(&r, &["checkout", "-q", "main"]);
     commit_file(&r, "shared-sq.txt", "line1\nline2\n", "sp-sq: squash-merge (#1)");
     commit_file(&r, "shared-sq.txt", "line1\nline2\nline3\n", "unrelated: advance shared-sq.txt");
-    f.put("sp-sq", b("closed"));
+    f.put("sp-sq", b("open"));
+    f.lc_past.insert("sp-sq".into());
     f.prs.insert("spira/sp-sq".into(), sq_tip.clone());
     // sp-otherpr: the lifecycle record has it LANDED, every commit patch-equivalent upstream.
     // sp-cherry: the LANDED is about the past; a later commit is unapplied. Both also carry a

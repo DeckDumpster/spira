@@ -76,13 +76,13 @@ pub fn witness(run: &Path, id: &str, seam: &dyn Seam) -> Option<String> {
             }
         }
     }
-    // 3/4. the lease: in_progress, or a database that cannot prove otherwise.
+    // 3/4. the lease: a WORKING row, or a machine that cannot prove otherwise.
     match seam.bead_status(id) {
         BeadStatus::Unreachable => {
-            Some("the bead database did not answer, so the status witness proves nothing".into())
+            Some("the lifecycle machine did not answer, so the claim witness proves nothing".into())
         }
-        BeadStatus::Known(s) if s == "in_progress" => {
-            Some("in_progress — the lease has not been released".into())
+        BeadStatus::Known(s) if spira_config::lc_state::is_working(&s) => {
+            Some("WORKING — the lease has not been released".into())
         }
         BeadStatus::Known(_) => None,
     }

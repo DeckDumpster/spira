@@ -128,12 +128,6 @@ fn main() -> ExitCode {
     let log = PathBuf::from(cfg_or_exit!("SPIRA_REBASE_STALE_LOG"));
     let git_name = cfg_or_exit!("SPIRA_GIT_NAME");
     let git_email = cfg_or_exit!("SPIRA_GIT_EMAIL");
-    // `SPIRA_DB` deliberately resolves to an empty string to mean "no database for this
-    // run" (spira/conf.d/SPIRA_DB) — that emptiness is the declared value, not a missing one.
-    let db = cfg_or_exit!("SPIRA_DB");
-    let db = if db.is_empty() { None } else { Some(PathBuf::from(db)) };
-    let bd = cfg_or_exit!("SPIRA_BD");
-
     let config = Config {
         log,
         git_name,
@@ -141,7 +135,7 @@ fn main() -> ExitCode {
         lock_wait: Duration::from_secs(60),
         run: run.clone(),
     };
-    let seam = LibSeam::new(home, db, bd, run.clone());
+    let seam = LibSeam::new(home, spira_config::lifecycle_row::lc_bin(), run.clone());
     let rules = Rules::standard(Some(run.join("rebase-stale.target")));
     let r = engine::run(&id, repo_arg.as_deref(), &config, &seam, &rules);
     if let Some(s) = r.stdout {

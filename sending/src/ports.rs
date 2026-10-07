@@ -57,6 +57,9 @@ pub trait World {
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool;
     /// spira_prune_worktrees.
     fn prune(&self, repo: &Path);
+    /// The lifecycle row says the builder has handed the bead on (SUBMITTED or later — what bd
+    /// `closed` used to mean). An unreadable record or a missing row is not past the builder.
+    fn lc_past_builder(&self, id: &str) -> bool;
     /// `spira-lc state <id>` reads LANDED: the lifecycle record says the bead landed. An
     /// unreadable record or a missing row is not LANDED (cannot prove it landed).
     fn lc_landed(&self, id: &str) -> bool;

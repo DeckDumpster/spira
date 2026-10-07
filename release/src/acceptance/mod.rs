@@ -360,17 +360,6 @@ pub fn bd_json(out: &str) -> Option<Vec<serde_json::Value>> {
     }
 }
 
-/// Whether `bd show <id> --json` says the aeon's close is recorded: status closed, or open
-/// carrying `spira-submitted` (sp-qsona: only the landing pass closes a work bead).
-/// Unreadable is not finished.
-pub fn bead_finished(show_json: &str) -> bool {
-    let Some(v) = bd_json(show_json) else { return false };
-    let Some(r) = v.first() else { return false };
-    let closed = r.get("status").and_then(|s| s.as_str()) == Some("closed");
-    let submitted = r.get("labels").and_then(|l| l.as_array()).is_some_and(|l| l.iter().any(|x| x.as_str() == Some("spira-submitted")));
-    closed || submitted
-}
-
 /// Whether a lifecycle history (`lifecycle_states`) shows the model's work handed off: it
 /// reached SUBMITTED, or anything only a submitted bead can reach.
 pub fn lifecycle_submitted(states: &[String]) -> bool {
