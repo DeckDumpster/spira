@@ -153,8 +153,16 @@ fn main() {
         }
         Some("open-trigger-count") => {
             let labels = sub_args.get(1).cloned().unwrap_or_default();
-            println!("{}", world.open_trigger_count(&labels));
-            return;
+            match world.open_trigger_count(&labels) {
+                Ok(n) => {
+                    println!("{n}");
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("maechen-trigger: cannot count open triggers: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         _ => {}
     }
@@ -190,7 +198,13 @@ fn run(world: &dyn World, cfg: &Cfg) -> bool {
     let labels = engine::trigger_labels(&cfg.scope_label, maechen_label);
 
     // DEDUP — at most one open-or-in-progress trigger bead at a time.
-    let open_count = world.open_trigger_count(&labels);
+    let open_count = match world.open_trigger_count(&labels) {
+        Ok(n) => n,
+        Err(e) => {
+            world.log(&format!("cannot count open triggers: {e} — refusing to file, retrying next pass"));
+            return true;
+        }
+    };
     if open_count > 0 {
         world.log(&format!(
             "trigger already open or in_progress ({open_count} bead(s) with labels [{labels}]) — skipping"
@@ -328,6 +342,7 @@ mod tests {
     /// own orchestration without a database, a git checkout or the `lib.sh` seam.
     #[derive(Default)]
     struct FakeWorld {
+        open_count_err: Option<String>,
         home_repo: String,
         repo_root: HashMap<String, PathBuf>,
         /// `landref` answers keyed by the exact `repo_name_or_path` argument — deliberately
@@ -356,8 +371,8 @@ mod tests {
         fn now(&self) -> i64 {
             0
         }
-        fn open_trigger_count(&self, _labels: &str) -> u64 {
-            0
+        fn open_trigger_count(&self, _labels: &str) -> Result<u64, String> {
+            self.open_count_err.clone().map_or(Ok(0), Err)
         }
         fn lane_admitted(&self, _lane: &str) -> bool {
             true
@@ -387,6 +402,26 @@ mod tests {
             self.created.borrow_mut().push((title.to_string(), labels.to_string(), description.to_string()));
             Ok(())
         }
+    }
+
+    #[test]
+    fn run_refuses_to_file_when_the_open_trigger_count_cannot_be_read() {
+        let mut w = FakeWorld::default();
+        w.open_count_err = Some("lifecycle state unreadable".into());
+        let s = || "x".to_string();
+        let cfg = Cfg {
+            spira_run: PathBuf::new(),
+            db: s(),
+            bd: s(),
+            repo_map: None,
+            labels: LaneLabels { plan: s(), incident: s(), groomer: s(), maechen: s(), spike: s(), czar: s() },
+            scope_label: s(),
+            max_gap: 1,
+            landing_interval: 1,
+            max_beads: 1,
+        };
+        assert!(run(&w, &cfg));
+        assert!(w.created.borrow().is_empty());
     }
 
     #[test]
