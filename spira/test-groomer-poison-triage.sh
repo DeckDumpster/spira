@@ -51,8 +51,21 @@ exit 0
 STUB
 chmod +x "$STUB_BD"
 
-# A close goes through spira-lc (sp-3fue0j); with no lifecycle store here, it closes the store.
-lc_close_stub "$T/lc" "$STUB_BD" "$T/fixture.db"
+# The lifecycle machine, standing in: poison is the ROW's hold (sp-psztcc), so bead ids starting
+# "poisoned-" are held poison here, whatever bd's labels say; an unhold is logged beside bd's
+# calls; a close (sp-3fue0j) closes the store, as the real verb does for a row it ends.
+mkdir -p "$T/lc"
+cat > "$T/lc/spira-lc" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+    held) case "\$2" in poisoned-*) [ "\$3" = poison ] && exit 0 ;; esac; exit 1 ;;
+    unhold) printf 'lc unhold %s %s\n' "\$2" "\$3" >> "\$BD_LOG_PATH"; exit 0 ;;
+    close) id="\$2"; reason="\$(cat)"; exec "$STUB_BD" -C "$T/fixture.db" close "\$id" --force --reason "\$reason" ;;
+esac
+exit 0
+STUB
+chmod +x "$T/lc/spira-lc"
+SPIRA_LC_BIN="$T/lc/spira-lc"; PATH="$T/lc:$PATH"
 run_groomer() {
     tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUN"
     # SPIRA_HOME EXPLICITLY: groomer no longer derives it from its own binary location —
@@ -101,7 +114,7 @@ echo "triage-poison --verdict work-fault on a bead that does not carry spira-poi
 : > "$BD_LOG"
 out="$(run_groomer triage-poison clean-bead --verdict work-fault --evidence 'nothing to triage')"; rc=$?
 is     "not-poisoned bead exits 1"   1              "$rc"
-want   "error mentions spira-poison" "spira-poison" "$out"
+want   "error says no poison is held" "holds no poison" "$out"
 nowant "no label remove issued"      "label remove" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
@@ -115,7 +128,8 @@ log="$(cat "$BD_LOG")"
 is     "triage-poison exits 0"                  0                  "$rc"
 want   "output confirms the triage"             "TRIAGED poisoned-strand verdict=work-fault" "$out"
 want   "a poison.cleared event floors attempts" "poison.cleared"   "$log"
-want   "spira-poison label is removed"          "label remove poisoned-strand spira-poison" "$log"
+want   "the poison hold is lifted"              "lc unhold poisoned-strand poison" "$log"
+nowant "no label is removed (poison is a hold)" "label remove" "$log"
 nowant "no unjudged credit is written (it WAS the work's fault)" "unjudged" "$log"
 want   "a note names the triage"                "note poisoned-strand" "$log"
 want   "the note says WORK'S FAULT"             "WORK'S FAULT"     "$log"
@@ -127,7 +141,7 @@ nowant "poison is never re-added" "label add poisoned-strand spira-poison" "$log
 
 # ==========================================================================================
 echo
-echo "triage-poison --verdict drop: closes the bead and labels it spira-dropped"
+echo "triage-poison --verdict drop: closes the bead (DROPPED on its row), no state label"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer triage-poison poisoned-litter --verdict drop --evidence 'fixture-shaped, filed by mistake, not worth fixing')"; rc=$?
@@ -136,7 +150,7 @@ log="$(cat "$BD_LOG")"
 is   "triage-poison drop exits 0"        0                      "$rc"
 want "output confirms DROPPED"           "DROPPED poisoned-litter" "$out"
 want "the bead is closed"                "close poisoned-litter"   "$log"
-want "the bead is labeled spira-dropped" "label add poisoned-litter spira-dropped" "$log"
+nowant "no spira-dropped label (the row says DROPPED)" "spira-dropped" "$log"
 
 echo
 tl_summary

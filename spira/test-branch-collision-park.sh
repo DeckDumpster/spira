@@ -136,7 +136,9 @@ echo "case 2 — park_branch_collisions parks a real collision, but cuts an inhe
 park_out2="$(park_branch_collisions "$out")"
 
 labels_root="$(bdq label list sp-root 2>/dev/null)"
-want "case 2: sp-root (own branch squatted) is labeled $SPIRA_ASK_LABEL" "$SPIRA_ASK_LABEL" "$labels_root"
+# Parked by the row's ask hold (the sentinel's unit tests assert the spira-lc hold call), never
+# the ask label (sp-psztcc); overseer stays, for the decisions pane.
+nowant "case 2: sp-root (own branch squatted) carries no $SPIRA_ASK_LABEL label" "$SPIRA_ASK_LABEL" "$labels_root"
 want "case 2: sp-root (own branch squatted) is labeled overseer"          "overseer"        "$labels_root"
 
 labels_child="$(bdq label list sp-child 2>/dev/null)"

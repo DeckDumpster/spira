@@ -1929,12 +1929,14 @@ fn sending_7c_7d_count_what_their_seams_report() {
     assert!(sink.has("ACT freed 1 branch-collision worktree(s)"));
     assert!(sink.has("ACT unlabeled 1 inherited branch-collision bead(s)"));
     assert!(sink.has("CHECK7d: 1 bead(s) whose recorded branch is held by another bead's worktree — parking with needs-operator")); // literal-ok: asserts log text built from the fixture
+    // Parked by the row's ask hold and the overseer label, never the ask label (sp-psztcc).
     assert!(
-        r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]) // literal-ok: the fixture's SPIRA_ASK_LABEL default
+        r.find(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("hold") && s.args.get(1).map(String::as_str) == Some("sp-c3") && s.args.get(2).map(String::as_str) == Some("ask"))
             .is_some(),
         "sp-c3 (no free, no inherited label) is parked: {:#?}",
         r.lines()
     );
+    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]).is_none(), "{:#?}", r.lines()); // literal-ok: the fixture's SPIRA_ASK_LABEL default
     assert!(r.find(|s| s.prog == "sending" && s.args.first().map(String::as_str) == Some("destroy-worktree")).is_some());
 
     // the next audit finds every base unchanged and does not walk

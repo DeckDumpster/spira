@@ -1514,7 +1514,8 @@ fn rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons() {
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
-    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr")); // literal-ok: fixture/fallback
+    // Parked by the row's ask hold (asserted below), never an ask label (sp-psztcc).
+    assert!(!w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr")); // literal-ok: fixture/fallback
     assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("overseer")), "{:?}", w.labels.get("sp-rr"));
     assert!(w.notes.iter().any(|(id, n)| id == "sp-rr" && n.contains("RAPID-RECUR")), "{:?}", w.notes);
     assert!(o.log.contains("RAPID-RECUR: 3 consecutive sub-10s runs"), "{}", o.log);

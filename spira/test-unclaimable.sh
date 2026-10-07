@@ -65,7 +65,7 @@ spike|${SCOPE},spike|${EXC}
 # classify <beads-json> [parts] [all_parts] -> unclaimable.py's stdout
 classify() {
     local beads_json="$1" parts="${2:-$FULL_PARTS}" all_parts="${3:-$FULL_PARTS}"
-    PARTS="$parts" ALL_PARTS="$all_parts" \
+    PARTS="$parts" ALL_PARTS="$all_parts" HELD_IDS="${HELD_IDS:-}" \
     SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_CI_LABEL="$CI" SPIRA_ASK_LABEL="$ASK" \
     SPIRA_GROOM_ASK_LABEL="$GROOM_ASK" \
         unclaimable.py <<< "$beads_json"
@@ -117,10 +117,13 @@ out2="$(classify "[$(bead sp-unc6c "")]")"
 want "in-scope no-partition bead IS reported (positive control)" "UNCLAIMABLE sp-unc6c" "$out2"
 
 echo
-echo "case 7 — spira-poison and ask-label beads are excluded (have their own check)"
-out="$(classify "[$(bead sp-unc7a spira-poison), $(bead sp-unc7b "$ASK")]")"
-nowant "poisoned bead not flagged by unclaimable check"   "sp-unc7a" "$out"
-nowant "ask-label bead not flagged by unclaimable check"  "sp-unc7b" "$out"
+echo "case 7 — beads the lifecycle machine holds poison/ask are excluded (they have their own check);"
+echo "         a hold LABEL alone is not a hold (sp-psztcc)"
+out="$(HELD_IDS=sp-unc7a,sp-unc7b classify "[$(bead sp-unc7a ""), $(bead sp-unc7b "")]")"
+nowant "poison-held bead not flagged by unclaimable check" "sp-unc7a" "$out"
+nowant "ask-held bead not flagged by unclaimable check"    "sp-unc7b" "$out"
+out="$(classify "[$(bead sp-unc7c spira-poison)]")"
+want "a stale spira-poison label with no hold is still judged (positive control)" "UNCLAIMABLE sp-unc7c" "$out"
 
 echo
 echo "case 7b — a groom-ask bead (already escalated to the operator) is excluded (sp-recur-unclaimable)"
