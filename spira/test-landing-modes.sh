@@ -64,12 +64,12 @@ fixture() {
     local mode="$1"
     REPONAME="$mode-repo"; REPO="$TMP/$mode/repo"; REMOTE="$TMP/$mode/remote.git"
     mkdir -p "$TMP/$mode"
-    git init -q --bare -b main "$REMOTE"
-    git init -q -b main "$REPO"
-    git -C "$REPO" commit -q --allow-empty -m base
-    git -C "$REPO" remote add origin "$REMOTE"
-    git -C "$REPO" push -q origin main
-    git -C "$REPO" fetch -q origin
+    timeout 5 git init -q --bare -b main "$REMOTE"
+    timeout 5 git init -q -b main "$REPO"
+    timeout 5 git -C "$REPO" commit -q --allow-empty -m base
+    timeout 5 git -C "$REPO" remote add origin "$REMOTE"
+    timeout 5 git -C "$REPO" push -q origin main
+    timeout 5 git -C "$REPO" fetch -q origin
     printf '%s | %s | %s | origin/main | | |\n' "$REPONAME" "$REPO" "$mode" > "$SH/land-map"
     rm -rf "$RUN/submitted" "$RUN/landstate" "$RUN/tip-at-gate"
     rm -f "$RUN/events.log"; : > "$EMITTED"; : > "$FORGE_LOG"; : > "$FORGE_PRS"
@@ -82,10 +82,10 @@ JSONL
 # closed_branch <id> — a closed bead labelled for the fixture repository, with one commit.
 closed_branch() {
     local id="$1"
-    git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
+    timeout 5 git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
     printf 'work for %s\n' "$id" > "$RUN/worktree/$id/$id.txt"
-    git -C "$RUN/worktree/$id" add -A
-    git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
+    timeout 5 git -C "$RUN/worktree/$id" add -A
+    timeout 5 git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":["repo:%s"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$REPONAME" "$id" | testdb_seed
 }
@@ -146,7 +146,7 @@ out="$(runpass pr)"
 want    "pr: a pull request is opened"          "opened a pull request for spira/sp-prd" "$out"
 is      "pr: the forge was asked to create exactly one" 1 "$(grep -c '^pr-create' "$FORGE_LOG")"
 is      "pr: the base did not move"             "$base0" "$(remote_main)"
-git -C "$REMOTE" rev-parse --verify -q refs/heads/spira/sp-prd >/dev/null \
+timeout 5 git -C "$REMOTE" rev-parse --verify -q refs/heads/spira/sp-prd >/dev/null \
     && ok "pr: the branch was pushed to the remote" || bad "pr: the branch was pushed to the remote" "$out"
 is      "pr: the bead stays closed until the merge" closed "$(status_of sp-prd)"
 nowant  "pr: no land event"                     "kind: bead.landed" "$(events)"
