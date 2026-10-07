@@ -74,13 +74,15 @@ WantedBy=default.target
 EOF
 
 # Copy the unit file into the container's user systemd configuration directory.
-podman exec "$CNAME" bash -c 'mkdir -p /run/user/1001/systemd/user' 2>/dev/null || true
+podman exec "$CNAME" bash -c 'mkdir -p /run/user/1001/systemd/user' 2>/dev/null || true # batch-job: container fixture call; image pulls and starts exceed 5 s
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman cp "$TMP/spira-probe.service" \
     "${CNAME}:/run/user/1001/systemd/user/spira-probe.service"
 cp_rc=$?
 iszero "unit file copied into container" "$cp_rc"
 
 # Reload the user daemon to pick up the new unit.
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser \
     -e XDG_RUNTIME_DIR=/run/user/1001 \
     -e DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1001/bus" \
@@ -91,6 +93,7 @@ iszero "daemon-reload exits 0" "$?"
 echo
 echo "start — activate the unit:"
 # ==========================================================================
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser \
     -e XDG_RUNTIME_DIR=/run/user/1001 \
     -e DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1001/bus" \
@@ -98,6 +101,7 @@ podman exec --user spirauser \
 iszero "systemctl --user start exits 0" "$?"
 
 # Verify the unit reached active state.
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 status_out="$(podman exec --user spirauser \
     -e XDG_RUNTIME_DIR=/run/user/1001 \
     -e DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1001/bus" \
@@ -108,6 +112,7 @@ is "unit is active after start" "active" "$status_out"
 echo
 echo "stop — deactivate the unit:"
 # ==========================================================================
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser \
     -e XDG_RUNTIME_DIR=/run/user/1001 \
     -e DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1001/bus" \
@@ -115,6 +120,7 @@ podman exec --user spirauser \
 iszero "systemctl --user stop exits 0" "$?"
 
 # After stop, is-active must return non-zero (inactive).
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser \
     -e XDG_RUNTIME_DIR=/run/user/1001 \
     -e DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1001/bus" \

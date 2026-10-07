@@ -51,7 +51,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" branch local/main main
 
 RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixtrans; RELEASES="$TMP/releases"
@@ -157,7 +157,7 @@ land() {
     queue land-local "$REPONAME" --head "$head" --members "$id:$tip" >/dev/null
 }
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -269,9 +269,9 @@ PRE_MAIN="$(remote_main)"
 PRE_LOCAL="$(localmain)"
 
 CLONE="$TMP/clone"
-git clone -q "$REMOTE" "$CLONE"
+timeout 5 git clone -q "$REMOTE" "$CLONE"
 git -C "$CLONE" commit -q --allow-empty -m "foreign: not from local/main"
-git -C "$CLONE" push -q origin main
+timeout 5 git -C "$CLONE" push -q origin main
 FOREIGN="$(git -C "$CLONE" rev-parse main)"
 
 out="$(queue to-forge "$REPONAME")"; rc=$?
@@ -293,9 +293,9 @@ out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
 FORWARD_TIP="$(remote_main)"
 
 # Advance the forge further, directly, as ordinary queue.forge work would.
-git clone -q "$REMOTE" "$TMP/clone-2"
+timeout 5 git clone -q "$REMOTE" "$TMP/clone-2"
 git -C "$TMP/clone-2" commit -q --allow-empty -m "forge-only: landed while in queue.forge mode"
-git -C "$TMP/clone-2" push -q origin main
+timeout 5 git -C "$TMP/clone-2" push -q origin main
 ADVANCED="$(git -C "$TMP/clone-2" rev-parse main)"
 [ "$ADVANCED" != "$FORWARD_TIP" ] && ok "6 setup: the forge actually advanced" \
     || bad "6 setup: the forge actually advanced" "did not move"

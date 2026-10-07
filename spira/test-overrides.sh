@@ -30,7 +30,7 @@ git -C "$ORIGIN" add spira/ brief.txt
 git -C "$ORIGIN" commit -q -m "base"
 BASE_COMMIT="$(git -C "$ORIGIN" rev-parse HEAD)"
 
-git clone -q "$ORIGIN" "$REPO"
+timeout 5 git clone -q "$ORIGIN" "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
 git -C "$REPO" remote set-head origin --auto >/dev/null 2>&1 || true

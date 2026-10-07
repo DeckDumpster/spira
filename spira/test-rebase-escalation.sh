@@ -78,6 +78,7 @@ body_of() {
 count_new() { ls "$SPIRA_MAIL/$1/new" 2>/dev/null | wc -l | tr -d ' '; }
 
 needs_ryan_count() {
+    # batch-job: fixture bd call against the suite's throwaway store
     "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --status open --label "${SPIRA_ASK_LABEL}" --limit 0 --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' \
         | python3 -c '

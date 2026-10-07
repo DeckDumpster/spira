@@ -56,7 +56,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 
 # Every id this suite ever asks spira_bead_status about, set through a real file rather
 # than `spira_status_seam -`: a bare `-` reads from spira_status_seam's own stdin, which a

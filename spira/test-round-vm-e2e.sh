@@ -71,7 +71,7 @@ except Exception:
 ' "$TMP/state/pool.json" 2>/dev/null)"
         [ -n "$bg_pid" ] && kill "$bg_pid" >/dev/null 2>&1
     fi
-    podman rm -f "$VM_NAME" >/dev/null 2>&1
+    podman rm -f "$VM_NAME" >/dev/null 2>&1 # batch-job: container fixture call; image pulls and starts exceed 5 s
     [ -r "$TMP/state/git-daemon.pid" ] && kill "$(cat "$TMP/state/git-daemon.pid" 2>/dev/null)" >/dev/null 2>&1
     chmod -R u+w "$TMP" 2>/dev/null
     rm -rf "$TMP"
@@ -89,12 +89,13 @@ BIN="$(command -v round-vm 2>/dev/null || true)"
 # key delivery (through the stub's real podman-exec-backed agent/exec, agent/file-write) has
 # to be what makes ssh work, or this suite would prove nothing about that path.
 IMG="docker.io/library/ubuntu:24.04"
-podman run -d --name "$VM_NAME" --network=host --rm "$IMG" sleep 900 >/dev/null || skip "podman could not start the stand-in container"
+podman run -d --name "$VM_NAME" --network=host --rm "$IMG" sleep 900 >/dev/null || skip "podman could not start the stand-in container" # batch-job: container fixture call; image pulls and starts exceed 5 s
 
 SSH_PORT=$((20000 + (RANDOM % 10000)))
 MIRROR_PORT=$((30000 + (RANDOM % 10000)))
 PVE_PORT=$((40000 + (RANDOM % 10000)))
 
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 if ! podman exec "$VM_NAME" bash -c '
     export DEBIAN_FRONTEND=noninteractive
     apt-get -o Acquire::Retries=1 update -qq && \
@@ -102,8 +103,8 @@ if ! podman exec "$VM_NAME" bash -c '
 ' >"$TMP/apt.log" 2>&1; then
     skip "could not install openssh-server/rsync/git in the stand-in container (no network egress?) — $(tail -3 "$TMP/apt.log")"
 fi
-podman exec "$VM_NAME" mkdir -p /run/sshd
-podman exec -d "$VM_NAME" /usr/sbin/sshd -p "$SSH_PORT" -D
+podman exec "$VM_NAME" mkdir -p /run/sshd # batch-job: container fixture call; image pulls and starts exceed 5 s
+podman exec -d "$VM_NAME" /usr/sbin/sshd -p "$SSH_PORT" -D # batch-job: container fixture call; image pulls and starts exceed 5 s
 
 ssh-keygen -t ed25519 -N '' -q -f "$TMP/client_key"
 
@@ -125,8 +126,8 @@ printf '#!/bin/sh\necho fake-binary\n' > target/release/fakebin
 chmod +x target/release/fakebin
 FAKECARGO
 chmod +x "$TMP/fake-cargo"
-podman cp "$TMP/fake-cargo" "$VM_NAME:/usr/local/bin/cargo"
-podman exec "$VM_NAME" chmod +x /usr/local/bin/cargo
+podman cp "$TMP/fake-cargo" "$VM_NAME:/usr/local/bin/cargo" # batch-job: container fixture call; image pulls and starts exceed 5 s
+podman exec "$VM_NAME" chmod +x /usr/local/bin/cargo # batch-job: container fixture call; image pulls and starts exceed 5 s
 
 # ── the stub Proxmox HTTPS API: a CA + a leaf cert it presents, so PVE_CACERT (the CA) is
 # usable as a rustls trust root the way HttpTransport::new expects — a bare self-signed leaf
@@ -230,10 +231,10 @@ nowant "run: file-write sent no encoding param (live bug 2)" "\"encoding\"" "$(c
 nowant "run: exec sent no capture-output param" "\"capture-output\"" "$(cat "$REQLOG")"
 
 # ── key delivery actually happened on the real filesystem, not merely reported success.
-DELIVERED_KEY="$(podman exec "$VM_NAME" cat /root/.ssh/authorized_keys 2>/dev/null)"
+DELIVERED_KEY="$(podman exec "$VM_NAME" cat /root/.ssh/authorized_keys 2>/dev/null)" # batch-job: container fixture call; image pulls and starts exceed 5 s
 EXPECTED_KEY="$(cat "$TMP/client_key.pub")"
 is "run: the delivered authorized_keys is exactly the host's public key" "$EXPECTED_KEY" "$DELIVERED_KEY"
-KEY_MODE="$(podman exec "$VM_NAME" stat -c %a /root/.ssh/authorized_keys 2>/dev/null)"
+KEY_MODE="$(podman exec "$VM_NAME" stat -c %a /root/.ssh/authorized_keys 2>/dev/null)" # batch-job: container fixture call; image pulls and starts exceed 5 s
 is "run: authorized_keys was chmod 600 (absolute path, live bug 1)" "600" "$KEY_MODE"
 
 # ── the VM this run leased is destroyed and verified gone; a background pre-warm for the

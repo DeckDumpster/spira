@@ -234,8 +234,8 @@ TRMAP
 git -C "$TREPO" add -A
 git -C "$TREPO" commit -q --allow-empty -m base
 git -C "$TREPO" remote add origin "$TREMOTE"
-git -C "$TREPO" push -q origin main
-git -C "$TREPO" fetch -q origin
+timeout 5 git -C "$TREPO" push -q origin main
+timeout 5 git -C "$TREPO" fetch -q origin
 
 transition() {
     tl_config SPIRA_HOME_REPO=tfixq SPIRA_RUN="$TRUN" SPIRA_QUEUE_DIR="$TRUN/queue" \

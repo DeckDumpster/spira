@@ -28,7 +28,7 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up mailaeon || { echo "test-mail-aeon: could not build fixture db"; exit 1; }
 # bdq is a lib.sh function; define a thin wrapper so test-level calls reach the fixture db.
-bdq() { BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
+bdq() { BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
 tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
@@ -132,12 +132,12 @@ echo
 echo "(d) mailbox seen during the run, then gone after the aeon exits"
 
 AEON_ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$AEON_ORIGIN"
-AEON_REPO="$TMP/repo"; git clone -q "$AEON_ORIGIN" "$AEON_REPO" 2>/dev/null
+AEON_REPO="$TMP/repo"; timeout 5 git clone -q "$AEON_ORIGIN" "$AEON_REPO" 2>/dev/null
 git -C "$AEON_REPO" config user.email t@t; git -C "$AEON_REPO" config user.name t
 printf 'seed\n' > "$AEON_REPO/f"
 git -C "$AEON_REPO" add f
 git -C "$AEON_REPO" commit -qm seed
-git -C "$AEON_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$AEON_REPO" push -q origin main 2>/dev/null
 
 printf 'fixture | %s | push | origin/main | |\n' "$AEON_REPO" > "$SPIRA_HOME/repo-map"
 SPIRA_REPO_MAP="$SPIRA_HOME/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"

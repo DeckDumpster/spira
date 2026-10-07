@@ -71,17 +71,17 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 LC_SERVER_PID=$!
 lc_up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
         lc_up=1; break
     fi
     sleep 0.2
 done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
-lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
+lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
 export SPIRA_LC_HOST=127.0.0.1
@@ -182,7 +182,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate"
 export SPIRA_REAPLOG="$RUN/reap.log"
@@ -376,11 +376,11 @@ git -C "$REPO" worktree add -q --detach "$RUN/worktree/.landing.$(basename "$REP
 # be SENT, so give it a remote counterpart before the pass. --no-fetch means sending.sh
 # will not fetch on its own, so the local tracking ref send_branch reads must already
 # exist here.
-git -C "$REPO" push -q origin spira/sp-cl1
+timeout 5 git -C "$REPO" push -q origin spira/sp-cl1
 # A bare `fetch origin` (not `fetch origin spira/sp-cl1`), so the default refspec updates
 # refs/remotes/origin/spira/sp-cl1 — a single named branch on the command line only
 # populates FETCH_HEAD, never the tracking ref send_branch's remote-delete check reads.
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 # Give it a branch: label too, to prove the label is dropped once the ref is verifiably
 # gone (law-branch-affinity-is-recorded).
 bead sp-cl1 closed '[]' '["branch:spira/sp-cl1"]'
@@ -395,8 +395,8 @@ touch "$RUN/sp-cl1.log"
 # advance, sp-otherpr's and sp-cherry's "spira: land ..." commits — was made on the LOCAL
 # main only. Without this, spira-lc content-landed and landed() would judge every branch against a
 # base frozen at the very first commit.
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 
 echo "test-sending.sh"
 
@@ -519,7 +519,7 @@ nowant "the per-repository .landing tree is never judged" ".landing" "$out"
 want "the unresolvable-ref repo is SKIPPED, naming the cause" "cannot resolve the ref it lands on" "$out"
 
 # UC-19: remote branch delete, branch: label removal, aeon log kept.
-if git -C "$REPO" ls-remote --exit-code "$REMOTE" "refs/heads/spira/sp-cl1" >/dev/null 2>&1; then
+if timeout 5 git -C "$REPO" ls-remote --exit-code "$REMOTE" "refs/heads/spira/sp-cl1" >/dev/null 2>&1; then
     bad "the remote copy of spira/sp-cl1 is deleted too" "still on the remote"
 else
     ok "the remote copy of spira/sp-cl1 is deleted too"
@@ -540,7 +540,7 @@ git init -q --bare -b main "$DREMOTE"
 git init -q -b main "$DREPO"
 git -C "$DREPO" commit -q --allow-empty -m base
 git -C "$DREPO" remote add origin "$DREMOTE"
-git -C "$DREPO" push -q origin main
+timeout 5 git -C "$DREPO" push -q origin main
 git -C "$DREPO" remote set-head origin main
 mkdir -p "$DRUN/worktree" "$DRUN/landstate"
 git -C "$DREPO" checkout -q -b spira/sp-dry main
@@ -576,7 +576,7 @@ git init -q --bare -b main "$FREMOTE"
 git init -q -b main "$FREPO"
 git -C "$FREPO" commit -q --allow-empty -m base
 git -C "$FREPO" remote add origin "$FREMOTE"
-git -C "$FREPO" push -q origin main
+timeout 5 git -C "$FREPO" push -q origin main
 git -C "$FREPO" remote set-head origin main
 mkdir -p "$FRUN/worktree"
 git -C "$FREPO" checkout -q -b spira/sp-fail main

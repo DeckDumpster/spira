@@ -116,7 +116,7 @@ if [ -z "$flags" ]; then
         "no matching curl invocation found"
 else
     start=$SECONDS
-    timeout 120 curl $flags -o /dev/null "http://192.0.2.1/unreachable" >/dev/null 2>&1
+    timeout 120 curl $flags -o /dev/null "http://192.0.2.1/unreachable" >/dev/null 2>&1 # batch-job: the suite measures the deadline of an unreachable call, so it must outlast the 5 s cap
     rc=$?
     elapsed=$((SECONDS - start))
     not_hung() { [ "$1" -lt 90 ] && ok "$2" || bad "$2" "took ${1}s"; }

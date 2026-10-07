@@ -240,8 +240,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$LREPO"
 git -C "$LREPO" commit -q --allow-empty -m base
 git -C "$LREPO" remote add origin "$REMOTE"
-git -C "$LREPO" push -q origin main
-git -C "$LREPO" fetch -q origin
+timeout 5 git -C "$LREPO" push -q origin main
+timeout 5 git -C "$LREPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
@@ -259,10 +259,12 @@ land() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$LREPO" \
         landing-pass land 2>&1
 }
+# batch-job: fixture bd call against the suite's throwaway store
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
+# batch-job: fixture bd call against the suite's throwaway store
 assignee_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -281,7 +283,7 @@ beads "$(bead sp-land-doc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,repo:home" ta
 land_branch sp-land-doc notes/spikes/answer.md
 out="$(land)"
 want "a confined spike branch lands" "landed spira/sp-land-doc" "$out"
-git -C "$LREPO" fetch -q origin
+timeout 5 git -C "$LREPO" fetch -q origin
 git -C "$LREPO" merge-base --is-ancestor spira/sp-land-doc origin/main \
     && ok "and its document really reached origin/main" \
     || bad "a confined spike lands" "not an ancestor of origin/main"
@@ -294,15 +296,15 @@ land_branch sp-land-poc notes/spikes/answer2.md src/experiment.rs
 # back in the graph wearing a name no aeon will ever claim past — visible, at P0, and dead.
 # Every reopen site goes through bead_reopen for that reason; a refusal is a reopen like any
 # other, and a new refusal path is exactly where the clearing gets left out.
-bd -C "$SPIRA_DB" update sp-land-poc --assignee aeon-dead >/dev/null 2>&1
+bd -C "$SPIRA_DB" update sp-land-poc --assignee aeon-dead >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 out="$(land)"
 want   "an unconfined spike branch is refused" "reopened sp-land-poc" "$out"
 nowant "and is not landed"                     "landed spira/sp-land-poc" "$out"
 is     "and the bead is genuinely reopened"    open "$(status_of sp-land-poc)"
 is     "and unassigned, so the next aeon can claim it" "" "$(assignee_of sp-land-poc)"
 want   "and the note carries the offending path" "src/experiment.rs" \
-       "$(bd -C "$SPIRA_DB" show sp-land-poc 2>/dev/null)"
-git -C "$LREPO" fetch -q origin
+       "$(bd -C "$SPIRA_DB" show sp-land-poc 2>/dev/null)" # batch-job: fixture bd call against the suite's throwaway store
+timeout 5 git -C "$LREPO" fetch -q origin
 git -C "$LREPO" merge-base --is-ancestor spira/sp-land-poc origin/main \
     && bad "the experiment stayed off main" "it was merged" \
     || ok "the experiment stayed off main"

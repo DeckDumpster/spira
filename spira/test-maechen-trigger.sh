@@ -561,10 +561,10 @@ git -C "$GITEA_WORK" remote add gitea "$BARE_3LJK"
 # "main" — pushing a "master" source that was never created here failed outright, leaving
 # the bare repo (deliberately named "master" via its own HEAD symref above, to exercise a
 # non-"main" default branch name) empty.
-git -C "$GITEA_WORK" push -q gitea main:master
+timeout 5 git -C "$GITEA_WORK" push -q gitea main:master
 
 GITEA_REPO="$T/gitea-repo-3ljk"
-git clone -q -o gitea "$BARE_3LJK" "$GITEA_REPO"
+timeout 5 git clone -q -o gitea "$BARE_3LJK" "$GITEA_REPO"
 git -C "$GITEA_REPO" config user.email "test@example.com"
 git -C "$GITEA_REPO" config user.name "Test"
 

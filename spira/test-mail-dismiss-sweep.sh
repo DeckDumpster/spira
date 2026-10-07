@@ -63,6 +63,7 @@ MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 run() { "$MAIL" "$@"; }
 
 bead_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -72,6 +73,7 @@ print(d[0].get("status") or "")' 2>/dev/null
 }
 
 bead_close_reason() {
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -81,6 +83,7 @@ print(d[0].get("close_reason") or "")' 2>/dev/null
 }
 
 bead_notes() {
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -205,7 +208,7 @@ BEAD_B="$(xbead_of operator)"
 PATH_B="$(newest_path operator)"
 is "decision bead B open before reply" "open" "$(bead_status "$BEAD_B")"
 
-BEADS_ACTOR="$SPIRA_OPERATOR_ACTOR" "$SPIRA_BD" -C "$SPIRA_DB" note "$BEAD_B" "Go ahead." >/dev/null 2>&1
+BEADS_ACTOR="$SPIRA_OPERATOR_ACTOR" "$SPIRA_BD" -C "$SPIRA_DB" note "$BEAD_B" "Go ahead." >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 rm -f "$PATH_B"
 
 out="$(run sweep-dismissed operator 2>&1)"; rc=$?

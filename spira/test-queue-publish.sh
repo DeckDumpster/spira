@@ -46,7 +46,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" branch local/main main
 
 RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixpub; RELEASES="$TMP/releases"
@@ -152,7 +152,7 @@ land() {
     queue land-local "$REPONAME" --head "$head" --members "$id:$tip" >/dev/null
 }
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -332,9 +332,9 @@ echo "5 — origin/main not an ancestor of local/main: publish refuses, alarms t
 clear_calls
 # Simulate a foreign write straight to the forge's main, bypassing the publish queue.
 CLONE="$TMP/clone"
-git clone -q "$REMOTE" "$CLONE"
+timeout 5 git clone -q "$REMOTE" "$CLONE"
 git -C "$CLONE" commit -q --allow-empty -m "foreign: not from local/main"
-git -C "$CLONE" push -q origin main
+timeout 5 git -C "$CLONE" push -q origin main
 FOREIGN="$(git -C "$CLONE" rev-parse main)"
 
 out="$(queue publish "$REPONAME")"; rc=$?
@@ -397,10 +397,10 @@ clear_mail
 # never one land-local triggers itself (no forge round trip belongs on the round-build
 # critical path). This proves land-local's own check, independent of any publish attempt.
 CLONE2="$TMP/clone2"
-git clone -q "$REMOTE" "$CLONE2"
+timeout 5 git clone -q "$REMOTE" "$CLONE2"
 git -C "$CLONE2" commit -q --allow-empty -m "foreign2: bypassed the publish queue again"
-git -C "$CLONE2" push -q origin main
-git -C "$REPO" fetch -q origin main
+timeout 5 git -C "$CLONE2" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin main
 
 seed sp-pub6
 git -C "$REPO" checkout -qb round-sp-pub6 local/main

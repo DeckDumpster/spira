@@ -231,6 +231,7 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 tl_config COCKPIT_DB="$SPIRA_DB"
 
 bd_show_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r[0].get("status","?") if isinstance(r,list) else r.get("status","?"))'
 }

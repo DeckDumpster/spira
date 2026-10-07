@@ -70,7 +70,7 @@ done < <(find "$REPO_ROOT/systemd" -name '*.service' 2>/dev/null)
 ORIGIN="$TMP/origin.git"
 REPO="$TMP/repo"
 git init -q --bare -b main "$ORIGIN"
-git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name t
 mkdir -p "$REPO/spira"
@@ -79,7 +79,7 @@ printf 'key=val\n' > "$REPO/spira/conf.sh"
 chmod +x "$REPO/install.sh"
 git -C "$REPO" add .
 git -C "$REPO" commit -qm "fixture: initial"
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # ---------------------------------------------------------------------------
 # BINARY STUBS

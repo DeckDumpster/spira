@@ -48,13 +48,14 @@ echo "positive control — prove podman works on this host:"
 # up before the real fixture uses the same image. A failure here means podman
 # itself is unavailable or misconfigured, not that the driver is broken.
 PC_NAME="spira-testenv-pc-$$"
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 if podman run -d --name "$PC_NAME" --rm docker.io/library/ubuntu:24.04 \
         bash -c 'exit 0' >/dev/null 2>&1; then
     ok "positive control: podman can create a container"
 else
     bad "positive control" "podman run failed on ubuntu:24.04"
 fi
-podman rm -f "$PC_NAME" >/dev/null 2>&1 || true
+podman rm -f "$PC_NAME" >/dev/null 2>&1 || true # batch-job: container fixture call; image pulls and starts exceed 5 s
 
 # ==========================================================================
 echo
@@ -79,13 +80,14 @@ owner_pid="$(cat "/tmp/${CNAME}.owner" 2>/dev/null || true)"
     || bad "owner pid is live" "pid ${owner_pid:-<empty>} not found in /proc"
 
 # PID 1 inside the container must be systemd.
-pid1="$(podman exec "$CNAME" cat /proc/1/comm 2>/dev/null)"
+pid1="$(podman exec "$CNAME" cat /proc/1/comm 2>/dev/null)" # batch-job: container fixture call; image pulls and starts exceed 5 s
 is "PID 1 is systemd" "systemd" "$pid1"
 
 # ==========================================================================
 echo
 echo "user systemd — systemctl --user connects via session bus:"
 # ==========================================================================
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 sc_out="$(podman exec --user spirauser \
     -e XDG_RUNTIME_DIR=/run/user/1001 \
     "$CNAME" systemctl --user status 2>&1 | head -4)"
@@ -105,7 +107,7 @@ echo
 echo "checkout mount — /workspace holds the caller checkout:"
 # ==========================================================================
 # Verify a file that exists in the harness checkout is visible inside the container.
-mnt_out="$(podman exec "$CNAME" ls /workspace/spira/conf.sh 2>&1)"
+mnt_out="$(podman exec "$CNAME" ls /workspace/spira/conf.sh 2>&1)" # batch-job: container fixture call; image pulls and starts exceed 5 s
 mnt_rc=$?
 iszero "/workspace/spira/conf.sh is accessible" "$mnt_rc"
 
@@ -116,6 +118,7 @@ echo "cargo cache — volumes mounted and two-build timing:"
 # Create a minimal hello-world project inside the container's own writable layer.
 # Using /tmp keeps the project off the mounted checkout and off the host filesystem.
 # Run as spirauser so cargo can write Cargo.lock without a permission error.
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser \
     -e CARGO_HOME=/var/spira/cargo \
     "$CNAME" bash -c \
@@ -131,6 +134,7 @@ printf "fn main(){println!(\"ok\");}\n" > /tmp/hello/src/main.rs' 2>/dev/null
 # First build: compiles main.rs and links. Target artefacts land in /tmp/hello/target
 # (inside the container's writable layer) so they vanish on the next down/up cycle.
 t_b1s=$(date +%s%N)
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser \
     -e CARGO_HOME=/var/spira/cargo \
     "$CNAME" cargo build --manifest-path /tmp/hello/Cargo.toml 2>/dev/null
@@ -142,6 +146,7 @@ iszero "first build exits 0" "$b1_rc"
 # Second build: cargo detects no source changes and skips recompilation. The speedup
 # is the increment over the first build's compile-and-link time.
 t_b2s=$(date +%s%N)
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser \
     -e CARGO_HOME=/var/spira/cargo \
     "$CNAME" cargo build --manifest-path /tmp/hello/Cargo.toml 2>/dev/null
@@ -161,7 +166,7 @@ printf '  note  first build: %dms, second build: %dms\n' "$b1_ms" "$b2_ms"
 # Confirm the registry volume exists (even though hello-world has no external deps,
 # the volume itself must be mounted and owned by spirauser for real projects to use it).
 vol_reg="${CNAME}-cargo-reg"
-vol_info="$(podman volume inspect "$vol_reg" 2>/dev/null)"
+vol_info="$(podman volume inspect "$vol_reg" 2>/dev/null)" # batch-job: container fixture call; image pulls and starts exceed 5 s
 [ -n "$vol_info" ] \
     && ok "cargo registry volume created" \
     || bad "cargo registry volume" "volume ${vol_reg} not found"
@@ -173,9 +178,11 @@ echo "rust-toolchain.toml — a pinned channel the image never installed must no
 # Positive control: without RUSTUP_TOOLCHAIN, a workspace pin naming an uninstalled
 # channel sends rustup to install it into the read-only /usr/local/rustup and cargo
 # dies with EACCES. Prove that before trusting a green from the image's own env.
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser "$CNAME" bash -c \
     'mkdir -p /tmp/rttest && printf "[toolchain]\nchannel = \"1.82.0\"\n" > /tmp/rttest/rust-toolchain.toml'
 
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 pin_unpatched_out="$(podman exec --user spirauser \
     -e CARGO_HOME=/var/spira/cargo \
     "$CNAME" env -u RUSTUP_TOOLCHAIN bash -c 'cd /tmp/rttest && cargo --version' 2>&1)"
@@ -184,6 +191,7 @@ pin_unpatched_rc=$?
     && ok "positive control: unpinned exec cannot install the toolchain (EACCES)" \
     || bad "positive control" "expected a failure without RUSTUP_TOOLCHAIN, got rc=0: $pin_unpatched_out"
 
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 pin_patched_out="$(podman exec --user spirauser \
     -e CARGO_HOME=/var/spira/cargo \
     "$CNAME" bash -c 'cd /tmp/rttest && cargo --version' 2>&1)"
@@ -203,6 +211,7 @@ testenv container down --name "$CNAME" >&2
 iszero "down exits 0" "$?"
 
 # Container must be gone.
+# batch-job: container fixture call; image pulls and starts exceed 5 s
 podman container exists "$CNAME" 2>/dev/null \
     && bad "container removed" "container still exists after down" \
     || ok "container removed after down"

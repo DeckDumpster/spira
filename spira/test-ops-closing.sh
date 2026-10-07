@@ -77,10 +77,10 @@ testdb_up opsclosing || { echo "test-ops-closing: could not build a fixture data
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
@@ -148,17 +148,18 @@ run_aeon() {             # run_aeon <fayth> <act>
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_HOME="$HOMEDIR" \
         BEADS_NO_AUTO_IMPORT=1 \
-        timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
+        timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1 # batch-job: runs a whole aeon session under the suite's own 300 s ceiling
 }
 seed() {                 # seed <id> [extra-label]
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\"${2:+,\"$2\"}"
     printf '{"id":"%s","title":"unit failed","status":"open","issue_type":"bug","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
+# batch-job: fixture bd call against the suite's throwaway store
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
-labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
+labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; } # batch-job: fixture bd call against the suite's throwaway store
 
 fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead
     testdb_reset

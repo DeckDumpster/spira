@@ -38,8 +38,8 @@ git -C "$REPO" checkout -q main
 GIT_AUTHOR_NAME=boot GIT_AUTHOR_EMAIL=boot@t GIT_COMMITTER_NAME=boot GIT_COMMITTER_EMAIL=boot@t \
     git -C "$REPO" commit -q --allow-empty -m "main: advance"
 
-git -C "$REPO" push -q origin main spira/testbranch
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main spira/testbranch
+timeout 5 git -C "$REPO" fetch -q origin
 
 echo "test-rebase-branch.sh"
 
@@ -141,7 +141,7 @@ drop_branch sp-kind
 branch sp-kindclash shared.txt "from the branch"
 printf '%s\n' "and the base disagrees" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared.txt again"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 timeout 5 git -C "$REPO" push -q origin main; timeout 5 timeout 5 git -C "$REPO" fetch -q origin
 is "and a real disagreement is named conflict" conflict "$(classify spira/sp-kindclash origin/main)"
 drop_branch sp-kindclash
 
@@ -164,7 +164,7 @@ branch sp-refused
 printf 'base version\n' > "$REPO/blocked.txt"
 git -C "$REPO" add blocked.txt
 git -C "$REPO" commit -q -m "base adds blocked.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 timeout 5 git -C "$REPO" push -q origin main; timeout 5 timeout 5 git -C "$REPO" fetch -q origin
 printf 'untracked\n' > "$RUN/worktree/sp-refused/blocked.txt"
 _ext="$(classify_ext spira/sp-refused origin/main)"
 _ext_fail="${_ext%%|*}"; _ext_rest="${_ext#*|}"; _ext_reason="${_ext_rest%%|*}"; _ext_conflicts="${_ext_rest#*|}"
@@ -176,7 +176,7 @@ drop_branch sp-refused
 branch sp-kindconflicts shared2.txt "from the branch"
 printf '%s\n' "base disagrees" > "$REPO/shared2.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared2.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 timeout 5 git -C "$REPO" push -q origin main; timeout 5 timeout 5 git -C "$REPO" fetch -q origin
 _ext="$(classify_ext spira/sp-kindconflicts origin/main)"
 _ext_fail="${_ext%%|*}"; _ext_rest="${_ext#*|}"; _ext_conflicts="${_ext_rest#*|}"
 is   "a real content conflict still produces REBASE_FAILURE=conflict"    conflict "$(classify spira/sp-kindconflicts origin/main)"
@@ -215,7 +215,7 @@ branch sp-ident
 printf 'base step\n' > "$REPO/ident-base.txt"
 git -C "$REPO" add ident-base.txt
 git -C "$REPO" commit -q -m "base adds ident-base.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 timeout 5 git -C "$REPO" push -q origin main; timeout 5 timeout 5 git -C "$REPO" fetch -q origin
 _ri="$(rebase_id_classify spira/sp-ident origin/main)"
 _ri_rc="${_ri%%|*}"; _ri_rest="${_ri#*|}"; _ri_cn="${_ri_rest%%|*}"; _ri_rest2="${_ri_rest#*|}"; _ri_ce="${_ri_rest2%%|*}"
 is   "rebase succeeds in a clean env when SPIRA_GIT_NAME and SPIRA_GIT_EMAIL are set" "0" "$_ri_rc"
@@ -227,7 +227,7 @@ branch sp-ident-clash shared-ic.txt "branch content"
 printf 'base content\n' > "$REPO/shared-ic.txt"
 git -C "$REPO" add shared-ic.txt
 git -C "$REPO" commit -q -m "base also writes shared-ic.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 timeout 5 git -C "$REPO" push -q origin main; timeout 5 timeout 5 git -C "$REPO" fetch -q origin
 _ri_clash="$(rebase_id_classify spira/sp-ident-clash origin/main)"
 _ri_clash_fail="${_ri_clash##*|}"
 is "a real conflict returns REBASE_FAILURE=conflict even with identity set" "conflict" "$_ri_clash_fail"

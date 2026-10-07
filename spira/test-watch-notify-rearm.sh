@@ -59,11 +59,11 @@ ok "user systemd running in container"
 # HOST SNAPSHOT — before any container work, so a diff after proves no host contamination.
 snap_before="$(ls -1 "$HOME/.config/systemd/user/" 2>/dev/null | sort || true)"
 
-CEXEC=(podman exec --user spirauser
+CEXEC=(podman exec --user spirauser # batch-job: container fixture call; image pulls and starts exceed 5 s
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
 )
-SC=(podman exec --user spirauser
+SC=(podman exec --user spirauser # batch-job: container fixture call; image pulls and starts exceed 5 s
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
     "$CNAME" systemctl --user)
@@ -86,9 +86,9 @@ grep -v '^On\(Active\|UnitActive\)Sec=' "$WORK/fixed.timer" > "$WORK/stripped.ti
 # trigger_after_restart <timer file>: prints the `Trigger:` line after fire + reload + restart.
 trigger_after_restart() {
     "${CEXEC[@]}" "$CNAME" mkdir -p "$UDIR"
-    podman cp "$WORK/spira-notify.service" "$CNAME:$UDIR/spira-notify.service"
-    podman cp "$1" "$CNAME:$UDIR/spira-notify.timer"
-    podman exec --user root "$CNAME" chown -R spirauser "$UDIR"
+    podman cp "$WORK/spira-notify.service" "$CNAME:$UDIR/spira-notify.service" # batch-job: container fixture call; image pulls and starts exceed 5 s
+    podman cp "$1" "$CNAME:$UDIR/spira-notify.timer" # batch-job: container fixture call; image pulls and starts exceed 5 s
+    podman exec --user root "$CNAME" chown -R spirauser "$UDIR" # batch-job: container fixture call; image pulls and starts exceed 5 s
     "${SC[@]}" daemon-reload
     "${SC[@]}" stop spira-notify.timer
     "${SC[@]}" start spira-notify.timer

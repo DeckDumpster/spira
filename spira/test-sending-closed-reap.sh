@@ -44,9 +44,9 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
@@ -131,8 +131,8 @@ git -C "$REPO" add sp-keep.txt
 git -C "$REPO" commit -q -m "sp-keep: real work"
 git -C "$REPO" checkout -q main
 
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 
 # ---------------------------------------------------------------------------
 # Bead database seed. Note: bd import uses "type" for dependency kinds.

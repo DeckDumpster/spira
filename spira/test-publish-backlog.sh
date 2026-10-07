@@ -41,7 +41,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" branch local/main main
 
 # --- fixture repo 2: queue.forge, the negative control (never scanned) -----------------
@@ -118,7 +118,7 @@ echo
 echo "3 — recovery: publishing catches the forge up, and CLEAR fires once"
 # ============================================================================
 clear_mail
-git -C "$REPO" push -q origin local/main:main
+timeout 5 git -C "$REPO" push -q origin local/main:main
 out="$(pb --show)"; rc=$?
 is   "3: exit 0"                          "0" "$rc"
 want "3: CLEAR is reported for fixlocal"  "CLEAR fixlocal" "$out"
@@ -181,7 +181,7 @@ echo "7 — age reads the landing ref's own arrival (reflog), not the commit's a
 # ============================================================================
 clear_mail
 rm -rf "$RUN/watchd"
-git -C "$REPO" push -q origin local/main:main   # forge caught up: unpublished range starts empty
+timeout 5 git -C "$REPO" push -q origin local/main:main   # forge caught up: unpublished range starts empty
 BKCOUNT=1000 BKAGE=10800   # count never trips; isolates the age check
 
 now_epoch="$(date +%s)"
@@ -201,7 +201,7 @@ nowant "7a: authored 12h ago but landed 1 min ago stays under threshold" "OVER" 
 is     "7a: no mail (age tracks the ref's arrival, not the author date)" "0" "$(mail_count)"
 
 clear_mail
-git -C "$REPO" push -q origin local/main:main   # forge catches up again before the next case
+timeout 5 git -C "$REPO" push -q origin local/main:main   # forge catches up again before the next case
 printf 'authored-old-2\n' >> "$REPO/f.txt"
 git -C "$REPO" add f.txt
 GIT_AUTHOR_DATE="$author_12h" GIT_COMMITTER_DATE="$land_4h" \
