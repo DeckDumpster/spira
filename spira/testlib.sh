@@ -570,7 +570,10 @@ if [ "$1" = reopen ]; then
     [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" label remove "$2" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1
     exit 0
 fi
-if [ "$1" = content ]; then shift; exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" "$@"; fi
+if [ "$1" = content ]; then
+    shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+    exec "${bd:-bd}" ${db:+-C "$db"} "$@"
+fi
 if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
 else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi
 printf '%s' "$src" | LC_MIRROR_DIR="$(dirname "$0")" python3 -c '
