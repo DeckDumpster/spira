@@ -283,6 +283,7 @@ fn is_work(r: &ReadyRow) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Claimable { depth: u32 },
+    Closed,
     NoOwnRow,
     OwnState(BeadState),
     Held(HoldKind),
@@ -314,6 +315,9 @@ pub fn stack_plan(
     bd: &HashMap<String, ReadyRow>,
     stack_max_depth: u32,
 ) -> Result<(Stack, u32), Verdict> {
+    if cand.status.as_deref() == Some("closed") {
+        return Err(Verdict::Closed);
+    }
     let Some(own) = lc.get(&cand.id) else { return Err(Verdict::NoOwnRow) };
     if let Some(h) = own.holds.iter().find(|h| **h != HoldKind::Wait) {
         return Err(Verdict::Held(*h));
@@ -624,6 +628,16 @@ mod tests {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 0), Verdict::Blocked("A".into()));
+    }
+
+    #[test]
+    fn closed_store_status_is_not_claimable_whatever_the_row_says() {
+        let mut b = row("B", 1, None, "t");
+        b.status = Some("closed".into());
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
+        assert_eq!(claimable(&b, &lc, &HashMap::new(), 4), Verdict::Closed);
+        b.status = Some("open".into());
+        assert_eq!(claimable(&b, &lc, &HashMap::new(), 4), Verdict::Claimable { depth: 0 });
     }
 
     #[test]

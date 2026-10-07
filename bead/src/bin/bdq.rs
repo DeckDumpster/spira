@@ -387,6 +387,9 @@ fn cmd_bdq(args: &[String]) -> i32 {
             }
         }
     }
+    if rc == 0 {
+        let _ = spira_config::lifecycle_row::after_close("bdq", args);
+    }
     if let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()) {
         let dir = format!("{run}/bdq");
         let _ = std::fs::create_dir_all(&dir);

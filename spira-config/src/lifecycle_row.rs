@@ -75,6 +75,44 @@ pub fn after_create(who: &str, created_stdout: &str) -> Result<(), String> {
     })
 }
 
+/// The bead a `bd close <id> ...` argv closes: the first operand, when it is one.
+pub fn closed_id(args: &[String]) -> Option<&str> {
+    match (args.first().map(String::as_str), args.get(1)) {
+        (Some("close"), Some(id)) if !id.starts_with('-') => Some(id),
+        _ => None,
+    }
+}
+
+/// Move the bead's lifecycle row to the terminal state its bd close earned
+/// (`spira-lc reconcile-closed`), so a closed bead never stays READY and claimable.
+pub fn terminalize_closed_with(bin: &str, id: &str) -> Result<(), String> {
+    let out = Command::new("timeout")
+        .args([LC_TIMEOUT_SECS, bin, "reconcile-closed", "--apply", id])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{bin} reconcile-closed {id} exited {}: {}{}",
+            out.status.code().map_or("signal".into(), |c| c.to_string()),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// Call after a successful `bd close`. A failure is reported and returned; the bead is
+/// closed, so the caller must not retry the close.
+pub fn after_close(who: &str, args: &[String]) -> Result<(), String> {
+    let Some(id) = closed_id(args) else { return Ok(()) };
+    terminalize_closed_with(&lc_bin(), id).map_err(|e| {
+        eprintln!("{who}: LIFECYCLE: {id} was closed but its lifecycle row is not terminal and may read as claimable: {e}");
+        e
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +156,18 @@ mod tests {
         let bin = stub(t.path(), 3);
         assert!(ensure_row_with(&bin, "sp-z").unwrap_err().contains("exited 3"));
         assert!(ensure_row_with("/nonexistent/lc", "sp-z").is_err());
+    }
+
+    #[test]
+    fn a_close_runs_reconcile_closed_for_exactly_the_bead_it_closed() {
+        let t = testkit::TempDir::new("lcrow-close");
+        let bin = stub(t.path(), 0);
+        assert_eq!(terminalize_closed_with(&bin, "sp-c"), Ok(()));
+        assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "reconcile-closed --apply sp-c\n");
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(closed_id(&a(&["close", "sp-c", "--reason-file", "-"])), Some("sp-c"));
+        assert_eq!(closed_id(&a(&["close", "--force", "sp-c"])), None);
+        assert_eq!(closed_id(&a(&["update", "sp-c"])), None);
+        assert!(terminalize_closed_with(&stub(t.path(), 3), "sp-c").unwrap_err().contains("exited 3"));
     }
 }

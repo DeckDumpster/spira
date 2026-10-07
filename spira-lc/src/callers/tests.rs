@@ -458,6 +458,8 @@ struct FakeBd {
     /// bead id -> (issue_type, assignee)
     rows: BTreeMap<String, (String, Option<String>)>,
     closed: Vec<(String, String)>,
+    /// bead id -> close reason, for beads bd reports closed.
+    reasons: BTreeMap<String, String>,
     down: bool,
 }
 
@@ -471,6 +473,12 @@ impl Bd for FakeBd {
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         self.closed.push((id.into(), reason.into()));
         Ok(())
+    }
+    fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        Ok(ids.iter().filter_map(|i| self.reasons.get(i).map(|r| (i.clone(), r.clone()))).collect())
     }
 }
 
@@ -571,4 +579,65 @@ fn renew_needs_a_numeric_deadline_and_reads_nothing_without_one() {
     assert_eq!(f.calls, 0);
     let mut down = Fake { down: true, ..Default::default() };
     assert_eq!(go(&mut down, "renew", &["sp-a", "aeon-1", "5"]).code, CANNOT_TELL);
+}
+
+// ---- reconcile-closed (sp-bc0rlt) ------------------------------------------------------
+
+#[test]
+fn reconcile_closed_moves_a_closed_beads_ready_row_to_the_terminal_its_reason_earns() {
+    let mut f = Fake::default();
+    f.bead("sp-d", BeadState::Ready);
+    f.bead("sp-s", BeadState::Ready);
+    f.bead("sp-open", BeadState::Ready);
+    f.bead("sp-w", BeadState::Working);
+    let mut b = FakeBd::default();
+    b.reasons.insert("sp-d".into(), "Answered: yes".into());
+    b.reasons.insert("sp-s".into(), "OUTCOME: duplicate\nSuperseded by sp-zz, same work".into());
+    b.reasons.insert("sp-w".into(), "closed by hand".into());
+
+    let dry = reconcile_closed(&[], &mut f, &mut b);
+    assert_eq!(dry.code, APPLIED, "{}", dry.stderr);
+    assert!(dry.stdout.contains("would move sp-d READY -> DROPPED"), "{}", dry.stdout);
+    assert!(f.events.is_empty(), "a dry run writes nothing");
+    assert_eq!(f.state("sp-d"), "READY");
+
+    let ans = reconcile_closed(&v(&["--apply"]), &mut f, &mut b);
+    assert_eq!(ans.code, APPLIED, "{}", ans.stdout);
+    assert_eq!(f.state("sp-d"), "DROPPED");
+    assert_eq!(f.state("sp-s"), "SUPERSEDED");
+    assert_eq!(f.state("sp-open"), "READY", "bd says open: untouched");
+    assert_eq!(f.state("sp-w"), "WORKING", "only never-claimed READY rows are rewritten");
+}
+
+#[test]
+fn reconcile_closed_with_ids_touches_only_those_and_cannot_tell_when_bd_is_down() {
+    let mut f = Fake::default();
+    f.bead("sp-a", BeadState::Ready);
+    f.bead("sp-b", BeadState::Ready);
+    let mut b = FakeBd::default();
+    b.reasons.insert("sp-a".into(), "x".into());
+    b.reasons.insert("sp-b".into(), "x".into());
+    assert_eq!(reconcile_closed(&v(&["--apply", "sp-a"]), &mut f, &mut b).code, APPLIED);
+    assert_eq!((f.state("sp-a"), f.state("sp-b")), ("DROPPED", "READY"));
+    b.down = true;
+    assert_eq!(reconcile_closed(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL);
+    assert_eq!(reconcile_closed(&v(&["--bogus"]), &mut f, &mut b).code, 2);
+}
+
+#[test]
+fn reconcile_closed_reports_an_ask_hold_as_refused() {
+    let mut f = Fake::default();
+    f.bead("sp-h", BeadState::Ready).holds.insert(HoldKind::Ask);
+    let mut b = FakeBd::default();
+    b.reasons.insert("sp-h".into(), "x".into());
+    let ans = reconcile_closed(&v(&["--apply", "sp-h"]), &mut f, &mut b);
+    assert_eq!(ans.code, REFUSED, "{}", ans.stdout);
+    assert_eq!(f.state("sp-h"), "READY");
+}
+
+#[test]
+fn a_close_reason_naming_a_successor_supersedes_otherwise_drops() {
+    assert_eq!(terminal_event_for("dup. superseded by sp-9x."), BeadEventKind::Supersede { by: "sp-9x".into() });
+    assert_eq!(terminal_event_for("superseded by nobody"), BeadEventKind::Drop { reason: DropReason::ClosedNoBranch });
+    assert_eq!(terminal_event_for(""), BeadEventKind::Drop { reason: DropReason::ClosedNoBranch });
 }

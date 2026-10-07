@@ -12,6 +12,8 @@
 //!
 //! There is no off mode (sp-v62vn): every verb reaches the machine.
 
+use std::collections::BTreeMap;
+
 use lifecycle::bead::{BeadEventKind, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
@@ -572,6 +574,82 @@ pub trait Bd {
     fn issue_type(&mut self, id: &str) -> Result<String, String>;
     /// `bd close <id> --reason <reason>`.
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String>;
+    /// `(id, close_reason)` for each of `ids` whose bd status is closed.
+    fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String>;
+}
+
+/// The terminal event a bead closed in bd with `reason` earns on its lifecycle row:
+/// SUPERSEDED when the reason names a successor, DROPPED otherwise. Never LANDED — only
+/// the landing path may claim content reached the base.
+pub fn terminal_event_for(reason: &str) -> BeadEventKind {
+    let lower = reason.to_lowercase();
+    if let Some(at) = lower.find("superseded by ") {
+        let rest = &reason[at + "superseded by ".len()..];
+        let by = rest.split_whitespace().next().unwrap_or("").trim_matches(|c: char| !c.is_alphanumeric());
+        if by.contains('-') {
+            return BeadEventKind::Supersede { by: by.to_string() };
+        }
+    }
+    BeadEventKind::Drop { reason: DropReason::ClosedNoBranch }
+}
+
+const RECONCILE_CHUNK: usize = 100;
+
+/// `reconcile-closed [--apply] [<id>...]` — move the READY lifecycle row of every bead bd
+/// has closed to the terminal state its close reason earns. Dry run unless `--apply`. With
+/// ids, only those; the closers' own hook passes the id it just closed. Only READY rows are
+/// touched: a bead that was claimed or submitted ends through the delivery path, which
+/// records its own outcome, and is reported, not rewritten.
+///
+/// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused (an ask hold, a lost race).
+pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let apply = args.iter().any(|a| a == "--apply");
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
+        return usage(&format!("reconcile-closed [--apply] [<bead-id>...] (unknown flag {bad})"));
+    }
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let (rc, out) = m.call(&["list".into()]);
+    if rc != 0 {
+        return Answer { code: rc.max(CANNOT_TELL), stderr: format!("spira-lc reconcile-closed: lifecycle list failed: {}\n", out.trim()), ..Default::default() };
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return Answer { code: CANNOT_TELL, stderr: "spira-lc reconcile-closed: lifecycle list is not a JSON array\n".into(), ..Default::default() };
+    };
+    let ready: Vec<&Value> = rows.iter().filter(|r| s(r, "state") == "READY" && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))).collect();
+    let ids: Vec<String> = ready.iter().map(|r| s(r, "bead_id")).collect();
+    let mut closed = BTreeMap::new();
+    for chunk in ids.chunks(RECONCILE_CHUNK) {
+        match bd.closed(chunk) {
+            Ok(v) => closed.extend(v),
+            Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-closed: bd unreadable: {}\n", e.trim()), ..Default::default() },
+        }
+    }
+    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    for r in ready {
+        let id = s(r, "bead_id");
+        let Some(reason) = closed.get(&id) else { continue };
+        let kind = terminal_event_for(reason);
+        let to = if matches!(kind, BeadEventKind::Supersede { .. }) { "SUPERSEDED" } else { "DROPPED" };
+        let why = reason.lines().next().unwrap_or("").trim();
+        if !apply {
+            lines.push(format!("would move {id} READY -> {to} ({why})"));
+            done += 1;
+            continue;
+        }
+        let (version, kind_json) = (s(r, "version"), serde_json::to_string(&kind).unwrap_or_default());
+        match event(m, "bead", &id, "READY", &version, "reconcile-closed", &kind_json).0 {
+            APPLIED => {
+                lines.push(format!("moved {id} READY -> {to} ({why})"));
+                done += 1;
+            }
+            rc => {
+                lines.push(format!("refused {id}: event exit {rc}"));
+                code = REFUSED;
+            }
+        }
+    }
+    lines.push(format!("reconcile-closed: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
+    Answer::out(code, lines.join("\n"))
 }
 
 /// `unclaim <id> <actor>` — an aeon hands back a bead it still holds (lib.sh
