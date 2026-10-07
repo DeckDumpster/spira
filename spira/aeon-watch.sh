@@ -32,13 +32,13 @@ _aw_unit_of() {
 
 _aw_count() {
     local n
-    n="$(timeout 15 journalctl --user --since "-${WINDOW}s" -o cat --no-pager 2>/dev/null \
+    n="$(timeout 5 journalctl --user --since "-${WINDOW}s" -g "$1" -o cat --no-pager 2>/dev/null \
         | grep -cF -- "$1")"
     printf '%s' "${n:-0}"
 }
 
 _aw_tick() {
-    local now ts u n=0 st stS who bead fayth age idle flag
+    local now ts u n=0 unknown=0 st stS who bead fayth age idle flag
     now="$(date +%s)"; ts="$(date -u +%H:%MZ)"
     local lines=""
     while read -r u; do
@@ -46,8 +46,8 @@ _aw_tick() {
         n=$((n + 1))
         st="$(systemctl --user show "$u" -p ActiveEnterTimestamp --value 2>/dev/null)"
         stS="$(date -d "$st" +%s 2>/dev/null || echo "$now")"
-        who="$(timeout 10 journalctl --user -u "$u" --since "@$stS" -o cat --no-pager 2>/dev/null \
-            | grep -oE '[a-z]+/[a-z]+: (claimed|resuming) sp-[a-z0-9.]+' | tail -1)"
+        who="$(timeout 5 journalctl --user -u "$u" --since "@$stS" -g '(claiming|claimed|resuming) sp-' -o cat --no-pager 2>/dev/null \
+            | grep -oE '[a-z]+/[a-z]+: (claiming|claimed|resuming) sp-[a-z0-9.]+' | tail -1)"
         bead="$(printf '%s' "$who" | grep -oE 'sp-[a-z0-9.]+')"
         fayth="${who%%:*}"
         age=$(( (now - stS) / 60 )); idle="?"; flag=""
@@ -55,12 +55,14 @@ _aw_tick() {
             idle=$(( (now - $(stat -c %Y "$SPIRA_RUN/$bead.log")) / 60 ))
             [ "$idle" -gt "$STALL_MIN" ] && flag=" STALL(log idle ${idle}m > ${STALL_MIN}m)"
         fi
-        [ -z "$bead" ] && flag=" (no claim seen yet)"
+        if [ -z "$bead" ]; then flag=" (no claim seen yet)"; unknown=$((unknown + 1)); fi
         lines="$lines
   ${fayth:-?} ${bead:-?}: ${age}m on it, log idle ${idle}m$flag"
     done < <(systemctl --user list-units 'spira-aeon-*' --state=active --no-legend --plain 2>/dev/null | awk '{print $1}')
 
     local pid et comm m long=""
+    [ "$unknown" -ge "$CHURN_MIN_COUNT" ] && long="
+  THRASH $unknown of $n live aeons have no claim yet — builders exiting within seconds, the churn seen from the aeon side"
     while read -r pid et comm; do
         [ -n "$pid" ] || continue
         m=$(( et / 60 ))
