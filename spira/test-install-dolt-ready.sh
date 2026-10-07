@@ -451,7 +451,7 @@ make_bd_stub invalid 999999   # never stops failing
 
 start_listener
 _out5="$(mktemp)"
-run_install "$_out5" "SPIRA_INSTALL_DOLT_READY_WAIT=10"
+run_install "$_out5" "SPIRA_INSTALL_DOLT_READY_WAIT=10" "SPIRA_INSTALL_BD_INIT_TRIES=2"
 _rc5=$?
 stop_listener
 
@@ -459,6 +459,9 @@ is2 "bounded-retry: exits 2 (phase fails)" "$_rc5"
 eq  "bounded-retry: bd init was attempted exactly twice, not forever" \
     "$(cat "$TMP/bd-init-calls" 2>/dev/null || echo 0)" "2"
 want "bounded-retry: reports bd init failure" "bd init (server mode) failed" "$(cat "$_out5")"
+[ ! -e "$FAKE_DB/.beads" ] \
+    && ok  "bounded-retry: the final failure leaves no workspace behind" \
+    || bad "bounded-retry: the final failure leaves no workspace behind" "$FAKE_DB/.beads present"
 
 # ==========================================================================
 echo

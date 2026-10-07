@@ -747,7 +747,7 @@ fn main() -> ExitCode {
                         return ExitCode::from(2);
                     }
                 }
-                let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
+                let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(120);
                 if !wait_dolt_query(dolt_port, ready_max) {
                     if let Some(mut c) = dolt_bg.take() {
                         let _ = c.kill();
@@ -756,6 +756,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
                 let dbname = Path::new(&db).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let max_tries: u32 = nonempty_env("SPIRA_INSTALL_BD_INIT_TRIES").and_then(|v| v.parse().ok()).unwrap_or(3).max(1);
                 let mut tries = 0;
                 loop {
                     tries += 1;
@@ -763,9 +764,10 @@ fn main() -> ExitCode {
                     if rc == 0 {
                         break;
                     }
-                    if tries < 2 && out.contains("invalid connection") {
-                        info("  bd init hit an invalid connection — removing the partial database and retrying");
-                        let _ = std::fs::remove_dir_all(Path::new(&db).join(".beads"));
+                    clean_partial_init(&db, &dbname, dolt_port);
+                    if tries < max_tries && out.contains("invalid connection") {
+                        info("  bd init hit an invalid connection — removed the partial database, retrying");
+                        std::thread::sleep(std::time::Duration::from_secs(2 * tries as u64));
                         continue;
                     }
                     eprint!("{out}");
@@ -1205,6 +1207,15 @@ fn read_yaml_port(path: &str) -> Option<u16> {
 
 fn tcp_up(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), std::time::Duration::from_secs(1)).is_ok()
+}
+
+fn clean_partial_init(db: &str, dbname: &str, port: u16) {
+    let _ = std::fs::remove_dir_all(Path::new(db).join(".beads"));
+    let _ = std::fs::remove_dir_all(Path::new(db).join(".dolt"));
+    if dbname.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && !dbname.is_empty() {
+        // batch-job: dropping the partial database; bounded at 30 s.
+        let _ = Command::new("timeout").args(["30", "dolt", "--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", &format!("DROP DATABASE IF EXISTS `{dbname}`")]).stdin(Stdio::null()).output();
+    }
 }
 
 fn wait_tcp(port: u16, max_secs: u64) -> bool {
