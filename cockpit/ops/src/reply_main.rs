@@ -48,8 +48,8 @@ struct RealFollow;
 
 impl Follow for RealFollow {
     fn lift_hold(&self, id: &str, message_id: &str) -> Result<(), String> {
-        let out = Command::new("timeout")
-            .args(["5", "spira-lc", "reply", id, message_id, "claude"])
+        let out = spira_config::bounded::bounded("spira-lc")
+            .args(["reply", id, message_id, "claude"])
             .output()
             .map_err(|e| format!("failed to run spira-lc: {e}"))?;
         if out.status.success() {
