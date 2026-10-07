@@ -634,14 +634,17 @@ const RECORD: &str = r#"{ printf 'ARGV'; for a in "$@"; do printf ' [%s]' "$a"; 
 
 #[test]
 fn live_bd_writes_pass_text_on_stdin() {
-    let (mut w, dir) = live("stdin", RECORD, "exit 0");
+    let (mut w, dir) = live("stdin", RECORD, RECORD);
     let cause = "it's \"the harness\" — not the work\nsecond line";
     w.note("sp-a", &format!("Poison cleared: {cause}")).unwrap();
     w.close("sp-ask1", &format!("Resolved: {cause}")).unwrap();
     let log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
     assert!(log.contains("ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]\nSTDIN Poison cleared: it's \"the harness\""), "{log}");
-    assert!(log.contains("ARGV [-C] [/fake/db] [close] [sp-ask1] [--reason-file] [-]\nSTDIN Resolved: it's"), "{log}");
-    for line in log.lines().filter(|l| l.starts_with("ARGV")) {
+    // The ask's close goes through the lifecycle machine (sp-3fue0j), never bd.
+    let lc_log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
+    assert!(lc_log.contains("ARGV [close] [sp-ask1] [--reason-file] [-] [--actor] [spira-claim]\nSTDIN Resolved: it's"), "{lc_log}");
+    assert!(!log.contains("[close]"), "a close never reaches bd: {log}");
+    for line in log.lines().chain(lc_log.lines()).filter(|l| l.starts_with("ARGV")) {
         assert!(!line.contains("harness"), "no free text in argv: {line}");
     }
 }

@@ -752,7 +752,7 @@ impl World for Live {
 
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
-        spira_config::lifecycle_row::close(id, reason, "spira-claim", None)
+        spira_config::lifecycle_row::close_with(&self.store.lc, id, reason, "spira-claim", None)
     }
 
     fn audit_len(&mut self) -> u64 {
