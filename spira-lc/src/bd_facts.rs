@@ -61,8 +61,21 @@ fn parse(text: &str, id: &str) -> Result<BdRecord, String> {
 /// design Intent 5's "cheap, fast" bench is about the lifecycle machine's own transitions,
 /// never about this tool, which runs once against a drained store.
 pub fn roster(bd_bin: &str, db: &str, repo_name: &str) -> Result<Vec<String>, String> {
+    list_ids(bd_bin, db, &["--label", &format!("repo:{repo_name}")], "5")
+}
+
+/// Every bead id in the database, in any status and with any labels — install's one-time
+/// population (sp-k62xz8) gives each a lifecycle row, so none may be left off this roster by
+/// a label filter. Bounded longer than [`roster`]: one unfiltered list of a whole store.
+pub fn roster_all(bd_bin: &str, db: &str) -> Result<Vec<String>, String> {
+    list_ids(bd_bin, db, &[], "30")
+}
+
+fn list_ids(bd_bin: &str, db: &str, filter: &[&str], secs: &str) -> Result<Vec<String>, String> {
     let out = Command::new("timeout")
-        .args(["5", bd_bin, "-C", db, "list", "--json", "--all", "--label", &format!("repo:{repo_name}"), "--limit", "0"])
+        .args([secs, bd_bin, "-C", db, "list", "--json", "--all"])
+        .args(filter)
+        .args(["--limit", "0"])
         .output()
         .map_err(|e| format!("spawning {bd_bin}: {e}"))?;
     if !out.status.success() {
