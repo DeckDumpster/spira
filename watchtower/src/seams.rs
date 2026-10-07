@@ -45,7 +45,7 @@ ctrl.sh suspended || exit 98
 /// — the caller treats that as "cannot check", not as "nothing is disabled"
 /// (law-absence-needs-a-positive-control).
 pub fn timer_priority_and_suspended(_spira_home: &str) -> Option<Timers> {
-    let out = Command::new("bash").arg("-c").arg(TIMERS_SCRIPT).output().ok()?;
+    let out = spira_config::bounded::bounded("bash").arg("-c").arg(TIMERS_SCRIPT).output().ok()?;
     if !out.status.success() {
         return None;
     }

@@ -9,7 +9,7 @@
 use crate::SyncCell as Cell;
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use test_plan::{build_matrix, load_catalogues, orphan_violations, render_markdown, SuiteCoverage};
 
@@ -54,7 +54,7 @@ fn suites_at(tree: &Tree, rev: &str) -> Result<Vec<SuiteCoverage>, String> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
-    let mut child = Command::new("git")
+    let mut child = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(&tree.root)
         .args(["cat-file", "--batch"])
@@ -168,6 +168,7 @@ impl Rule for PlanMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use crate::testutil::TempDir;
 
     const CAT: &str = "api_version = \"1\"\narea = \"demo\"\n\n[[use_case]]\nid = \"UC-demo-01\"\ntier = \"T0\"\nstatement = \"one\"\n\n[[use_case]]\nid = \"UC-demo-02\"\ntier = \"T1\"\nstatement = \"two\"\n";

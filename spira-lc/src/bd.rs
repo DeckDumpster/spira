@@ -11,7 +11,7 @@ fn bd_bin() -> Result<String, String> {
 }
 
 fn run(args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new(bd_bin()?);
+    let mut cmd = spira_config::bounded::bounded(bd_bin()?);
     let db = spira_config::process::cfg("SPIRA_DB")?;
     if !db.is_empty() {
         cmd.args(["-C", &db]);
@@ -77,7 +77,7 @@ pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
 pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Result<String, String> {
     // bead.sh, by name on the launcher's PATH (sp-gypjk) — never repository-relative.
     let bead_sh = "bead.sh";
-    let out = Command::new(bead_sh)
+    let out = spira_config::bounded::bounded(bead_sh)
         .args(["file", title, "--for", persona, "--repo", repo, "--parent", parent])
         .output()
         .map_err(|e| format!("running {bead_sh}: {e}"))?;
@@ -95,7 +95,7 @@ pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, bod
     // mail, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
-    let mut child = Command::new(&mail_sh)
+    let mut child = spira_config::bounded::bounded(&mail_sh)
         .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

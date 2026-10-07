@@ -4,7 +4,7 @@
 //! `poison.cleared` floor, the lifecycle hold, the note and the ask are all spira-claim's,
 //! verified by CHECK 4's own decision — this crate does not re-derive any of it.
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 #[derive(Debug)]
 pub struct Opts {
@@ -51,7 +51,7 @@ pub fn spira_claim_args(o: &Opts) -> Vec<String> {
 /// `groomer.sh` checked: `OK   <id>:`.
 pub fn run(bin: &str, o: &Opts) -> (i32, String) {
     let args = spira_claim_args(o);
-    let out = Command::new(bin).args(&args).stdin(Stdio::null()).output();
+    let out = spira_config::bounded::bounded(bin).args(&args).stdin(Stdio::null()).output();
     let out = match out {
         Ok(o) => o,
         Err(e) => return (1, format!("groomer: unpoison: could not run {bin}: {e}")),

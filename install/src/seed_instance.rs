@@ -10,7 +10,6 @@
 //! spira-config may name the typed config file or the repo map).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The write target a writer at `conf`/`toml` should target (conf.sh's own cross-root
 /// helper) — `toml` itself if it exists; else a full `spira-config convert` from `conf`
@@ -70,7 +69,7 @@ pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path)
         }
     };
     let target = write_target_for(conf, toml, home, rm.as_deref(), &fy)?;
-    let current = Command::new("spira-config")
+    let current = spira_config::bounded::bounded("spira-config")
         .args(["get", "spira.instance"])
         .arg(&target)
         .output()
@@ -80,7 +79,7 @@ pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path)
     if current.as_deref() == Some(instance) {
         return None;
     }
-    let ok = Command::new("spira-config").args(["set", "spira.instance", instance]).arg(&target).status().map(|s| s.success()).unwrap_or(false);
+    let ok = spira_config::bounded::bounded("spira-config").args(["set", "spira.instance", instance]).arg(&target).status().map(|s| s.success()).unwrap_or(false);
     if ok {
         Some(format!("install: seeded {} with instance = {instance}", target.display()))
     } else {

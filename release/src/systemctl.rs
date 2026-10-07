@@ -1,7 +1,6 @@
 //! systemd, behind a trait: the real one runs `systemctl --user` (or `$SPIRA_SYSTEMCTL`);
 //! unit tests use a fake.
 
-use std::process::Command;
 
 /// What `systemctl show` says about a unit.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -43,7 +42,7 @@ impl RealSystemctl {
     }
 
     fn run(&self, args: &[&str]) -> Result<String, String> {
-        let out = Command::new(&self.program)
+        let out = spira_config::bounded::bounded(&self.program)
             .arg("--user")
             .args(args)
             .output()

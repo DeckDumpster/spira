@@ -63,7 +63,7 @@ fn sentinel_active() -> Option<bool> {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE").unwrap_or_default();
     let systemctl = env_nonempty("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
     let run = |verb: &str, unit: &str| {
-        Command::new(&systemctl).args(["--user", verb, unit]).output().ok()
+        spira_config::bounded::bounded(&systemctl).args(["--user", verb, unit]).output().ok()
     };
     sentinel_timer_active(&instance, |unit| {
         let enabled = run("is-enabled", unit).is_some_and(|o| o.status.success());
@@ -126,7 +126,7 @@ fn live_aeon_n(run: &str) -> i64 {
 fn renderer_rev() -> String {
     let Some(release) = env_nonempty("SPIRA_RELEASE") else { return String::new() };
     let dir = Path::new(&release).join("cockpit");
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .args(["-C"])
         .arg(&dir)
         .args(["rev-parse", "--short", "HEAD"])
@@ -170,7 +170,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     let now = now_epoch();
     let age_secs = snap.get("SP_AT").and_then(|v| v.parse::<i64>().ok()).map(|at| now - at);
     let hhmm = {
-        let out = Command::new("date").arg("+%H:%M").output().ok();
+        let out = spira_config::bounded::bounded("date").arg("+%H:%M").output().ok();
         out.filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default()

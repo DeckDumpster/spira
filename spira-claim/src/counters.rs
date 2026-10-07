@@ -68,7 +68,7 @@ pub fn lapse_record_content(bead: &str, quiet: &str, last: &str, tip: &str) -> S
 /// lapse, never on a hot path, and must match the format `watchtower`'s reader already
 /// expects from the real writer (test-watchtower.sh's gap G8, test-watchtower-lapse.sh).
 fn utc_stamp() -> String {
-    std::process::Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y%m%dT%H%M%SZ"])
         .output()
         .ok()

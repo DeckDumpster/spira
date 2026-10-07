@@ -22,7 +22,7 @@ impl Default for Cfg {
         Cfg {
             stall_secs: 60 * 60,
             gh_bin: "gh".to_string(),
-            gh_timeout: Duration::from_secs(120),
+            gh_timeout: Duration::from_secs(5),
         }
     }
 }

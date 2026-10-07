@@ -34,7 +34,6 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::{discover, load, SpiraToml};
 
@@ -168,7 +167,7 @@ pub fn fayth_get(home: &Path, fayth: &str, var: &str, default: &str) -> String {
     }
     let script =
         r#"f="$1"; var="$2"; def="$3"; . "$f" 2>/dev/null; eval "printf '%s' \"\${$var:-\$def}\"""#;
-    let out = Command::new("bash")
+    let out = crate::bounded::bounded("bash")
         .arg("-c")
         .arg(script)
         .arg("fayth_get")

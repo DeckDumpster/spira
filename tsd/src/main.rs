@@ -143,7 +143,7 @@ fn default_host() -> String {
 }
 
 fn now_iso() -> String {
-    Command::new("date")
+    Command::new("timeout").arg("5").arg("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()

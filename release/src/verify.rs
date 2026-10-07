@@ -1,10 +1,10 @@
 //! `release verify <sha>` (DESIGN.md "verify"). Reports every failure, not just the first.
 
+use std::process::Command;
 use crate::config::Config;
 use crate::fsutil;
 use crate::manifest::Manifest;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub struct VerifyOpts {
     pub pre_activate: bool,
@@ -64,6 +64,7 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
         } else {
             match pre_activate_env(cfg, &rel) {
                 Ok(envs) => {
+                    // batch-job: this runs whatever its caller names, as long as that takes
                     let mut cmd = Command::new(&pa);
                     cmd.arg(&rel);
                     for (k, v) in &envs {

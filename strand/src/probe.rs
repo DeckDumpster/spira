@@ -2,11 +2,12 @@
 //! systemctl, and the harness's own run files. Every payload a subprocess needs travels on
 //! its stdin (law-payloads-go-on-stdin); argv carries only verbs, flags, ids and labels.
 
+use std::process::Command;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::classify::Throttle;
 use crate::config::Config;
@@ -20,6 +21,7 @@ pub struct Out {
 }
 
 pub fn run(program: &str, args: &[&str], stdin: Option<&[u8]>, env: &[(&str, &str)]) -> Out {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })

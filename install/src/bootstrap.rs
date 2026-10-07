@@ -203,7 +203,7 @@ fn spira_above(exe: &Path) -> Option<PathBuf> {
 /// fallback stays as a second line of defense for a minimal env that sets neither.
 pub fn watch_names() -> Result<Vec<String>, String> {
     let watchers = nonempty_env("SPIRA_WATCHERS").or_else(|| nonempty_env("SPIRA_HOME").map(|h| format!("{h}/watchers")));
-    let mut cmd = Command::new("watchd");
+    let mut cmd = spira_config::bounded::bounded("watchd");
     cmd.arg("units");
     if let Some(w) = watchers {
         cmd.env("SPIRA_WATCHERS", w);
@@ -223,7 +223,7 @@ pub fn watch_names() -> Result<Vec<String>, String> {
 /// `ctrl.sh list --json`'s render. A missing/failing `ctrl` means nothing is suspended,
 /// matching the bash fallback.
 pub fn suspended_set() -> std::collections::BTreeSet<String> {
-    let out = Command::new("ctrl").arg("suspended").output();
+    let out = spira_config::bounded::bounded("ctrl").arg("suspended").output();
     let Ok(out) = out else { return Default::default() };
     if !out.status.success() {
         return Default::default();

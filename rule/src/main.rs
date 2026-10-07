@@ -84,7 +84,7 @@ fn main() {
 /// `bd -C <db> <args...>` — never `$SPIRA_BD` (DESIGN.md "Decisions": `rule.sh` didn't
 /// either). Returns (exit code, stdout, stderr).
 fn run_bd(db: &str, args: &[&str]) -> (i32, String, String) {
-    let out = Command::new("bd").arg("-C").arg(db).args(args).output();
+    let out = spira_config::bounded::bounded("bd").arg("-C").arg(db).args(args).output();
     match out {
         Ok(o) => (
             o.status.code().unwrap_or(1),
@@ -154,6 +154,7 @@ fn refuse_hook(e: &str) -> i32 {
 }
 
 fn synth(hook: &str) -> bool {
+    // batch-job: this runs whatever its caller names, as long as that takes
     Command::new(hook).status().map(|s| s.success()).unwrap_or(false)
 }
 
@@ -186,6 +187,7 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         }
     };
     let script = format!("{home}/wiki-commit.sh");
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let mut child = match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
         .arg(&script)
         .arg(&wiki)
@@ -482,6 +484,7 @@ fn memories_json_cached() -> Result<String, String> {
 fn fetch_memories_json() -> String {
     if let Ok(cmd) = std::env::var("SPIRA_MEMORIES_CMD") {
         if !cmd.is_empty() {
+            // batch-job: runs a gate, build or forge script that takes as long as its work
             return Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
                 .arg("-c")
                 .arg(&cmd)
@@ -493,7 +496,7 @@ fn fetch_memories_json() -> String {
                 .unwrap_or_default();
         }
     }
-    Command::new("bdq")
+    spira_config::bounded::bounded("bdq")
         .args(["memories", "--json"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())

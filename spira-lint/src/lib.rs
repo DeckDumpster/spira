@@ -13,7 +13,6 @@ use std::sync::OnceLock;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub mod lex;
 pub mod rules;
@@ -49,7 +48,7 @@ impl Tree {
     /// (untracked, not ignored). Fails when `root` is not a git work tree — a bad root is
     /// indistinguishable from a clean tree, so it is never read as one.
     pub fn from_git(root: &Path) -> Result<Tree, LintError> {
-        let ok = Command::new("git")
+        let ok = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(root)
             .args(["rev-parse", "--git-dir"])
@@ -63,7 +62,7 @@ impl Tree {
             )));
         }
         let list = |extra: &[&str]| -> Result<Vec<String>, LintError> {
-            let out = Command::new("git")
+            let out = spira_config::bounded::bounded("git")
                 .arg("-C")
                 .arg(root)
                 .args(["ls-files", "-z"])
@@ -112,7 +111,7 @@ impl Tree {
 
     /// `git -C <root> <args>`'s stdout, or its error.
     pub fn git(&self, args: &[&str]) -> Result<Vec<u8>, String> {
-        let out = Command::new("git")
+        let out = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(&self.root)
             .args(args)

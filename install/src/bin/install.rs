@@ -497,10 +497,12 @@ fn would(s: &str) {
 
 /// Run a bare-name tool, inheriting stdio, returning its exit code (127 on a spawn failure).
 fn tool_status(name: &str, args: &[&str]) -> i32 {
+    // batch-job: this runs whatever its caller names, as long as that takes
     Command::new(name).args(args).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
 }
 
 fn tool_output(name: &str, args: &[&str], extra_env: &[(&str, &str)]) -> (i32, String) {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut c = Command::new(name);
     c.args(args);
     for (k, v) in extra_env {
@@ -708,7 +710,7 @@ fn main() -> ExitCode {
         // to run at all). This ALSO proves the post-init skip check keeps -C — only the
         // fresh-init call below lost it.
         let bead_count = Command::new("timeout")
-            .args(["10", "bd", "-C", &db, "list", "--limit", "0", "--json"])
+            .args(["5", "bd", "-C", &db, "list", "--limit", "0", "--json"])
             .output()
             .ok()
             .and_then(|o| o.status.success().then(|| o.stdout))
@@ -735,6 +737,7 @@ fn main() -> ExitCode {
                 if !tcp_up(dolt_port) {
                     info(&format!("starting dolt server on port {dolt_port} for database init"));
                     let yaml = format!("{}/dolt-server.yaml", dolt_data.clone().unwrap());
+                    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
                     dolt_bg = Command::new("dolt").args(["sql-server", "--config", &yaml]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
                     if !wait_tcp(dolt_port, 30) {
                         if let Some(mut c) = dolt_bg.take() {
@@ -772,14 +775,14 @@ fn main() -> ExitCode {
                     eprintln!("install: phase database failed — bd init (server mode) failed");
                     return ExitCode::from(2);
                 }
-                let _ = Command::new("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
+                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             } else {
                 // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if Command::new("bd").current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
+                if spira_config::bounded::bounded("bd").current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
                     eprintln!("install: phase database failed — bd init failed");
                     return ExitCode::from(2);
                 }
-                let _ = Command::new("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
+                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             }
             changes += 1;
         }
@@ -787,13 +790,13 @@ fn main() -> ExitCode {
 
     // bd reads beads.role from the cwd's git config, not from -C; every caller runs from some
     // other checkout, so only the user-global value reaches all of them.
-    let role_set = Command::new("git").args(["config", "--global", "--get", "beads.role"]).output().map(|o| o.status.success() && !o.stdout.is_empty()).unwrap_or(false);
+    let role_set = spira_config::bounded::bounded("git").args(["config", "--global", "--get", "beads.role"]).output().map(|o| o.status.success() && !o.stdout.is_empty()).unwrap_or(false);
     if role_set {
         skip("beads.role already set (git config --global)");
     } else if opts.dry {
         would("run: git config --global beads.role maintainer");
     } else {
-        if Command::new("git").args(["config", "--global", "beads.role", "maintainer"]).status().map(|s| s.success()).unwrap_or(false) {
+        if spira_config::bounded::bounded("git").args(["config", "--global", "beads.role", "maintainer"]).status().map(|s| s.success()).unwrap_or(false) {
             info("set beads.role maintainer (git config --global)");
             changes += 1;
         } else {
@@ -801,12 +804,12 @@ fn main() -> ExitCode {
         }
     }
 
-    let metrics_off = Command::new("dolt").args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
+    let metrics_off = spira_config::bounded::bounded("dolt").args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
     if metrics_off {
         skip("dolt metrics.disabled already true");
     } else if opts.dry {
         would("run: dolt config --global --add metrics.disabled true");
-    } else if Command::new("dolt").args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
+    } else if spira_config::bounded::bounded("dolt").args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
         info("set dolt metrics.disabled true (dolt config --global)");
         changes += 1;
     } else {
@@ -936,7 +939,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
             info(&format!("dolt-beads.service listening on port {bp}"));
-            let _ = Command::new("bd").args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
+            let _ = spira_config::bounded::bounded("bd").args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
             let db_max: u64 = nonempty_env("SPIRA_INSTALL_DB_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
             if !wait_bd_list(&db, db_max) {
                 eprintln!("install: phase units failed — bd did not accept connections within {db_max}s after dolt-beads.service started");
@@ -1009,13 +1012,13 @@ fn main() -> ExitCode {
 
     // Linger.
     let linger_user = nonempty_env("USER").unwrap_or_else(whoami);
-    let cur_linger = Command::new("loginctl").args(["show-user", &linger_user, "-p", "Linger"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let cur_linger = spira_config::bounded::bounded("loginctl").args(["show-user", &linger_user, "-p", "Linger"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     if cur_linger == "Linger=yes" {
         skip(&format!("linger already enabled for {linger_user}"));
     } else if opts.dry {
         would(&format!("run: loginctl enable-linger {linger_user}"));
     } else {
-        let _ = Command::new("loginctl").args(["enable-linger", &linger_user]).status();
+        let _ = spira_config::bounded::bounded("loginctl").args(["enable-linger", &linger_user]).status();
         if let Some(run) = nonempty_env("SPIRA_RUN") {
             let _ = std::fs::create_dir_all(&run);
             let _ = std::fs::write(Path::new(&run).join("install-linger-enabled"), "");
@@ -1096,8 +1099,8 @@ fn main() -> ExitCode {
             }
         }
     }
-    if which_prog("tmux").is_some() && Command::new("tmux").args(["list-panes", "-a"]).output().map(|o| o.status.success()).unwrap_or(false) {
-        let panel = Command::new("tmux").args(["list-panes", "-a", "-F", "#{@cockpit}"]).output().map(|o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| *l == "panel").count()).unwrap_or(0);
+    if which_prog("tmux").is_some() && spira_config::bounded::bounded("tmux").args(["list-panes", "-a"]).output().map(|o| o.status.success()).unwrap_or(false) {
+        let panel = spira_config::bounded::bounded("tmux").args(["list-panes", "-a", "-F", "#{@cockpit}"]).output().map(|o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| *l == "panel").count()).unwrap_or(0);
         if panel > 0 {
             skip("cockpit panes already present");
         } else if opts.dry {
@@ -1141,7 +1144,7 @@ fn main() -> ExitCode {
 }
 
 fn whoami() -> String {
-    Command::new("id").arg("-un").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    spira_config::bounded::bounded("id").arg("-un").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
 }
 
 fn which_prog(p: &str) -> Option<String> {
@@ -1149,7 +1152,7 @@ fn which_prog(p: &str) -> Option<String> {
 }
 
 fn is_root() -> bool {
-    Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
+    spira_config::bounded::bounded("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
 }
 
 fn is_git_checkout(mut path: &str) -> bool {
@@ -1175,6 +1178,7 @@ fn git_remotes(db: &str) -> Vec<String> {
     if !Path::new(db).join(".git").exists() {
         return Vec::new();
     }
+    // batch-job: git history or network operation, as long as the repository is large
     Command::new("git").args(["-C", db, "remote"]).output().map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect()).unwrap_or_default()
 }
 
@@ -1200,7 +1204,7 @@ fn read_yaml_port(path: &str) -> Option<u16> {
 }
 
 fn tcp_up(port: u16) -> bool {
-    std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), std::time::Duration::from_secs(1)).is_ok()
 }
 
 fn wait_tcp(port: u16, max_secs: u64) -> bool {
@@ -1226,7 +1230,7 @@ fn wait_tcp_down(port: u16, max_secs: u64) {
 fn wait_dolt_query(port: u16, max_secs: u64) -> bool {
     let start = std::time::Instant::now();
     loop {
-        let ok = Command::new("dolt").args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", "select 1"]).stdin(Stdio::null()).output().map(|o| o.status.success()).unwrap_or(false);
+        let ok = spira_config::bounded::bounded("dolt").args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", "select 1"]).stdin(Stdio::null()).output().map(|o| o.status.success()).unwrap_or(false);
         if ok {
             return true;
         }
@@ -1241,7 +1245,7 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
     let start = std::time::Instant::now();
     let mut attempt: u64 = 0;
     loop {
-        let ok = Command::new("bd").args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
+        let ok = spira_config::bounded::bounded("bd").args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
         if ok {
             return true;
         }
@@ -1261,7 +1265,7 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
 /// retirement). Only the init call needs this; every other `bd` call in this binary keeps
 /// `-C` for the already-initialised database it is allowed to name from outside.
 fn bd_output(db: &str, args: &[&str]) -> (i32, String) {
-    let mut c = Command::new("bd");
+    let mut c = spira_config::bounded::bounded("bd");
     c.current_dir(db).args(args).env("BD_NON_INTERACTIVE", "1");
     match c.output() {
         Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
@@ -1353,7 +1357,7 @@ fn proc_cmdlines() -> Vec<(String, String)> {
 }
 
 fn flock_free(path: &str) -> bool {
-    Command::new("flock").arg("-n").arg(path).arg("true").status().map(|s| s.success()).unwrap_or(true)
+    spira_config::bounded::bounded("flock").arg("-n").arg(path).arg("true").status().map(|s| s.success()).unwrap_or(true)
 }
 
 fn dolt_servers() -> Vec<(String, String)> {
@@ -1401,11 +1405,11 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
         ));
     }
 
-    if Command::new("getent").arg("group").arg(&group).status().map(|s| !s.success()).unwrap_or(true) {
+    if spira_config::bounded::bounded("getent").arg("group").arg(&group).status().map(|s| !s.success()).unwrap_or(true) {
         info(&format!("create group {group}"));
         run_ok("groupadd", &["--system", &group])?;
     }
-    if Command::new("id").arg("-u").arg(&user).status().map(|s| !s.success()).unwrap_or(true) {
+    if spira_config::bounded::bounded("id").arg("-u").arg(&user).status().map(|s| !s.success()).unwrap_or(true) {
         info(&format!("create user {user} (system, no login, no home)"));
         run_ok("useradd", &["--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", &group, &user])?;
     }
@@ -1443,6 +1447,7 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
 }
 
 fn run_ok(prog: &str, args: &[&str]) -> Result<(), String> {
+    // batch-job: this runs whatever its caller names, as long as that takes
     Command::new(prog).args(args).status().map_err(|e| format!("cannot run {prog}: {e}")).and_then(|s| if s.success() { Ok(()) } else { Err(format!("{prog} {} failed ({s})", args.join(" "))) })
 }
 
@@ -1473,7 +1478,7 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
 }
 
 fn group_gid(group: &str) -> Option<u32> {
-    let out = Command::new("getent").args(["group", group]).output().ok()?;
+    let out = spira_config::bounded::bounded("getent").args(["group", group]).output().ok()?;
     String::from_utf8_lossy(&out.stdout).trim().split(':').nth(2)?.parse().ok()
 }
 

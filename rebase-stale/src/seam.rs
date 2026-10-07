@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoInfo {
@@ -74,7 +74,7 @@ impl LibSeam {
         } else {
             r#". "$0" >/dev/null 2>&1 || exit 97; "$@""#
         };
-        let mut c = Command::new("bash");
+        let mut c = spira_config::bounded::bounded("bash");
         c.arg("-c")
             .arg(script)
             .arg(self.home.join("lib.sh"))
@@ -158,7 +158,7 @@ impl Seam for LibSeam {
 
     fn submit(&self, branch: &str, repo_name: &str) -> (Gate, String) {
         // stdout and stderr combined into one capture, as queue.sh's `2>&1` did.
-        let o = Command::new("bash")
+        let o = spira_config::bounded::bounded("bash")
             .arg("-c")
             .arg(r#"exec "$0" submit "$1" "$2" 2>&1"#)
             .arg(&self.queue_bin)

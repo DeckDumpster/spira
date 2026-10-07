@@ -101,7 +101,7 @@ pub fn render_state(m: &BTreeMap<String, Sample>) -> String {
 }
 
 fn unit_sample(cfg: &Cfg, unit: &str) -> Option<Sample> {
-    let out = std::process::Command::new(&cfg.systemctl)
+    let out = spira_config::bounded::bounded(&cfg.systemctl)
         .args(["--user", "show", "-p", "ControlGroup", "--value", unit])
         .output()
         .ok()?;

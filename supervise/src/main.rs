@@ -172,6 +172,7 @@ fn main() -> ExitCode {
         libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
     }
 
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut child = match Command::new(&args[1]).args(&args[2..]).spawn() {
         Ok(c) => c,
         Err(e) => {

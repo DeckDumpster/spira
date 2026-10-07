@@ -133,7 +133,7 @@ impl Git<'_> {
     /// `branch_exists` itself exactly as lib.sh does, because `git branch -D` can exit
     /// non-zero yet still have removed the ref (or vice versa with a racing writer).
     pub fn branch_delete_sanctioned(&self, name: &str) -> String {
-        let out = Command::new("git")
+        let out = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(self.0)
             .args(["branch", "-D", name])
@@ -172,6 +172,7 @@ impl Git<'_> {
     /// `worktree prune -n -v`'s STDERR (that command reports on stderr, not stdout; reading
     /// it any other way yields nothing and a guard fed an empty list approves everything).
     pub fn worktree_prune_dry(&self) -> String {
+        // batch-job: git history or network operation, as long as the repository is large
         Command::new("git")
             .arg("-C")
             .arg(self.0)
@@ -188,6 +189,7 @@ impl Git<'_> {
     }
 
     pub fn worktree_repair(&self, path: &Path) {
+        // batch-job: git history or network operation, as long as the repository is large
         let _ = Command::new("git")
             .arg("-C")
             .arg(self.0)

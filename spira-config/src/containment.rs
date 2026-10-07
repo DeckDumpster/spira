@@ -59,7 +59,7 @@ fn is_under(path: &str, root: &str) -> bool {
 /// `path` is not a git checkout at all (`git -C path rev-parse --git-dir` failing is not an
 /// error here — most registered repos are plain directories at the fixture tier).
 fn fetch_remotes(path: &str) -> Vec<String> {
-    let is_repo = std::process::Command::new("git")
+    let is_repo = crate::bounded::bounded("git")
         .args(["-C", path, "rev-parse", "--git-dir"])
         .output()
         .map(|o| o.status.success())
@@ -67,6 +67,7 @@ fn fetch_remotes(path: &str) -> Vec<String> {
     if !is_repo {
         return Vec::new();
     }
+    // batch-job: git history or network operation, as long as the repository is large
     let out = std::process::Command::new("git")
         .args(["-C", path, "remote", "-v"])
         .output();

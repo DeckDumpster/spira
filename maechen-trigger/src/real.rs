@@ -4,7 +4,7 @@ use crate::lanes::LaneLabels;
 use crate::ports::World;
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 pub struct Real {
     pub home: PathBuf,
@@ -86,7 +86,7 @@ impl World for Real {
     fn open_trigger_count(&self, labels: &str) -> u64 {
         // bd says which beads carry the labels; whether each is still open is the lifecycle
         // machine's answer (sp-mve9i), never bd's status.
-        let out = Command::new(&self.bd)
+        let out = spira_config::bounded::bounded(&self.bd)
             .arg("-C")
             .arg(&self.db)
             .args(["list", "--all", "--label", labels, "--json"])
@@ -134,7 +134,7 @@ impl World for Real {
     }
 
     fn git_log_subjects(&self, repo_path: &Path, since_ts: i64, base_ref: &str) -> String {
-        Command::new("git")
+        spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo_path)
             .arg("log")
@@ -153,7 +153,7 @@ impl World for Real {
     }
 
     fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {
-        let mut child = Command::new(&self.bd)
+        let mut child = spira_config::bounded::bounded(&self.bd)
             .arg("-C")
             .arg(&self.db)
             .arg("create")
@@ -214,7 +214,7 @@ fn humantime_utc_now() -> String {
     // Matches the bash's `date -u +%Y-%m-%dT%H:%M:%SZ`. No chrono dependency: shell to
     // `date`, exactly as every other already-rewritten crate's log stamp does when it needs
     // one (czar-pass, reconciler) — a fixed-format UTC stamp is not worth a crate.
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .arg("-u")
         .arg("+%Y-%m-%dT%H:%M:%SZ")
         .output()

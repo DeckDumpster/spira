@@ -416,11 +416,11 @@ impl Registry {
 // ========================================================================================
 
 fn git_status_ok(repo: &str, args: &[&str]) -> bool {
-    Command::new("git").arg("-C").arg(repo).args(args).output().map(|o| o.status.success()).unwrap_or(false)
+    crate::bounded::bounded("git").arg("-C").arg(repo).args(args).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(repo).args(args).output().ok()?;
+    let out = crate::bounded::bounded("git").arg("-C").arg(repo).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -432,6 +432,7 @@ fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
 /// as "no remotes," exactly as bash's own `$(git remote 2>/dev/null)` does (a failed
 /// substitution is just an empty string, and nothing downstream distinguishes the two).
 fn git_remotes(repo: &str) -> Vec<String> {
+    // batch-job: git history or network operation, as long as the repository is large
     match Command::new("git").arg("-C").arg(repo).arg("remote").output() {
         Ok(o) if o.status.success() => {
             String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).filter(|l| !l.is_empty()).collect()
@@ -610,7 +611,7 @@ pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>)
 /// a private git dir and a shared common one, and only the shared one identifies the
 /// repository (see [`same_repo`]'s own doc).
 fn gitstore(path: &str) -> Option<PathBuf> {
-    let out = Command::new("git").args(["-C", path, "rev-parse", "--git-common-dir"]).output().ok()?;
+    let out = crate::bounded::bounded("git").args(["-C", path, "rev-parse", "--git-common-dir"]).output().ok()?;
     if !out.status.success() {
         return None;
     }

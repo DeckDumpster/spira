@@ -26,7 +26,7 @@ pub struct RealTemplates;
 
 impl Templates for RealTemplates {
     fn find(&self, dir: &Path, pattern: &str) -> Result<Vec<PathBuf>, String> {
-        let out = std::process::Command::new("find").arg(dir).arg("-maxdepth").arg("1").arg("-name").arg(pattern).output().map_err(|e| format!("cannot run find: {e}"))?;
+        let out = spira_config::bounded::bounded("find").arg(dir).arg("-maxdepth").arg("1").arg("-name").arg(pattern).output().map_err(|e| format!("cannot run find: {e}"))?;
         if !out.status.success() {
             // find on a missing/unreadable dir: treat as "none", matching the script's own
             // `2>/dev/null` (a missing UNITDIR is refused earlier, by the `install`/`status`

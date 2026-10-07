@@ -22,7 +22,6 @@
 //! operator noticed and re-exported the webdav vars by hand.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The operator's switch: unset, empty or `sccache` — the cache is required; `off` — an
 /// explicit, loud opt-out (a host or container without sccache).
@@ -122,7 +121,7 @@ pub enum BackendCheck {
 /// environment (this process's, via `extra_env`) names, which is exactly why callers pass the
 /// configured store's own vars here rather than the bare ambient environment.
 fn show_stats_cache_location(sccache_bin: &Path, extra_env: &[(String, String)]) -> Option<String> {
-    let out = Command::new(sccache_bin).arg("--show-stats").envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).output().ok()?;
+    let out = crate::bounded::bounded(sccache_bin).arg("--show-stats").envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).output().ok()?;
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .find(|l| l.trim_start().starts_with("Cache location"))
@@ -157,7 +156,7 @@ fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
         None => BackendCheck::Unknown,
         Some(line) if is_webdav_location(&line) => BackendCheck::Matches,
         Some(line) => {
-            let _ = Command::new(sccache_bin).arg("--stop-server").output();
+            let _ = crate::bounded::bounded(sccache_bin).arg("--stop-server").output();
             BackendCheck::Restarted(line)
         }
     }

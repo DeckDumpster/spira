@@ -298,7 +298,7 @@ pub struct RealMailer;
 impl Mailer for RealMailer {
     fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool {
         let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}\n");
-        let mut cmd = Command::new("mail");
+        let mut cmd = spira_config::bounded::bounded("mail");
         cmd.envs(spira_config::release_env::child_path_env_for_process());
         cmd.args(["send", "operator", "--from", "Incident <incident@spira>", "--subject", subject, "--kind", "question", "--default", default])
             .stdin(Stdio::piped())

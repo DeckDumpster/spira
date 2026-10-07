@@ -1,8 +1,8 @@
 //! `literal-lint` — refuse configured-name literals outside the files that declare them.
 //! Contract: DESIGN.md. Ported from `spira/literal-lint.sh` (deleted).
 
-use std::process::Command;
 
+use std::process::Command;
 use regex::bytes::Regex;
 
 use crate::{lines, trim_lead, Entry, Finding, LintError, Rule, Tree};
@@ -86,6 +86,7 @@ const BOX_CONFIG_PINS: &[(&str, &str)] = &[
 const TREE_FIXTURE: &str = "../spira-config/tests/fixtures/complete.toml";
 
 fn run_schema(schema: &std::path::Path, args: &[&str], extra_env: &[(&str, &str)]) -> Option<String> {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(schema);
     cmd.args(args);
     for (k, v) in BOX_CONFIG_PINS {

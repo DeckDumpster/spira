@@ -22,7 +22,7 @@
 //!     silently drop.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Run `<script>` as `bash -c '<script>' <name>`, with `SPIRA_HOME_LIB` pointing at
 /// `lib.sh` (the seam's own prelude sources it) and every `(k, v)` in `envs` set besides
@@ -31,7 +31,7 @@ use std::process::{Command, Stdio};
 /// sentinel's seams do.
 pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin: &str) -> (String, bool) {
     let full = format!("set -uo pipefail\n. \"$SPIRA_HOME_LIB\" >&2 || exit 97\n{script}\n");
-    let mut cmd = Command::new("bash");
+    let mut cmd = spira_config::bounded::bounded("bash");
     cmd.args(["-c", &full, name]);
     cmd.env("SPIRA_HOME_LIB", lib_sh);
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's

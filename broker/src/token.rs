@@ -15,7 +15,7 @@
 use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
@@ -107,7 +107,7 @@ fn b64url(data: &[u8]) -> String {
 }
 
 fn sign_rs256(key_path: &str, message: &str) -> Result<Vec<u8>, String> {
-    let mut child = Command::new("openssl")
+    let mut child = spira_config::bounded::bounded("openssl")
         .args(["dgst", "-sha256", "-sign", key_path, "-binary"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -170,7 +170,7 @@ fn mint_fresh(creds: &AppCreds) -> Result<(String, u64), String> {
         "https://api.github.com/app/installations/{}/access_tokens",
         creds.installation_id
     );
-    let out = Command::new("curl")
+    let out = spira_config::bounded::bounded("curl")
         .args([
             "-sf", "--max-time", "30",
             "-X", "POST",

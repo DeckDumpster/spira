@@ -188,7 +188,7 @@ fn cmd_ghq(args: &[String]) -> i32 {
 // =========================================================================================
 
 fn date_now_utc_nanos() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .arg("-u")
         .arg("+%Y-%m-%dT%H:%M:%S.%NZ")
         .output()

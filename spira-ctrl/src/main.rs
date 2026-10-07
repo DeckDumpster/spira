@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use spira_ctrl::{self as ctrl, CtrlData};
 
@@ -48,7 +48,7 @@ fn systemctl_bin() -> String {
 }
 
 fn sc(args: &[&str]) -> String {
-    Command::new(systemctl_bin())
+    spira_config::bounded::bounded(systemctl_bin())
         .args(args)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -56,7 +56,7 @@ fn sc(args: &[&str]) -> String {
 }
 
 fn sc_lines(args: &[&str]) -> Vec<String> {
-    Command::new(systemctl_bin())
+    spira_config::bounded::bounded(systemctl_bin())
         .args(args)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect())
@@ -69,7 +69,7 @@ fn sc_lines(args: &[&str]) -> Vec<String> {
 /// the top level through [`spira_config::process::cfg`] and passed down — pure logic takes
 /// config as an argument, it does not read it.
 fn today(tz: &str) -> String {
-    let mut cmd = Command::new("date");
+    let mut cmd = spira_config::bounded::bounded("date");
     cmd.arg("+%Y-%m-%d");
     if !tz.is_empty() {
         cmd.env("TZ", tz);

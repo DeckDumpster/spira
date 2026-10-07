@@ -3,7 +3,7 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{ExitCode, Stdio};
 
 use cockpit_ops::db;
 use cockpit_ops::reply::{run, usage_error, BdResult, Commenter, Outcome, USAGE};
@@ -13,7 +13,7 @@ struct RealBd;
 impl Commenter for RealBd {
     fn comment(&self, db: &Path, id: &str, text: &str) -> BdResult {
         let bd = db::bd_bin();
-        let out = Command::new(&bd)
+        let out = spira_config::bounded::bounded(&bd)
             .arg("-C")
             .arg(db)
             .args(["comments", "add", id, text])

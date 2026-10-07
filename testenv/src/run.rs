@@ -2,6 +2,7 @@
 //! cache, build, stand up the container, install, run, record, judge, tear down. Every exit
 //! goes through [`Finish`], which is printed as the final `VERDICT` line.
 
+use std::process::Command;
 use spira_config::admission;
 use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
@@ -27,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// How a run ended; rendered as the last stdout line.
@@ -359,6 +360,7 @@ fn helper(
     if !script.is_file() {
         return None;
     }
+    // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let mut cmd = Command::new("bash");
 cmd.envs(spira_config::release_env::child_path_env_for_process());
     cmd.arg(script).args(args).stderr(Stdio::inherit());
@@ -388,6 +390,7 @@ fn helper_bin(bin: &Path, args: &[&str], extra_env: &[(&str, String)]) -> Option
     if !bin.is_file() {
         return None;
     }
+    // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let mut cmd = Command::new(bin);
     cmd.args(args).stderr(Stdio::inherit());
     for (k, v) in extra_env {
@@ -515,6 +518,7 @@ fn sweep_orphans(s: &Settings, deps: &Deps) {
 
 /// podman's StartedAt (`2026-09-28 12:34:56.123 +0000 UTC`), via `date -d` as the script did.
 fn parse_started_at(s: &str) -> Option<u64> {
+    // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let o = Command::new("date")
         .args(["-d", s, "+%s"])
         .stderr(Stdio::null())

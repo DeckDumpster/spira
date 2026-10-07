@@ -121,7 +121,7 @@ impl ProdEnv {
 /// effort: a failure here must never change canary's own exit status.
 fn file_incident(prod: &ProdEnv, title: &str, body: &str) {
     let Some(db) = &prod.db else { return };
-    let mut cmd = Command::new("incident.sh");
+    let mut cmd = spira_config::bounded::bounded("incident.sh");
     cmd.env("SPIRA_DB", db)
         .env("SPIRA_RUN", prod.run.as_deref().unwrap_or("/tmp/canary-inc"))
         .env("SPIRA_BD", &prod.bd)
@@ -305,6 +305,7 @@ pub fn canary_worker() -> Result<(), String> {
     let lease_until = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + CANARY_LEASE_SECS;
     // batch-job: the stage's synthetic aeon claiming its bead, bounded by the canary's own --deadline.
     let mut tools = |prog: &str, args: &[String]| -> (i32, String) {
+        // batch-job: this runs whatever its caller names, as long as that takes
         match Command::new(prog).args(args).stdin(Stdio::null()).stderr(Stdio::inherit()).output() {
             Ok(o) => (o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()),
             Err(e) => (127, format!("{prog}: {e}")),
@@ -323,7 +324,7 @@ pub fn canary_worker() -> Result<(), String> {
         release_bead(&id, &holder);
         return Err("SPIRA_REPO not set".into());
     }
-    let checkout = |args: &[&str]| Command::new("git").current_dir(&repo).args(args).status().map(|s| s.success()).unwrap_or(false);
+    let checkout = |args: &[&str]| spira_config::bounded::bounded("git").current_dir(&repo).args(args).status().map(|s| s.success()).unwrap_or(false);
     if !checkout(&["checkout", "-q", "-b", &branch, "origin/main"]) && !checkout(&["checkout", "-q", &branch]) {
         log(&format!("could not create branch {branch}"));
         release_bead(&id, &holder);
@@ -334,21 +335,22 @@ pub fn canary_worker() -> Result<(), String> {
     let git_env = |c: &mut Command| {
         c.env("GIT_AUTHOR_NAME", "canary").env("GIT_AUTHOR_EMAIL", "canary@example.invalid").env("GIT_COMMITTER_NAME", "canary").env("GIT_COMMITTER_EMAIL", "canary@example.invalid");
     };
-    let mut add = Command::new("git");
+    let mut add = spira_config::bounded::bounded("git");
     add.current_dir(&repo).args(["add", "canary.txt"]);
     git_env(&mut add);
     run_ok(&mut add, "git add")?;
-    let mut commit = Command::new("git");
+    let mut commit = spira_config::bounded::bounded("git");
     commit.current_dir(&repo).args(["commit", "-q", "-m", &format!("feat: {id} — canary synthetic commit")]);
     git_env(&mut commit);
     run_ok(&mut commit, "git commit")?;
+    // batch-job: git history or network operation, as long as the repository is large
     if !Command::new("git").current_dir(&repo).args(["push", "-q", "origin", &branch]).status().map(|s| s.success()).unwrap_or(false) {
         log(&format!("push failed for {branch}"));
         return Err(format!("push failed for {branch}"));
     }
     log(&format!("committed and pushed {branch}"));
 
-    let mut set_state = Command::new(&bd);
+    let mut set_state = spira_config::bounded::bounded(&bd);
     if !db.is_empty() {
         set_state.arg("-C").arg(&db);
     }
@@ -357,7 +359,7 @@ pub fn canary_worker() -> Result<(), String> {
 
     // Hand the bead on the way an aeon does: the machine's Submit event with the branch's
     // tip (WORKING -> SUBMITTED), never a bd close — bd status is inert for a work bead.
-    let tip = Command::new("git").current_dir(&repo).args(["rev-parse", "HEAD"]).output().map_err(|e| format!("cannot run git rev-parse: {e}"))?;
+    let tip = spira_config::bounded::bounded("git").current_dir(&repo).args(["rev-parse", "HEAD"]).output().map_err(|e| format!("cannot run git rev-parse: {e}"))?;
     let tip = String::from_utf8_lossy(&tip.stdout).trim().to_string();
     let (rc, out) = tools("timeout", &submit_args(&id, &tip, &holder));
     if rc != 0 {

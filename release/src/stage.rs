@@ -332,6 +332,7 @@ pub fn down(root: &Path) -> Result<(), String> {
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    // batch-job: cp runs for as long as its work does
     let st = Command::new("cp").args(["-rp"]).arg(from).arg(to).stdout(Stdio::null()).status().map_err(|e| format!("cannot run cp: {e}"))?;
     if !st.success() {
         return Err(format!("cp -rp {} {} failed ({st})", from.display(), to.display()));

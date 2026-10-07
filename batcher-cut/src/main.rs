@@ -414,7 +414,7 @@ impl drive::RoundOps for LiveOps<'_> {
 
 /// The commit `rev` names in `repo`, if any.
 fn git_rev(repo: &Repo, rev: &str) -> Option<String> {
-    let o = std::process::Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q", rev]).output().ok()?;
+    let o = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q", rev]).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 

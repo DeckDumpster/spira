@@ -63,6 +63,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         pre_activate: true,
         dry_run: false,
         stage: None,
+        // batch-job: a release restart waits on every unit to come back
         deadline: Duration::from_secs(120),
         skip_restart: false,
     };

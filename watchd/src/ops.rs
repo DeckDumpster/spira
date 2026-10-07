@@ -161,7 +161,7 @@ impl Ops for Real {
             return None;
         }
         let base = std::path::Path::new(prog).file_name()?.to_str()?.to_string();
-        let out = Command::new("pgrep").arg("-f").arg(&base).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        let out = spira_config::bounded::bounded("pgrep").arg("-f").arg(&base).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let Ok(pid) = line.trim().parse::<i32>() else { continue };
             if !cmdline_has_arg(pid, prog) {
@@ -193,7 +193,7 @@ impl Ops for Real {
 
     fn mail_health(&self) -> i32 {
         // A spawn failure was a silent 3 ("could not check") — name it (sp-xp0u2).
-        match Command::new("mail-health.sh").envs(spira_config::release_env::child_path_env_for_process()).stdin(Stdio::null()).status() {
+        match spira_config::bounded::bounded("mail-health.sh").envs(spira_config::release_env::child_path_env_for_process()).stdin(Stdio::null()).status() {
             Ok(s) => s.code().unwrap_or(3),
             Err(e) => {
                 eprintln!("watchd: cannot run mail-health.sh: {e}");
@@ -244,7 +244,7 @@ fn is_locked_by_someone(path: &std::path::Path) -> bool {
 
 fn run_with_stdin(program: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
     use std::io::Write;
-    let mut child = Command::new(program)
+    let mut child = spira_config::bounded::bounded(program)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

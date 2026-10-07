@@ -152,7 +152,7 @@ async fn check_sentinel(instance: &str, systemctl: &str) -> Option<bool> {
     ];
     let mut found_inactive = false;
     for name in &names {
-        match Command::new(systemctl)
+        match Command::new("timeout").arg("5").arg(systemctl)
             .args(["--user", "is-active", name])
             .output()
             .await

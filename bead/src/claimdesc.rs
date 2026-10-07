@@ -5,7 +5,7 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use sha2::{Digest, Sha256};
 
@@ -178,8 +178,8 @@ pub fn aeon_alive(pidfile: &str) -> bool {
 }
 
 fn mail_send(aeon_id: &str, body: &str) {
-    let Ok(mut child) = Command::new("timeout")
-        .args(["5", "mail", "send", aeon_id, "--from", "amend <amend@spira>", "--subject", "Update while you work"])
+    let Ok(mut child) = spira_config::bounded::bounded("mail")
+        .args(["send", aeon_id, "--from", "amend <amend@spira>", "--subject", "Update while you work"])
         .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

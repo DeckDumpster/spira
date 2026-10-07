@@ -5,7 +5,6 @@ use crate::incident::{self, Finding};
 use crate::log::log;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Command;
 
 pub struct Cfg {
     pub systemctl: String,
@@ -52,7 +51,7 @@ pub fn decide(releases: usize, since: Option<i64>, now: i64, max_secs: i64) -> V
 }
 
 pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
-    let out = Command::new(&cfg.systemctl)
+    let out = spira_config::bounded::bounded(&cfg.systemctl)
         .args(["--user", "show", "spira-*", "--state=active", "-p", "Id", "-p", "Environment"])
         .output();
     let Some(out) = out.ok().filter(|o| o.status.success()) else {

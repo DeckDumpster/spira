@@ -62,7 +62,7 @@ fn write_checkpoint<T: serde::Serialize>(path: &Path, cp: &T) -> Result<(), Stri
 }
 
 fn now_iso() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()
@@ -107,7 +107,7 @@ fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
          WHERE created_at >= {} ORDER BY created_at, id",
         sql_str(since)
     );
-    let out = Command::new(&bd)
+    let out = spira_config::bounded::bounded(&bd)
         .args(["-C", &db, "sql", "--json", &query])
         .output()
         .map_err(|e| format!("running {bd}: {e}"))?;
@@ -261,7 +261,7 @@ fn write_rows(run: &Path, rows: &[StageRow]) -> Result<(), String> {
     // tsd-write, by name on the launcher's PATH (sp-gypjk); a missing one fails the spawn below.
     let tsd_bin = "tsd-write";
     for row in rows {
-        let mut cmd = Command::new(tsd_bin);
+        let mut cmd = spira_config::bounded::bounded(tsd_bin);
         cmd.args(["--family", "bead-stage", "--root"])
             .arg(run)
             .args(["--ts", &row.ts])

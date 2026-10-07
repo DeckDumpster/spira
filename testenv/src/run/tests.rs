@@ -2,6 +2,7 @@
 //! fake builder: the contract of DESIGN.md §2 and §4, end to end, without podman or cargo.
 
 use super::*;
+use std::process::Command;
 use crate::cli::{parse, Invocation};
 use crate::fixture::fake::FakeRuntime;
 use crate::runtime::ExecOutcome;

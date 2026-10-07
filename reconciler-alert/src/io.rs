@@ -4,7 +4,7 @@
 //! the dedup and classification logic lives in `reconciler_engine::alert`, not here.
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 // Persistence for which streak each invariant last alerted for lives in reconciler-engine::io
 // now — reconciler-flow shares the exact same file format instead of a second copy of it.
@@ -15,7 +15,7 @@ pub use reconciler_engine::io::{load_alerted, save_alerted, AlertedSinceMap};
 /// nobody to wake, so the alert must fall back to operator mail rather than being typed
 /// into a session that will never read it.
 pub fn concierge_is_running(concierge_sh: &str) -> bool {
-    Command::new("bash")
+    spira_config::bounded::bounded("bash")
         .arg(concierge_sh)
         .arg("status")
         .stdin(Stdio::null())
@@ -39,7 +39,7 @@ pub fn mail_send(
     class: Option<&str>,
     body: &str,
 ) -> Result<(), String> {
-    let mut cmd = Command::new(mail_sh);
+    let mut cmd = spira_config::bounded::bounded(mail_sh);
     cmd.arg("send").arg(mailbox).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
     if let Some(d) = default {
         cmd.arg("--default").arg(d);

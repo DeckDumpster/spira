@@ -78,6 +78,7 @@ impl LibSeam {
 
     fn run(&self, args: &[&str]) -> Result<String, String> {
         let script = r#". "$0" >/dev/null 2>&1 || exit 97; "$@""#;
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -123,6 +124,7 @@ impl Seam for LibSeam {
     fn conf(&self, key: &str) -> Result<String, String> {
         // run_stdin unused here; a plain var read never needs a payload.
         let script = format!(r#". "$0" >/dev/null 2>&1 || exit 97; printf '%s' "${{{key}:-}}""#);
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -149,7 +151,7 @@ impl Seam for LibSeam {
         // needs lib.sh sourced at all. `bdq state <id> repo` inherits this process's own
         // SPIRA_DB/SPIRA_BD exactly as the bash shim's `command bdq "$@"` did; `state` is
         // not a create, so it never touches the repo-label fence's registry build either.
-        let out = Command::new("bdq").arg("state").arg(id).arg("repo").stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("bdq").arg("state").arg(id).arg("repo").stdin(Stdio::null()).stderr(Stdio::null()).output();
         let name = match out {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
             _ => String::new(),
@@ -171,11 +173,11 @@ impl Seam for LibSeam {
     }
 
     fn lc_held_poison(&self, id: &str) -> bool {
-        Command::new("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+        spira_config::bounded::bounded("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
     }
 
     fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String> {
-        let st = Command::new("spira-lc").args(["unhold", id, kind, "groomer"]).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|e| format!("spira-lc unhold: {e}"))?;
+        let st = spira_config::bounded::bounded("spira-lc").args(["unhold", id, kind, "groomer"]).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|e| format!("spira-lc unhold: {e}"))?;
         if st.success() { Ok(()) } else { Err(format!("spira-lc unhold {id} {kind} exited {}", st.code().unwrap_or(-1))) }
     }
 }

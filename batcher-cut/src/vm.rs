@@ -199,6 +199,7 @@ impl<'a> VmRunner<'a> {
             }
         }
         let head = io::head_of(&wt);
+        // batch-job: git history or network operation, as long as the repository is large
         let _ = Command::new("git").arg("-C").arg(&self.repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
         result?;
         io::set_branch(self.repo, &branch, &head?);
@@ -211,7 +212,7 @@ impl<'a> VmRunner<'a> {
         let bins = res.join("bins");
         let Ok(rd) = fs::read_dir(&bins) else { return Ok(()) };
         let want = String::from_utf8_lossy(
-            &Command::new("git").arg("-C").arg(&self.wt).args(["rev-parse", "HEAD^{tree}"]).output().map_err(|e| e.to_string())?.stdout,
+            &spira_config::bounded::bounded("git").arg("-C").arg(&self.wt).args(["rev-parse", "HEAD^{tree}"]).output().map_err(|e| e.to_string())?.stdout,
         )
         .trim()
         .to_string();
@@ -254,6 +255,7 @@ impl<'a> VmRunner<'a> {
             }
             Ok(()) => {
                 let results = wt.join(".install-probe-results");
+                // batch-job: the install probe is a VM wall-clock job
                 let status = Command::new("timeout")
                     .arg("-k")
                     .arg("10")
@@ -277,6 +279,7 @@ impl<'a> VmRunner<'a> {
                 status.ok().and_then(|st| st.code()).map_or(JobResult::Fault, install_probe_result)
             }
         };
+        // batch-job: git history or network operation, as long as the repository is large
         let _ = Command::new("git").arg("-C").arg(&self.repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
         result
     }
@@ -324,6 +327,7 @@ impl RoundRunner for VmRunner<'_> {
                 }
                 order::covers(&io::suites_in(&self.wt, "HEAD"), suites)?;
                 let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
+                // batch-job: this runs whatever its caller names, as long as that takes
                 let mut cmd = Command::new("systemd-run");
                 cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref()));
                 cmd.arg("timeout");

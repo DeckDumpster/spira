@@ -270,6 +270,7 @@ pub fn read_on_base(repo: &Repo, ms: &[Member]) -> Vec<(String, Option<bool>)> {
         return read_on_local_base(repo, ms);
     }
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
+    // batch-job: git history or network operation, as long as the repository is large
     let fetched = Command::new("git")
         .arg("-C")
         .arg(&repo.path)
@@ -282,7 +283,7 @@ pub fn read_on_base(repo: &Repo, ms: &[Member]) -> Vec<(String, Option<bool>)> {
             if !fetched || m.tip.is_empty() {
                 return (m.id.clone(), None);
             }
-            let st = Command::new("git")
+            let st = spira_config::bounded::bounded("git")
                 .arg("-C")
                 .arg(&repo.path)
                 .args(["merge-base", "--is-ancestor", &m.tip, &repo.base])
@@ -304,7 +305,7 @@ fn read_on_local_base(repo: &Repo, ms: &[Member]) -> Vec<(String, Option<bool>)>
             if m.tip.is_empty() {
                 return (m.id.clone(), None);
             }
-            let st = Command::new("git")
+            let st = spira_config::bounded::bounded("git")
                 .arg("-C")
                 .arg(&repo.path)
                 .args(["merge-base", "--is-ancestor", &m.tip, &base_ref])

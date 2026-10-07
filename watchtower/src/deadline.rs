@@ -75,7 +75,7 @@ pub fn output_within(label: &str, cmd: &mut Command, within: Duration) -> io::Re
     match status {
         Some(status) => Ok(Output { status, stdout: t_out.join().unwrap_or_default(), stderr: t_err.join().unwrap_or_default() }),
         None => {
-            let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).status();
+            let _ = spira_config::bounded::bounded("kill").args(["-KILL", "--", &format!("-{}", child.id())]).status();
             let _ = child.kill();
             let _ = child.wait();
             drop((t_out, t_err));

@@ -27,7 +27,7 @@ pub trait Git {
 pub struct RealGit;
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let o = Command::new("git")
+    let o = Command::new("timeout").arg("5").arg("git")
         .arg("-C")
         .arg(repo)
         .args(args)

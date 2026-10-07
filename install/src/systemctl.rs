@@ -4,7 +4,6 @@
 //! files, so it carries its own trait rather than widening that one under every implementor.
 
 use std::collections::BTreeMap;
-use std::process::Command;
 
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
@@ -45,7 +44,7 @@ impl RealSystemctl {
     }
 
     fn run(&self, args: &[&str]) -> (bool, String, String) {
-        match Command::new(&self.program).arg("--user").args(args).output() {
+        match spira_config::bounded::bounded(&self.program).arg("--user").args(args).output() {
             Ok(out) => (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string(), String::from_utf8_lossy(&out.stderr).to_string()),
             Err(e) => (false, String::new(), format!("cannot run {}: {e}", self.program)),
         }
