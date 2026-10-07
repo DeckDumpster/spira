@@ -305,6 +305,9 @@ pub fn run(
         Mode::Serial => run_serial(&sh, jobs, &mut outcome),
         Mode::Parallel => run_parallel(&sh, jobs, &mut outcome),
     }
+    if !outcome.harness_fault() && !outcome.deadline_hit {
+        rerun_lost(&sh, jobs);
+    }
     if outcome.deadline_hit && !outcome.harness_fault() {
         let d = cfg.deadline.map(|d| d.as_secs()).unwrap_or(0);
         (hooks.log)(&format!(
@@ -320,6 +323,43 @@ pub fn run(
     outcome.records = sh.records.into_inner().unwrap();
     outcome.cancelled |= cancelled();
     outcome
+}
+
+/// A suite whose exit status podman lost is run once more, serially, and its second
+/// record replaces the first: one lost status must not fault the other suites' verdicts.
+fn rerun_lost(sh: &Shared, jobs: &[Job]) {
+    let lost: Vec<(usize, &Job)> = jobs
+        .iter()
+        .enumerate()
+        .filter(|(_, j)| {
+            sh.records
+                .lock()
+                .unwrap()
+                .get(&j.name)
+                .is_some_and(|r| r.status.is_fault())
+        })
+        .collect();
+    for (idx, job) in lost {
+        if cancelled() || sh.past_deadline() {
+            return;
+        }
+        let n = idx + 1;
+        (sh.hooks.log)(&format!(
+            "podman lost the exit status of {} — re-running it once",
+            job.name
+        ));
+        if sh.cfg.mode == Mode::Parallel {
+            sh.session.make_home(n);
+        }
+        let (rc, secs, output) = sh.exec_suite(n, &job.name);
+        if rc == crate::runtime::RC_DEADLINE {
+            return;
+        }
+        if rc == crate::runtime::RC_CANCELLED && cancelled() {
+            return;
+        }
+        sh.finish(n, &job.name, rc, secs, &output);
+    }
 }
 
 fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
@@ -655,6 +695,47 @@ mod tests {
         let res = fs::read_to_string(dir.join("test-strand-reclaim-n.sh.result")).unwrap();
         assert!(res.starts_with("fault "));
         assert!(res.trim_end().ends_with(" parallel explicit 255"));
+    }
+
+    #[test]
+    fn a_lost_exit_status_is_rerun_once_and_the_second_verdict_stands() {
+        const LOST: &str = "Error: timed out waiting for file /var/lib/containers/storage/overlay-containers/a/userdata/b/exit/a\n";
+        let rt = FakeRuntime::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c2 = calls.clone();
+        rt.on(
+            |r| r.argv.get(1).map(String::as_str) == Some("/workspace/spira/test-lost.sh"),
+            move |_| {
+                if c2.fetch_add(1, Ordering::SeqCst) == 0 {
+                    ExecOutcome { rc: 255, output: LOST.into() }
+                } else {
+                    ExecOutcome { rc: 0, output: "ok 1 - a\n".into() }
+                }
+            },
+        );
+        rt.suite("test-a.sh", 0, "ok\n");
+        let dir = tmpdir("rerun-lost");
+        let s = session(&rt);
+        let c = cfg(Mode::Parallel, &dir, 2);
+        let out = with_hooks(|h, _| {
+            run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-lost.sh", "test-a.sh"]))
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(out.records["test-lost.sh"].status, Status::Ok);
+        assert!(out.faulted().is_empty());
+    }
+
+    #[test]
+    fn a_status_lost_twice_stays_a_fault_and_is_not_rerun_again() {
+        const LOST: &str = "Error: timed out waiting for file /var/lib/containers/storage/overlay-containers/a/userdata/b/exit/a\n";
+        let rt = FakeRuntime::new();
+        rt.suite("test-lost.sh", 255, LOST);
+        let dir = tmpdir("rerun-lost-twice");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-lost.sh"])));
+        assert_eq!(out.faulted(), vec!["test-lost.sh"]);
+        assert_eq!(rt.suite_execs().len(), 2);
     }
 
     #[test]
