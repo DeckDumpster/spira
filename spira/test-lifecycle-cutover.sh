@@ -167,6 +167,27 @@ certify_stacked() {
     lc event bead "$id" --expect SUBMITTED --version 2 --actor test --kind '{"GatePass":{"tip":"'"$tip"'","gate_key":"k1"}}' >/dev/null
 }
 
+# submit <id> <tip> — claim and submit only: a SUBMITTED row, no per-bead gate.
+submit() {
+    local id="$1" tip="$2"
+    lc create-bead "$id" >/dev/null
+    lc event bead "$id" --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"aeon-1","lease_until":1}}' >/dev/null
+    lc event bead "$id" --expect WORKING --version 1 --actor test --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null
+}
+
+# ── a round takes SUBMITTED beads directly (law-a-round-is-feature-first-then-catch-all) ─
+submit sp-lc-sub tipS
+certify sp-lc-cer tipC
+out="$(lc cut batch-sub --repo spira --head HS --base BS --members "sp-lc-sub:tipS,sp-lc-cer:tipC" --actor test)"
+wantrc "cut admits a SUBMITTED member beside a CERTIFIED one" 0 $?
+is "the SUBMITTED member enters delivery" "IN_DELIVERY" "$(member_field sp-lc-sub bead state)"
+is "the CERTIFIED member enters delivery" "IN_DELIVERY" "$(member_field sp-lc-cer bead state)"
+submit sp-lc-rw tipR
+v="$(lc show sp-lc-rw | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["version"])')"
+lc event bead sp-lc-rw --expect SUBMITTED --version "$v" --actor test --kind '{"GateRed":{"tip":"tipR","reason":"suites-failed"}}' >/dev/null
+lc cut batch-rw --repo spira --head HR --base BR --members "sp-lc-rw:tipR" --actor test >/dev/null 2>&1
+wantrc "cut still refuses a REWORK member" 3 $?
+
 # ── criterion 1: a green batch lands every member atomically in one transaction ──────────
 certify sp-lc-1 tipA
 certify sp-lc-2 tipB

@@ -146,6 +146,17 @@ fn open_skips_what_is_not_certified_or_does_not_merge() {
 }
 
 #[test]
+fn open_admits_a_submitted_member_its_full_suite_certifies() {
+    // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-s"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("sp-s:ts") && !o.contains("sp-s: lifecycle state"), "{o}");
+    assert!(t.lc.has("cut"), "the round is recorded as a batch");
+}
+
+#[test]
 fn a_second_round_is_refused_until_the_first_is_closed() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
