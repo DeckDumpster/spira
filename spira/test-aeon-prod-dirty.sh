@@ -31,7 +31,7 @@
 # runs do not claim it. Only the current case's bead is available for the next aeon.
 #
 # tier: T2
-# covers: aeon/src/*
+# covers: aeon/src/* UC-aeon-execution-16
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # PD_PART: main runs cases 0 and 1, rest runs cases 2 and 3; test-aeon-prod-dirty-rest.sh

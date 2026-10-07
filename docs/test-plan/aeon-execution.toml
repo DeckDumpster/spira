@@ -106,11 +106,6 @@ id = "UC-aeon-execution-16"
 tier = "T1"
 statement = "the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name"
 
-[use_case.uncovered]
-reason = "partly: the guards judge the restricted hand-on (decide::builder_submitted) and refuse it back to REWORK; test-aeon-prod-dirty.sh drives that refusal end to end (own-dirty refused, override stands). test-groom-escalation-check.sh's and test-ops-closing.sh's end-to-end rows for the knob binding are not restored yet."
-date = "2026-10-05"
-bead = "sp-v62vn"
-
 [[use_case]]
 id = "UC-aeon-execution-17"
 tier = "T1"

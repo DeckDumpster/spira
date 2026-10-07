@@ -58,7 +58,7 @@
 # defect: sp-9pyr
 # tier: T3
 # covers: aeon/src/* sop/src/*.rs spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
-# covers: aeon/src/* spira/close-reason-flags.py spira/chamber/ops.fayth spira/test-ops-closing.sh
+# covers: aeon/src/* spira/close-reason-flags.py spira/chamber/ops.fayth spira/test-ops-closing.sh UC-aeon-execution-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
