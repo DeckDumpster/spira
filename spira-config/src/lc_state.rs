@@ -159,10 +159,19 @@ fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
 /// Every lifecycle row (`spira-lc list`). Err when the machine cannot answer: a caller that
 /// cannot read the state must not decide as if it had (law-a-control-that-cannot-check-must-refuse).
 pub fn list_with(bin: &str) -> Result<Vec<Row>, String> {
+    parse_rows(&list_raw_with(bin)?)
+}
+
+/// `spira-lc list`'s stdout, unparsed, for a caller that keeps the last good answer.
+pub fn list_raw_with(bin: &str) -> Result<String, String> {
     match run(bin, &["list"])? {
-        (0, out) => parse_rows(&out),
+        (0, out) => Ok(out),
         (rc, _) => Err(format!("{bin} list exited {rc}")),
     }
+}
+
+pub fn list_raw() -> Result<String, String> {
+    list_raw_with(&lc_bin())
 }
 
 pub fn list() -> Result<Vec<Row>, String> {

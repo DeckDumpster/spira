@@ -350,6 +350,8 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_HOTFIX_LINE", rs_line);
     push(&mut out, "SP_HOTFIX_ALERT", rs_alert);
 
+    push(&mut out, "SP_LC_STALE_S", lc::stale_age().to_string());
+
     let (ov_n, ov_failed, ov_list) = overrides_summary();
     push(&mut out, "SP_OVERRIDES_N", ov_n.to_string());
     push(&mut out, "SP_OVERRIDES_FAILED", ov_failed.to_string());

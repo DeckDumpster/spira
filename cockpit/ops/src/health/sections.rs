@@ -196,6 +196,11 @@ pub fn header_line(
         out.push(format!(" {DIM}ALERT{RST}  {BAD}{B}{firing}{RST} firing  {BAD}{keys}{RST}"));
     }
 
+    let lc_stale = snap.get("SP_LC_STALE_S").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    if lc_stale > 0 {
+        out.push(format!(" {DIM}lifecycle{RST}  {BAD}STALE {lc_stale}s{RST} — last good read, the store did not answer"));
+    }
+
     let overrides_n = snap.get("SP_OVERRIDES_N").unwrap_or("0");
     if overrides_n == "?" {
         out.push(format!(" {DIM}overrides{RST}  {BAD}?{RST} — could not be read"));

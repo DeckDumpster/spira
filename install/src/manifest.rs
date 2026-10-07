@@ -164,9 +164,11 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // split exists to keep away from the operator, so it is declined there.
     if inputs.lc_system_mode {
         m.optional.push("lc-serve.service".into());
+        m.optional.push("lc-serve.socket".into());
         m.notes.push("spira-lc runs as a system service (--system-user) — not installing lc-serve.service.".into());
     } else {
-        m.units.push(t("lc-serve.service", true));
+        m.units.push(t("lc-serve.socket", true));
+        m.units.push(t("lc-serve.service", false));
     }
 
     if inputs.inotify_present {
@@ -425,8 +427,9 @@ mod tests {
     fn lc_serve_is_installed_and_enabled_only_in_same_user_mode() {
         let m = build(&inputs()).unwrap();
         let u = m.units.iter().find(|u| u.name == "lc-serve.service").expect("same-user mode installs it");
-        assert!(u.enable);
-        assert!(m.enable("prod").contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
+        assert!(!u.enable, "socket-activated, never enabled directly");
+        assert!(m.enable("prod").contains(&"lc-serve.socket".to_string()), "shared name, never instance-suffixed");
+        assert!(!m.enable("prod").contains(&"lc-serve.service".to_string()));
         assert!(!m.optional.contains(&"lc-serve.service".to_string()));
 
         let mut i = inputs();
@@ -571,7 +574,7 @@ mod tests {
     #[test]
     fn union_template_names_carries_a_conditionally_declined_template() {
         let names = union_template_names();
-        for n in ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service"] {
+        for n in ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service", "lc-serve.socket"] {
             assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
         }
         assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");
