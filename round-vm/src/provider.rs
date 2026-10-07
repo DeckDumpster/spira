@@ -29,6 +29,8 @@ pub trait Provider {
     /// Converts the (stopped) VM into a template.
     fn make_template(&self, vmid: &str) -> Result<(), String>;
     fn is_template(&self, vmid: &str) -> Result<bool, String>;
+    /// Blocks (bounded) while an ephemeral CI VM provisions, so a sweep VM does not boot against it.
+    fn hold_for_ci(&self) {}
 }
 
 /// The only name round-vm gives a VM, and the only name it will ever destroy (G4).
@@ -166,6 +168,7 @@ pub fn provision(p: &dyn Provider, spec: &ProvisionSpec, on_vmid: &mut dyn FnMut
     let vmid = p.next_id().map_err(|e| fail(format!("API unreachable (nextid): {e}")))?;
     on_vmid(&vmid);
     let t = spec.timing;
+    p.hold_for_ci();
     if let Err(e) = p.clone_to(&vmid, &vm_name(&vmid)) {
         return Err(cleanup(p, &vmid, t, format!("clone refused: {e}")));
     }

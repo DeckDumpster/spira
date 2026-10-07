@@ -244,6 +244,14 @@ impl<T: Transport> Provider for Pve<T> {
         self.task(Method::Post, &cfg_path, &[("net0", pinned)])
     }
 
+    fn hold_for_ci(&self) {
+        crate::ci_yield::wait_for_ci(
+            &|| self.list_vms(),
+            &|s| std::thread::sleep(std::time::Duration::from_secs(s)),
+            30,
+        );
+    }
+
     fn start(&self, vmid: &str) -> Result<(), String> {
         self.task(Method::Post, &format!("{}/status/start", self.qemu(vmid)), &[])
     }
