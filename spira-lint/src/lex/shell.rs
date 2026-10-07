@@ -136,6 +136,26 @@ impl<'a> Lexer<'a> {
                         self.i += 1;
                     }
                 }
+                b'(' if self.i > 0 && self.s[self.i - 1] == b'=' => {
+                    self.i += 1;
+                    while self.i < self.s.len() && self.s[self.i] != b')' {
+                        match self.s[self.i] {
+                            b'\n' => {
+                                self.line += 1;
+                                self.i += 1;
+                            }
+                            b' ' | b'\t' => self.i += 1,
+                            _ => {
+                                let from = self.i;
+                                self.word();
+                                if self.i == from {
+                                    self.i += 1;
+                                }
+                            }
+                        }
+                    }
+                    self.i += 1;
+                }
                 b'(' => {
                     self.flush(&mut cmd);
                     depth += 1;
@@ -357,20 +377,11 @@ impl<'a> Lexer<'a> {
         if self.i > st && !self.s[st].is_ascii_digit() {
             vars.push(String::from_utf8_lossy(&self.s[st..self.i]).into_owned());
         }
-        let mut depth = 0usize;
         while self.i < self.s.len() {
             match self.s[self.i] {
-                b'}' if depth == 0 => {
+                b'}' => {
                     self.i += 1;
                     return;
-                }
-                b'}' => {
-                    depth -= 1;
-                    self.i += 1;
-                }
-                b'{' => {
-                    depth += 1;
-                    self.i += 1;
                 }
                 b'\\' => self.i += 2,
                 b'\'' if !in_dq => self.squote(),
@@ -451,6 +462,18 @@ mod tests {
         let py = find(&cs, "python3");
         assert_eq!(py.split_env().0[0].assignment_name(), Some("FOO"));
         assert_eq!(py.words.last().unwrap().vars, vec!["b"]);
+    }
+
+    #[test]
+    fn escaped_brace_in_a_parameter_default_does_not_open_a_quote() {
+        let cs = parse(b"a=\"${4:-{\\}}\"\n# `bd ready` note\nls\n");
+        assert_eq!(cs.iter().filter_map(|c| argv(c).first().cloned()).collect::<Vec<_>>(), vec!["ls"]);
+    }
+
+    #[test]
+    fn an_array_literal_is_not_a_command() {
+        let cs = parse(b"P=(podman\n   git curl)\nls\n");
+        assert_eq!(cs.iter().filter_map(|c| argv(c).first().cloned()).collect::<Vec<_>>(), vec!["ls"]);
     }
 
     #[test]
