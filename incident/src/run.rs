@@ -174,7 +174,7 @@ fn bump_and_note(
     now: i64,
     log: &mut Vec<String>,
 ) -> FileOutcome {
-    let ev_n = ports::recurs_of(bd, cfg.db, id);
+    let ev_n = ports::recurs_of(bd, id);
     let events_unknown = ev_n.is_none();
     let n = ev_n.unwrap_or(0) + 1;
 
@@ -192,7 +192,7 @@ fn bump_and_note(
         bd.label_add(cfg.db, id, &format!("payload-hash:{new_hash}"));
     }
 
-    ports::bump_recur(bd, cfg.db, id, cfg.cause);
+    ports::bump_recur(bd, id, cfg.cause);
     let log_suffix = if was_reopened { " (reopened from closed)" } else { "" };
     log.push(format!("{reference} recurred ({n}) — {id}{log_suffix}"));
 
@@ -480,8 +480,11 @@ mod tests {
         fn reachable(&self, _db: &str) -> bool {
             self.reachable
         }
-        fn sql(&self, _db: &str, _query: &str) -> Result<String, String> {
-            Ok("header\n----\n0\n".to_string())
+        fn fact(&self, _id: &str, _kind: &str, _cause: &str) -> bool {
+            true
+        }
+        fn fact_count(&self, _id: &str, _kind: &str) -> Option<usize> {
+            Some(0)
         }
     }
 

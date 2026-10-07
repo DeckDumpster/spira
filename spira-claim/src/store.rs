@@ -102,6 +102,12 @@ impl Store {
         c
     }
 
+    pub fn lc_cmd(&self, args: &[String]) -> Command {
+        let mut c = Command::new(&self.lc);
+        c.args(args);
+        c
+    }
+
     /// Run `bd <args>` to completion; `Err` names the verb and bd's own first stderr line
     /// (or the timeout/spawn failure). `pub` so `cmd_claim_retry` (the
     /// generic bd-retry verb, which takes arbitrary caller argv main.rs never parses) can
@@ -110,15 +116,24 @@ impl Store {
         run(self.bd_cmd(args), self.timeout).map_err(|e| format!("bd {}: {e}", args.first().unwrap_or(&"")))
     }
 
-    /// Every folded event for `ids`, one query per [`EVENT_CHUNK`] ids.
+    /// Every folded event for `ids`, one query per [`EVENT_CHUNK`] ids: bd's own rows (its
+    /// claim/close/reopen events and the history written before the move) and the facts the
+    /// harness has appended to the lifecycle log since.
     pub fn events(&self, ids: &[String]) -> Result<Vec<EventRow>, String> {
         let mut out = Vec::new();
         for chunk in ids.chunks(EVENT_CHUNK) {
             let q = events_sql(chunk);
             let text = self.bd(&["sql", "--json", &q])?;
             out.extend(events::parse_rows(&text)?);
+            out.extend(self.facts(chunk)?);
         }
         Ok(out)
+    }
+
+    pub fn facts(&self, ids: &[String]) -> Result<Vec<EventRow>, String> {
+        let args = ["facts".to_string(), "--ids".into(), ids.join(",")];
+        let text = run(self.lc_cmd(&args), self.timeout).map_err(|e| format!("spira-lc facts: {e}"))?;
+        events::parse_rows(&text)
     }
 
     /// bd rows by id, `--status all`, chunked.

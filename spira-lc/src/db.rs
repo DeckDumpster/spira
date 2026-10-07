@@ -142,6 +142,15 @@ impl Conn {
         result
     }
 
+    /// Append one already-built event INSERT in its own transaction (a fact: no row is mutated).
+    pub fn append_event(&self, insert_sql: &str) -> Result<(), DbError> {
+        match self.run_script(&format!("START TRANSACTION;\n{insert_sql};\nCOMMIT;\n")) {
+            Ok(_) => Ok(()),
+            Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain INSERT lost a race — unexpected".into())),
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
+    }
+
     /// Insert one event row in its own transaction. Used both for logical refusals (no row
     /// mutation attempted at all) and for the fallback recording of a race lost at COMMIT.
     pub fn insert_refusal_event(&self, ev: &EventRecord) -> Result<(), DbError> {

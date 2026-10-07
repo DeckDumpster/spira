@@ -709,17 +709,7 @@ impl World for Live {
     }
 
     fn write_event(&mut self, id: &str, event_type: &str, value: &str) -> Result<(), String> {
-        // bd sql takes its query only as argv; every value in it is validated or bounded.
-        let u = uuid4()?;
-        let q = format!(
-            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ({}, {}, {}, {}, {}, UTC_TIMESTAMP())",
-            store::sql_quote(&u),
-            store::sql_quote(id),
-            store::sql_quote(event_type),
-            store::sql_quote(&bounded_cause(&self.beads_actor)),
-            store::sql_quote(&bounded_cause(value)),
-        );
-        self.bd_ok(&["sql", &q], None).map(|_| ())
+        crate::counters::write_event(&self.store, &self.beads_actor, id, event_type, value)
     }
 
     fn clear_ask_history(&mut self, id: &str) -> Result<(), String> {

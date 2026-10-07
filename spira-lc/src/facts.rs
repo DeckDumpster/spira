@@ -1,0 +1,148 @@
+//! The attempt and poison history: facts that change no bead's state but that the attempt
+//! count and the poison decision fold. Appended to the lifecycle event log under machine
+//! `fact`, so the history shares the log's append-only guarantee and no bd write.
+
+use serde_json::Value;
+
+use crate::db::{self, Conn};
+use crate::rows;
+
+const CANNOT_TELL: i32 = 2;
+const REFUSED: i32 = 3;
+
+/// Closed: a kind outside this list is refused, so a typo cannot start a new history.
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "__doctor_probe__"];
+
+pub const MACHINE: &str = "fact";
+pub const CAUSE_MAX: usize = 200;
+pub const READ_MAX: usize = 120;
+
+fn flag(args: &[String], name: &str) -> Option<String> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
+fn bounded(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(CAUSE_MAX).collect()
+}
+
+pub fn insert_sql(key: &str, kind: &str, cause: &str, actor: &str, at: i64) -> String {
+    let evidence = serde_json::json!({ "cause": cause }).to_string();
+    format!(
+        "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ('{}', '{}', '{}', '', '', '', 1, NULL, '{}', '{}', {at})",
+        MACHINE,
+        rows::escape(key),
+        rows::escape(kind),
+        rows::escape(&evidence),
+        rows::escape(actor),
+    )
+}
+
+/// `fact <bead-id> --kind K --actor A [--cause C]`.
+pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(key) = args.first().filter(|a| !a.starts_with("--")) else {
+        return (CANNOT_TELL, "fact: missing <bead-id>".into());
+    };
+    let (Some(kind), Some(actor)) = (flag(args, "--kind"), flag(args, "--actor")) else {
+        return (CANNOT_TELL, "fact: --kind and --actor are required".into());
+    };
+    if !KINDS.contains(&kind.as_str()) {
+        return (REFUSED, format!("fact: unknown kind {kind:?} (want one of {})", KINDS.join(", ")));
+    }
+    if key.is_empty() || actor.is_empty() {
+        return (CANNOT_TELL, "fact: empty <bead-id> or --actor".into());
+    }
+    let cause = bounded(&flag(args, "--cause").unwrap_or_default());
+    match conn.append_event(&insert_sql(key, &kind, &cause, &bounded(&actor), db::now_epoch())) {
+        Ok(()) => (0, String::new()),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    }
+}
+
+pub fn select_sql(ids: &[String], kinds: &[String]) -> String {
+    let list = |v: &[String]| v.iter().map(|i| format!("'{}'", rows::escape(i))).collect::<Vec<_>>().join(",");
+    let mut sql = format!(
+        "SELECT lc_key AS issue_id, event AS event_type, SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')), ''), 1, {READ_MAX}) AS new_value, actor, `at` FROM event WHERE machine = '{MACHINE}'"
+    );
+    if !ids.is_empty() {
+        sql.push_str(&format!(" AND lc_key IN ({})", list(ids)));
+    }
+    if !kinds.is_empty() {
+        sql.push_str(&format!(" AND event IN ({})", list(kinds)));
+    }
+    sql.push_str(" ORDER BY lc_key, seq");
+    sql
+}
+
+fn csv(args: &[String], name: &str) -> Vec<String> {
+    flag(args, name).map(|v| v.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// Each row as bd's `events` rows read: `issue_id`, `event_type`, `new_value`, `actor`, `created_at`.
+pub fn shape(rows: Vec<Value>) -> Vec<Value> {
+    rows.into_iter()
+        .map(|r| {
+            let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            let at = s("at").parse::<i64>().unwrap_or(0);
+            serde_json::json!({
+                "issue_id": s("issue_id"),
+                "event_type": s("event_type"),
+                "new_value": s("new_value"),
+                "actor": s("actor"),
+                "created_at": crate::callers::fmt_utc(at),
+            })
+        })
+        .collect()
+}
+
+/// `facts [--ids a,b] [--kinds x,y]`: the facts, oldest first per bead.
+pub fn cmd_facts(args: &[String], conn: &Conn) -> (i32, String) {
+    match conn.query(&select_sql(&csv(args, "--ids"), &csv(args, "--kinds"))) {
+        Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(shape(r))).unwrap()),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_insert_is_an_applied_fact_with_the_cause_as_evidence() {
+        let q = insert_sql("sp-a", "requeued", "gate-red", "harness", 1_000_000_000);
+        assert!(q.contains("'fact', 'sp-a', 'requeued'"), "{q}");
+        assert!(q.contains(r#"{"cause":"gate-red"}"#), "{q}");
+        assert!(q.contains(", 1, NULL,"), "{q}");
+    }
+
+    #[test]
+    fn quotes_in_a_cause_do_not_escape_the_literal() {
+        let q = insert_sql("sp-a", "requeued", "it's", "h", 1);
+        assert!(q.contains(r"it\\'s") || q.contains(r"it\'s"), "{q}");
+    }
+
+    #[test]
+    fn the_select_scopes_to_the_fact_machine_and_the_asked_ids() {
+        let q = select_sql(&["sp-a".into(), "o'x".into()], &["claimed".into()]);
+        assert!(q.contains("machine = 'fact'") && q.contains("'sp-a','o\\'x'") && q.contains("event IN ('claimed')"), "{q}");
+        let all = select_sql(&[], &[]);
+        assert!(!all.contains("lc_key IN") && !all.contains("event IN"), "{all}");
+    }
+
+    #[test]
+    fn rows_come_back_in_the_shape_of_bd_events() {
+        let out = shape(vec![serde_json::json!({"issue_id": "sp-a", "event_type": "claimed", "new_value": "aeon", "actor": "h", "at": "1000000000"})]);
+        assert_eq!(out[0]["created_at"], "2001-09-09T01:46:40Z");
+        assert_eq!(out[0]["event_type"], "claimed");
+    }
+
+    #[test]
+    fn a_cause_is_bounded_and_single_line() {
+        assert_eq!(bounded(&format!("a\nb{}", "x".repeat(300))).len(), CAUSE_MAX);
+        assert!(!bounded("a\nb").contains('\n'));
+    }
+
+    #[test]
+    fn every_kind_fits_the_event_column() {
+        assert!(KINDS.iter().all(|k| k.len() <= 32));
+    }
+}

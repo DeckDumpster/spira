@@ -364,7 +364,7 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    /// lib.sh `_bump_write_event`: one events row, best-effort.
+    /// One attempt-history fact appended to the lifecycle event log, best-effort.
     pub fn write_event_row(&self, id: &str, etype: &str, cause: &str) {
         let actor = self
             .ctx
@@ -372,17 +372,9 @@ impl<'a> Sentinel<'a> {
             .filter(|s| !s.is_empty())
             .unwrap_or("harness")
             .to_string();
-        let uuid = uuid4();
-        let q = format!(
-            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('{uuid}', '{}', '{}', '{}', '{}', UTC_TIMESTAMP())",
-            sql_str(id),
-            sql_str(etype),
-            sql_str(&actor),
-            sql_str(cause)
-        );
-        let args = vec!["-C".to_string(), self.cfg.db.clone(), "sql".into(), q];
+        let args = ["fact", id, "--kind", etype, "--actor", &actor, "--cause", cause].map(String::from).to_vec();
         let _ = self.h.run(
-            Spec::args_owned(self.cfg.bd.clone(), args)
+            Spec::args_owned(self.cfg.lc_bin.clone(), args)
                 .out(Io::Null)
                 .err(Io::Null)
                 .timeout(self.cfg.bd_timeout),
@@ -441,34 +433,6 @@ impl<'a> Sentinel<'a> {
         ));
         self.act(&format!("backfilled {} rowless bead(s)", rowless_ids.len() - failed.len()));
     }
-}
-
-fn sql_str(s: &str) -> String {
-    s.replace('\'', "''")
-}
-
-/// A random v4 UUID from /dev/urandom (python's uuid.uuid4()).
-pub fn uuid4() -> String {
-    let mut b = [0u8; 16];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let _ = f.read_exact(&mut b);
-    }
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h = b.iter().fold(String::new(), |mut s, x| {
-        use std::fmt::Write;
-        let _ = write!(s, "{x:02x}");
-        s
-    });
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
 }
 
 #[cfg(test)]
@@ -610,13 +574,6 @@ mod tests {
                 "INCONSISTENT\tb\tREADY with a holder still set"
             ]
         );
-    }
-
-    #[test]
-    fn uuid_is_v4_shaped() {
-        let u = uuid4();
-        assert_eq!(u.len(), 36);
-        assert_eq!(&u[14..15], "4");
     }
 
     // ── CHECK-ROWLESS ─────────────────────────────────────────────────────────────────
