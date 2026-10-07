@@ -343,7 +343,7 @@ impl<'a> Sentinel<'a> {
     }
 
 
-    fn holder_alive(&self, id: &str) -> bool {
+    pub(crate) fn holder_alive(&self, id: &str) -> bool {
         self.h
             .run(Spec::args_owned(self.cfg.sending_bin.clone(), vec!["holder-alive".into(), id.to_string()]).err(Io::Null))
             .ok()
