@@ -833,8 +833,7 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {name}'s batch reported a harness fault — container died mid-batch ({d}).\ngate: command: {cmd}\n{out}"));
         }
         if rc == 124 && by_deadline {
-            let phase = self.s.phases.last().map_or("-", |p| p.0.as_str()).to_string();
-            return deadline_verdict(deadline, &phase, w.now().saturating_sub(t_start), &cmd, &out);
+            return killed_verdict(&self.s.phases, deadline, w.now().saturating_sub(t_start), &cmd, &out);
         }
         if rc == 124 {
             return v(NOVERDICT, "timeout", format!(
@@ -939,8 +938,7 @@ impl<'w, W: World> Trial<'w, W> {
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
             if r == 124 && by_deadline {
-                let phase = self.s.phases.last().map_or("-", |p| p.0.as_str()).to_string();
-                return deadline_verdict(deadline, &phase, w.now().saturating_sub(t_start), base_cmd, &o);
+                return killed_verdict(&self.s.phases, deadline, w.now().saturating_sub(t_start), base_cmd, &o);
             }
             base_rc = r;
             base_out = o;
@@ -1832,6 +1830,34 @@ pub const WARM_TIMEOUT: &str = "3600";
 
 /// The cap name of a cold tools build (see [`phase_cap`]); metered as `tools` all the same.
 pub const TOOLS_COLD: &str = "tools-cold";
+
+/// The last phase run, if it was killed at its own cap rather than by the whole-gate deadline.
+pub fn phase_cap_hit(phases: &[(String, u64)]) -> Option<(&str, u64, u64)> {
+    let (name, ran) = phases.last()?;
+    let cap = phase_cap(name)?;
+    (*ran >= cap).then_some((name.as_str(), *ran, cap))
+}
+
+/// NO_VERDICT: a phase was killed at its own cap, well inside the whole-gate deadline.
+pub fn phase_cap_verdict(phase: &str, ran: u64, cap: u64, cmd: &str, out: &str) -> Verdict {
+    v(NOVERDICT, "phase-cap", format!(
+        "gate: phase `{phase}` was killed at its {cap}s cap (ran {ran}s) — the whole-gate deadline was not reached; it judged nothing.\ngate: command: {cmd}\n{out}"))
+}
+
+/// The verdict for a gate command killed (rc 124) under the deadline: the phase cap when
+/// the last phase reached its own, else the whole-gate deadline.
+pub fn killed_verdict(phases: &[(String, u64)], deadline: u64, ran: u64, cmd: &str, out: &str) -> Verdict {
+    match phase_cap_hit(phases) {
+        Some((p, r, c)) if ran < deadline => phase_cap_verdict(p, r, c, cmd, out),
+        _ => deadline_verdict(
+            deadline,
+            phases.last().map_or("-", |p| p.0.as_str()),
+            ran,
+            cmd,
+            out,
+        ),
+    }
+}
 
 /// NO_VERDICT: the gate ran out of wall clock — in `phase` — and judged nothing.
 pub fn deadline_verdict(deadline: u64, phase: &str, ran: u64, cmd: &str, out: &str) -> Verdict {
