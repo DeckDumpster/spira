@@ -29,6 +29,18 @@ Carrying it out means merges, the round's suites, the PR, the open-batch record 
 - **Exit:** 0 when the cut ran or had nothing to do; non-zero with a one-line reason on
   stderr.
 
+## 2a. Rounds are the batcher's (sp-1oiokx)
+
+The pool is every unheld SUBMITTED or CERTIFIED lifecycle row whose tip is its branch's live
+tip: no gate verdict is required, because the round's full suite is the stronger trial. A
+non-empty pool cuts at once (`should_cut`: no count, no idle wait; an open batch prepares the
+next round). `select_round` is feature-first: the epic root (the id before its first `.`)
+shared by the most members, at least two, with the members they stack on or that stack on
+them and every express member; else a catch-all of the whole pool. A member that conflicts
+on merge waits for the next round. Reds are attributed by §4 and ejected with quoted lines;
+a SUBMITTED survivor is certified (`GatePass`, gate key `round:<key>`) just before
+`land-local`, and a SUBMITTED owner is returned to REWORK by `GateRed`.
+
 ## 3. Lifecycle machine
 
 There is no lifecycle switch: sp-v62vn retired `lifecycle_enforce`, and the machine is the only

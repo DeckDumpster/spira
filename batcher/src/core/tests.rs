@@ -49,75 +49,98 @@ fn clean_title_drops_a_foreign_bead_prefix_never_mid_word() {
     assert_eq!(clean_title("  sp-abc: padded  "), "padded");
 }
 
-// -- A. Adaptive trigger --------------------------------------------------------------------
+// -- A. Trigger and selection ---------------------------------------------------------------
 
+// ACCEPTANCE (sp-1oiokx): any non-empty pool with no batch open cuts at once — no count to
+// reach, no idle wait to sit out.
 #[test]
-fn adaptive_n_tracks_certify_rate_times_round_duration() {
-    assert_eq!(adaptive_n(PoolHistory { certify_rate_per_min: 0.5, round_duration_mins: 20.0 }), 10);
-}
-
-#[test]
-fn adaptive_n_clamps_to_one_and_thirty() {
-    assert_eq!(adaptive_n(PoolHistory { certify_rate_per_min: 0.01, round_duration_mins: 1.0 }), 1);
-    assert_eq!(adaptive_n(PoolHistory { certify_rate_per_min: 10.0, round_duration_mins: 20.0 }), 30);
-}
-
-// SEEN RED on today's code: no history floored N at 4, so the timer waited for a pool of 4
-// (law-batcher-earns-the-round-by-parity wants a cut on the first certified member).
-#[test]
-fn adaptive_n_with_no_history_is_one_not_four() {
-    assert_eq!(adaptive_n(PoolHistory::default()), 1);
-}
-
-// ACCEPTANCE (sp-ffezo): pool of 1, no batch open, cuts even with a year-long
-// queue_batch_wait. SEEN RED on today's code: n was 4, 1 < 4, and the huge wait keeps the
-// idle path from firing either, so should_cut returned None.
-#[test]
-fn pool_of_one_with_no_history_cuts_regardless_of_a_year_long_wait() {
+fn a_pool_of_one_cuts_at_once() {
     let pool = vec![m("sp-a", 2, false, 0)];
-    let n = adaptive_n(PoolHistory::default());
-    let t = TriggerInputs { pool: &pool, now: 10, last_arrival: Some(0), n, q_minutes: 31_536_000 / 60, main_red: false, batch_open: false };
+    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
     assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(1)));
+}
+
+fn ids(v: &[Member]) -> Vec<&str> {
+    v.iter().map(|m| m.id.as_str()).collect()
+}
+
+#[test]
+fn no_shared_epic_is_a_catch_all_of_the_whole_pool() {
+    let pool = vec![m("sp-a", 2, false, 0), m("sp-b.1", 2, false, 1), m("sp-c.1", 2, false, 2)];
+    let (round, kind) = select_round(pool);
+    assert_eq!(kind, RoundKind::CatchAll);
+    assert_eq!(ids(&round), ["sp-a", "sp-b.1", "sp-c.1"]);
+}
+
+#[test]
+fn two_members_of_one_epic_cut_that_feature_alone() {
+    let pool = vec![m("sp-a", 2, false, 0), m("sp-f.1", 2, false, 1), m("sp-f.2", 2, false, 2), m("sp-z", 2, false, 3)];
+    let (round, kind) = select_round(pool);
+    assert_eq!(kind, RoundKind::Feature("sp-f".into()));
+    assert_eq!(ids(&round), ["sp-f.1", "sp-f.2"]);
+}
+
+#[test]
+fn the_epic_parent_itself_belongs_to_its_feature() {
+    let pool = vec![m("sp-f", 2, false, 0), m("sp-f.1", 2, false, 1), m("sp-o", 2, false, 2)];
+    let (round, kind) = select_round(pool);
+    assert_eq!(kind, RoundKind::Feature("sp-f".into()));
+    assert_eq!(ids(&round), ["sp-f", "sp-f.1"]);
+}
+
+#[test]
+fn the_larger_feature_wins_and_a_tie_goes_to_the_lower_root() {
+    let pool = vec![m("sp-b.1", 2, false, 0), m("sp-b.2", 2, false, 1), m("sp-a.1", 2, false, 2), m("sp-a.2", 2, false, 3)];
+    assert_eq!(select_round(pool).1, RoundKind::Feature("sp-a".into()));
+    let pool = vec![m("sp-b.1", 2, false, 0), m("sp-b.2", 2, false, 1), m("sp-b.3", 2, false, 2), m("sp-a.1", 2, false, 3), m("sp-a.2", 2, false, 4)];
+    assert_eq!(select_round(pool).1, RoundKind::Feature("sp-b".into()));
+}
+
+#[test]
+fn what_the_feature_stacks_on_and_what_stacks_on_it_ride_along() {
+    let mut dep = m("sp-d", 2, false, 4);
+    dep.stack.insert("sp-f.1".into(), "sp-f.1-tip".into());
+    let mut second = m("sp-e", 2, false, 5);
+    second.stack.insert("sp-d".into(), "sp-d-tip".into());
+    let mut f2 = m("sp-f.2", 2, false, 2);
+    f2.stack.insert("sp-p".into(), "sp-p-tip".into());
+    let pool = vec![m("sp-f.1", 2, false, 1), f2, m("sp-p", 2, false, 0), dep, second, m("sp-z", 2, false, 6)];
+    let (round, kind) = select_round(pool);
+    assert_eq!(kind, RoundKind::Feature("sp-f".into()));
+    assert_eq!(ids(&round), ["sp-f.1", "sp-f.2", "sp-p", "sp-d", "sp-e"]);
+}
+
+#[test]
+fn an_express_member_rides_in_a_feature_round() {
+    let pool = vec![m("sp-f.1", 2, false, 0), m("sp-f.2", 2, false, 1), m("sp-x", 1, true, 2), m("sp-z", 2, false, 3)];
+    let (round, _) = select_round(pool);
+    assert_eq!(ids(&round), ["sp-f.1", "sp-f.2", "sp-x"]);
 }
 
 #[test]
 fn pool_full_cuts_a_round() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10), m("sp-c", 2, false, 20), m("sp-d", 2, false, 30)];
-    let t = TriggerInputs { pool: &pool, now: 40, last_arrival: Some(30), n: 4, q_minutes: 30, main_red: false, batch_open: false };
+    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
     assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(4)));
 }
 
 #[test]
-fn idle_with_nothing_new_cuts_a_round_even_under_n() {
-    let pool = vec![m("sp-a", 2, false, 0)];
-    let t = TriggerInputs { pool: &pool, now: 1800, last_arrival: Some(0), n: 10, q_minutes: 30, main_red: false, batch_open: false };
-    assert_eq!(should_cut(&t), Some(TriggerReason::Idle { waited_mins: 30 }));
-}
-
-#[test]
-fn under_n_and_not_yet_idle_does_not_cut() {
-    let pool = vec![m("sp-a", 2, false, 0)];
-    let t = TriggerInputs { pool: &pool, now: 60, last_arrival: Some(0), n: 10, q_minutes: 30, main_red: false, batch_open: false };
-    assert_eq!(should_cut(&t), None);
-}
-
-#[test]
 fn empty_pool_never_cuts_on_idle() {
-    let t = TriggerInputs { pool: &[], now: 10_000, last_arrival: None, n: 4, q_minutes: 30, main_red: false, batch_open: false };
+    let t = TriggerInputs { pool: &[], main_red: false, batch_open: false };
     assert_eq!(should_cut(&t), None);
 }
 
 #[test]
 fn express_member_cuts_at_once_regardless_of_pool_size() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-x", 1, true, 5)];
-    let t = TriggerInputs { pool: &pool, now: 6, last_arrival: Some(5), n: 30, q_minutes: 60, main_red: false, batch_open: false };
+    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
     assert_eq!(should_cut(&t), Some(TriggerReason::Express("sp-x".into())));
 }
 
 #[test]
 fn main_red_cuts_at_once_and_outranks_express() {
     let pool = vec![m("sp-x", 1, true, 0)];
-    let t = TriggerInputs { pool: &pool, now: 1, last_arrival: Some(0), n: 30, q_minutes: 60, main_red: true, batch_open: false };
+    let t = TriggerInputs { pool: &pool, main_red: true, batch_open: false };
     assert_eq!(should_cut(&t), Some(TriggerReason::MainRed));
 }
 
@@ -126,7 +149,7 @@ fn main_red_cuts_at_once_and_outranks_express() {
 #[test]
 fn open_batch_pr_prepares_rather_than_cuts() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10), m("sp-c", 2, false, 20), m("sp-d", 2, false, 30)];
-    let t = TriggerInputs { pool: &pool, now: 10_000, last_arrival: Some(30), n: 4, q_minutes: 1, main_red: false, batch_open: true };
+    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: true };
     assert_eq!(should_cut(&t), Some(TriggerReason::Prepare(4)));
     let t = TriggerInputs { pool: &[], ..t };
     assert_eq!(should_cut(&t), None);
@@ -137,7 +160,7 @@ fn open_batch_pr_prepares_rather_than_cuts() {
 #[test]
 fn express_triggers_while_a_batch_pr_is_open() {
     let pool = vec![m("sp-x", 1, true, 0)];
-    let t = TriggerInputs { pool: &pool, now: 1, last_arrival: Some(0), n: 4, q_minutes: 30, main_red: false, batch_open: true };
+    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: true };
     assert_eq!(should_cut(&t), Some(TriggerReason::Express("sp-x".into())));
 }
 
@@ -512,7 +535,7 @@ fn cut_event_names_the_trigger_and_membership() {
     let e = cut_event(&TriggerReason::PoolFull(4), &combined);
     assert_eq!(e.kind, "cut");
     assert_eq!(e.ids, vec!["sp-a".to_string()]);
-    assert!(e.text.contains("pool reached 4"));
+    assert!(e.text.contains("4 waiting, no round running"));
 }
 
 #[test]
@@ -584,7 +607,7 @@ fn base_fail_body_carries_repo_branch_suites_and_evidence() {
 #[test]
 fn a_full_round_from_trigger_through_pr_record() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-b", 3, false, 10), m("sp-x", 1, true, 20)];
-    let trig = TriggerInputs { pool: &pool, now: 21, last_arrival: Some(20), n: 30, q_minutes: 60, main_red: false, batch_open: false };
+    let trig = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
     let reason = should_cut(&trig).expect("the express member forces an immediate cut");
     assert_eq!(reason, TriggerReason::Express("sp-x".into()));
 
@@ -766,7 +789,7 @@ fn base_fix_member_triggers_ahead_of_express_and_lands_alone() {
     let fix = Member { base_fix: true, priority: Some(0), ..m("sp-f", 0, false, 9) };
     let pool = base_fix_lane(vec![m("sp-a", 1, false, 0), m("sp-x", 1, true, 5), fix]);
     assert_eq!(pool.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["sp-f"]);
-    let t = TriggerInputs { pool: &pool, now: 10, last_arrival: Some(9), n: 30, q_minutes: 60, main_red: false, batch_open: false };
+    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
     assert_eq!(should_cut(&t), Some(TriggerReason::BaseFix("sp-f".into())));
 }
 
