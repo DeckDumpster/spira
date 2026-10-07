@@ -103,19 +103,12 @@ notes_np="$(fa_notes sp-np-1)"
 want   "the note reads No progress, not Unlanded"   "No progress" "$notes_np"
 nowant "the note does not read Unlanded"            "Unlanded"    "$notes_np"
 want   "the note says no attempt was charged"       "No attempt charged" "$notes_np"
-# sp-k7eqd: status=deferred hid expired holds from bd ready forever (27 beads stranded) —
-# the fix then left status OPEN with a future defer_until. bd since makes a DATED defer a
-# snooze that wakes to open by itself once the date passes (`bd defer --help`: "A defer WITH
-# a date is a snooze: once --until passes, the next ready-front read returns the issue to
-# open automatically"), and the aeon writes no bd status at all any more (sp-mve9i, design
-# §3.4) — so "held" is bd's own dated snooze, which releases itself with no second actor.
-is     "held for the backoff — bd's dated snooze (deferred until a date), which wakes on its own" \
-       "deferred" "$(field sp-np-1 status)"
-[ -n "$(field sp-np-1 defer_until)" ] && _defer_set=yes || _defer_set=no
-is   "a defer_until is recorded — the hold the next ready query reads" "yes" "$_defer_set"
-np_ready="$(timeout 5 bd -C "$SPIRA_DB" ready --limit 0 --exclude-type epic,event -u --json 2>/dev/null)"
-nowant "held — the future defer_until keeps it off bd ready, not plain open for the next summon" \
-       '"sp-np-1"' "$np_ready"
+# The backoff is a timed `wait` hold on the lifecycle row (reason snooze-until:<epoch>), which
+# claim reads and which expires by itself; the aeon writes neither a bd status nor a bd defer.
+holds_np="$(grep '^sp-np-1 ' "$SPIRA_RUN/lc-holds.log" 2>/dev/null)"
+want   "held for the backoff — a wait hold carrying its expiry" "sp-np-1 wait snooze-until:" "$holds_np"
+is     "bd status is untouched by the hold" "open" "$(field sp-np-1 status)"
+is     "no bd defer is recorded" "" "$(field sp-np-1 defer_until)"
 is   "POSITIVE CONTROL — bead not closed, claude rc=1 — aeon exits non-zero" "1" "$rc"
 
 # ==========================================================================================

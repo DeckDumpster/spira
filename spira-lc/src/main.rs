@@ -257,7 +257,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
-fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
+pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(bead_id) = args.first() else {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
     };
@@ -284,7 +284,7 @@ fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     (0, serde_json::to_string_pretty(&out).unwrap())
 }
 
-fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
+pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
         return cmd_list_delivery(args, conn);
     }

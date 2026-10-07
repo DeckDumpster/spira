@@ -159,7 +159,7 @@ judgement are yours.
 
 **Your scan is the whole graph, not the partition you own.** A bead's STATE — its
 `spira-lc` state and holds (poisoned, waiting, asked) — does not depend on which partition it
-carries. Read every open bead in every partition (`work list --status open --json`). For each
+carries. Read every open bead in every partition (`work list --json`). For each
 open bead:
 
 1. Read the title, description, and labels

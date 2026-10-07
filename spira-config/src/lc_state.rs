@@ -17,6 +17,17 @@ use std::process::{Command, Stdio};
 
 use crate::lifecycle_row::lc_bin;
 
+/// The `wait` hold's reason that makes it a timed snooze: `snooze-until:<epoch seconds>`.
+pub const SNOOZE_PREFIX: &str = "snooze-until:";
+
+pub fn snooze_reason(until: i64) -> String {
+    format!("{SNOOZE_PREFIX}{until}")
+}
+
+pub fn snooze_until(reason: &str) -> Option<i64> {
+    reason.strip_prefix(SNOOZE_PREFIX)?.trim().parse().ok()
+}
+
 /// One `spira_lifecycle.bead` row, as `spira-lc list` / `show` print it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Row {

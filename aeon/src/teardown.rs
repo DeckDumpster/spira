@@ -337,11 +337,14 @@ impl Run<'_> {
                     self.log(&format!("{f}: {id} no-progress streak {streak}/{cap} at {tip} — routed to the Concierge, no attempt charged"));
                 } else {
                     let backoff_min = decide::no_progress_backoff_minutes(streak);
-                    let until = util::iso_utc(self.now() + backoff_min * 60);
-                    // A dated defer is bd's snooze: hidden from `bd ready` until `until`,
-                    // then it wakes to open on its own (`bd defer --help`). No bd status
-                    // write follows it — the release above is the lifecycle's (sp-mve9i).
-                    let _ = self.d.bd.bd(&s(&["update", &id, "--defer", &until]));
+                    let until_epoch = self.now() + backoff_min * 60;
+                    let until = util::iso_utc(until_epoch);
+                    // A timed `wait` hold on the lifecycle row: claim reads the expiry from its
+                    // reason, so nothing has to lift it and no bd status or defer is written.
+                    let held = self.d.exec.exec("spira-lc", &s(&["hold", &id, "wait", &spira_config::lc_state::snooze_reason(until_epoch), "aeon"]), None, None);
+                    if held.code != 0 {
+                        self.log(&format!("{f}: {id} snooze hold refused (rc={}): {}", held.code, held.stdout.trim()));
+                    }
                     self.note(&format!("No progress ({o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged."));
                     self.log(&format!("{f}: {id} no-progress streak {streak} at {tip} — held {backoff_min}m until {until}, no attempt charged"));
                 }

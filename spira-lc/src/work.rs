@@ -27,7 +27,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         return refusal;
     }
     match verb.as_str() {
-        "show" => cmd_show(bead_id),
+        "show" => cmd_show(bead_id, conn),
         "note" => cmd_note(bead_id, rest),
         "submit" => cmd_submit(bead_id, rest, conn),
         "done" => cmd_done(bead_id, rest, conn),
@@ -48,11 +48,40 @@ fn require_actor(args: &[String]) -> Result<String, (i32, String)> {
     flag(args, "--actor").ok_or((CANNOT_TELL, "work: --actor is required".to_string()))
 }
 
-fn cmd_show(bead_id: &str) -> (i32, String) {
-    match crate::bd::show(bead_id) {
-        Ok(text) => (0, text),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
+fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
+    let text = match crate::bd::show(bead_id) {
+        Ok(text) => text,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    match crate::cmd_show(&[bead_id.to_string()], conn) {
+        (0, row) => (0, with_lifecycle(&text, &row)),
+        (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
+        (_, e) => (CANNOT_TELL, e),
     }
+}
+
+/// bd's `show` text with its status word replaced by the lifecycle state, then the row itself:
+/// a session reads the machine's state, never bd's status, as where the bead stands.
+fn with_lifecycle(bd_text: &str, show_json: &str) -> String {
+    let row: serde_json::Value = serde_json::from_str(show_json).unwrap_or_default();
+    let bead = &row["bead"];
+    let state = bead["state"].as_str().unwrap_or("?");
+    let mut lines: Vec<String> = bd_text.lines().map(str::to_string).collect();
+    if let Some(head) = lines.first_mut() {
+        if let (Some(dot), true) = (head.rfind(" · "), head.ends_with(']')) {
+            head.replace_range(dot + " · ".len().., &format!("{state}]"));
+        }
+    }
+    let field = |k: &str| bead[k].as_str().filter(|v| !v.is_empty()).map(|v| format!("  {k}: {v}\n")).unwrap_or_default();
+    format!(
+        "{}\n\nLIFECYCLE: {state}\n{}{}{}{}{}",
+        lines.join("\n"),
+        field("holds"),
+        field("reason"),
+        field("holder"),
+        field("tip"),
+        row["delivery"]["state"].as_str().map(|d| format!("  delivery: {d}\n")).unwrap_or_default(),
+    )
 }
 
 fn cmd_note(bead_id: &str, args: &[String]) -> (i32, String) {
@@ -416,6 +445,9 @@ fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     Bd { args: Vec<String>, stdin: Option<String> },
+    /// `work list`: the lifecycle rows in these states (every non-terminal state when empty,
+    /// every state with `all`), joined to bd's content rows filtered by `bd_args`.
+    LcList { states: Vec<String>, all: bool, bd_args: Vec<String>, json: bool, limit: Option<usize> },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     CreateRow,
     /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
@@ -510,24 +542,35 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             Ok(vec![bd([vec![s("show"), id], flatten(&f)].concat())])
         }
         "list" => {
-            let f = parse_flags(verb, a, 0, &["--status", "--label", "--title-contains", "--limit"], &["--json", "--all"])?;
-            if let Some(st) = get(&f, "--status") {
-                if st.is_empty() || !st.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == ',') {
-                    return Err(usage(verb, &format!("--status {st:?} is not a status list")));
+            if a.iter().any(|x| x == "--status") {
+                return Err(usage(verb, "--status is bd's status; a bead's state is the lifecycle's — use --state <STATE[,STATE]>"));
+            }
+            let f = parse_flags(verb, a, 0, &["--state", "--label", "--title-contains", "--limit"], &["--json", "--all"])?;
+            let mut states = Vec::new();
+            for st in get(&f, "--state").into_iter().flat_map(|v| v.split(',')) {
+                let up = st.to_ascii_uppercase();
+                if bead::BeadState::from_str(&up).is_none() {
+                    return Err(usage(verb, &format!("--state {st:?} is not a lifecycle state")));
+                }
+                states.push(up);
+            }
+            let limit = match get(&f, "--limit") {
+                Some(n) => Some(n.parse::<usize>().map_err(|_| usage(verb, &format!("--limit {n:?} is not a number")))?),
+                None => None,
+            };
+            let mut bd_args = Vec::new();
+            for k in ["--label", "--title-contains"] {
+                if let Some(v) = get(&f, k) {
+                    bd_args.extend([s(k), v.to_string()]);
                 }
             }
-            if let Some(n) = get(&f, "--limit") {
-                if n.parse::<u32>().is_err() {
-                    return Err(usage(verb, &format!("--limit {n:?} is not a number")));
-                }
-            }
-            Ok(vec![bd([vec![s("list")], flatten(&f)].concat())])
+            Ok(vec![Step::LcList { states, all: f.iter().any(|(k, _)| k == "--all"), bd_args, json: f.iter().any(|(k, _)| k == "--json"), limit }])
         }
         "search" => {
             let Some(q) = a.first().filter(|q| !q.is_empty() && !q.starts_with('-')) else {
                 return Err(usage(verb, "missing <query>"));
             };
-            let f = parse_flags(verb, a, 1, &["--status", "--limit"], &["--json"])?;
+            let f = parse_flags(verb, a, 1, &["--limit"], &["--json"])?;
             Ok(vec![bd([vec![s("search"), q.clone()], flatten(&f)].concat())])
         }
         "note-on" => {
@@ -753,6 +796,44 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
 }
 
 /// The kinds mail has a template for; a test holds this equal to `spira/mail/kinds`.
+/// `work list`: lifecycle state decides which beads, bd supplies what they say. A state filter
+/// is the machine's; `--label`/`--title-contains` narrow by content through bd, and the two are
+/// intersected here so neither side's idea of "open" is consulted.
+fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[String], json: bool, limit: Option<usize>) -> (i32, String) {
+    let (rc, rows) = crate::cmd_list(&[], conn);
+    if rc != 0 {
+        return (rc, rows);
+    }
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&rows).unwrap_or_default();
+    let keep = |st: &str| if !states.is_empty() { states.iter().any(|x| x == st) } else { all || !bead::BeadState::from_str(st).is_some_and(|b| b.is_terminal()) };
+    let by_id: std::collections::HashMap<String, serde_json::Value> =
+        rows.into_iter().filter(|r| keep(r["state"].as_str().unwrap_or(""))).filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r))).collect();
+    let mut args = vec![s("list"), s("--status"), s("all"), s("--limit"), s("0"), s("--json")];
+    args.extend(bd_args.iter().cloned());
+    let content = match crate::bd::run_stdin(&args, None) {
+        Ok(t) => t,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    let content: Vec<serde_json::Value> = serde_json::from_str(content.trim()).unwrap_or_default();
+    let mut out = Vec::new();
+    for mut c in content {
+        let Some(lc) = c["id"].as_str().and_then(|id| by_id.get(id)).cloned() else { continue };
+        c["lifecycle_state"] = lc["state"].clone();
+        c["lifecycle_holds"] = lc["holds"].clone();
+        out.push(c);
+    }
+    out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    if let Some(n) = limit {
+        out.truncate(n);
+    }
+    if json {
+        return (0, serde_json::to_string_pretty(&out).unwrap_or_default());
+    }
+    let lines: Vec<String> =
+        out.iter().map(|c| format!("{} {} {}", c["id"].as_str().unwrap_or("?"), c["lifecycle_state"].as_str().unwrap_or("?"), c["title"].as_str().unwrap_or(""))).collect();
+    (0, lines.join("\n"))
+}
+
 const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
 
 fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, String) {
@@ -769,6 +850,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 Ok(t) => (0, t),
                 Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
             },
+            Step::LcList { states, all, bd_args, json, limit } => list_with_content(conn, &states, all, &bd_args, json, limit),
             Step::Tool { program, args, stdin } => {
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
@@ -908,14 +990,32 @@ mod tests {
     }
 
     #[test]
-    fn list_forwards_only_its_own_filters() {
+    fn list_filters_by_lifecycle_state_and_content() {
         assert_eq!(
-            plan("list", "-", &call(&["--status", "open", "--label", "plan", "--json"], "warden")).unwrap(),
-            vec![Step::Bd { args: v(&["list", "--status", "open", "--label", "plan", "--json"]), stdin: None }]
+            plan("list", "-", &call(&["--state", "ready,rework", "--label", "plan", "--json"], "warden")).unwrap(),
+            vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, bd_args: v(&["--label", "plan"]), json: true, limit: None }]
         );
         assert!(plan("list", "-", &call(&["--db", "/x"], "warden")).is_err());
-        assert!(plan("list", "-", &call(&["--status", "open; rm"], "warden")).is_err());
+        assert!(plan("list", "-", &call(&["--state", "open"], "warden")).is_err(), "a bd status word is not a lifecycle state");
         assert!(plan("list", "-", &call(&["--limit", "many"], "warden")).is_err());
+    }
+
+    #[test]
+    fn list_refuses_bds_status_and_names_the_lifecycle_flag() {
+        let e = plan("list", "-", &call(&["--status", "open"], "warden")).unwrap_err();
+        assert!(e.1.contains("--state"), "{}", e.1);
+    }
+
+    #[test]
+    fn show_replaces_bds_status_word_with_the_lifecycle_state() {
+        let bd = "○ sp-1 · title   [P2 · OPEN]\nOwner: x\n";
+        let row = r#"{"bead":{"state":"SUBMITTED","holds":"[\"wait\"]","reason":"snooze-until:9","holder":null},"delivery":null}"#;
+        let out = with_lifecycle(bd, row);
+        assert!(out.starts_with("○ sp-1 · title   [P2 · SUBMITTED]\n"), "{out}");
+        assert!(!out.contains("OPEN"), "{out}");
+        assert!(out.contains("LIFECYCLE: SUBMITTED\n  holds:"), "{out}");
+        assert!(out.contains("  reason: snooze-until:9\n"), "{out}");
+        assert!(!out.contains("holder"), "{out}");
     }
 
     #[test]

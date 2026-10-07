@@ -1053,17 +1053,17 @@ fn a_session_that_leaves_the_bead_open_with_no_commit_is_a_no_progress_exit_held
     // Exempt, not charged: the events fold's `unjudged-` prefix, same as every other
     // never-judged disposition, so CHECK 4 never counts this toward the attempts ask.
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-o", "unjudged-no-progress"]), "{:?}", w.seam_calls);
-    // sp-mve9i: no bd status write around the machine — bd's dated defer is a snooze that
-    // wakes on its own (`bd defer --help`), and the release above is the lifecycle's.
+    // sp-mve9i: no bd status write around the machine; the snooze is a timed `wait` hold.
     assert!(
         !w.bd_calls.iter().any(|c| c.iter().any(|a| a == "--status" || a.starts_with("--status="))),
         "a timed hold writes no bd status: {:?}",
         w.bd_calls
     );
-    // Held, not resumed: a real defer, not just release() (which alone put it right back
+    assert!(!w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())), "the snooze is the lifecycle's, not bd's defer: {:?}", w.bd_calls);
+    // Held, not resumed: a real snooze, not just release() (which alone put it right back
     // in front of the next summon — the whole bug).
     assert!(
-        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        snoozed(&w),
         "{:?}",
         w.bd_calls
     );
@@ -1096,7 +1096,7 @@ fn a_committed_but_still_open_session_still_charges_a_real_attempt() {
     );
     assert!(!w.seam_calls.iter().any(|c| c.0 == "bump_requeue"), "a charged attempt writes no exempt requeue cause: {:?}", w.seam_calls);
     assert!(!w.seam_calls.iter().any(|c| c.0 == "thrash_streak_bump"), "committed work is not a no-progress exit: {:?}", w.seam_calls);
-    assert!(!w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())), "a real attempt is not held for a backoff: {:?}", w.bd_calls);
+    assert!(!snoozed(&w), "a real attempt is not held for a backoff: {:?}", w.bd_calls);
     assert_eq!(w.status["sp-p"], "open");
 }
 
@@ -1149,7 +1149,7 @@ fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(
-        !w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())),
+        !snoozed(&w),
         "at the cap this routes to the Concierge instead of deferring again: {:?}",
         w.bd_calls
     );
@@ -1202,7 +1202,7 @@ fn a_branch_already_ahead_with_no_new_commit_this_session_is_still_held_not_char
     assert!(!w.notes.iter().any(|(_, n)| n.starts_with("Unlanded (unlanded):")), "{:?}", w.notes);
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-aa", "unjudged-no-progress"]), "{:?}", w.seam_calls);
     assert!(
-        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        snoozed(&w),
         "held, not resumed: {:?}",
         w.bd_calls
     );
@@ -1237,7 +1237,7 @@ fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
     assert!(w.notes.iter().any(|(_, n)| n.starts_with("No progress (unlanded):")), "{:?}", w.notes);
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-ao", "unjudged-no-progress"]), "{:?}", w.seam_calls);
     assert!(
-        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        snoozed(&w),
         "{:?}",
         w.bd_calls
     );
@@ -1570,4 +1570,14 @@ fn no_aeon_source_reads_the_landstate_ledger() {
         }
     }
     assert!(checked > 10);
+}
+
+/// A `spira-lc hold <id> wait snooze-until:<epoch>` — the no-progress backoff.
+fn snoozed(w: &World) -> bool {
+    w.exec_calls.iter().any(|(p, a, _)| {
+        p == "spira-lc"
+            && a.first().map(String::as_str) == Some("hold")
+            && a.get(2).map(String::as_str) == Some("wait")
+            && a.get(3).is_some_and(|r| spira_config::lc_state::snooze_until(r).is_some())
+    })
 }

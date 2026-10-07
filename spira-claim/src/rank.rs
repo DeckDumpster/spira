@@ -212,6 +212,8 @@ pub struct LifecycleRow {
     /// bd branch head, so a prerequisite that never certifies is never stackable regardless
     /// of state.
     pub tip: Option<String>,
+    /// An unexpired `wait` snooze's end, resolved against the clock at parse time.
+    pub snoozed_until: Option<i64>,
 }
 
 pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, String> {
@@ -251,7 +253,13 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
             Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
             _ => None,
         };
-        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip });
+        let snoozed_until = match r.get("reason") {
+            Some(Value::String(reason)) if holds.contains(&HoldKind::Wait) => {
+                spira_config::lc_state::snooze_until(reason).filter(|t| *t > crate::ready::now_epoch())
+            }
+            _ => None,
+        };
+        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until });
     }
     Ok(out)
 }
@@ -286,6 +294,7 @@ pub enum Verdict {
     NoOwnRow,
     OwnState(BeadState),
     Held(HoldKind),
+    Snoozed(i64),
     Blocked(String),
     TooDeep { depth: u32, max: u32 },
 }
@@ -317,6 +326,9 @@ pub fn stack_plan(
     let Some(own) = lc.get(&cand.id) else { return Err(Verdict::NoOwnRow) };
     if let Some(h) = own.holds.iter().find(|h| **h != HoldKind::Wait) {
         return Err(Verdict::Held(*h));
+    }
+    if let Some(t) = own.snoozed_until {
+        return Err(Verdict::Snoozed(t));
     }
     if !matches!(own.state, BeadState::Ready | BeadState::Rework) {
         return Err(Verdict::OwnState(own.state));
@@ -484,7 +496,7 @@ mod tests {
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
         c.status = Some("in_progress".into());
-        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None })]);
+        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None })]);
         assert!(!epic_started(&[c.clone()], &HashMap::new()), "no row: nothing started, though bd says in_progress");
         assert!(!epic_started(&[c.clone()], &at(BeadState::Ready)));
         assert!(!epic_started(&[c.clone()], &at(BeadState::Rework)));
@@ -532,7 +544,7 @@ mod tests {
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {
-        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")) })
+        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None })
     }
 
     fn blocked_on(id: &str, blocker: &str) -> ReadyRow {
@@ -624,6 +636,22 @@ mod tests {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 0), Verdict::Blocked("A".into()));
+    }
+
+    fn snooze_snapshot(until: i64, hold: &str) -> HashMap<String, LifecycleRow> {
+        let reason = spira_config::lc_state::snooze_reason(until);
+        parse_lifecycle(&format!(r#"[{{"bead_id":"B","state":"READY","holds":["{hold}"],"reason":"{reason}"}}]"#)).unwrap()
+    }
+
+    #[test]
+    fn an_unexpired_wait_snooze_is_not_claimable_and_an_expired_one_is() {
+        let bd = HashMap::new();
+        let b = row("B", 1, None, "t");
+        let future = crate::ready::now_epoch() + 3600;
+        assert_eq!(claimable(&b, &snooze_snapshot(future, "wait"), &bd, 4), Verdict::Snoozed(future));
+        assert_eq!(claimable(&b, &snooze_snapshot(crate::ready::now_epoch() - 1, "wait"), &bd, 4), Verdict::Claimable { depth: 0 });
+        assert_eq!(claimable(&b, &snooze_snapshot(future, "operator"), &bd, 4), Verdict::Held(HoldKind::Operator), "only a wait hold snoozes");
+        assert!(crate::ready::lifecycle_ready_ids(&snooze_snapshot(future, "wait")).is_empty());
     }
 
     #[test]
