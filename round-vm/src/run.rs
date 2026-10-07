@@ -204,6 +204,21 @@ else
 fi
 setup_secs=$(( $(date +%s) - t_start ))
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
+sig_out="$HOME/round-work/.runtime/spira/tsd/vm-signals.jsonl"
+mkdir -p "$(dirname "$sig_out")"
+cpu_now() { awk '/^cpu /{t=0; for(i=2;i<=9;i++) t+=$i; print t, $6, $9}' /proc/stat; }
+(
+    prev="$(cpu_now)"
+    while sleep 10; do
+        cur="$(cpu_now)"
+        psi="$(awk '/^some/{sub("avg10=","",$2); print $2}' /proc/pressure/io 2>/dev/null)"
+        infl="$(cat /sys/block/*/inflight 2>/dev/null | awk '{s+=$1+$2} END{print s+0}')"
+        printf '%s %s %s %s\n' "$prev" "$cur" "${psi:-0}" "$infl" | awk -v ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -v host="$(hostname)" \
+            '{dt=$4-$1; if (dt<=0) next; printf "{\"ts\":\"%s\",\"host\":\"%s\",\"family\":\"vm-signals\",\"iowait_pct\":%.2f,\"steal_pct\":%.2f,\"io_psi_some_avg10\":%s,\"disk_inflight\":%d}\n", ts, host, 100*($5-$2)/dt, 100*($6-$3)/dt, $7, $8}' >> "$sig_out"
+        prev="$cur"
+    done
+) &
+sampler_pid=$!
 set +e
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
 # They run beside the suites, on the build above; a red here makes the round red.
@@ -232,6 +247,7 @@ else
     [ "$rc" -eq 0 ] && rc=1
 fi
 suites_secs=$(( $(date +%s) - t_start - setup_secs ))
+kill "$sampler_pid" 2>/dev/null; wait "$sampler_pid" 2>/dev/null
 echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
 if [ "$setup_secs" -gt "$setup_alarm" ]; then
     echo "round-vm: SETUP-SLOW: setup took ${setup_secs}s, over the ${setup_alarm}s limit — something is being built or fetched that the template should hold" >&2
@@ -813,6 +829,24 @@ pub fn exit_for_remote(rc: i32) -> i32 {
     }
 }
 
+/// A run cut by a signal still holds the verdicts its VM produced: pulls them into
+/// `results_dir` (results already there are kept) before the VM is released. Bounded by
+/// `within`, because the caller's kill-after is seconds away. Returns how many were new.
+pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> usize {
+    let pulled = std::thread::scope(|sc| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        sc.spawn(move || {
+            let _ = fs::remove_dir_all(scratch);
+            let ok = remote.pull(addr, REMOTE_RESULTS, scratch).is_ok();
+            let _ = tx.send(ok);
+        });
+        rx.recv_timeout(within).unwrap_or(false)
+    });
+    let n = if pulled { stream_into(scratch, results_dir).unwrap_or(0) } else { 0 };
+    let _ = fs::remove_dir_all(scratch);
+    n
+}
+
 /// Where the VM's testenv writes the corpus's results.
 pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
 
@@ -1378,6 +1412,32 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("round-vm: setup ${setup_secs}s, suites ${suites_secs}s"));
         assert!(REMOTE_SCRIPT.contains("SETUP-SLOW"));
         assert!(REMOTE_SCRIPT.contains("[ \"$setup_secs\" -gt \"$setup_alarm\" ]"));
+    }
+
+    #[test]
+    fn a_signalled_run_salvages_the_verdicts_its_vm_already_produced() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let dest = fx.cfg.run_dir.join("salvaged");
+        let scratch = fx.cfg.state_dir.join(".salvage-test");
+        let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5));
+        assert_eq!(n, 2);
+        assert!(dest.join("test-a.sh.result").is_file());
+        assert!(!scratch.exists(), "scratch is removed");
+        let mut none = FakeRemote::green();
+        none.files.clear();
+        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), 0, "an unreachable VM salvages nothing and does not fail");
+    }
+
+    #[test]
+    fn the_remote_script_records_vm_wide_signals_beside_the_suite_times() {
+        let sampler = REMOTE_SCRIPT.find("sampler_pid=$!").expect("a sampler is started");
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        let stop = REMOTE_SCRIPT.find("kill \"$sampler_pid\"").expect("and stopped");
+        assert!(sampler < batch && batch < stop, "it brackets the suites");
+        for f in ["vm-signals", "iowait_pct", "steal_pct", "io_psi_some_avg10", "disk_inflight", "tsd/vm-signals.jsonl"] {
+            assert!(REMOTE_SCRIPT.contains(f), "{f}");
+        }
     }
 
     #[test]
