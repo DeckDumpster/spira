@@ -237,9 +237,6 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         std::os::unix::fs::symlink(&p, &link).map_err(|e| format!("cannot symlink {name}: {e}"))?;
     }
 
-    let registry = o.harness_spira.join("conf.d");
-    std::os::unix::fs::symlink(&registry, sh.join("conf.d")).map_err(|e| format!("cannot symlink the config registry {}: {e}", registry.display()))?;
-
     write_exec(&sh.join("fake-summon.sh"), FAKE_SUMMON)?;
     write_exec(&sh.join("fake-launch.sh"), FAKE_LAUNCH)?;
 
