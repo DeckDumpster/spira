@@ -145,7 +145,7 @@ impl<'a> Sentinel<'a> {
         for c in &changes {
             if !dry {
                 let (Change::Add(id) | Change::Remove(id)) = c;
-                let was = snap.get(id).map(|b| b.status.as_str()).unwrap_or("");
+                let was = snap.lc_state(id);
                 if self.still("CHECK3c", id, was, live.as_ref()).is_none() {
                     continue;
                 }

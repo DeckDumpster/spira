@@ -438,7 +438,7 @@ STUB
 lc_called() { grep -q "^$2 $3\b" "$1/calls.log" 2>/dev/null; }
 lc_bead() {      # lc_bead <STATE> <id> <tip> <since>  (one row per id: a new STATE replaces the old)
     rm -f "$LC_FIX"/bead/*/"$2"
-    mkdir -p "$LC_FIX/bead/$1"
+    mkdir -p "$LC_FIX/bead/$1" "$LC_FIX/show"
     printf '{"bead_id":"%s","state":"%s","tip":"%s","since":%s}' "$2" "$1" "$3" "$4" > "$LC_FIX/bead/$1/$2"
     printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s"}}' "$2" "$1" "$3" > "$LC_FIX/show/$2"
 }

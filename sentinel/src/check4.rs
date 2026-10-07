@@ -332,7 +332,7 @@ impl<'a> Sentinel<'a> {
             if tok.contains("poison") || tok.contains("ask") {
                 // Re-read before the write (fresh.rs): the snapshot is a snapshot, and the
                 // landing pass or an aeon may have moved this bead since it was taken.
-                let was = snap.get(id).map(|b| b.status.clone()).unwrap_or_default();
+                let was = snap.lc_state(id).map(str::to_string);
                 let live = self.reread(&[id.as_str()]);
                 // Handed on by its builder since the snapshot: the lifecycle row, re-read
                 // live, is past WORKING where the pass's read was not (design §3.4 — never
@@ -341,7 +341,7 @@ impl<'a> Sentinel<'a> {
                     self.log(&format!("CHECK4 {id}: {n} attempts, but it closed while this pass ran — not poisoned, not asked"));
                     continue;
                 }
-                let Some(shown) = self.still("CHECK4", id, &was, live.as_ref()).cloned() else {
+                let Some(shown) = self.still("CHECK4", id, was.as_deref(), live.as_ref()).cloned() else {
                     continue;
                 };
                 let shown = Some(shown);

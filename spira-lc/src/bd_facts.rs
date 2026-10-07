@@ -16,8 +16,8 @@ pub struct BdRecord {
 
 /// Runs `bd -C <db> show <id> --json` and extracts exactly the fields the classifier reads.
 pub fn fetch(bd_bin: &str, db: &str, id: &str) -> Result<BdRecord, String> {
-    let out = Command::new(bd_bin)
-        .args(["-C", db, "show", id, "--json"])
+    let out = Command::new("timeout")
+        .args(["5", bd_bin, "-C", db, "show", id, "--json"])
         .output()
         .map_err(|e| format!("spawning {bd_bin}: {e}"))?;
     if !out.status.success() {
@@ -61,8 +61,8 @@ fn parse(text: &str, id: &str) -> Result<BdRecord, String> {
 /// design Intent 5's "cheap, fast" bench is about the lifecycle machine's own transitions,
 /// never about this tool, which runs once against a drained store.
 pub fn roster(bd_bin: &str, db: &str, repo_name: &str) -> Result<Vec<String>, String> {
-    let out = Command::new(bd_bin)
-        .args(["-C", db, "list", "--json", "--all", "--label", &format!("repo:{repo_name}"), "--limit", "0"])
+    let out = Command::new("timeout")
+        .args(["5", bd_bin, "-C", db, "list", "--json", "--all", "--label", &format!("repo:{repo_name}"), "--limit", "0"])
         .output()
         .map_err(|e| format!("spawning {bd_bin}: {e}"))?;
     if !out.status.success() {
@@ -80,7 +80,8 @@ pub fn closed(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<(String, Str
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut cmd = Command::new(bd_bin);
+    let mut cmd = Command::new("timeout");
+    cmd.args(["5", bd_bin]);
     if !db.is_empty() {
         cmd.args(["-C", db]);
     }
