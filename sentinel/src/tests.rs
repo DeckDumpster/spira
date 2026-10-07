@@ -440,7 +440,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
             // the snapshot paths reached strand
             assert!(env_of(s, "SPIRA_LIST_SNAPSHOT")
                 .is_some_and(|p| std::fs::read_to_string(p).unwrap().contains("sp-epic")));
-            assert!(env_of(s, "SPIRA_READY_SNAPSHOT").is_some());
+            assert!(env_of(s, "SPIRA_READY_SNAPSHOT").is_none());
             let cache = std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap();
             assert_eq!(cache, "builder 1\nops 0\n");
             return ok("RECLAIMED sp-x — ghost\nSTRANDED plan sp-y — stuck\n");

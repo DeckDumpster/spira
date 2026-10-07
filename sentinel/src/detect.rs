@@ -88,18 +88,10 @@ impl<'a> Sentinel<'a> {
     /// `unclaimable.py` reads fields (`external_ref`) this binary's own `Bead` does not
     /// model, so this never round-trips through `parse_beads`. `snap_ready_raw` is the
     /// pass's own `ready_raw_args` snapshot when running inside a full pass; `None` for a
-    /// standalone `sentinel --detect-unclaimable`, which falls back to
-    /// `$SPIRA_READY_SNAPSHOT` and then a live `bd ready` call.
+    /// standalone `sentinel --detect-unclaimable`, which makes a live `bd ready` call.
     fn broad_ready_raw(&self, snap_ready_raw: Option<&str>) -> String {
         if let Some(r) = snap_ready_raw {
             return r.to_string();
-        }
-        if let Ok(p) = std::env::var("SPIRA_READY_SNAPSHOT") {
-            if !p.is_empty() {
-                if let Ok(text) = std::fs::read_to_string(&p) {
-                    return text;
-                }
-            }
         }
         let args = crate::store::ready_raw_args(&self.cfg);
         self.bd().json(self.h, &args).unwrap_or_default()

@@ -108,6 +108,8 @@ pub struct Partition<'a> {
     pub labels: Vec<String>,
     /// Claimable beads under the partition's own predicate (`bd ready`).
     pub ready: HashSet<String>,
+    /// Beads whose lifecycle row is WORKING: a builder holds them.
+    pub working: HashSet<String>,
     pub vocab: &'a Vocab,
     pub facts: &'a Facts,
 }
@@ -118,7 +120,7 @@ impl<'a> Partition<'a> {
     }
     /// moving(b): the pipeline is carrying it (DESIGN.md §4).
     fn moving(&self, b: &Bead) -> bool {
-        b.status == Status::InProgress
+        self.working.contains(&b.id)
             || b.has(&self.vocab.submitted)
             || b.has(&self.vocab.queue_wait)
             || self.ready.contains(&b.id)
@@ -592,11 +594,15 @@ mod tests {
         Store::new(parse_beads(&serde_json::Value::Array(v).to_string()).unwrap())
     }
     fn run_with(s: &Store, ready: &[&str], facts: &Facts) -> Vec<Row> {
+        run_working(s, ready, &[], facts)
+    }
+    fn run_working(s: &Store, ready: &[&str], working: &[&str], facts: &Facts) -> Vec<Row> {
         let vocab = Vocab { ask: ASK.into(), ..Vocab::default() };
         let p = Partition {
             store: s,
             labels: PLAN.iter().map(|s| s.to_string()).collect(),
             ready: ready.iter().map(|s| s.to_string()).collect(),
+            working: working.iter().map(|s| s.to_string()).collect(),
             vocab: &vocab,
             facts,
         };
@@ -638,13 +644,14 @@ mod tests {
     }
 
     #[test]
-    fn in_progress_dependent_is_not_reported() {
+    fn working_dependent_is_not_reported() {
         let s = store(vec![
             epic("E", PLAN),
-            bead("c", "in_progress", PLAN, Some("E"), &["x"]),
+            bead("c", "open", PLAN, Some("E"), &["x"]),
             bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
-        assert!(run(&s, &[]).is_empty());
+        assert!(run_working(&s, &[], &["c"], &Facts { live: 1, ..Facts::default() }).is_empty());
+        assert!(!run(&s, &[]).is_empty(), "bd status in_progress alone no longer means moving");
     }
 
     #[test]
@@ -718,10 +725,10 @@ mod tests {
         let s = store(vec![
             epic("sp-msk4h", PLAN),
             bead("sp-7tw9h", "closed", &plan_with(&["spira-submitted"]), Some("sp-msk4h"), &[]),
-            bead("sp-o3o6z", "in_progress", PLAN, Some("sp-msk4h"), &["sp-7tw9h"]),
+            bead("sp-o3o6z", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h"]),
             bead("sp-o4wu7", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h", "sp-o3o6z"]),
         ]);
-        assert!(run(&s, &[]).is_empty());
+        assert!(run_working(&s, &[], &["sp-o3o6z"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
     #[test]
@@ -813,9 +820,9 @@ mod tests {
         let s = store(vec![
             epic("E", PLAN),
             bead("c", "open", PLAN, Some("E"), &["x"]),
-            bead("x", "in_progress", &["spira", "incident"], None, &[]),
+            bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
-        assert!(run(&s, &[]).is_empty());
+        assert!(run_working(&s, &[], &["x"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
     #[test]
