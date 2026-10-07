@@ -41,6 +41,14 @@ out="$(run watch --interval 1 --ticks 1)"
 want "a marker its round has finished is stale" "outlived its round" "$out"
 want "ROUND DUE fires after a finished round's marker" "ROUND DUE" "$out"
 
+run watch --interval 1 --ticks 1 >/dev/null
+rm -f "$TMP/run/rounds/"*; : > "$TMP/run/rounds/300.result"
+(sleep 1.5; echo "red sp-aaa" >> "$TMP/run/rounds/300.result"; sleep 1; echo "round 300: no verdict from any VM" >> "$TMP/run/rounds/300.result") &
+out="$(run watch --interval 1 --ticks 5)"; wait
+want "a result line is announced" "ROUND RESULT 300: red sp-aaa" "$out"
+want "a verdict-less result is reported as its own condition" "ROUND NO VERDICTS 300" "$out"
+[ "$(printf '%s\n' "$out" | grep -c 'ROUND NO VERDICTS')" = 1 ]; is "only the verdict-less line raises it" "0" "$?"
+
 run watch --interval 7 --ticks 1 >/dev/null
 run health >/dev/null; is "health passes after a fresh poll" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/round-duty.health"

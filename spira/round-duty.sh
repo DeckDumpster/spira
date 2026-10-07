@@ -67,7 +67,13 @@ _rd_tick() {
         n="$(wc -l < "$f")"; p="${_rd_lines[$f]:-}"
         if [ -z "$p" ]; then _rd_lines[$f]=$n; continue; fi
         if [ "$n" -gt "$p" ]; then
-            tail -n $((n - p)) "$f" | while IFS= read -r l; do _rd_say "ROUND RESULT $(basename "$f" .result): $l"; done
+            tail -n $((n - p)) "$f" | while IFS= read -r l; do
+                _rd_say "ROUND RESULT $(basename "$f" .result): $l"
+                case "${l,,}" in
+                    *"no verdict"*|*"no-verdict"*|*"verdict-less"*|*"verdictless"*)
+                        _rd_say "ROUND NO VERDICTS $(basename "$f" .result): the round produced no verdicts — a fault of the round machinery (VM, mirror, host address), not of the candidates; fix it before cutting another" ;;
+                esac
+            done
             _rd_lines[$f]=$n
         fi
     done
