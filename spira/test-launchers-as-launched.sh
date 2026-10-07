@@ -85,6 +85,7 @@ mkdir -p "$TMP/home"
 meter_in='{"context_window": {"current_usage": {}, "total_input_tokens": 12345}}'
 out="$(printf '%s' "$meter_in" | client_env "$TMP/home" "$METER" 2>&1)"; rc=$?
 wantrc "the statusLine command exits 0 as the client runs it" 0 "$rc"
+[ "$rc" = 0 ] || echo "# statusLine said: $out; command: $METER"
 [ -n "$out" ] && ok "and prints the meter" || bad "and prints the meter" "no output"
 case "$out" in *SPIRA_TOML*) bad "and names no missing config" "$out" ;; *) ok "and names no missing config" ;; esac
 
@@ -95,6 +96,7 @@ out="$(printf '%s' "$meter_in" | client_env "$TMP/home" "$(unconfigured "$METER"
 hook_in='{"hook_event_name":"SessionStart","source":"startup"}'
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$HOOK" 2>&1)"; rc=$?
 wantrc "the SessionStart command exits 0 as the client runs it" 0 "$rc"
+[ "$rc" = 0 ] || echo "# SessionStart said: $out; command: $HOOK"
 want "and prints the watcher summary" "probe" "$out"
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$(unconfigured "$HOOK")" 2>&1)"
 nowant "SEEN RED: the same command without SPIRA_TOML prints no summary" "probe" "$out"
@@ -106,6 +108,7 @@ mkdir -p "$TMP/cockpit"
 SNAP="$TMP/snapshot.env"
 env -i PATH="$R/bin:/usr/bin:/bin" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="$R" SPIRA_COCKPIT_FORCE=1 \
     cockpit-collect once >/dev/null 2>&1
+echo "# snapshot: $(wc -l < "$TMP/run/cockpit.env" 2>&1) lines: $(head -c 600 "$TMP/run/cockpit.env" 2>&1 | tr '\n' ' ')"
 [ -s "$TMP/run/cockpit.env" ] && ok "the collector wrote a snapshot for the pane to read" || bad "the collector wrote a snapshot for the pane to read" "no $TMP/run/cockpit.env"
 
 pane() {  # pane <name> <toml-for-the-server-or-empty> — `layout up` in a fresh server, print the health pane
