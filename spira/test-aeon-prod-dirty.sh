@@ -33,7 +33,10 @@
 # tier: T2
 # covers: aeon/src/*
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# PD_PART: main runs cases 0 and 1, rest runs cases 2 and 3; test-aeon-prod-dirty-rest.sh
+# sets rest and sources this file (split for wall time).
+PD_PART="${PD_PART:-main}"
 . "$HERE/testlib.sh"
 
 # CLEAR ANY INHERITED SHARED FIXTURE before building our own. An aeon session exports
@@ -55,7 +58,7 @@ unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN \
 testdb_require test-aeon-prod-dirty
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonproddirty || { echo "test-aeon-prod-dirty: could not build a fixture database"; exit 1; }
+testdb_up "aeonproddirty$PD_PART" || { echo "test-aeon-prod-dirty: could not build a fixture database"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # ---- harness repo (SPIRA_REPO) --------------------------------------------------------
@@ -168,6 +171,7 @@ poison_bead() {
     timeout 5 bd -C "$SPIRA_DB" label add "$1" spira-poison >/dev/null 2>&1 || true
 }
 
+if [ "$PD_PART" = main ]; then
 # ============================================================
 echo
 echo "CASE 0 (positive control): OWN WORKTREE dirty — the submission is refused, back to rework:"
@@ -197,7 +201,9 @@ not_reopened "repo-dirty" "$b2"
 # Restore HARNESS so it does not affect later cases.
 git -C "$HARNESS" checkout -q -- incident.sh 2>/dev/null || true
 poison_bead "$b2"
+fi
 
+if [ "$PD_PART" = rest ]; then
 # ============================================================
 echo
 echo "CASE 2: both clean — the hand-on stands (baseline):"
@@ -219,6 +225,7 @@ b4="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: own dirty with override"
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 SPIRA_ALLOW_PROD_DIRTY=1 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+fi
 not_reopened "override (despite dirty worktree)" "$b4"
 
 echo

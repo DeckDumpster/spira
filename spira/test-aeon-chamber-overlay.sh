@@ -27,7 +27,10 @@
 # tier: T1
 # covers: aeon/src/* spira/chamber/builder.md spira/conf.sh doctor/src/*
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# OV_PART: main runs the golden renders and doctor rows, overlay the three overlay renders;
+# test-aeon-chamber-overlay-mech.sh sets overlay and sources this file (split for wall time).
+OV_PART="${OV_PART:-main}"
 . "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
@@ -35,7 +38,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 testdb_require test-aeon-chamber-overlay
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonchamberov || { echo "test-aeon-chamber-overlay: could not build fixture database"; exit 1; }
+testdb_up "aeonchamberov$OV_PART" || { echo "test-aeon-chamber-overlay: could not build fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -137,6 +140,7 @@ PATH="$STUB_BIN:$PATH"   # the stubs, by name, ahead of the tree's build
 
 # ==========================================================================================
 echo "test-aeon-chamber-overlay.sh"
+if [ "$OV_PART" = main ]; then
 echo
 echo "GOLDEN: the rendered builder brief has no gate-run.sh instruction, no overlay present"
 # ==========================================================================================
@@ -172,6 +176,8 @@ nowant "and the legacy bd-close instruction is absent" "bd -C $SPIRA_DB close" "
 # later section's make_bead to reclaim.
 close_bead "$BID_F1"
 
+fi
+if [ "$OV_PART" = overlay ]; then
 # ==========================================================================================
 echo
 echo "OVERLAY: a section file replaces one ## heading, an append file is appended"
@@ -227,6 +233,8 @@ want "SEEN RED CONTROL: the block overlay text appears" "Operator override of th
 rm -f "$SPIRA_CHAMBER_OVERLAY/blocks/PARK.md"
 close_bead "$BID_B"
 
+fi
+if [ "$OV_PART" = main ]; then
 # ==========================================================================================
 echo
 echo "doctor reports an active overlay by name and reports none when the directory is empty"
@@ -242,5 +250,6 @@ EMPTY_OVERLAY="$TMP/overlay-none"
 tl_config SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" SPIRA_DB="$SPIRA_DB"
 out_none="$(SPIRA_HOME="$SPIRA_HOME" doctor 2>&1)"
 want "doctor reports none active when the overlay directory is empty" "none active" "$out_none"
+fi
 
 tl_summary

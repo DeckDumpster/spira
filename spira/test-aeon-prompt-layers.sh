@@ -15,7 +15,10 @@
 # tier: T2
 # covers: aeon/src/* spira/chamber/*.fayth spira/lib.sh UC-aeon-execution-06
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd -P)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# PL_PART: main runs the replace and groomer rows, sticking the thrash-banner rows;
+# test-aeon-prompt-layers-sticking.sh sets sticking and sources this file (split for wall time).
+PL_PART="${PL_PART:-main}"
 . "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -30,7 +33,7 @@ echo "T3: real fayth files wire the same mechanism end to end"
 . "$HERE/testdb.sh"
 testdb_require test-aeon-prompt-layers
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonlayers || { echo "test-aeon-prompt-layers: could not build fixture database"; exit 1; }
+testdb_up "aeonlayers$PL_PART" || { echo "test-aeon-prompt-layers: could not build fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -114,6 +117,7 @@ make_bead() {           # make_bead -> prints bead id
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
 
+if [ "$PL_PART" = main ]; then
 # ==========================================================================================
 echo
 echo "replace fayth: --system-prompt-file in argv, bead body on stdin, no statute in stdin"
@@ -173,7 +177,9 @@ if [ -n "$BID_G" ]; then
 else
     printf '  skip  groomer bead creation failed (groomer partition not ready)\n'
 fi
+fi
 
+if [ "$PL_PART" = sticking ]; then
 # ==========================================================================================
 echo
 echo "sp-4rzlw: a bead carrying an unresolved thrash streak leads its brief with the sticking point:"
@@ -230,5 +236,6 @@ BID_CLEAN="$(make_sticking_bead)"
 aeon testlayers-sticking
 task_clean="$(cat "$SPIRA_RUN/$BID_CLEAN.task.md" 2>/dev/null)"
 nowant "a bead with no thrash history gets no STICKING POINT banner" "STICKING POINT" "$task_clean"
+fi
 
 tl_summary
