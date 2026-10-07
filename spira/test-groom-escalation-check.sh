@@ -81,6 +81,8 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
     printf 'trigger {{BEAD_ID}} scrub\n' > "$HOMEDIR/chamber/$f.md"
+    spira-config set "persona.$f.model" claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
+        || { echo "test-groom-escalation-check: could not declare persona.$f.model" >&2; exit 1; }
 done
 printf 'FAYTH_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/chamber/scrubber.fayth"
 

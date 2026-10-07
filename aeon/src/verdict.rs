@@ -79,11 +79,11 @@ impl Run<'_> {
 
     /// `bead_reopen`, plus the lifecycle half when the session handed on by submitting.
     fn refuse(&mut self, submitted: bool, cause: &str, note: &str) {
-        self.bead_reopen(cause, note);
         if submitted {
             let id = self.s.bead.clone();
             self.lc_rework(&id);
         }
+        self.bead_reopen(cause, note);
     }
 
     fn requeue(&mut self, cause: &str, why: String) {
