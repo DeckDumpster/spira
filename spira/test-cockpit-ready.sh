@@ -29,6 +29,10 @@ BASE_PATH="$PATH"
 PROBE_LC="$TMP/probe-lc"; mkdir -p "$PROBE_LC"
 cat > "$PROBE_LC/spira-lc" <<'LC'
 #!/usr/bin/env bash
+if [ "$1" = content ]; then
+    shift; bd="$(spira-config get spira.bd 2>/dev/null)"; db="$(spira-config get spira.db 2>/dev/null)"
+    exec "${bd:-bd}" ${db:+-C "$db"} "$@"
+fi
 [ "$1" = list ] && printf '[{"bead_id":"sp-ck-none","state":"READY","holder":null,"lease_until":null,"holds":[]}]\n'
 exit 0
 LC
