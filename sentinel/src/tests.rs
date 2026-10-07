@@ -289,6 +289,12 @@ pub fn standard(r: &FakeRunner) {
 /// re-read before every write (fresh.rs) consults. Missing ids are omitted, as bd does.
 pub fn show_from(list: &'static str) -> impl Fn(&Spec) -> Option<Out> {
     move |s| {
+        if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("show") {
+            let rows: Vec<serde_json::Value> = serde_json::from_str(&lc_mirror(list)).unwrap();
+            let id = s.args.get(1)?;
+            let row = rows.iter().find(|r| r["bead_id"].as_str() == Some(id.as_str()))?;
+            return ok(&serde_json::json!({"bead": row}).to_string());
+        }
         if !is_bd(s, "show") {
             return None;
         }
@@ -2380,8 +2386,24 @@ fn check3c_skips_a_bead_that_moved_since_the_snapshot() {
         .find(|s| is_bd(s, "label")
             && s.args[2..] == ["label", "remove", "sp-done", "spira-open-children"])
         .is_some());
-    assert!(sink.has("CHECK3c sp-a: open in this pass's snapshot, closed now — skipped"));
+    assert!(sink.has("CHECK3c sp-a: READY in this pass's snapshot, LANDED now — skipped"));
     assert_eq!(r.count(|s| is_bd(s, "show")), 1, "one re-read for the whole check");
+}
+
+#[test]
+fn check3c_fence_reads_the_row_not_bd_status() {
+    let (w, r, sink, clock) = setup("fresh3c-row");
+    open_children_world(&r);
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("show") {
+            return ok(r#"{"bead":{"state":"SUBMITTED"}}"#);
+        }
+        None
+    });
+    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    run_mode(&w, &r, &sink, &clock, Mode::OpenChildren { dry: false }, &extra, None);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{:#?}", r.lines());
+    assert!(sink.has("CHECK3c sp-a: READY in this pass's snapshot, SUBMITTED now — skipped"), "{}", sink.text());
 }
 
 // ---------------------------------------------------------------------------------------

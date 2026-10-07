@@ -3,8 +3,8 @@
 //! Every check decides from the pass's one snapshot, read at pass start, and a pass can run
 //! for minutes. A decision is only as current as that read; a WRITE must not be. So each
 //! mutating action on a bead re-reads that bead live — one `bd show <id>… --json` for all
-//! the beads a check is about to touch — and skips a bead whose status is no longer what the
-//! snapshot showed. A bead the re-read cannot find, or a re-read that fails, is skipped too:
+//! the beads a check is about to touch — and skips a bead whose lifecycle state is no longer what the
+//! snapshot showed (bd's status is never the fence). A bead the re-read cannot find, or a re-read that fails, is skipped too:
 //! the next pass decides it again from a fresh snapshot, and no write here is so urgent that
 //! it is better made blind.
 //!
@@ -29,13 +29,14 @@ impl<'a> Sentinel<'a> {
         Some(rows.into_iter().map(|b| (b.id.clone(), b)).collect())
     }
 
-    /// The live row of `id` when its status is still `was`; otherwise log why this write is
-    /// skipped and return None.
+    /// The live row of `id` when its lifecycle state is still `was` (None: rowless); otherwise
+    /// log why this write is skipped and return None. A state the machine cannot be asked for
+    /// is not `was`.
     pub fn still<'m>(
         &self,
         check: &str,
         id: &str,
-        was: &str,
+        was: Option<&str>,
         live: Option<&'m HashMap<String, Bead>>,
     ) -> Option<&'m Bead> {
         let now = match live {
@@ -46,11 +47,15 @@ impl<'a> Sentinel<'a> {
             Some(m) => m.get(id),
         };
         match now {
-            Some(b) if b.status == was => Some(b),
             Some(b) => {
+                let live_state = self.lc_live_state(id);
+                if live_state.as_deref() == was {
+                    return Some(b);
+                }
                 self.log(&format!(
-                    "{check} {id}: {was} in this pass's snapshot, {} now — skipped, the next pass decides it again",
-                    b.status
+                    "{check} {id}: {} in this pass's snapshot, {} now — skipped, the next pass decides it again",
+                    was.unwrap_or("rowless"),
+                    live_state.as_deref().unwrap_or("rowless or unreadable")
                 ));
                 None
             }
