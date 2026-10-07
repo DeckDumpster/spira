@@ -48,8 +48,8 @@ struct RealFollow;
 
 impl Follow for RealFollow {
     fn lift_hold(&self, id: &str, message_id: &str) -> Result<(), String> {
-        let out = Command::new("spira-lc")
-            .args(["reply", id, message_id, "claude"])
+        let out = Command::new("timeout")
+            .args(["5", "spira-lc", "reply", id, message_id, "claude"])
             .output()
             .map_err(|e| format!("failed to run spira-lc: {e}"))?;
         if out.status.success() {
@@ -60,7 +60,9 @@ impl Follow for RealFollow {
     }
 
     fn deliver(&self, id: &str, text: &str) {
-        bead::claimdesc::notify_live_aeon(id, text);
+        let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+        let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+        bead::claimdesc::notify_live_aeon(id, text, &run, &mail);
     }
 }
 
