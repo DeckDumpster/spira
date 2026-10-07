@@ -67,6 +67,15 @@ impl crate::callers::Bd for LiveBd {
     fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
         crate::bd_facts::known(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
     }
+    fn reopen(&mut self, id: &str) -> Result<(), String> {
+        // The store follows the row the door just moved: open, unassigned, and no longer wearing
+        // the submitted label (a legacy state label; best effort, it may not be there).
+        run(&["update", id, "--status", "open", "--assignee", ""]).map(|_| ())?;
+        if let Some(label) = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()) {
+            let _ = run(&["label", "remove", id, &label]);
+        }
+        Ok(())
+    }
 }
 
 pub fn note(bead_id: &str, text: &str) -> Result<String, String> {

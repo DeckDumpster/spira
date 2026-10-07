@@ -75,7 +75,6 @@ pub const VERBS: &[&str] = &[
     "certify",
     "resubmit",
     "renew",
-    "reopen",
 ];
 
 pub fn is_verb(v: &str) -> bool {
@@ -214,12 +213,6 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
         }
         "renew" => renew(m, args),
-        "reopen" => {
-            if !need(1) {
-                return usage("reopen <bead-id> [cause] [actor]");
-            }
-            reopen(m, &a(0), &a(1), &actor_or(args.get(2), "reopen"))
-        }
         other => usage(&format!("unknown caller verb {other:?}")),
     }
 }
@@ -641,6 +634,40 @@ pub trait Bd {
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String>;
     /// The subset of `ids` that bd has a bead for, in any status.
     fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String>;
+    /// The store half of a reopen: bd status open, no assignee, no submitted label — so a bead
+    /// the machine handed back reads open wherever bd is still read (sp-swh8b8). Idempotent.
+    fn reopen(&mut self, id: &str) -> Result<(), String>;
+}
+
+/// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
+/// [`close`]: the row records the transition its state implies FIRST (see the caller verb's
+/// table), and only then is the store reopened, so bd never says open while the row says done.
+/// A bead with no row (an alert, an ask — rowless, bd is its only state) is reopened in the
+/// store alone. Terminal, refused or unreadable: nothing is written to the store.
+pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let Some(id) = args.first().filter(|s| !s.is_empty()) else {
+        return usage("reopen <bead-id> [cause] [actor]");
+    };
+    let cause = args.get(1).cloned().unwrap_or_default();
+    let actor = actor_or(args.get(2), "reopen");
+    match show(m, id) {
+        Err(NO_ROW) => {}
+        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc reopen: {id}: the lifecycle row is unreadable — nothing reopened\n"), ..Default::default() },
+        Ok(_) => {
+            let a = reopen(m, id, &cause, &actor);
+            if a.code != APPLIED {
+                return a;
+            }
+        }
+    }
+    match bd.reopen(id) {
+        Ok(()) => Answer::code(APPLIED),
+        Err(e) => Answer {
+            code: CANNOT_TELL,
+            stderr: format!("spira-lc reopen: {id}: the row is handed back but the store reopen failed: {}\n", e.trim()),
+            ..Default::default()
+        },
+    }
 }
 
 /// The terminal event a bead closed in bd with `reason` earns on its lifecycle row:

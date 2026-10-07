@@ -200,7 +200,8 @@ out="$(run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 for certified, unbatched bead" || bad "exit 0" "rc=$rc out=$out"
 want "reports the certified-unbatched case" "certified, not yet batched" "$out"
 is   "the withdrawn bead is returned to REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej-cert)"
-want "bd reopen called" "reopen sp-ej-cert" "$(cat "$BD_LOG")"
+# The reopen door (sp-swh8b8) moves the row, then reopens the store: bd sees an update, never a raw reopen.
+want "the store is reopened after the row" "update sp-ej-cert --status open" "$(cat "$BD_LOG")"
 
 echo
 echo "eject: --suites reaches the bead's comment, and the bead is returned to REWORK:"
@@ -512,7 +513,8 @@ out="$(real_run eject sp-ej01 --reason 'test-suite-x.sh RED: assertion mismatch 
 is "real bd: the ejected bead is REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej01)"
 
 bead_st="$(field sp-ej01 status)"
-[ "$bead_st" = "closed" ] && ok "real bd: bd status is left unmoved by eject" || bad "real bd: bd status unmoved" "status=$bead_st"
+# The store follows the row the reopen door moved (sp-swh8b8): REWORK reads open in bd too.
+[ "$bead_st" = "open" ] && ok "real bd: bd status follows the row to open" || bad "real bd: bd status follows the row" "status=$bead_st"
 assignee="$(field sp-ej01 assignee)"
 [ -z "$assignee" ] && ok "real bd: assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
 comment_out="$(B comments sp-ej01 2>/dev/null || true)"

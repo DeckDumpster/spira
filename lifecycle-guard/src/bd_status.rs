@@ -144,7 +144,10 @@ pub(crate) fn is_test_file(rel: &str) -> bool {
 fn in_scope(rel: &str) -> bool {
     !(rel.starts_with("lifecycle/")
         || rel.starts_with("lifecycle-guard/")
-        || rel == "spira-lc/src/bd_facts.rs" || rel == "spira-config/src/nonwork.rs")
+        || rel == "spira-lc/src/bd_facts.rs" || rel == "spira-config/src/nonwork.rs"
+        // The machine's door to bd: the store half of close/reopen writes bd's status after
+        // the row has moved (sp-3fue0j, sp-swh8b8) — a write that follows the machine.
+        || rel == "spira-lc/src/bd.rs")
 }
 
 /// `code` (masked) with every short, identifier-like string literal's text put back from

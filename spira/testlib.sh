@@ -384,12 +384,22 @@ STUB
 # --reason or --reason-file), and exports SPIRA_LC_BIN at it. Without <bd>/<db> they are read at
 # each call as the real verb reads them — spira.bd / spira.db from $SPIRA_TOML — so a suite
 # that re-declares SPIRA_BD between runs closes through the bd it declared last. Every other
-# verb exits 7, so a suite that needs rows uses lc_fix_init instead.
+# verb but close and reopen exits 7, so a suite that needs rows uses lc_fix_init instead.
 lc_close_stub() {
     local dir="${1:?lc_close_stub needs a directory}" bd="${2:-}" db="${3:-}"
     mkdir -p "$dir"
     cat > "$dir/spira-lc" <<STUB
 #!/usr/bin/env bash
+bd="$bd"; db="$db"
+[ -n "\$bd" ] || bd="\$(spira-config get spira.bd 2>/dev/null)"; [ -n "\$bd" ] || bd=bd
+[ -n "\$db" ] || db="\$(spira-config get spira.db 2>/dev/null)"
+# reopen (sp-swh8b8): the rowless door reopens the store — open, unassigned, not submitted.
+if [ "\$1" = reopen ]; then
+    "\$bd" \${db:+-C "\$db"} update "\$2" --status open --assignee "" || exit 2
+    sub="\$(spira-config get spira.submitted_label 2>/dev/null)"
+    [ -n "\$sub" ] && "\$bd" \${db:+-C "\$db"} label remove "\$2" "\$sub" >/dev/null 2>&1
+    exit 0
+fi
 [ "\$1" = close ] || exit 7
 id="\$2"; shift 2; reason=""
 while [ \$# -gt 0 ]; do
@@ -400,9 +410,6 @@ while [ \$# -gt 0 ]; do
         *) shift ;;
     esac
 done
-bd="$bd"; db="$db"
-[ -n "\$bd" ] || bd="\$(spira-config get spira.bd 2>/dev/null)"; [ -n "\$bd" ] || bd=bd
-[ -n "\$db" ] || db="\$(spira-config get spira.db 2>/dev/null)"
 exec "\$bd" \${db:+-C "\$db"} close "\$id" --force --reason "\$reason"
 STUB
     chmod +x "$dir/spira-lc"
@@ -426,6 +433,15 @@ LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
 case "\$1" in fact|facts|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
 case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
+# reopen (sp-swh8b8): the door reopens the store after the row; here the row is the fixture's,
+# so only the store half runs.
+if [ "\$1" = reopen ]; then
+    b="\$(spira-config get spira.bd 2>/dev/null)"; d="\$(spira-config get spira.db 2>/dev/null)"
+    "\${b:-bd}" \${d:+-C "\$d"} update "\$2" --status open --assignee "" >/dev/null || exit 2
+    sub="\$(spira-config get spira.submitted_label 2>/dev/null)"
+    [ -n "\$sub" ] && "\${b:-bd}" \${d:+-C "\$d"} label remove "\$2" "\$sub" >/dev/null 2>&1
+    exit 0
+fi
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
     list)
@@ -539,6 +555,12 @@ if [ "$1" = close ]; then
         esac
     done
     exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" close "$id" --force --reason "$reason"
+fi
+# reopen (sp-swh8b8): this mirror's rows ARE the store's, so the reopen is the store's.
+if [ "$1" = reopen ]; then
+    "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" update "$2" --status open --assignee "" >/dev/null || exit 2
+    [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" label remove "$2" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1
+    exit 0
 fi
 if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
 else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi

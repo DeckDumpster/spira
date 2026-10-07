@@ -93,6 +93,7 @@ fn main() {
             };
             std::process::exit(emit(&args[1..], callers::close(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd, &mut read)))
         }
+        Some("reopen") => std::process::exit(emit(&args[1..], callers::reopen_cmd(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("close-epic") => std::process::exit(emit(&args[1..], callers::close_epic(&args[1..], &mut bd::LiveBd))),
         Some("content-landed") if args.len() == 4 => {
             std::process::exit(if git_evidence::content_on_base(std::path::Path::new(&args[1]), &args[2], &args[3]) { 0 } else { 1 })
