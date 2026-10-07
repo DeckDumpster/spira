@@ -296,7 +296,12 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         Some(p) => p.fayth_counts.iter().map(|(_, n)| *n as i64).sum::<i64>().to_string(),
         None => "?".to_string(),
     };
-    let idle_while_ready = idle_while_ready_hits(&ledger_path, &probe, cfg.idle_while_ready_n);
+    let active_since: Vec<i64> = ["WORKING", "SUBMITTED"]
+        .iter()
+        .flat_map(|s| lc::beads_in(s).unwrap_or_default())
+        .filter_map(|b| b.since)
+        .collect();
+    let idle_while_ready = idle_while_ready_hits(&ledger_path, &probe, cfg.idle_while_ready_n, &active_since);
 
     // DISK / MEM / TMP ---------------------------------------------------------------------
     let tmp_pct = tmp_pct();
@@ -474,11 +479,14 @@ fn guard_block(cfg: &Cfg) -> String {
     }
 }
 
-/// A fayth with ready work whose last N summons ALL came back "idle" (sp-o4trx).
+/// A fayth with ready work whose last N summons ALL came back "idle", no aeon of it is
+/// alive, and no bead entered WORKING/SUBMITTED since the first of those summons. Lifecycle
+/// rows carry no persona, so any such transition in the window counts as the fayth working.
 fn idle_while_ready_hits(
     ledger_path: &std::path::Path,
     probe: &Option<seams::PipelineProbe>,
     n: usize,
+    active_since: &[i64],
 ) -> Vec<(String, u32, String)> {
     let mut out = Vec::new();
     let Some(p) = probe else { return out };
@@ -509,6 +517,15 @@ fn idle_while_ready_hits(
             .iter()
             .map(|l| l.split_whitespace().skip(3).collect::<Vec<_>>().join(" "))
             .collect();
+        if p.fayth_counts.iter().any(|(f, c)| f == fayth && *c > 0) {
+            continue;
+        }
+        let window_start = last_n[0].split_whitespace().next().and_then(crate::log::parse_iso_utc);
+        if let Some(start) = window_start {
+            if active_since.iter().any(|at| *at >= start) {
+                continue;
+            }
+        }
         if reasons.iter().all(|r| r == "idle") {
             out.push((fayth.clone(), *ready, reasons.last().cloned().unwrap_or_default()));
         }
@@ -624,7 +641,7 @@ mod tests {
     fn five_idle_summons_with_ready_work_is_a_hit_naming_fayth_count_and_reason() {
         let d = testkit::TempDir::new("wt-iwr-hit");
         let l = ledger(&d, &[IDLE; 5]);
-        let hits = idle_while_ready_hits(&l, &probe(&[("builder", 3)]), 5);
+        let hits = idle_while_ready_hits(&l, &probe(&[("builder", 3)]), 5, &[]);
         assert_eq!(hits, vec![("builder".to_string(), 3, "idle".to_string())]);
     }
 
@@ -632,7 +649,7 @@ mod tests {
     fn an_empty_ready_set_is_not_a_hit_however_idle_the_ledger() {
         let d = testkit::TempDir::new("wt-iwr-empty");
         let l = ledger(&d, &[IDLE; 5]);
-        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 0)]), 5).is_empty());
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 0)]), 5, &[]).is_empty());
     }
 
     #[test]
@@ -641,7 +658,7 @@ mod tests {
         let mut lines = vec!["2026-01-01T00:00:01Z awake builder sp-real1"];
         lines.extend([IDLE; 4]);
         let l = ledger(&d, &lines);
-        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5).is_empty());
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[]).is_empty());
     }
 
     #[test]
@@ -650,9 +667,33 @@ mod tests {
         let mut lines = vec!["2026-01-01T00:00:01Z awake other idle"; 5];
         lines.extend([IDLE; 4]);
         let l = ledger(&d, &lines);
-        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5).is_empty());
-        assert!(idle_while_ready_hits(&l, &None, 4).is_empty());
-        assert!(idle_while_ready_hits(&d.join("absent.log"), &probe(&[("builder", 1)]), 4).is_empty());
-        assert_eq!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 4).len(), 1);
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[]).is_empty());
+        assert!(idle_while_ready_hits(&l, &None, 4, &[]).is_empty());
+        assert!(idle_while_ready_hits(&d.join("absent.log"), &probe(&[("builder", 1)]), 4, &[]).is_empty());
+        assert_eq!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 4, &[]).len(), 1);
+    }
+
+    fn live_probe(fayth: &str, ready: u32, live: u32) -> Option<seams::PipelineProbe> {
+        Some(seams::PipelineProbe {
+            fayth_counts: vec![(fayth.to_string(), live)],
+            ready_by_fayth: vec![(fayth.to_string(), ready)],
+        })
+    }
+
+    #[test]
+    fn a_working_or_submitted_row_inside_the_idle_window_is_not_a_hit() {
+        let d = testkit::TempDir::new("wt-iwr-submitted");
+        let l = ledger(&d, &[IDLE; 5]);
+        let start = crate::log::parse_iso_utc("2026-01-01T00:00:01Z").unwrap();
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[start + 60]).is_empty());
+        assert_eq!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[start - 60]).len(), 1);
+    }
+
+    #[test]
+    fn a_live_aeon_of_the_fayth_is_not_a_hit() {
+        let d = testkit::TempDir::new("wt-iwr-live");
+        let l = ledger(&d, &[IDLE; 5]);
+        assert!(idle_while_ready_hits(&l, &live_probe("builder", 1, 1), 5, &[]).is_empty());
+        assert_eq!(idle_while_ready_hits(&l, &live_probe("builder", 1, 0), 5, &[]).len(), 1);
     }
 }
