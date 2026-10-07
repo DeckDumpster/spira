@@ -52,7 +52,7 @@ case "${1:-}" in
     *) exit 1 ;;
 esac'
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -90,7 +90,7 @@ closed_branch() {
         "$id" "$id" "$REPONAME" "$id" | testdb_seed
 }
 
-pass() {  # pass <land|pr>
+runpass() {  # runpass <land|pr>
     rm -f "$RUN/landing.progress"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
@@ -98,8 +98,8 @@ pass() {  # pass <land|pr>
         SPIRA_GATE_WORKER=0 PATH="$SH:$PATH" landing-pass "$1" 2>&1
 }
 
-remote_main() { git -C "$REMOTE" rev-parse main; }
-on_remote_main() { git -C "$REMOTE" log --format=%s main | grep -q "$1"; }
+remote_main() { timeout 5 git -C "$REMOTE" rev-parse main; }
+on_remote_main() { timeout 5 git -C "$REMOTE" log --format=%s main | grep -q "$1"; }
 events() { cat "$RUN/events.log" 2>/dev/null; }
 
 echo "test-landing-modes.sh"
@@ -111,7 +111,7 @@ echo "push mode: the branch lands on the base"
 fixture push
 closed_branch sp-pushed
 base0="$(remote_main)"
-out="$(pass land)"
+out="$(runpass land)"
 want    "push: the land is reported"            "landed spira/sp-pushed" "$out"
 if on_remote_main "sp-pushed"; then ok "push: the work is on the remote base"; else bad "push: the work is on the remote base" "$out"; fi
 [ "$(remote_main)" != "$base0" ] && ok "push: the base moved" || bad "push: the base moved" "unchanged"
@@ -126,7 +126,7 @@ echo "queue mode: the branch is certified and the base is left for the round"
 fixture queue
 closed_branch sp-queued
 base0="$(remote_main)"
-out="$(pass land)"
+out="$(runpass land)"
 want    "queue: the branch is certified"        "certified spira/sp-queued" "$out"
 nowant  "queue: it is not reported landed"      "landed spira/sp-queued" "$out"
 is      "queue: the base did not move"          "$base0" "$(remote_main)"
@@ -142,7 +142,7 @@ echo "pr mode: one pull request is opened, the base is left to the forge"
 fixture pr
 closed_branch sp-prd
 base0="$(remote_main)"
-out="$(pass pr)"
+out="$(runpass pr)"
 want    "pr: a pull request is opened"          "opened a pull request for spira/sp-prd" "$out"
 is      "pr: the forge was asked to create exactly one" 1 "$(grep -c '^pr-create' "$FORGE_LOG")"
 is      "pr: the base did not move"             "$base0" "$(remote_main)"
@@ -151,7 +151,7 @@ git -C "$REMOTE" rev-parse --verify -q refs/heads/spira/sp-prd >/dev/null \
 is      "pr: the bead stays closed until the merge" closed "$(status_of sp-prd)"
 nowant  "pr: no land event"                     "kind: bead.landed" "$(events)"
 
-out="$(pass pr)"
+out="$(runpass pr)"
 is      "pr: a second pass opens no second pull request" 1 "$(grep -c '^pr-create' "$FORGE_LOG")"
 nowant  "pr: the second pass does not report opening one" "opened a pull request" "$out"
 
