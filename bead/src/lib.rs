@@ -310,6 +310,21 @@ pub fn parse_blocks_targets(json: &str) -> Vec<String> {
         .collect()
 }
 
+/// The id `bd create` printed: bare under `--silent`, or the `id` of the object (or
+/// one-element array) under `--json`.
+pub fn parse_created_id(out: &str) -> Option<String> {
+    let out = out.trim();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(out) {
+        let obj = match &v {
+            serde_json::Value::Array(a) => a.first()?,
+            other => other,
+        };
+        return obj.get("id").and_then(|x| x.as_str()).map(str::to_string);
+    }
+    let last = out.lines().last()?.trim();
+    (!last.is_empty() && !last.contains(char::is_whitespace)).then(|| last.to_string())
+}
+
 /// The `branch:` label a bead carries, if any (first one found, matching the bash's
 /// `break` on first match).
 pub fn branch_label(labels: &[String]) -> Option<&str> {
@@ -619,6 +634,15 @@ mod tests {
             parse_blocks_targets(json),
             vec!["sp-a".to_string(), "sp-b".to_string()]
         );
+    }
+
+    #[test]
+    fn parse_created_id_reads_silent_and_json_shapes() {
+        assert_eq!(parse_created_id("sp-abc1\n").as_deref(), Some("sp-abc1"));
+        assert_eq!(parse_created_id("{\"id\":\"sp-x\"}").as_deref(), Some("sp-x"));
+        assert_eq!(parse_created_id("[{\"id\":\"sp-y\"}]").as_deref(), Some("sp-y"));
+        assert_eq!(parse_created_id("created a thing"), None);
+        assert_eq!(parse_created_id(""), None);
     }
 
     #[test]

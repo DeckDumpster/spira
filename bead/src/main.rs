@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use bead::claimdesc::notify_live_aeon;
 use bead::{
     branch_candidate, branch_label, chamber_partitions, incident_blocks_refusal, is_blocks_type,
-    awaits_dispatch, lane_check, lint_judge, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    awaits_dispatch, lane_check, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -103,6 +103,10 @@ fn bdq_status(home: &str, args: &[String]) -> i32 {
 /// Runs `bdq` capturing stdout, discarding stderr (`2>/dev/null`, matching every read call
 /// `bead.sh`'s own sweep made).
 fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
+    bdq_capture_with(home, args, Stdio::null())
+}
+
+fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String) {
     // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = Command::new("bash")
         .arg("-c")
@@ -113,8 +117,9 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
         // release's bin/+spira/ on the CHILD's PATH, never only inherited.
         .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(stderr)
         .output();
     match out {
         Ok(o) => (
@@ -123,6 +128,35 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
         ),
         Err(_) => (127, String::new()),
     }
+}
+
+/// Whether `id` carries the incident label. A bd parent cannot be blocked on its own child,
+/// so a remedy filed under an incident is wired as a plain blocks edge instead of a child.
+fn is_incident(home: &str, id: &str) -> bool {
+    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
+    let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
+    parse_show_row(&out).map(|r| r.labels.contains(&incident_label)).unwrap_or(false)
+}
+
+/// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
+/// set that incident is wired to block on the new bead in the same step
+/// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>) -> i32 {
+    let Some(incident) = incident else { return bdq_status(home, args) };
+    let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
+    print!("{stdout}");
+    if code != 0 {
+        return code;
+    }
+    let Some(new_id) = parse_created_id(&stdout) else {
+        eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
+        return 1;
+    };
+    let rc = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
+    if rc != 0 {
+        eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
+    }
+    rc
 }
 
 fn s(strs: &[&str]) -> Vec<String> {
@@ -330,6 +364,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         i += 1;
     }
 
+    let incident_parent = match &parent {
+        Some(p) if is_incident(home, p) => parent.take(),
+        _ => None,
+    };
+
     let repos = load_repos();
     if let Some(r) = &repo {
         if !repos.contains_key(r) {
@@ -436,7 +475,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_status(home, &bd_args)
+        bdq_create(home, &bd_args, incident_parent.as_deref())
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -484,7 +523,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_status(home, &bd_args)
+        bdq_create(home, &bd_args, incident_parent.as_deref())
     }
 }
 
@@ -674,6 +713,10 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     0
 }
 
+fn is_closed(status: &str) -> bool {
+    status == "closed"
+}
+
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let ids: Vec<String> = if args.is_empty() || args[0] == "--all" {
         let (_, out) = bdq_capture(home, &s(&["list", "--all", "--limit", "0", "--json"]));
@@ -803,6 +846,26 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         } else {
             false
         };
+        if row.labels.iter().any(|l| l == &incident_label) && !is_closed(&row.status) {
+            let (_, rel_out) =
+                bdq_capture(home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
+            for oid in parse_blocks_targets(&rel_out) {
+                if blocks_targets.contains(&oid) {
+                    continue;
+                }
+                let (_, oout) = bdq_capture(home, &s(&["show", &oid, "--json"]));
+                let Some(orow) = parse_show_row(&oout) else { continue };
+                if is_closed(&orow.status) || orow.labels.iter().any(|l| l == &incident_label) {
+                    continue;
+                }
+                eprintln!(
+                    "bead: {id}: open remedy {oid} is linked relates-to only (an incident with a fix in flight must block on it; use bd dep add {id} {oid})"
+                );
+                bad += 1;
+                rc = 1;
+            }
+        }
+
         let (_, lines) = lint_judge(
             &labels_joined,
             awaits,

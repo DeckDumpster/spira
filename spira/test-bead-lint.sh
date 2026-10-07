@@ -152,4 +152,57 @@ wantrc "the alarm itself, with no outgoing blocks edge, passes alone" "0" "$LINT
 run_lint sp-lint-work-b
 wantrc "a work-onto-work blocks edge passes alone (positive control for the accept path)" "0" "$LINT_RC"
 
+# ===========================================================================================
+echo
+echo "T5: an incident whose open remedy is linked relates-to only (law-a-bug-with-a-fix-in-flight-depends-on-it)"
+# ===========================================================================================
+testdb_seed <<'JSONL'
+{"id":"sp-lint-rem-bad","title":"incident, remedy only related","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-bad","depends_on_id":"sp-lint-rem-fix1","type":"relates-to"}]}
+{"id":"sp-lint-rem-fix1","title":"remedy one","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-rem-good","title":"incident, remedy blocks","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-good","depends_on_id":"sp-lint-rem-fix2","type":"blocks"}]}
+{"id":"sp-lint-rem-fix2","title":"remedy two","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-rem-done","title":"incident, remedy landed","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-done","depends_on_id":"sp-lint-rem-fix3","type":"relates-to"}]}
+{"id":"sp-lint-rem-fix3","title":"remedy three, closed","status":"closed","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+JSONL
+
+run_lint sp-lint-rem-bad
+wantrc "relates-to-only open remedy exits 1" "1" "$LINT_RC"
+want   "relates-to-only open remedy is flagged" \
+       "sp-lint-rem-bad: open remedy sp-lint-rem-fix1 is linked relates-to only" "$LINT_OUT"
+
+run_lint sp-lint-rem-good
+wantrc "a blocks-linked open remedy passes" "0" "$LINT_RC"
+
+run_lint sp-lint-rem-done
+wantrc "a relates-to remedy that already closed passes" "0" "$LINT_RC"
+
+echo
+echo "T5b: filing a remedy under an incident adds the blocks edge in the same step"
+testdb_seed <<'JSONL'
+{"id":"sp-lint-fil-inc","title":"incident to remedy","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-fil-work","title":"ordinary parent","status":"open","issue_type":"task","labels":["spira","repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+JSONL
+
+printf 'harness | /tmp/harness | push | origin/main | | true | plan\n' > "$TMP/repos.tbl"
+file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test" \
+        SPIRA_REPO_MAP="$TMP/repos.tbl"
+    FILE_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \
+        bead.sh file "remedy for $1" --for builder --repo harness --parent "$1" 2>"$TMP/file.err")"
+    FILE_RC=$?
+}
+blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depends on
+    SPIRA_DB="$SPIRA_DB" timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep list "$1" --type blocks --json 2>/dev/null \
+        | python3 -c 'import json,sys; print(" ".join(d.get("depends_on_id") or d.get("id") for d in json.load(sys.stdin)))'
+}
+
+file_under sp-lint-fil-inc
+wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"
+want   "the incident now blocks on the new remedy" "$(printf %s "$FILE_OUT" | head -n1)" "$(blocks_of sp-lint-fil-inc)"
+
+file_under sp-lint-fil-work
+wantrc "filing under an ordinary bead exits 0 (positive control)" "0" "$FILE_RC"
+is     "an ordinary parent gets no blocks edge" "" "$(blocks_of sp-lint-fil-work)"
+
 tl_summary
