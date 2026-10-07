@@ -17,8 +17,10 @@ echo "test-spira-config-only-door.sh"
 # `spira-lint/src/rules/lockfile_lint.rs` (sp-ufbkh) parses a tree's Cargo.lock to compare
 # locked package versions against the base — a separate document (Cargo's own lockfile
 # format), never spira.toml.
+# `sim/src/actors.rs` and `sim/src/fit.rs` parse the simulator's own actors.toml and
+# durations.toml, never spira.toml.
 # spira/deps.toml is read only through `spira_config::deps`; no other crate parses it.
-EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/lockfile_lint.rs"
+EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/lockfile_lint.rs sim/src/actors.rs sim/src/fit.rs"
 
 # The lines of $1 before its first `#[cfg(test)]` module, with comment-only lines dropped —
 # production code only, so a doc comment describing the file (or a test fixture that must
@@ -137,6 +139,12 @@ fn f() {
     let _doc: Foo = toml::from_str(&text).unwrap();
 }
 RS
+mkdir -p "$SCRATCH/sim/src"
+cat > "$SCRATCH/sim/src/actors.rs" <<'RS'
+fn f() {
+    let _doc: Foo = toml::from_str(&text).unwrap();
+}
+RS
 mkdir -p "$SCRATCH/gated-crate/src"
 cat > "$SCRATCH/gated-crate/src/main.rs" <<'RS'
 #[cfg(test)]
@@ -158,6 +166,7 @@ want "planted toml::from_str is flagged" "offender-crate/src/main.rs: calls toml
 want "planted spira.toml path resolution is flagged" "offender-crate/src/main.rs: resolves spira.toml's path" "$offenders"
 nowant "spira-config's own parser is not flagged" "spira-config/src/lib.rs" "$offenders"
 nowant "desired-state's store.rs is exempt (its own document kind)" "store.rs" "$offenders"
+nowant "the sim's actors.rs is exempt (its own document kind)" "sim/src/actors.rs" "$offenders"
 nowant "a whole-file #[cfg(test)] mod is exempt (sentinel's own tests.rs shape)" "gated-crate/src/tests.rs" "$offenders"
 
 echo
