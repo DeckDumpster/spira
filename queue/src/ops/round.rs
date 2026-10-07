@@ -439,8 +439,9 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
     // A green round IS the full-suite pass on its head (sp-x334k): publish refuses a head with no
     // full-suite local-pass record, and the round's full corpus is the run that earns it.
     if let Err(e) = spira_config::local_pass::record(&c.s.run, spira_config::local_pass::Kind::FullSuite, &head, &format!("round {batch}"), &w.clock.now().to_string()) {
-        w.err(format!("queue.sh {label}: cannot record the full-suite local pass for {head}: {e}"));
-        return FAIL;
+        // Not a reason to discard a green round: publish fails closed on the missing record and
+        // names it, so the gap is loud at the one place it matters.
+        w.err(format!("queue.sh {label}: WARNING — round {batch} is green but its full-suite local pass for {head} was not recorded ({e}); publish will refuse this head until it is"));
     }
     set_phase(w, &mut kv, "green");
     if save(w, label, &c, &kv).is_err() {
