@@ -166,12 +166,12 @@ jobs:
             # "Assert gate check" step). Nothing to provision or build for that.
             _s=""
           elif [ "${{ github.event_name }}" = "pull_request" ] \
-             && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
-            _base="${{ github.event.pull_request.base.sha }}"
-            # CI judges its own build: the selector built from this commit, by explicit path
-            _s="$(target/release/suite-select select --base "$_base" --head "${{ github.sha }}" \
-                  --repo . --suite-dir spira)" || { printf 'select: the selector refused (rc %s)\n' "$?"; exit 1; }
-            _s="$(printf '%s\n' "$_s" | tr '\n' ',' | sed 's/,$//')"
+             && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/(queue|publish)/'; then
+            # A publish PR is the last gate before main: it runs every suite
+            # (law-publish-ci-runs-the-full-suite). testenv drops disabled suites and
+            # excuses in-date quarantines from the tree's spira/suite-state, longest-first.
+            _s="$(ls spira/test-*.sh | xargs -n1 basename \
+                  | tr '\n' ',' | sed 's/,$//')"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             _base="${{ github.event.pull_request.base.sha }}"
             # CI judges its own build: the selector built from this commit, by explicit path
@@ -588,9 +588,8 @@ jobs:
           # comma-separated list back to newline-separated for --suites -.
           _s="$(printf '%s' "${{ needs.select.outputs.suites }}" | tr ',' '\n')"
           if [ "${{ github.event_name }}" = "pull_request" ] \
-             && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
-            _base="${{ github.event.pull_request.base.sha }}"
-            printf 'gate: queue PR — running suites selected by batch diff (base %s)\n' "$_base"
+             && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/(queue|publish)/'; then
+            printf 'gate: queue/publish PR — running the whole corpus\n'
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             printf 'gate: pull request — running the suites the diff selects\n'
           elif [ "${{ github.event_name }}" = "push" ]; then
@@ -858,9 +857,10 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${_art}/zip" > /tmp/batch-assert.zip
           unzip -q /tmp/batch-assert.zip -d /tmp/batch-assert
           _count="$(find /tmp/batch-assert -name '*.result' | wc -l)"
-          [ "${_count:-0}" -gt 0 ] || {
-            printf 'cut: queue PR run %s has zero .result files — suite list was empty\n' \
-              "$_run_id" >&2
+          _want="$(ls spira/test-*.sh | wc -l)"
+          [ "${_count:-0}" -ge "${_want:-1}" ] || {
+            printf 'cut: run %s has %s .result files, the full corpus is %s — not a full-suite run\n' \
+              "$_run_id" "${_count:-0}" "${_want:-1}" >&2
             exit 1
           }
           printf 'cut: %s suite results found in queue PR run %s\n' "$_count" "$_run_id"

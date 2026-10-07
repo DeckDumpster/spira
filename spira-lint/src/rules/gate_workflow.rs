@@ -200,10 +200,9 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "runs spira-lint's scratch-fence rule", "spira-lint --only scratch-fence", g);
     j.want(GATE, "runs the testenv runner on the staged release's build", "testenv --artifacts \"$SPIRA_RELEASE/bin\" --suites -", g);
     j.want(GATE, "its retry tests the same prebuilt set", "GATE_RETRY_ARTIFACTS=\"$SPIRA_RELEASE/bin\" bash spira/gate-retry.sh", g);
-    // 2. queue PRs use diff-selected suites
+    // 2. queue and publish PRs run the whole corpus
     j.want(GATE, "the selected list is piped via --suites", "--suites", g);
-    j.want(GATE, "queue PRs use the selector", "suite-select select", g);
-    j.want(GATE, "queue PRs match spira/queue/", "spira/queue/", g);
+    j.want(GATE, "queue and publish PRs match their branches", "spira/(queue|publish)/", g);
     // 3. an infrastructure fault is not a branch failure
     j.want(GATE, "the harness-fault exit code is handled", "75", g);
     // 4. release only by explicit dispatch, only on the base branch
@@ -297,8 +296,8 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     // 14. push to main selects nothing
     let sel = step(g, "Select suites", false);
     j.located(GATE, "the Select suites step", &sel);
-    j.want(GATE, "select matches queue PRs", "spira/queue/", &sel);
-    j.want(GATE, "queue selection uses the selector", "suite-select select", &sel);
+    j.want(GATE, "select matches queue and publish PRs", "spira/(queue|publish)/", &sel);
+    j.want(GATE, "queue and publish selection enumerates the corpus", "ls spira/test-*.sh", &sel);
     j.want(GATE, "PR selection uses the selector's gate pipeline", "suite-select gate", &sel);
     j.want(GATE, "select has a dedicated push branch", "\"push\"", &sel);
     let push_branch = between(&sel, |l| l.contains("= \"push\""), |l| l == "          else");
