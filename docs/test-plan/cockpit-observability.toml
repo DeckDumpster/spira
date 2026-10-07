@@ -291,8 +291,3 @@ id = "UC-cockpit-observability-51"
 tier = "T2"
 statement = "The ops pane's start command, run as the cockpit starts it, renders once with real values — no '?' placeholders and no STOPPED banner."
 launcher = { site = "cockpit/ops/src/layout.rs", needle = "health loop" }
-
-[use_case.uncovered]
-reason = "no suite renders the pane from its own start command; a green test waits on the pane failing visibly instead of falling back to a default run root"
-date = "2026-10-06"
-bead = "sp-h3bs2g"
