@@ -249,7 +249,7 @@ land sp-pub3 three.txt three
 HEAD3="$(localmain)"
 PRE_MAIN="$(remote_main)"
 
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 
 out="$(CHECK_STATUS=red RED_SUITES="test-example-suite.sh" verdict)"; rc=$?
 [ "$rc" -eq 0 ] && ok "4: verdict settles the red publish" || bad "4: verdict settles the red publish" "got rc=$rc out=$out"
@@ -285,7 +285,7 @@ land sp-pub3b threeb.txt threeb
 HEAD3B="$(localmain)"
 PRE_MAIN_3B="$(remote_main)"
 
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 
 # Closing a PR retriggers its Gate run (to cancel the superseded one), and that retrigger
 # run can itself conclude green — required jobs skip rather than run once the PR is closed.
@@ -304,7 +304,7 @@ clear_calls
 seed sp-pub3c
 land sp-pub3c threec.txt threec
 HEAD3C="$(localmain)"
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 out="$(PR_STATE=merged CHECK_STATUS=green verdict)"; rc=$?
 is "4c-merged: a PR reported merged (never our own doing) also never fast-forwards again here" \
     "$PRE_MAIN_3B" "$(remote_main)"
@@ -316,7 +316,7 @@ clear_log
 seed sp-pub3d
 land sp-pub3d threed.txt threed
 HEAD3D="$(localmain)"
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 out="$(PR_STATE=unknown verdict)"; rc=$?
 want "4c-unknown: an unreadable PR state waits rather than guessing" "waiting" "$out"
 [ -f "$QDIR/$REPONAME/publish" ] && ok "4c-unknown: the publish record is left in place" \
@@ -369,7 +369,7 @@ seed sp-pub4
 land sp-pub4 four.txt four
 [ -f "$QDIR/$REPONAME/publish" ] && bad "6 setup: no stray publish record before this case" "found one" \
     || true
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 [ -f "$QDIR/$REPONAME/publish" ] && ok "6: a publish PR is open going into the local cut" \
     || bad "6: a publish PR is open going into the local cut" "no record at $QDIR/$REPONAME/publish"
 
