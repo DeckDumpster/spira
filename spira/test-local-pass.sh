@@ -56,7 +56,7 @@ OUT="$(dispatch SPIRA_LOCAL_PASS_OVERRIDE='box cannot run podman today')"; RC=$?
 want "the override is logged" "box cannot run podman today" "$(cat "$TMP/run/local-pass/overrides.log" 2>/dev/null)"
 rm -f "$TMP/dispatch.calls"
 
-SPIRA_RUN="$TMP/run" spira-config local-pass record acceptance-ad "$SHA" acceptance-local.sh
+SPIRA_TOML="$(tl_layer SPIRA_RUN="$TMP/run")" spira-config local-pass record acceptance-ad "$SHA" acceptance-local.sh
 OUT="$(dispatch)"; RC=$?
 [ "$RC" -eq 0 ] && ok "a recorded A-D pass dispatches" || bad "a recorded A-D pass dispatches" "rc=$RC: $OUT"
 want "gate.yml was dispatched" "cut=true" "$(cat "$TMP/dispatch.calls" 2>/dev/null)"
