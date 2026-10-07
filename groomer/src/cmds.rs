@@ -98,22 +98,13 @@ pub fn depends_on_fix(bd: &dyn Bd, bug_id: &str, fix_id: &str, evidence: &str) -
     if evidence.is_empty() {
         return usage_err("depends-on-fix: --evidence <text> is required");
     }
-    let show = bd.show_json(fix_id).map_err(|_| (1, format!("depends-on-fix: fix bead {fix_id} does not exist")))?;
-    if fix_status(&show) == "CLOSED" {
+    let closed = bd.lifecycle_terminal(fix_id).map_err(|_| (1, format!("depends-on-fix: fix bead {fix_id} does not exist")))?;
+    if closed {
         return usage_err(format!("depends-on-fix: fix bead {fix_id} is already closed — cannot depend on a closed bead"));
     }
     bd.dep_add(bug_id, fix_id).map_err(|e| (1, e))?;
     bd.note(bug_id, &format!("Parked behind fix {fix_id}: {evidence}")).map_err(|e| (1, e))?;
     Ok(String::new())
-}
-
-fn fix_status(v: &serde_json::Value) -> String {
-    let bead = match v {
-        serde_json::Value::Array(a) => a.first(),
-        serde_json::Value::Object(_) => Some(v),
-        _ => None,
-    };
-    bead.and_then(|b| b.get("status")).and_then(|s| s.as_str()).unwrap_or("").to_string()
 }
 
 /// `triage-poison <id> --verdict work-fault|drop --evidence <text>`. The other side of
@@ -231,18 +222,21 @@ mod cmds_tests {
     }
 
     #[test]
-    fn depends_on_fix_refuses_a_closed_fix() {
-        let bd = FakeBd::new();
-        bd.set_show("sp-fix", serde_json::json!([{"status": "CLOSED"}]));
-        let err = depends_on_fix(&bd, "sp-bug", "sp-fix", "the fix is in flight").unwrap_err();
-        assert_eq!(err.0, 1);
-        assert!(err.1.contains("already closed"));
+    fn depends_on_fix_refuses_a_fix_in_any_terminal_state() {
+        for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+            let bd = FakeBd::new();
+            bd.set_lifecycle("sp-fix", state);
+            let err = depends_on_fix(&bd, "sp-bug", "sp-fix", "the fix is in flight").unwrap_err();
+            assert_eq!(err.0, 1);
+            assert!(err.1.contains("already closed"), "{state}");
+            assert!(!bd.log().iter().any(|c| c.starts_with("dep add")));
+        }
     }
 
     #[test]
     fn depends_on_fix_links_and_notes_an_open_fix() {
         let bd = FakeBd::new();
-        bd.set_show("sp-fix", serde_json::json!([{"status": "OPEN"}]));
+        bd.set_lifecycle("sp-fix", "WORKING");
         depends_on_fix(&bd, "sp-bug", "sp-fix", "the fix is in flight").unwrap();
         assert!(bd.log().contains(&"dep add sp-bug sp-fix".to_string()));
         assert!(bd.log().contains(&"note sp-bug Parked behind fix sp-fix: the fix is in flight".to_string()));
