@@ -77,9 +77,12 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+LC_CRED="$TMP/lc.credential"; : > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
+cat "$TMP/schema.log" >&2
 
 PASS="test-pass-$$"
 sed "s/@SPIRA_LC_PASSWORD@/$PASS/" "$REPO/lifecycle/grants.sql" > "$TMP/grants_filled.sql"
@@ -107,6 +110,8 @@ is "seeded row count" "$((ROWS + 1))" "$count"
 
 export SPIRA_LC_USER=spira_lc
 export SPIRA_LC_PASSWORD="$PASS"
+printf '%s' "$PASS" > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 spira-lc list-all >/dev/null 2>&1   # warm: first connect and server caches are not the read
 t0=$(date +%s%N)
