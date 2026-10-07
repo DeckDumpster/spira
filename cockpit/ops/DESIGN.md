@@ -39,6 +39,13 @@ derived from it.
   (law-absence-needs-a-positive-control) — every section function is unit tested against
   both a present and an absent/`?` reading.
 
+- ROUND section (`health/round.rs`): the round in flight from the collector's `round` probe,
+  which reads `spira-lc list --batches` (batch, members, ejections) and the bead rows for the
+  pool — no `bd`, no logs. Wall time is computed at render from `SP_ROUND_OPENED` against
+  `SP_ROUND_CAP` (`SPIRA_ROUND_CERTIFY_WALL_SECS`): amber past 80%, red past the cap. With no
+  open batch: last verdict and the SUBMITTED + CERTIFIED unheld pool. Under 60 columns, one line.
+  Screenshot: `docs/screenshots/ops-pane-round.svg`.
+
 ### 2.2 `layout up|down|status|ensure [--window <target>]`
 
 - `up`: create-or-repair the dashboard in `<target>` (default: the window this process is

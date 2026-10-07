@@ -14,6 +14,7 @@ pub mod colors;
 pub mod fmt;
 pub mod frame;
 pub mod model;
+pub mod round;
 pub mod sections;
 pub mod share;
 pub mod term;

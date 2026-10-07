@@ -11,6 +11,7 @@ mod lc;
 mod queue;
 mod ratelim;
 mod reachable;
+mod round;
 mod unsent;
 
 use crate::io;
@@ -68,6 +69,7 @@ pub struct Cfg {
     pub ci_park_max: i64,
     pub ctrl: String,
     pub repo_map: String,
+    pub round_cap_secs: i64,
 }
 
 impl Cfg {
@@ -95,6 +97,7 @@ impl Cfg {
             ci_park_max: cfg_parse::<i64>("SPIRA_CI_PARK_MAX")?,
             ctrl: cfg("SPIRA_CTRL")?,
             repo_map: cfg("SPIRA_REPO_MAP")?,
+            round_cap_secs: cfg_parse::<i64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
         })
     }
 }
@@ -125,6 +128,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(admission::admission_keys());
     out.extend(unsent::unsent_keys(cfg));
     out.extend(queue::queue_keys(cfg));
+    out.extend(round::round_keys(cfg.round_cap_secs));
     out.extend(reachable::reachable_keys(cfg));
     out.extend(sphere_keys(cfg));
     out.extend(repo_label_keys(cfg));
@@ -162,6 +166,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "admission" => Some(admission::admission_keys()),
         "unsent" => Some(unsent::unsent_keys(cfg)),
         "queue" => Some(queue::queue_keys(cfg)),
+        "round" => Some(round::round_keys(cfg.round_cap_secs)),
         "reachable" => Some(reachable::reachable_keys(cfg)),
         "sphere" => Some(sphere_keys(cfg)),
         "repo_labels" => Some(repo_label_keys(cfg)),
