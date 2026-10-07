@@ -10,6 +10,9 @@
 #   bead.sh dep add <id> <depends-on-id> [--type <type>]
 #                                     wrap `bd dep add`, refusing a blocks edge onto an
 #                                     incident-labelled bead (use `bd dep relate` for those)
+#   bead.sh dep remove <id> <depends-on-id>
+#                                     drop an existing edge; refuses unknown ids and a missing edge,
+#                                     prints the removed edge
 #
 # WHY THIS EXISTS AND NOT bd create DIRECTLY
 # ------------------------------------------

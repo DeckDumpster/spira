@@ -40,14 +40,15 @@ fn main() {
         "event" => cmd_event(&rest),
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
+            Some("remove") => cmd_dep_remove(&home, &rest[1..]),
             _ => {
-                eprintln!("usage: bead.sh dep add <id> <depends-on-id> [--type <type>]");
+                eprintln!("usage: bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>");
                 2
             }
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -895,4 +896,38 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
     }
     call.extend(rest);
     bdq_status(home, &call)
+}
+
+// =========================================================================================
+// dep remove
+// =========================================================================================
+
+fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
+    let (id, depid) = match args {
+        [i, d] if !i.starts_with('-') && !d.starts_with('-') => (i.clone(), d.clone()),
+        _ => {
+            eprintln!("usage: bead.sh dep remove <id> <depends-on-id>");
+            return 2;
+        }
+    };
+
+    for b in [&id, &depid] {
+        let (_, out) = bdq_capture(home, &s(&["show", b, "--json"]));
+        if parse_show_row(&out).is_none() {
+            eprintln!("bead: dep remove: refusing — unknown bead {b}");
+            return 1;
+        }
+    }
+
+    let (_, out) = bdq_capture(home, &s(&["dep", "list", &id, "--json"]));
+    if !parse_blocks_targets(&out).iter().any(|t| t == &depid) {
+        eprintln!("bead: dep remove: refusing — {id} has no dependency edge on {depid}");
+        return 1;
+    }
+
+    let rc = bdq_status(home, &s(&["dep", "remove", &id, &depid]));
+    if rc == 0 {
+        println!("removed edge: {id} -> {depid}");
+    }
+    rc
 }

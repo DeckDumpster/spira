@@ -75,4 +75,31 @@ run_dep_add sp-dep-work-b sp-dep-work-a
 wantrc "dep add between two work beads exits 0" "0" "$DA_RC"
 is     "the blocks edge was wired in the store" "sp-dep-work-a" "$(blocks_of sp-dep-work-b)"
 
+run_dep_remove() {        # run_dep_remove <args...> -> sets DA_OUT and DA_RC from ONE call
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_INCIDENT_LABEL="incident-test" SPIRA_RUN="$TMP/run"
+    DA_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
+        bead.sh dep remove "$@" 2>&1)"
+    DA_RC=$?
+}
+
+# ===========================================================================================
+echo
+echo "T3: dep remove drops an existing edge, refusing unknown ids and a missing edge"
+# ===========================================================================================
+run_dep_remove sp-dep-work-b sp-dep-nope
+wantrc "an unknown depends-on id is refused" "1" "$DA_RC"
+want   "the refusal names the unknown id" "sp-dep-nope" "$DA_OUT"
+run_dep_remove sp-dep-nope sp-dep-work-a
+wantrc "an unknown id is refused" "1" "$DA_RC"
+is     "the existing edge survived the refusals" "sp-dep-work-a" "$(blocks_of sp-dep-work-b)"
+
+run_dep_remove sp-dep-work-a sp-dep-work-b
+wantrc "removing an edge that does not exist is refused" "1" "$DA_RC"
+
+run_dep_remove sp-dep-work-b sp-dep-work-a
+wantrc "removing the real edge exits 0" "0" "$DA_RC"
+want   "it prints the removed edge" "sp-dep-work-b -> sp-dep-work-a" "$DA_OUT"
+is     "the edge is gone from the store" "" "$(blocks_of sp-dep-work-b)"
+
 tl_summary
