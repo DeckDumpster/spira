@@ -8,12 +8,9 @@
 # standing in for the model: a builder's hand-on standing as SUBMITTED, and the retired SOP
 # closing rule's key being ignored with a warning.
 #
-# THE CLOSE-REASON FENCE'S AEON ROWS ARE GONE (sp-v62vn). The fence lives in the verdict's
-# closed branch (aeon verdict.rs), and every session is restricted now and hands its bead on
-# only through the work verbs, so decide::builder_closed is false for every session and the
-# fence is reached by none. Its T3 rows asserted that unreachable path and are deleted, not
-# rewritten; UC-aeon-execution-16 is marked uncovered in docs/test-plan/aeon-execution.toml.
-# The T1 table over close-reason-flags.py stays: lib.sh's detect_invalid_closed shares it.
+# The close-reason fence judges the restricted hand-on (decide::builder_submitted): a refused
+# submission reopens in bd and returns the lifecycle row to REWORK, asserted on the row.
+# The T1 table over close-reason-flags.py: lib.sh's detect_invalid_closed shares it.
 #
 # WHAT "SILENCE" MEANS, EXACTLY, and why the distinction is the entire suite. A session may
 # end three honest ways, and each is one command:
@@ -125,7 +122,10 @@ cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
-bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
+case "$(cat "$TMP/act")" in
+    bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
+    *)          bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1 ;;
+esac
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
@@ -160,6 +160,7 @@ field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' |
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; } # batch-job: fixture bd call against the suite's throwaway store
+notes()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | tr -s '[:space:]' ' '; }
 
 fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead
     testdb_reset
@@ -237,5 +238,18 @@ wantrc "ops.md does not tell the aeon to commit a page the broker wrote" 0 "$_rc
 grep -q "not in your worktree" "$OPS_MD"; wantrc "ops.md says where sop write puts the page" 0 "$?"
 _probe="commit that page"; printf '%s\n' "$_probe" | grep -Eq 'commit that page|SOP page is normally'
 wantrc "the matcher fires on the old instruction" 0 "$?"
+
+# ===========================================================================================
+echo
+echo "T3: a submission whose close reason has a statute phrase is refused back to REWORK:"
+# ===========================================================================================
+fresh sp-oc-13; run_aeon builder bad-reason
+is   "the lifecycle row goes back to REWORK"   REWORK  "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-13)"
+is   "the bd bead is reopened"                 open    "$(field sp-oc-13 status)"
+want "the note names the matched phrase"       "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
+want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
+
+fresh sp-oc-14; run_aeon builder none
+is   "a clean close reason stands SUBMITTED"   SUBMITTED "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-14)"
 
 tl_summary
