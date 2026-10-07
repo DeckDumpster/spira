@@ -234,6 +234,18 @@ fn content_on_base_lands_any_non_terminal_state_with_its_proof() {
     assert_eq!(go(&mut f, "content-on-base", &["sp-c", "again"]).code, REFUSED);
 }
 
+#[test]
+fn supersede_retires_a_non_terminal_bead_by_its_successor_and_refuses_a_terminal_one() {
+    let mut f = Fake::default();
+    f.bead("sp-s", BeadState::Ready).holds.insert(HoldKind::Operator);
+    assert_eq!(go(&mut f, "supersede", &["sp-s", "sp-succ"]).code, APPLIED);
+    assert_eq!(f.state("sp-s"), "SUPERSEDED");
+    assert_eq!(f.beads["sp-s"].reason.as_deref(), Some("sp-succ"));
+    assert_eq!(f.events[0].4, "groomer");
+    assert_eq!(f.events[0].5, r#"{"Supersede":{"by":"sp-succ"}}"#);
+    assert_eq!(go(&mut f, "supersede", &["sp-s", "sp-other"]).code, REFUSED);
+}
+
 // ---- reads -----------------------------------------------------------------------------
 
 #[test]
