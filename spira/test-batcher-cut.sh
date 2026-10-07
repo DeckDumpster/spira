@@ -44,7 +44,10 @@
 # tier: T2
 # covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md spira/testlib/lc-fixture.sh
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd -P)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# CUT_PART: main runs cases A-F and H, land runs G (land mode) onward; test-batcher-cut-land.sh
+# sets land and sources this file, so the two halves share one fixture build and neither nears the wall bound.
+CUT_PART="${CUT_PART:-main}"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 # batcher, tsd-write and the queue binary case L lands through (queue/DESIGN.md §7.4) are the
@@ -64,7 +67,7 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 unset SPIRA_BATCH_MAXPAR
 testdb_require test-batcher-cut
 TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
-testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
+testdb_up "batchercut$CUT_PART" || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
 lcfix_up || { echo "test-batcher-cut: could not build a lifecycle fixture"; exit 1; }
 
 # ── the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
@@ -377,8 +380,10 @@ lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the 
     lcfix_sql -q "UPDATE bead SET updated_at=${3:-$(date +%s)} WHERE bead_id='$1'" >/dev/null 2>&1
 }
 
-echo "test-batcher-cut.sh"
+echo "test-batcher-cut.sh ($CUT_PART)"
 testdb_reset
+
+if [ "$CUT_PART" = main ]; then
 
 # =============================================================================
 # CASE A — happy path: an express member merges, the stub corpus is green, a PR
@@ -711,6 +716,9 @@ want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_ref
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
 is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
+fi
+
+if [ "$CUT_PART" = land ]; then
 
 # =============================================================================
 # CASE G — land mode (sp-o1jm6): find_repo accepts queue.local, never just queue, and
@@ -1105,5 +1113,7 @@ is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || e
 is     "N: sp-ciiii stub row stays REWORK — untouched, not re-ejected" \
        "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
 is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
+
+fi
 
 tl_summary
