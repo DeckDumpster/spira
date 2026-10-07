@@ -234,7 +234,7 @@ mod tests {
     use super::*;
 
     fn lc_row(id: &str, state: BeadState) -> (String, LifecycleRow) {
-        (id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds: Default::default(), stack_depth: 0, tip: None })
+        (id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds: Default::default(), stack_depth: 0, tip: None, snoozed_until: None })
     }
 
     /// NEXT's ready set takes no bd status: a LANDED bead is out however bd's row reads,
