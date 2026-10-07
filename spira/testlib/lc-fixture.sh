@@ -64,6 +64,16 @@ lcfix_down() {
     LCFIX_DIR=""
 }
 
+# lcfix_reset_facts — forget every attempt-history fact; a suite that resets its bd fixture
+# between sections resets these with it (lcfix_follow_testdb).
+lcfix_reset_facts() { lcfix_sql -q "DELETE FROM event WHERE machine='fact'" >/dev/null 2>&1; }
+
+# lcfix_follow_testdb — from here on, testdb_reset also clears the facts.
+lcfix_follow_testdb() {
+    eval "$(declare -f testdb_reset | sed '1s/testdb_reset/_lcfix_testdb_reset_bd/')"
+    testdb_reset() { _lcfix_testdb_reset_bd "$@" && lcfix_reset_facts; }
+}
+
 lcfix_env() {
     printf 'SPIRA_TOML=%s SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD=' \
         "$SPIRA_TOML" "$SPIRA_LC_HOST" "$SPIRA_LC_PORT" "$SPIRA_LC_DB" "$SPIRA_LC_DATA_DIR" "$SPIRA_LC_USER"

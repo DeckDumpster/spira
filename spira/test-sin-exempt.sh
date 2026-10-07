@@ -98,13 +98,7 @@ print(" ".join(d["beads"].get("'"$1"'", {}).get("labels", [])))
 '
 }
 has_label() { [[ " $(labels_of "$1") " == *" $2 "* ]]; }
-recur_max() {
-    python3 -c '
-import json
-d = json.load(open("'"$STUB_BD_STATE"'"))
-print(sum(1 for e in d["events"] if e["issue_id"] == "'"$1"'" and e["event_type"] == "recurred"))
-'
-}
+recur_max() { lc_fact_count "$TMP/lc" "$1" recurred; }
 
 # ======================================================================================
 echo

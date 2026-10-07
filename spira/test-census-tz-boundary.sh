@@ -86,6 +86,11 @@ testdb_up census-tz-boundary || {
     exit $?
 }
 
+. "$HERE/testlib/lc-fixture.sh"
+lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
+lcfix_follow_testdb
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+
 _insert_event_at() {   # _insert_event_at <bead_id> <event_type> <cause> <utc_ts>
     local id="$1" etype="$2" cause="$3" ts="$4"
     local uuid
@@ -119,26 +124,24 @@ is "event after watermark is counted (after present)"   "1" "$_after_count"
 
 # ==============================================================================
 echo
-echo "PART 3 — write side: bump_requeue stamps created_at in UTC, not server-local"
+echo "PART 3 — write side: bump_requeue stamps the fact in UTC epoch, not server-local"
 # ==============================================================================
-# sp-yyih8: _bump_write_event_try / bump_reopen used NOW(), which on a box whose dolt
-# server has no TZ set returns server-local wall clock while the column is read as UTC.
-# UTC_TIMESTAMP() is unaffected by @@system_time_zone. A container's own system tz may
-# happen to be UTC, in which case NOW() and UTC_TIMESTAMP() agree there and the
-# behavioural check below cannot see the class — so check the source text first, the
-# same way PART 1 checks _census_events_sql's text rather than relying on the read side
-# landing on a skewed box.
+# The write side is an epoch second taken by spira-lc, so no server timezone can skew it; the
+# INSERT text in lib.sh must still never reach for NOW() (the bd leg's historical hazard).
 _now_count="$(grep -c "created_at) VALUES.*NOW())" "$HERE/lib.sh" || true)"
 is "no write-side event INSERT uses NOW()" "0" "$_now_count"
 
 bump_requeue "sp-tz1" "tz-write-check"
-_lag="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-    "SELECT ABS(TIMESTAMPDIFF(SECOND, MAX(created_at), MAX(UTC_TIMESTAMP()))) FROM events WHERE issue_id='sp-tz1' AND event_type='requeued' AND new_value='tz-write-check'" \
-    2>/dev/null | sed -n '3p' | tr -d ' ')"
+_fact_at="$(timeout 5 spira-lc facts --ids sp-tz1 --kinds requeued 2>/dev/null | python3 -c '
+import calendar, json, sys, time
+rows = [r for r in json.load(sys.stdin) if r["new_value"] == "tz-write-check"]
+print(calendar.timegm(time.strptime(rows[-1]["created_at"], "%Y-%m-%dT%H:%M:%SZ")))' 2>/dev/null)"
+_lag=""
+[ -n "$_fact_at" ] && _lag=$(( $(date -u +%s) - _fact_at )) && [ "$_lag" -lt 0 ] && _lag=$(( -_lag ))
 if [ -n "$_lag" ] && [ "$_lag" -le 5 ] 2>/dev/null; then
-    ok "bump_requeue created_at within 5s of UTC_TIMESTAMP()"
+    ok "bump_requeue's fact is stamped within 5s of UTC now"
 else
-    bad "bump_requeue created_at within 5s of UTC_TIMESTAMP()" "lag_s=${_lag:-<empty>}"
+    bad "bump_requeue's fact is stamped within 5s of UTC now" "lag_s=${_lag:-<empty>}"
 fi
 
 echo

@@ -33,6 +33,11 @@ testdb_up census || {
     exit 77
 }
 
+. "$HERE/testlib/lc-fixture.sh"
+lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
+lcfix_follow_testdb
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+
 # Source lib.sh for bump_requeue/bead_reopen and the shared _bump_write_event helper.
 # These write the event rows census.sh reads; adding labels via 'bd label add' only
 # creates 'label_added' events, which census never queries. Protect SPIRA_DB since
@@ -59,9 +64,11 @@ REMEDY_LABEL=maechen-remedy
 # file: `list` has a row only for a bead with a file, `state` answers SUBMITTED for one
 # without (known, not landed).
 LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE"
+LC_REAL="$(command -v spira-lc)"
 cat > "$TMP/spira-lc-stub" <<STUB
 #!/usr/bin/env bash
 case "\${1:-}" in
+    fact|facts|facts-query) exec "$LC_REAL" "\$@" ;;
     state) if [ -s "$LCSTATE/\${2:-}" ]; then cat "$LCSTATE/\${2:-}"; else echo SUBMITTED; fi ;;
     list)  first=1; printf '['
            for f in "$LCSTATE"/*; do [ -s "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0

@@ -47,6 +47,10 @@ testdb_up census-events || {
     printf 'SKIP test-census-events: server testdb not available\n' >&2
     exit 77
 }
+. "$HERE/testlib/lc-fixture.sh"
+lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
+lcfix_follow_testdb
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 tl_config SPIRA_DB="$TESTDB_DIR" SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
@@ -316,8 +320,10 @@ is "requeues_of still counts the requeue event" "1" "$_rqn"
 
 # A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census splits the covers:
 # beads by `spira-lc list`. lc_rows <id>:<STATE>... sets what this stub answers.
+LC_REAL="$(command -v spira-lc)"
 cat > "$TMP/spira-lc-stub" <<STUB
 #!/usr/bin/env bash
+case "\${1:-}" in fact|facts|facts-query) exec "$LC_REAL" "\$@" ;; esac
 [ "\${1:-}" = list ] || exit 2
 cat "$TMP/lc-rows.json" 2>/dev/null || echo '[]'
 STUB

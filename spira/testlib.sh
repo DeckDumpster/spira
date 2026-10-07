@@ -419,10 +419,12 @@ lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
     # go to the real spira-lc, the first one on PATH that is not this stub.
     local real="" c
     while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
+    printf '#!/usr/bin/env bash\n%s\nexit 2\n' "$_LC_FACTS_BODY" > "$fix/facts-lc"; chmod +x "$fix/facts-lc"
     cat > "$bindir/spira-lc" <<STUB
 #!/usr/bin/env bash
 LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
+case "\$1" in fact|facts|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
 case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
@@ -467,6 +469,7 @@ case "${1:-}" in
         done
         printf "%s\t%s\t%s\t%s\t%s\n" "$id" "$kind" "$actor" "$cause" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(dirname "$0")/facts.tsv"
         exit 0 ;;
+    facts-query) exit 0 ;;
     facts)
         shift
         LC_FACTS_FILE="$(dirname "$0")/facts.tsv" python3 -c "
@@ -489,12 +492,18 @@ print(json.dumps(rows))
 esac
 '
 
-# lc_facts_stub <dir> — a spira-lc that knows only the attempt-history facts; every other verb is
-# "cannot tell". Prepends <dir> to PATH. For a suite whose fold reads bd events it seeded itself.
+# lc_facts_stub <dir> — a spira-lc that keeps the attempt-history facts itself (`fact`, `facts`;
+# `facts-query` answers an empty table) and hands every other verb to the spira-lc that was on PATH,
+# or answers "cannot tell" when there was none. Prepends <dir> to PATH. For a suite whose fold
+# reads bd events it seeded itself.
 lc_facts_stub() {
-    local dir="${1:?lc_facts_stub needs a directory}"
+    local dir="${1:?lc_facts_stub needs a directory}" real
     mkdir -p "$dir"
-    { printf '#!/usr/bin/env bash\n%s\nexit 2\n' "$_LC_FACTS_BODY"; } > "$dir/spira-lc"
+    real="$(command -v spira-lc 2>/dev/null || true)"
+    {
+        printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"
+        if [ -n "$real" ]; then printf 'exec %q "$@"\n' "$real"; else printf 'exit 2\n'; fi
+    } > "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
     export PATH="$dir:$PATH"
 }
@@ -697,8 +706,7 @@ except Exception: print("")' 2>/dev/null
 lc_aeon_mirror() {
     local dir="${1:?lc_aeon_mirror needs a directory}"
     mkdir -p "$dir"
-    cat > "$dir/spira-lc" <<'STUB'
-#!/usr/bin/env bash
+    { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
     *) for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
@@ -794,6 +802,7 @@ elif verb == "event":
         open(os.path.join(run, "lc-row", i), "w").write("SUBMITTED\n")
 ' "$@"
 STUB
+    } > "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
 }
 
