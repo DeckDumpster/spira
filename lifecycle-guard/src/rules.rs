@@ -86,6 +86,9 @@ pub const GATE_CLASSES: &[Class] = &[
     // sp-3fue0j: a bd close from Rust, joined in the commit that routed every caller through
     // `spira-lc close`.
     Class::BdCloseRust,
+    // sp-psztcc: a hold kept as a bd label, joined in the commit that moved every claim
+    // predicate and writer onto the row's hold.
+    Class::HoldLabel,
 ];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or

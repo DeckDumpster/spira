@@ -658,11 +658,9 @@ impl<'a> Sentinel<'a> {
     pub fn plan_ready_live(&self) -> Option<usize> {
         let o = self.h.run(Spec::args_owned(
             self.cfg.claim_bin.clone(),
-            vec![
-                "ready-count".into(),
-                self.cfg.plan_labels().join(","),
-                format!("spira-poison,{}", self.cfg.ask),
-            ],
+            // No exclude labels: poison and ask are holds on the row, which the machine's own
+            // claimable set already leaves out (sp-psztcc).
+            vec!["ready-count".into(), self.cfg.plan_labels().join(",")],
         ));
         if o.ok() { o.stdout.trim().parse().ok() } else { None }
     }

@@ -110,14 +110,11 @@ reclassify)
         fi
         cur="$(attempts_of "$id")"; cur="${cur:-0}"
         [ "$cur" -gt 0 ] || continue
-        # Read the labels ONCE, into a variable, and match with a herestring. Piping into
-        # `grep -q` under `set -o pipefail` is a trap: grep exits at the first match and
-        # closes the pipe, the writer dies of SIGPIPE, and pipefail hands back 141 — so the
-        # test reads FALSE exactly when it succeeded, and poison would be left standing on
-        # an attempt that had just been withdrawn (law-no-grep-q-under-pipefail).
-        labels="$(bdq label list "$id" 2>/dev/null)"
+        # Poison is the lifecycle row's hold, never a label (sp-psztcc): `held` exits 0 when
+        # the row carries it. Its exit code is read directly — no pipe, so nothing for
+        # pipefail to mangle (law-no-grep-q-under-pipefail).
         poisoned=0
-        case "$labels" in *spira-poison*) poisoned=1 ;; esac
+        spira-lc held "$id" poison >/dev/null 2>&1 && poisoned=1
         lifts=0
         [ "$poisoned" = 1 ] && [ "$(( cur - 1 ))" -lt "${SPIRA_POISON_AT:-3}" ] && lifts=1
         n=$((n+1))
@@ -141,11 +138,11 @@ reclassify)
                 continue
             fi
             bdq note "$id" "Attempt $cur withdrawn: its session was refused by the account for want of capacity, not by anything about this work. Evidence: $SPIRA_RUN/$id.log ends in a rejected rate_limit_event." >/dev/null 2>&1
-            # A bead poisoned only by that attempt is no longer poisoned. Its label goes with
-            # it — leaving it would keep the bead out of every fayth's predicate for a
+            # A bead poisoned only by that attempt is no longer poisoned. Its hold goes with
+            # it — leaving it would keep the bead out of every fayth's claimable set for a
             # failure that was withdrawn, which is the whole harm this is undoing.
             if [ "$lifts" = 1 ]; then
-                bdq label remove "$id" spira-poison >/dev/null 2>&1
+                spira-lc unhold "$id" poison capacity.sh >/dev/null 2>&1
                 printf 'RESTORED %-20s attempt %s withdrawn, poison lifted\n' "$id" "$cur"
             else
                 printf 'RESTORED %-20s attempt %s withdrawn\n' "$id" "$cur"

@@ -84,7 +84,7 @@ pub fn sweep(bd: &dyn Bd, seam: &dyn Seam, dry_run: bool) -> Result<Outcome, Str
                     if !ci_label.is_empty() {
                         let _ = bd.label_remove(&row.id, &ci_label);
                     }
-                    let _ = std::process::Command::new("spira-lc").args(["unhold", &row.id, "wait", "groomer"]).status();
+                    let _ = seam.lc_unhold(&row.id, "wait");
                 }
                 acted += 1;
             }

@@ -210,12 +210,11 @@ impl<'a> Run<'a> {
         if count < threshold as i64 {
             return;
         }
-        let ask = self.conf.ask_label();
-        if self.d.bd.bd(&s(&["label", "list", &id])).text().contains(&ask) {
+        // Already parked is the row's ask hold, never a label (sp-psztcc).
+        if self.lc_bead(&id).is_some_and(|r| r.held("ask")) {
             return;
         }
         self.log(&format!("{}: {id} RAPID-RECUR: {count} consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry", self.f()));
-        let _ = self.d.bd.bd(&s(&["label", "add", &id, &ask]));
         let _ = self.d.bd.bd(&s(&["label", "add", &id, "overseer"]));
         // spira-lc's caller verb, as in verdict.rs's eviction-race escalation.
         let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("rapid-recur: {count} consecutive sub-10s aeon summons"), self.f()]), None, None);
@@ -223,7 +222,7 @@ impl<'a> Run<'a> {
             self.d.bd,
             &id,
             &format!(
-                "RAPID-RECUR: {count} consecutive sub-10s aeon runs on {id}. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with {ask} and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger."
+                "RAPID-RECUR: {count} consecutive sub-10s aeon runs on {id}. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with an ask hold (and the overseer label) instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger."
             ),
         );
         self.sdo(

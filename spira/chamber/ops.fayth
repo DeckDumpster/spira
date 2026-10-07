@@ -24,7 +24,7 @@ FAYTH_DESC="Ops — the diagnostician: claims incidents and sweeps, works out wh
 # time, while a configured variable keeps the fayth, the sentinel and every reader in
 # agreement on which label means "production event for ops" (law-schema-over-code).
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 # BOTH BOOKS. Statutes are how to behave; SOPs are how to fix — and Ops is the only
 # persona that needs the second. The builder reads `law-` alone, which is what keeps a

@@ -22,7 +22,7 @@ FAYTH_DESC="Czar — the queue sovereign: claims queue-state escalations and act
 # that ordinary plan beads are not dispatchable here and that czar-trigger beads are
 # (law-absence-needs-a-positive-control).
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_CZAR_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 # Statutes only. The czar executes no runbook from the SOP shelf.
 FAYTH_MEMORY_PREFIXES="law-"

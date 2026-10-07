@@ -773,6 +773,8 @@ def watchdog():
         time.sleep(1)
 threading.Thread(target=watchdog, daemon=True).start()
 sub = os.environ.get("SPIRA_SUBMITTED_LABEL") or "spira-submitted"
+# Holds are the row's (sp-psztcc): a hold/unhold event is recorded here and shown on the row.
+holds = {}
 def bd(args):
     env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
     o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args, "--json"],
@@ -787,7 +789,7 @@ def row(b):
     st = b.get("status") or "open"
     labels = b.get("labels") or []
     state = "SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY")
-    return {"bead_id": b["id"], "state": state, "holds": [],
+    return {"bead_id": b["id"], "state": state, "holds": json.dumps(sorted(holds.get(b["id"], set()))), "version": "1",
             "holder": (b.get("assignee") or None) if state == "WORKING" else None}
 def answer(args):
     if args[:1] == ["show"] and len(args) > 1:
@@ -795,6 +797,16 @@ def answer(args):
         return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
     if args[:1] == ["list"]:
         return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"]) if isinstance(b, dict) and b.get("id")])
+    if args[:2] == ["event", "bead"] and len(args) > 2 and "--kind" in args:
+        kind = json.loads(args[args.index("--kind") + 1])
+        bid = args[2]
+        if isinstance(kind, dict) and "Hold" in kind:
+            holds.setdefault(bid, set()).add(kind["Hold"]["kind"].lower())
+        elif isinstance(kind, dict) and "Unhold" in kind:
+            holds.get(bid, set()).discard(kind["Unhold"]["kind"].lower())
+        elif kind == "AskWithdrawn":
+            holds.get(bid, set()).discard("ask")
+        return 0, ""
     return 2, "cannot tell: stand-in lifecycle service"
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 srv.bind(path)

@@ -699,7 +699,7 @@ fn starved_plan_recomputes_then_judges_once_an_hour() {
     let recount = r
         .find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count"))
         .expect("recount");
-    assert_eq!(recount.line(), "spira-claim ready-count spira,plan spira-poison,needs-operator"); // literal-ok: asserts argv built from the fixture
+    assert_eq!(recount.line(), "spira-claim ready-count spira,plan"); // literal-ok: asserts argv built from the fixture
     assert!(sink.has("spira: recomputed is_blocked"));
     assert!(sink.has("STARVED — 1 open, 0 ready, 0 running. Dropping to inference."));
     let refl = r.find(|s| s.prog.ends_with("/reflect.sh")).unwrap();
@@ -1347,7 +1347,7 @@ fn on_plan_ready_is_spira_claims_and_in_progress_is_the_machines_working_rows() 
     let q = r
         .find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count"))
         .expect("plan_ready asks spira-claim");
-    assert_eq!(q.args, vec!["ready-count", "spira,plan", "spira-poison,needs-operator"]); // literal-ok: asserts argv built from the fixture
+    assert_eq!(q.args, vec!["ready-count", "spira,plan"]); // literal-ok: asserts argv built from the fixture
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1, "the counts reuse the pass's one lifecycle read");
     assert_eq!(r.count(|s| is_bd(s, "recompute-blocked")), 0, "work is running: CHECK 3 has nothing to free");
     assert!(!sink.has("STARVED"), "{}", sink.text());
@@ -1935,12 +1935,14 @@ fn sending_7c_7d_count_what_their_seams_report() {
     assert!(sink.has("ACT freed 1 branch-collision worktree(s)"));
     assert!(sink.has("ACT unlabeled 1 inherited branch-collision bead(s)"));
     assert!(sink.has("CHECK7d: 1 bead(s) whose recorded branch is held by another bead's worktree — parking with needs-operator")); // literal-ok: asserts log text built from the fixture
+    // Parked by the row's ask hold and the overseer label, never the ask label (sp-psztcc).
     assert!(
-        r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]) // literal-ok: the fixture's SPIRA_ASK_LABEL default
+        r.find(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("hold") && s.args.get(1).map(String::as_str) == Some("sp-c3") && s.args.get(2).map(String::as_str) == Some("ask"))
             .is_some(),
         "sp-c3 (no free, no inherited label) is parked: {:#?}",
         r.lines()
     );
+    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]).is_none(), "{:#?}", r.lines()); // literal-ok: the fixture's SPIRA_ASK_LABEL default
     assert!(r.find(|s| s.prog == "sending" && s.args.first().map(String::as_str) == Some("destroy-worktree")).is_some());
 
     // the next audit finds every base unchanged and does not walk

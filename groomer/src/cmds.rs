@@ -134,20 +134,19 @@ pub fn triage_poison(bd: &dyn Bd, seam: &dyn Seam, id: &str, verdict: &str, evid
     }
 
     if verdict == "drop" {
+        // The close records DROPPED on the row (sp-3fue0j); no label stands in for it.
         bd.close(id, &format!("GROOM: Poison triage — DROP. {evidence}")).map_err(|e| (1, e))?;
-        let _ = bd.label_add(id, "spira-dropped");
         return Ok(format!("DROPPED {id}\n"));
     }
 
-    let labels = bd.label_list(id).map_err(|e| (1, e))?;
-    if !labels.contains("spira-poison") {
-        return usage_err(format!("triage-poison: {id} does not carry spira-poison — nothing to triage"));
+    // Poison is the row's hold, never a label (sp-psztcc).
+    if !seam.lc_held_poison(id) {
+        return usage_err(format!("triage-poison: {id} holds no poison on its lifecycle row — nothing to triage"));
     }
 
     seam.bump_poison_cleared(id, "work-fault-triage").map_err(|e| (1, e))?;
-    bd.label_remove(id, "spira-poison").map_err(|e| (1, format!("triage-poison: could not remove spira-poison from {id}: {e}")))?;
+    seam.lc_unhold(id, "poison").map_err(|e| (1, format!("triage-poison: could not lift {id}'s poison hold: {e}")))?;
     let _ = seam.poison_asked_clear(id);
-    let _ = std::process::Command::new("spira-lc").args(["unhold", id, "poison", "groomer"]).status();
     let _ = bd.note(
         id,
         &format!(
@@ -267,34 +266,36 @@ mod cmds_tests {
     }
 
     #[test]
-    fn triage_poison_drop_closes_and_labels_dropped() {
+    fn triage_poison_drop_closes_with_no_state_label() {
         let bd = FakeBd::new();
         let seam = FakeSeam::new();
         let out = triage_poison(&bd, &seam, "sp-1", "drop", "not worth it").unwrap();
         assert_eq!(out, "DROPPED sp-1\n");
         assert!(bd.log()[0].starts_with("close sp-1 GROOM: Poison triage — DROP."));
-        assert!(bd.log().contains(&"label add sp-1 spira-dropped".to_string()));
+        assert!(!bd.log().iter().any(|c| c.starts_with("label")), "{:?}", bd.log());
     }
 
     #[test]
-    fn triage_poison_work_fault_refuses_a_clean_bead() {
+    fn triage_poison_work_fault_refuses_a_bead_with_no_poison_hold() {
         let bd = FakeBd::new();
-        bd.set_labels("sp-1", &["plan"]);
+        // A stale label is not poison: only the row's hold is (sp-psztcc).
+        bd.set_labels("sp-1", &["plan", "spira-poison"]);
         let seam = FakeSeam::new();
         let err = triage_poison(&bd, &seam, "sp-1", "work-fault", "evidence").unwrap_err();
         assert_eq!(err.0, 1);
-        assert!(err.1.contains("spira-poison"));
+        assert!(err.1.contains("holds no poison"));
     }
 
     #[test]
     fn triage_poison_work_fault_lifts_poison_without_crediting() {
         let bd = FakeBd::new();
-        bd.set_labels("sp-1", &["plan", "spira-poison"]);
         let seam = FakeSeam::new();
+        seam.held_poison.borrow_mut().insert("sp-1".into());
         let out = triage_poison(&bd, &seam, "sp-1", "work-fault", "split it").unwrap();
         assert_eq!(out, "TRIAGED sp-1 verdict=work-fault\n");
         assert!(seam.log().contains(&"bump_poison_cleared sp-1 work-fault-triage".to_string()));
-        assert!(bd.log().contains(&"label remove sp-1 spira-poison".to_string()));
+        assert!(seam.log().contains(&"lc_unhold sp-1 poison".to_string()));
+        assert!(!bd.log().iter().any(|c| c.starts_with("label")), "{:?}", bd.log());
         assert!(bd.log().iter().any(|c| c.contains("WORK'S FAULT")));
     }
 

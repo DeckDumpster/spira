@@ -110,6 +110,10 @@ pub struct Partition<'a> {
     pub ready: HashSet<String>,
     /// Beads whose lifecycle row is WORKING: a builder holds them.
     pub working: HashSet<String>,
+    /// Beads whose lifecycle row holds an ask / poison — the hold, never a label standing in
+    /// for it (sp-psztcc).
+    pub held_ask: HashSet<String>,
+    pub held_poison: HashSet<String>,
     pub vocab: &'a Vocab,
     pub facts: &'a Facts,
 }
@@ -126,10 +130,10 @@ impl<'a> Partition<'a> {
             || self.ready.contains(&b.id)
     }
     fn parked(&self, b: &Bead) -> bool {
-        b.has(&self.vocab.ask) || b.status == Status::Deferred
+        self.held_ask.contains(&b.id) || b.status == Status::Deferred
     }
     fn poisoned(&self, b: &Bead) -> bool {
-        b.has(&self.vocab.poison)
+        self.held_poison.contains(&b.id)
     }
     fn delegated(&self, b: &Bead) -> bool {
         b.has(&self.vocab.open_children)
@@ -186,7 +190,7 @@ impl<'a> Partition<'a> {
     // blocks target anywhere in the store is non-closed (R9).
     fn deferred(&self, members: &[&Bead], rows: &mut Vec<Row>) {
         for b in members {
-            if b.status != Status::Deferred || b.has(&self.vocab.ask) {
+            if b.status != Status::Deferred || self.held_ask.contains(&b.id) {
                 continue;
             }
             let live_blocker =
@@ -211,15 +215,8 @@ impl<'a> Partition<'a> {
                 "deferred-unescalated",
                 &b.id,
                 Disposition::Escalate,
-                format!(
-                    "deferred but not labelled {}: {}",
-                    self.vocab.ask,
-                    b.title.as_deref().unwrap_or("")
-                ),
-                format!(
-                    "bd update {} --status open, or label it {} with the decision",
-                    b.id, self.vocab.ask
-                ),
+                format!("deferred with no ask held: {}", b.title.as_deref().unwrap_or("")),
+                format!("undefer {} so it is queued, or hold it with the decision: spira-lc hold {} ask \"<the question>\"", b.id, b.id),
             ));
         }
     }
@@ -603,6 +600,8 @@ mod tests {
             labels: PLAN.iter().map(|s| s.to_string()).collect(),
             ready: ready.iter().map(|s| s.to_string()).collect(),
             working: working.iter().map(|s| s.to_string()).collect(),
+            held_ask: s.beads.iter().filter(|b| b.has(ASK)).map(|b| b.id.clone()).collect(),
+            held_poison: s.beads.iter().filter(|b| b.has("spira-poison")).map(|b| b.id.clone()).collect(),
             vocab: &vocab,
             facts,
         };
@@ -876,7 +875,7 @@ mod tests {
         let s = store(vec![bead("d", "deferred", PLAN, None, &["x"]), bead("x", "closed", &[], None, &[])]);
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("deferred-unescalated".into(), "d".into())]);
-        assert_eq!(rows[0].detail, "deferred but not labelled operator-ask: title of d");
+        assert_eq!(rows[0].detail, "deferred with no ask held: title of d");
     }
 
     #[test]

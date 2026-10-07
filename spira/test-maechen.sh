@@ -83,10 +83,10 @@ is "FAYTH_ASSIGNEE is not set" "UNSET" "$assignee"
 
 # ==========================================================================================
 echo
-echo "maechen.fayth — FAYTH_EXCLUDE_LABELS excludes spira-poison"
+echo "maechen.fayth — FAYTH_EXCLUDE_LABELS names no hold label (poison/ask are lifecycle holds, sp-psztcc)"
 # ==========================================================================================
 excl="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_EXCLUDE_LABELS:-}\"")"
-want "FAYTH_EXCLUDE_LABELS contains spira-poison" "spira-poison" "$excl"
+nowant "FAYTH_EXCLUDE_LABELS names no spira-poison" "spira-poison" "$excl"
 
 # ==========================================================================================
 echo

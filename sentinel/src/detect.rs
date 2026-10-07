@@ -112,10 +112,17 @@ impl<'a> Sentinel<'a> {
         }
         let all_parts = self.all_parts_str();
         let ready_raw = self.broad_ready_raw(snap_ready_raw);
+        // A bead held ask/poison on its lifecycle row is deliberately parked, not unclaimable
+        // by fault; the hold is the row's, never a label (sp-psztcc).
+        let held: Vec<String> = self
+            .lc_rows()
+            .map(|rows| rows.into_iter().filter(|r| r.holds.iter().any(|h| h == "ask" || h == "poison")).map(|r| r.bead_id).collect())
+            .unwrap_or_default();
         let o = self.h.run(
             Spec::args_owned("unclaimable.py".to_string(), Vec::new())
                 .env("PARTS", parts)
                 .env("ALL_PARTS", all_parts)
+                .env("HELD_IDS", held.join(","))
                 .stdin(ready_raw.into_bytes())
                 .out(Io::Capture)
                 .err(Io::Null),
@@ -274,9 +281,11 @@ impl<'a> Sentinel<'a> {
         let Some(rows) = self.state_rows() else {
             return Vec::new();
         };
+        // Claimable = READY/REWORK with no ask or poison hold: a parked bead is the row's hold,
+        // never a label (sp-psztcc), and it is not re-detected on the next pass.
         let claimable: std::collections::HashSet<&str> = rows
             .iter()
-            .filter(|r| lc_state::is_claimable(&r.state))
+            .filter(|r| lc_state::is_claimable(&r.state) && !r.holds.iter().any(|h| h == "ask" || h == "poison"))
             .map(|r| r.bead_id.as_str())
             .collect();
         let args = vec![
@@ -294,14 +303,11 @@ impl<'a> Sentinel<'a> {
             return Vec::new();
         };
         beads.retain(|b| claimable.contains(b.id.as_str()));
-        let ask = &self.cfg.ask;
+        // `claimable` is the machine's set, which already leaves ask- and poison-held beads out.
         let prefix = self.worktree_prefix();
         let mut maps: HashMap<String, Vec<(String, String)>> = HashMap::new();
         let mut out = Vec::new();
         for b in &beads {
-            if !ask.is_empty() && b.has(ask) {
-                continue;
-            }
             let repo = b.label_value("repo:").map(str::to_string).unwrap_or_else(|| self.cfg.home_repo.clone());
             if !maps.contains_key(&repo) {
                 let list = match self.repo_root_cmd(&repo) {
@@ -383,11 +389,16 @@ impl<'a> Sentinel<'a> {
     /// apparently-inherited branch name, matching lib.sh exactly).
     pub fn park_branch_collisions(&self, collisions: &[Collision]) -> Vec<ParkOutcome> {
         let mut out = Vec::new();
+        // Already parked is the row's ask hold, never a label (sp-psztcc).
+        let asked: std::collections::HashSet<String> = self
+            .lc_rows()
+            .map(|rows| rows.into_iter().filter(|r| r.holds.iter().any(|h| h == "ask")).map(|r| r.bead_id).collect())
+            .unwrap_or_default();
         for c in collisions {
-            let labels = self.label_list(&c.id);
-            if labels.contains(self.cfg.ask.as_str()) {
+            if asked.contains(&c.id) {
                 continue;
             }
+            let labels = self.label_list(&c.id);
 
             let inherited_from = c.branch.strip_prefix("spira/").map(str::to_string);
             if let Some(inh) = &inherited_from {
@@ -449,7 +460,6 @@ impl<'a> Sentinel<'a> {
                 }
             }
 
-            self.bd().quiet(self.h, &["label", "add", &c.id, &self.cfg.ask], None);
             self.bd().quiet(self.h, &["label", "add", &c.id, "overseer"], None);
             self.lc_hold(
                 &c.id,
@@ -457,8 +467,8 @@ impl<'a> Sentinel<'a> {
                 &format!("branch {} squatted by {}'s worktree at {}", c.branch, c.holder_id, c.holder_path),
             );
             let note = format!(
-                "Parked by detect_branch_collisions: recorded branch {} is checked out in {}'s worktree at {}, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled {} and overseer so dispatch stops spending a claim here — free {} or correct the branch: label, then remove {}.",
-                c.branch, c.holder_id, c.holder_path, self.cfg.ask, c.holder_path, self.cfg.ask
+                "Parked by detect_branch_collisions: recorded branch {} is checked out in {}'s worktree at {}, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Held with an ask (and labelled overseer) so dispatch stops spending a claim here — free {} or correct the branch: label, then withdraw the ask (spira-lc withdraw-ask {}).",
+                c.branch, c.holder_id, c.holder_path, c.holder_path, c.id
             );
             self.bd().quiet(self.h, &["note", &c.id, "--stdin"], Some(&note));
         }
