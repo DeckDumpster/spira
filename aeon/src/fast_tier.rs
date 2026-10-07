@@ -6,13 +6,13 @@ use std::path::Path;
 
 use crate::ports::{Exec, Git};
 
-/// The fast tier's commands, in order. BOTH get the branch's base: spira-lint's diff-relative
-/// rules exit "no base to compare against" without SPIRA_GATE_BASE, so a bare `spira-lint`
-/// refuses every handoff.
+/// The fast tier's commands, in order. spira-lint judges only the branch's own diff, so a
+/// finding already on the base never reds a bead; the round lints the whole tree. The build
+/// fence gets the base through SPIRA_GATE_BASE.
 pub fn steps(base_fq: &str) -> Vec<(&'static str, Vec<String>)> {
     let base = format!("SPIRA_GATE_BASE={base_fq}");
     vec![
-        ("env", vec![base.clone(), "spira-lint".to_string()]),
+        ("env", vec![base.clone(), "spira-lint".to_string(), "--diff".to_string(), base_fq.to_string()]),
         ("env", vec![base, "bash".to_string(), "spira/build-fence.sh".to_string()]),
     ]
 }
@@ -76,7 +76,7 @@ mod tests {
             assert_eq!(*prog, "env");
             assert_eq!(args[0], "SPIRA_GATE_BASE=refs/heads/local/main", "{args:?}");
         }
-        assert_eq!(steps[0].1[1], "spira-lint");
+        assert_eq!(steps[0].1[1..], ["spira-lint".to_string(), "--diff".to_string(), "refs/heads/local/main".to_string()]);
         assert_eq!(steps[1].1[1..], ["bash".to_string(), "spira/build-fence.sh".to_string()]);
     }
 
