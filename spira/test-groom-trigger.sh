@@ -178,7 +178,7 @@ STUB
 chmod +x "$FAIL_BD"
 : > "$BD_LOG"
 tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$FAIL_BD"
-out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" \
@@ -200,7 +200,7 @@ BD_LIST_OUTPUT="[]"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_SCOPE_LABEL="myproject" SPIRA_GROOMER_LABEL="hygiene" SPIRA_BD="$STUB_BD"
 out="$(BD_LIST_OUTPUT="[]" \
-    env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" \
@@ -227,7 +227,7 @@ echo "EMPTY SCOPE: SPIRA_SCOPE_LABEL='' produces only the groomer label (no lead
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_SCOPE_LABEL="" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
-out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" \
@@ -250,7 +250,7 @@ printf 'plan-only | /tmp/plan-only | push | origin/main | | | consume\n' >> "$CO
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$CONSUME_MAP" \
     SPIRA_HOME_REPO="home-tg" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
-out_ng="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+out_ng="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" \
@@ -264,7 +264,7 @@ want   "no-groom-map: logs skipping trigger"  "skipping trigger" "$out_ng"
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_HOME_REPO="spira" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
-out_gp="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+out_gp="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" \
