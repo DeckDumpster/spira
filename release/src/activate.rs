@@ -10,6 +10,7 @@ use crate::units;
 use crate::verify;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 pub const CURRENT: &str = "current";
@@ -414,6 +415,32 @@ fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>) -> Result<(Switch
     Ok((out, late))
 }
 
+/// Install and enable the units the release at `sha` ships that the box does not have yet,
+/// through the release's own `unit-ensure` (which owns the manifest: gates, enable flags,
+/// watchers). `switch` only rewrites units already on disk. A release with no `unit-ensure`
+/// has nothing to install them with and is skipped.
+fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
+    let rel = verify::release_dir(cfg, sha)?;
+    let bin = rel.join("bin/unit-ensure");
+    if !fsutil::is_executable(&bin) {
+        return Ok(());
+    }
+    // batch-job: installs and starts whatever units are new, bounded at 120 s by timeout(1)
+    let mut cmd = Command::new("timeout");
+    cmd.arg("120").arg(&bin).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
+    for (k, v) in verify::pre_activate_env(cfg, &rel)? {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+    for l in String::from_utf8_lossy(&out.stdout).lines().chain(String::from_utf8_lossy(&out.stderr).lines()) {
+        eprintln!("release: {l}");
+    }
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!("{sha} is active but unit-ensure could not install its new units ({})", out.status))
+}
+
 /// `release activate <sha> [--hotfix <reason>]`.
 pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Switched, String> {
     let state = ctx.cfg.state_dir()?;
@@ -444,10 +471,11 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
             write_hotfix(&state, None)?;
         }
     }
-    match late {
-        Some(e) => Err(e),
-        None => Ok(out),
+    if let Some(e) = late {
+        return Err(e);
     }
+    ensure_new_units(ctx.cfg, sha)?;
+    Ok(out)
 }
 
 /// `release rollback`: activate the release below the top of the history stack.

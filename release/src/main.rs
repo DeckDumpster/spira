@@ -124,6 +124,24 @@ fn fail_err(m: String) -> (u8, String) {
     (1, m)
 }
 
+/// [`Config::resolve`], except that `verify` and `activate` of a release resolve against the
+/// layers with that release's own config delta already applied: this binary is the new
+/// release's, its registry requires the keys the delta adds, and `activate` is what writes them.
+/// The real spec stays in `env`, so units are still rendered with, and the delta still applied
+/// to, the files in force.
+fn resolve_config(a: &Args, env: &config::Env, cmd: &str, rest: &[String]) -> Result<Config, String> {
+    let staged = match (cmd, rest.first(), env.get("SPIRA_TOML").filter(|s| !s.is_empty())) {
+        ("verify" | "activate", Some(sha), Some(spec)) => release::config_delta::staged_for_resolution(spec, a.flags.releases.as_deref(), sha)?,
+        _ => None,
+    };
+    let Some((dir, spec)) = staged else { return Config::resolve(&a.flags, env) };
+    std::env::set_var("SPIRA_TOML", &spec);
+    let cfg = Config::resolve(&a.flags, env);
+    std::env::set_var("SPIRA_TOML", env.get("SPIRA_TOML").map(String::as_str).unwrap_or_default());
+    let _ = std::fs::remove_dir_all(dir);
+    cfg
+}
+
 /// The release root `install`/`status` address the hook/meter through, and its PATH tail.
 ///
 /// PREFERS `<releases>/current` when [`Config`] resolves and that path actually exists — the
@@ -371,7 +389,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         _ => {}
     }
 
-    let cfg = Config::resolve(&a.flags, &env).map_err(|e| (1, e))?;
+    let cfg = resolve_config(&a, &env, &cmd, rest).map_err(|e| (1, e))?;
     let repo = || release::repo::resolve(a.repo.as_deref().map(Path::new), &env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
     match cmd.as_str() {
         "build" => {
