@@ -3,5 +3,4 @@
 #
 # SHRINK-ONLY. A count goes down as calls gain a timeout of at most 5 s, or a
 # `batch-job: <why>` marker where the call really is a batch job; nothing is raised for a NEW call.
-1 spira/testdb.sh
 2 spira/testlib/gate-fixture.sh
