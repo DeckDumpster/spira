@@ -11,7 +11,7 @@
 #   ahead    counted against spira_landref, never a hardcoded branch name
 #   EMPTY    only when ahead == 0; only empties are offered for bulk removal
 #   ORPHAN   branch whose bead no longer exists — more dangerous to drop, not less
-#   UNKNOWN  the bead store could not be read at all — never downgraded to ORPHAN,
+#   UNKNOWN  the lifecycle machine could not be read at all — never downgraded to ORPHAN,
 #            since "gone" and "unreachable" call for opposite actions; exits non-zero
 #   NO REMOTE  printed unconditionally first; changes every other judgement on the page
 set -uo pipefail
@@ -58,17 +58,17 @@ _hold_repos() {
     done
 }
 
-# Bead status string: "(none)" when bd ran and found no such bead, "(unknown)" when
-# bd's output could not even be parsed as JSON — the store itself was unreadable, which
-# must never be read as "(none)" (ORPHAN is for a bead that is confirmed gone).
+# The bead's lifecycle state, upper-case: "(none)" when the machine has no row for it,
+# "(unknown)" when the machine itself could not be read — which must never be read as
+# "(none)" (ORPHAN is for a bead that is confirmed gone).
 _bead_status() {
-    bdjson show "$1" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: print("(unknown)"); sys.exit()
-d = d if isinstance(d, list) else [d]
-s = d[0].get("status", "") if d else ""
-print(s.upper() if s else "(none)")' 2>/dev/null
+    local s rc
+    s="$(spira-lc state "$1" 2>/dev/null)"; rc=$?
+    case "$rc" in
+        0) printf '%s\n' "${s^^}" ;;
+        1) printf '(none)\n' ;;
+        *) printf '(unknown)\n' ;;
+    esac
 }
 
 _ahead()  { git -C "$1" rev-list --count "${3}..$2"  2>/dev/null || printf '?'; }
@@ -101,7 +101,7 @@ _collect() {
         wt_display="${wt:+live}"; wt_display="${wt_display:--}"
 
         if [ "$bead_state" = "(unknown)" ]; then
-            verdict="UNKNOWN — bd unreadable"
+            verdict="UNKNOWN — lifecycle machine unreadable"
             unknown_count=$(( unknown_count + 1 ))
         elif [ "$bead_state" = "(none)" ]; then
             verdict="ORPHAN — bead is gone"
@@ -163,7 +163,7 @@ _print_table() {
     [ "$empty_count" -gt 0 ]  && printf '  %d empty.\n'  "$empty_count"
     [ "$orphan_count" -gt 0 ] && printf '  %d orphan.\n' "$orphan_count"
     [ "$unknown_count" -gt 0 ] && \
-        printf '  %d unknown — bd could not be read; verdict withheld.\n' "$unknown_count"
+        printf '  %d unknown — lifecycle machine could not be read; verdict withheld.\n' "$unknown_count"
 
     if [ "$held_count" -gt 0 ] || [ "$orphan_count" -gt 0 ]; then
         printf '\n'
@@ -210,7 +210,7 @@ if [ "$MODE" = summary ]; then
             s="$s · $held_count branch$([ "$held_count" -eq 1 ] || printf 'es') · $total_commits commit$([ "$total_commits" -eq 1 ] || printf 's') awaiting you"
         [ "$empty_count" -gt 0 ]  && s="$s · $empty_count empty"
         [ "$orphan_count" -gt 0 ] && s="$s · $orphan_count orphan"
-        [ "$unknown_count" -gt 0 ] && s="$s · $unknown_count unknown — bd unreadable"
+        [ "$unknown_count" -gt 0 ] && s="$s · $unknown_count unknown — lifecycle machine unreadable"
         printf '%s\n' "$s"
     done < <(_hold_repos)
     [ "$any_unknown" -eq 0 ]
