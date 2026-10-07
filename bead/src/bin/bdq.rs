@@ -247,6 +247,10 @@ fn cmd_bdq(args: &[String]) -> i32 {
             eprint!("{msg}");
             return 1;
         }
+        if let Some(msg) = bead::bdq::check_ask_shape(args, &ask_label) {
+            eprint!("{msg}");
+            return 1;
+        }
         if let Some(msg) = check_schema_delete(args) {
             eprint!("{msg}");
             return 1;
