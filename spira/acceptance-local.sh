@@ -349,6 +349,10 @@ exec /tmp/release acceptance '$_al_tag' \
     --bd-db \"\$HOME/.local/share/spira/db\" $_al_prev_args
 "
 _al_rc=$?
+if [ "$_al_rc" -eq 0 ] && [ -n "$PRED" ]; then
+    spira-config local-pass record acceptance-ad "$(git -C "$TREE" rev-parse HEAD)" acceptance-local.sh \
+        || printf 'acceptance-local: phases A-D passed but the pass could not be recorded\n' >&2
+fi
 
 # ---------------------------------------------------------------------------
 # 4. FORENSICS on FAIL. A build or container-startup failure (exit 2) never

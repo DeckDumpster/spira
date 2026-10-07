@@ -165,6 +165,10 @@ seed() {   # seed <id>
 remote_main()  { git -C "$REMOTE" rev-parse main 2>/dev/null; }
 localmain()    { git -C "$REPO" rev-parse local/main; }
 publish_file() { cat "$QDIR/$REPONAME/publish" 2>/dev/null; }
+
+# passed — the full-suite local pass a green round records for its head (sp-x334k): publish refuses a
+# local/main head without one, so every publish here stands on the pass production would have.
+passed() { local o; o="$(spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round 2>&1)" || echo "# passed() FAILED: $o" >&2; }
 callcount()    { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
@@ -181,7 +185,7 @@ clear_mail()   { rm -f "$RUN"/mail/concierge/new/* 2>/dev/null; }
 echo
 echo "1 — nothing to publish is a no-op: no branch, no PR, no record"
 # ============================================================================
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "1: exit 0 with nothing to publish" || bad "1: exit 0 with nothing to publish" "got rc=$rc out=$out"
 want "1: reports nothing to publish" "nothing to publish" "$out"
 [ "$(callcount pr-create)" -eq 0 ] && ok "1: forge never asked to open a PR" \
@@ -198,7 +202,7 @@ seed sp-pub1
 land sp-pub1 one.txt one
 HEAD1="$(localmain)"; TIP1="$LAST_TIP"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "2: publish opens a PR (exit 0)" || bad "2: publish opens a PR (exit 0)" "got rc=$rc out=$out"
 want "2: names the PR" "PR 1 opened" "$out"
 is "2: publish record's head is local/main's tip" "$HEAD1" "$(sed -n 's/^head=//p' "$QDIR/$REPONAME/publish")"
@@ -226,7 +230,7 @@ seed sp-pub2
 land sp-pub2 two.txt two
 HEAD2="$(localmain)"; TIP2="$LAST_TIP"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "3: second publish opens a new PR" || bad "3: second publish opens a new PR" "got rc=$rc out=$out"
 want "3: publish record carries only sp-pub2, not sp-pub1 again" "sp-pub2:$TIP2" "$(publish_file)"
 nowant "3: sp-pub1 is not re-published" "sp-pub1" "$(publish_file)"
@@ -245,7 +249,7 @@ land sp-pub3 three.txt three
 HEAD3="$(localmain)"
 PRE_MAIN="$(remote_main)"
 
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 
 out="$(CHECK_STATUS=red RED_SUITES="test-example-suite.sh" verdict)"; rc=$?
 [ "$rc" -eq 0 ] && ok "4: verdict settles the red publish" || bad "4: verdict settles the red publish" "got rc=$rc out=$out"
@@ -281,7 +285,7 @@ land sp-pub3b threeb.txt threeb
 HEAD3B="$(localmain)"
 PRE_MAIN_3B="$(remote_main)"
 
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 
 # Closing a PR retriggers its Gate run (to cancel the superseded one), and that retrigger
 # run can itself conclude green — required jobs skip rather than run once the PR is closed.
@@ -300,7 +304,7 @@ clear_calls
 seed sp-pub3c
 land sp-pub3c threec.txt threec
 HEAD3C="$(localmain)"
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 out="$(PR_STATE=merged CHECK_STATUS=green verdict)"; rc=$?
 is "4c-merged: a PR reported merged (never our own doing) also never fast-forwards again here" \
     "$PRE_MAIN_3B" "$(remote_main)"
@@ -312,7 +316,7 @@ clear_log
 seed sp-pub3d
 land sp-pub3d threed.txt threed
 HEAD3D="$(localmain)"
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 out="$(PR_STATE=unknown verdict)"; rc=$?
 want "4c-unknown: an unreadable PR state waits rather than guessing" "waiting" "$out"
 [ -f "$QDIR/$REPONAME/publish" ] && ok "4c-unknown: the publish record is left in place" \
@@ -337,7 +341,7 @@ git -C "$CLONE" commit -q --allow-empty -m "foreign: not from local/main"
 timeout 5 git -C "$CLONE" push -q origin main
 FOREIGN="$(git -C "$CLONE" rev-parse main)"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "5: publish refuses when the forge diverged" || bad "5: publish refuses when the forge diverged" "got rc=$rc out=$out"
 want "5: names the refusal" "not an ancestor" "$out"
 [ "$(callcount pr-create)" -eq 0 ] && ok "5: no PR was opened" || bad "5: no PR was opened" "$(cat "$CALL_LOG")"
@@ -348,7 +352,7 @@ is "5: the divergence alarm fired exactly once" "1" "$(mail_count)"
 want "5: the alarm names the foreign commit" "foreign: not from local/main" "$(mail_body)"
 want "5: the alarm says never to rebase silently" "Never rebase silently" "$(mail_body)"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "5b: a second publish attempt on the same divergence still refuses" \
     || bad "5b: a second publish attempt on the same divergence still refuses" "got rc=$rc out=$out"
 is "5b: the repeated refusal does not re-alarm (one alarm per divergence)" "1" "$(mail_count)"
@@ -365,7 +369,7 @@ seed sp-pub4
 land sp-pub4 four.txt four
 [ -f "$QDIR/$REPONAME/publish" ] && bad "6 setup: no stray publish record before this case" "found one" \
     || true
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 [ -f "$QDIR/$REPONAME/publish" ] && ok "6: a publish PR is open going into the local cut" \
     || bad "6: a publish PR is open going into the local cut" "no record at $QDIR/$REPONAME/publish"
 

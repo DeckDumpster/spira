@@ -30,6 +30,7 @@ pub mod eval;
 pub mod legacy_map;
 pub mod lc_state;
 pub mod lifecycle_row;
+pub mod local_pass;
 pub mod locate;
 pub mod nonwork;
 pub mod process;

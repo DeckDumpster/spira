@@ -1685,7 +1685,12 @@ fn land_local_of_the_harness_requires_the_round_worktree_while_a_release_is_in_f
 
 // ----------------------------------------------------------------------------- publish
 
+fn full_suite_passed(t: &T, sha: &str) {
+    spira_config::local_pass::record(&t.lib.s.run, spira_config::local_pass::Kind::FullSuite, sha, "test", "0").unwrap();
+}
+
 fn publishable(t: &T) {
+    full_suite_passed(t, "m3");
     t.git.set("refs/heads/local/main", "m3");
     t.git.set("refs/remotes/origin/main", "f0");
     t.git.ancestor("f0", "m3");
@@ -1768,6 +1773,7 @@ fn publish_waits_on_an_unmoved_red_head_then_republishes_once_local_main_moves()
 
     // local/main moves past the red head: the marker no longer matches and is cleared,
     // and this publish proceeds normally.
+    full_suite_passed(&t, "m4");
     t.git.set("refs/heads/local/main", "m4");
     t.git.ancestor("m4", "m4");
     t.git.ancestor("f0", "m4");
@@ -1957,6 +1963,7 @@ fn settle_decision_table() {
 
 fn stale_publish(t: &T, status: &str) {
     publishable(t);
+    full_suite_passed(t, "m4");
     t.git.set("refs/heads/local/main", "m4");
     t.git.ancestor("f0", "m4");
     t.git.ancestor("t1", "m4");
@@ -2245,4 +2252,31 @@ fn a_refused_close_is_left_submitted_and_reaps_nothing() {
 fn the_land_close_reason_cites_the_sha_or_unknown() {
     assert!(crate::ops::helpers::land_close_reason("abc").contains("work landed at abc (law-closed-is-not-landed)"));
     assert!(crate::ops::helpers::land_close_reason("").contains("work landed at unknown"));
+}
+
+#[test]
+fn publish_refuses_a_head_with_no_full_suite_local_pass_naming_the_record_and_command() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    fs::remove_file(t.lib.s.run.join("local-pass/full-suite/m3")).unwrap();
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    for cmd in ["publish", "publish-settle"] {
+        assert_eq!(t.run(&[cmd]), 1, "{cmd}: {}", t.out());
+        assert!(t.err().contains("full-suite local-pass record for m3") && t.err().contains("testenv --suites"), "{}", t.err());
+    }
+    assert!(t.forge.calls.borrow().is_empty());
+    assert!(!t.qfile("publish").exists());
+}
+
+#[test]
+fn publish_goes_ahead_on_a_named_override_and_logs_it() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    fs::remove_file(t.lib.s.run.join("local-pass/full-suite/m3")).unwrap();
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    t.env.vars.borrow_mut().insert(spira_config::local_pass::OVERRIDE_ENV.into(), "local round impossible, box is down".into());
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    assert!(t.qfile("publish").exists());
+    let log = fs::read_to_string(t.lib.s.run.join("local-pass/overrides.log")).unwrap();
+    assert!(log.contains("sha=m3") && log.contains("box is down"), "{log}");
 }
