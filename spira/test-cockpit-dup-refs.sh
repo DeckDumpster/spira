@@ -188,5 +188,22 @@ keys_marked="$(dup_refs "$TMP/marked.json")"
 is   "marked duplicate-of: pair does not count as a live surplus: SP_DUP_REFS=0" "0" "$(key "$keys_marked" SP_DUP_REFS)"
 is   "SP_DUP_BEADS=0"                                                            "0" "$(key "$keys_marked" SP_DUP_BEADS)"
 
+# ======================================================================================
+echo
+echo "a closed predecessor and a recurrence created after its close are not surplus:"
+# ======================================================================================
+# incident.sh files a fresh bead when the predecessor is terminal; that pair is a
+# recurrence, not a dedup failure, and aeons cannot add duplicate-of: to say so.
+cat > "$TMP/recur.json" <<'JSON'
+[
+  {"id":"sp-rec1","title":"predecessor","status":"closed","issue_type":"task","labels":["spira","incident"],"created_at":"2099-01-01T00:00:00Z","updated_at":"2099-01-02T00:00:00Z","closed_at":"2099-01-02T00:00:00Z","external_ref":"recur-ref"},
+  {"id":"sp-rec2","title":"recurrence","status":"open","issue_type":"task","labels":["spira","incident"],"created_at":"2099-01-03T00:00:00Z","updated_at":"2099-01-03T00:00:00Z","external_ref":"recur-ref"}
+]
+JSON
+
+keys_recur="$(dup_refs "$TMP/recur.json")"
+is   "closed predecessor + newer recurrence: SP_DUP_REFS=0" "0" "$(key "$keys_recur" SP_DUP_REFS)"
+is   "SP_DUP_BEADS=0"                                       "0" "$(key "$keys_recur" SP_DUP_BEADS)"
+
 echo
 tl_summary
