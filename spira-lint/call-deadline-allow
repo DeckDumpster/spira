@@ -22,7 +22,6 @@
 1 cockpit/ops/src/layout_main.rs
 4 cockpit/ops/src/rebuild.rs
 1 cockpit/ops/src/reply_main.rs
-1 cockpit/ops/src/resolve_main.rs
 3 cockpit/panel/src/model.rs
 1 cockpit/panel/src/store.rs
 10 czar-pass/src/main.rs
@@ -49,7 +48,7 @@
 2 install/src/install_units.rs
 2 install/src/seed_instance.rs
 1 install/src/systemctl.rs
-3 landing-pass/src/land_verify.rs
+2 landing-pass/src/land_verify.rs
 1 loom/src/ops.rs
 4 maechen-trigger/src/real.rs
 1 mail/src/bead.rs
@@ -91,7 +90,6 @@
 1 spira-config/src/unit.rs
 3 spira-ctrl/src/main.rs
 3 spira-lc/src/bd.rs
-2 spira-lc/src/bd_facts.rs
 1 spira-lc/src/classify_cmd.rs
 1 spira-lc/src/client.rs
 2 spira-lc/src/git_evidence.rs
@@ -311,7 +309,6 @@
 1 tsd/src/main.rs
 5 watchd/src/commands.rs
 3 watchd/src/ops.rs
-1 watchtower/src/conditions.rs
 1 watchtower/src/cpu_throttle.rs
 1 watchtower/src/czar_outcome.rs
 1 watchtower/src/deadline.rs

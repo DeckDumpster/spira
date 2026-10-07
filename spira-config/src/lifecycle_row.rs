@@ -130,8 +130,8 @@ pub fn close_landed(id: &str, reason: &str, actor: &str) -> Result<(), String> {
 
 fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) -> Result<(), String> {
     use std::io::Write;
-    let mut cmd = Command::new(bin);
-    cmd.args(["close", id, "--reason-file", "-", "--actor", actor]);
+    let mut cmd = Command::new("timeout");
+    cmd.args([LC_TIMEOUT_SECS, bin, "close", id, "--reason-file", "-", "--actor", actor]);
     cmd.args(extra);
     let mut child = cmd
         .stdin(Stdio::piped())
