@@ -2,7 +2,7 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N";
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
@@ -35,6 +35,11 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("run") => return run_main(&cwd, &args[1..], &env),
         Some("step") => return step_main(&args[1..]),
         Some("replay") => return replay_main(&args[1..]),
+        Some("probe") => {
+            let [dir] = &args[1..] else { return Err(USAGE.to_string()) };
+            print!("{}", spira_sim::probe::probe(&PathBuf::from(dir), &env)?);
+            return Ok(());
+        }
         _ => {}
     }
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
