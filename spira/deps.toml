@@ -715,3 +715,10 @@ tier = "optional"
 purpose = "the escape-census timer suite parses the OnCalendar expression with it; absent, that one check is skipped"
 version_min = ""
 version_probe = "systemd-analyze --version"
+
+[[dep]]
+name = "ip"
+tier = "runtime"
+purpose = "resolving this host's own address toward a target (ip route get); no address is configured"
+version_min = ""
+version_probe = "ip -V"

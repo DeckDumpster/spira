@@ -2,7 +2,8 @@
 //! address the kernel would use toward a target (`ip route get`). A DHCP lease that moves
 //! the box changes the answer; no config key holds a stale copy of it.
 
-use std::process::{Command, Stdio};
+use crate::bounded::bounded;
+use std::process::Stdio;
 
 pub const AUTO: &str = "auto";
 
@@ -27,7 +28,7 @@ pub fn source_toward_with(target: &str, ip: &dyn Fn(&str) -> Result<String, Stri
 }
 
 fn run_ip(target: &str) -> Result<String, String> {
-    let o = Command::new("ip")
+    let o = bounded("ip")
         .args(["-o", "route", "get", target])
         .stdin(Stdio::null())
         .output()
