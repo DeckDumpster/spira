@@ -959,8 +959,12 @@ pub fn bins_present(repo: &Repo, wt: &Path, head: &str) -> bool {
 /// stray in that checkout is neither — reading the branch's own tree gets all three right at
 /// once, matching exactly what testenv-batch.sh validates `--suites` against.
 pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
+    suites_in(&repo.path, branch)
+}
+
+pub fn suites_in(path: &Path, branch: &str) -> Vec<String> {
     let out = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["ls-tree", "-r", "--name-only", branch, "--", "spira/"]),
+        Command::new("git").arg("-C").arg(path).args(["ls-tree", "-r", "--name-only", branch, "--", "spira/"]),
         "git ls-tree suites",
     )
     .unwrap_or_default();

@@ -130,6 +130,7 @@ dependencies = [
  "spira-config",
  "suite-select",
  "testkit",
+ "tsd",
 ]
 
 [[package]]

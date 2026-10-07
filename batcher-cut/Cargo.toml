@@ -13,6 +13,7 @@ batcher = { path = "../batcher" }
 spira-config = { path = "../spira-config" }
 suite-select = { path = "../suite-select" }
 gate = { path = "../gate" }
+tsd = { path = "../tsd" }
 serde_json = "1"
 
 
