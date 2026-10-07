@@ -19,7 +19,6 @@
 use spira_config::nonwork::{self, Kind};
 use crate::model::{Item, View};
 use serde_json::Value;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -208,7 +207,7 @@ pub fn child_path(cfg: &Cfg) -> String {
 }
 
 fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<String, String> {
-    let mut c = Command::new(bin(cmd, cfg));
+    let mut c = spira_config::bounded::bounded(bin(cmd, cfg));
     c.args(args).env("PATH", child_path(cfg));
     // NO `current_dir`. It existed so `gt` could resolve its town, and `gt` is gone from this
     // panel; `bd` takes its database from `-C`, so a working directory here could only ever

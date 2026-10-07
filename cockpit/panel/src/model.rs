@@ -283,7 +283,7 @@ fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<(), String> {
 fn run_as(cmd: &str, args: &[&str], actor: Option<&str>, cfg: &Cfg) -> Result<(), String> {
     // Absolute path: tmux's global PATH has no ~/.local/bin, so a respawned pane cannot
     // find `bd` by name. See store::bin.
-    let mut c = Command::new(crate::store::bin(cmd, cfg));
+    let mut c = spira_config::bounded::bounded(crate::store::bin(cmd, cfg));
     c.args(args);
     c.env("PATH", crate::store::child_path(cfg));
     if let Some(a) = actor {
@@ -387,7 +387,7 @@ fn lift_work_holds(db: &str, item: &Item, actor: &str, cfg: &Cfg) {
 fn run_piped(cmd: &str, args: &[&str], stdin_body: &str, cfg: &Cfg) -> Result<(), String> {
     use std::io::Write;
     use std::process::Stdio;
-    let mut c = Command::new(cmd);
+    let mut c = spira_config::bounded::bounded(cmd);
     c.args(args)
         .env("PATH", crate::store::child_path(cfg))
         .stdin(Stdio::piped())
@@ -682,7 +682,7 @@ fn rule_sh() -> Result<String, String> {
 /// Three lines, because that is what the refusal is, collapsed to one row because the footer
 /// is one row.
 fn run_verbose(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<(), String> {
-    let mut c = Command::new(cmd);
+    let mut c = spira_config::bounded::bounded(cmd);
     c.args(args).env("PATH", crate::store::child_path(cfg));
     match c.output() {
         Err(e) => Err(format!("{cmd}: {e}")),

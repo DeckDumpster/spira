@@ -89,6 +89,7 @@ impl RealSeam {
         // still reaches whoever is reading this process's output, the same seam idiom
         // `sentinel::seams::PROBE` uses (`. "$LIB" >&2 || exit 97`).
         let script = format!(r#". "$0" >&2 || exit 97; {body}"#);
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -157,6 +158,7 @@ impl Seam for RealSeam {
         // own warnings (SPIRA_CLAUDE's deprecation notice among them) are never silently
         // dropped just because this process happens to be reading lib.sh's variables.
         let script = r#". "$0" >&2 || exit 97; for _v in $(compgen -v SPIRA_); do printf '%s\0' "$_v=${!_v:-}"; done"#;
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -183,7 +185,7 @@ impl Seam for RealSeam {
     }
 
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String> {
-        let o = Command::new("ctx-meter.sh").arg("env").arg(transcript).stdin(Stdio::null()).output();
+        let o = spira_config::bounded::bounded("ctx-meter.sh").arg("env").arg(transcript).stdin(Stdio::null()).output();
         let mut m = HashMap::new();
         if let Ok(o) = o {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
@@ -196,7 +198,7 @@ impl Seam for RealSeam {
     }
 
     fn archive_lineage(&self, session: &str) -> String {
-        Command::new("archive.sh")
+        spira_config::bounded::bounded("archive.sh")
             .args(["lineage", session, "--json"])
             .stdin(Stdio::null())
             .output()
@@ -205,7 +207,7 @@ impl Seam for RealSeam {
     }
 
     fn mail_send_digest(&self, subject: &str, body: &str) -> Result<bool, String> {
-        let mut child = Command::new("mail")
+        let mut child = spira_config::bounded::bounded("mail")
             .args(["send", "operator", "--from", "Archivist <archivist@spira>", "--subject", subject, "--kind", "note", "--digest"])
             .stdin(Stdio::piped())
             .spawn()
@@ -267,7 +269,7 @@ impl Seam for RealSeam {
         // for UTC, so an empty `tz` must leave `TZ` unset entirely (never exported, never
         // removed from a real ambient one — `date` then reads /etc/localtime) rather than
         // setting it to the empty string.
-        let mut c = Command::new("date");
+        let mut c = spira_config::bounded::bounded("date");
         c.arg("+%F");
         if tz.is_empty() {
             c.env_remove("TZ");

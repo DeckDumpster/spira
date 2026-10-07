@@ -17,6 +17,7 @@ use std::process::{Command, Stdio};
 /// lib.sh function returned nothing" from "lib.sh never sourced at all," so this is a
 /// dedicated, one-time check, not folded into `seam()`.
 pub fn lib_sh_sources(home: &Path) -> bool {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     Command::new("bash")
         .arg("-c")
         .arg(format!(". \"{}\" >/dev/null 2>&1", home.join("lib.sh").display()))
@@ -57,7 +58,7 @@ impl Real {
     }
 
     fn git(&self, repo: &Path, args: &[&str]) -> (bool, String) {
-        let out = Command::new("git").arg("-C").arg(repo).args(args).stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).stdin(Stdio::null()).output();
         match out {
             Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned()),
             Err(_) => (false, String::new()),
@@ -195,7 +196,7 @@ impl World for Real {
             .collect()
     }
     fn show_file(&self, repo: &Path, rev: &str, path: &str) -> Option<Vec<u8>> {
-        let out = Command::new("git").arg("-C").arg(repo).arg("show").arg(format!("{rev}:{path}")).stdin(Stdio::null()).output().ok()?;
+        let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).arg("show").arg(format!("{rev}:{path}")).stdin(Stdio::null()).output().ok()?;
         if out.status.success() { Some(out.stdout) } else { None }
     }
     fn file_mode(&self, repo: &Path, rev: &str, path: &str) -> Option<String> {
@@ -210,6 +211,7 @@ impl World for Real {
     }
 
     fn release_verify_no_pre_activate(&self, name: &str, releases: Option<&Path>) -> (bool, String) {
+        // batch-job: release runs for as long as its work does
         let mut c = Command::new("release");
         c.arg("verify").arg(name).arg("--no-pre-activate");
         if let Some(r) = releases {
@@ -222,6 +224,7 @@ impl World for Real {
         }
     }
     fn release_status(&self) -> String {
+        // batch-job: release runs for as long as its work does
         Command::new("release")
             .arg("status")
             .stdin(Stdio::null())
@@ -232,6 +235,7 @@ impl World for Real {
     }
     fn release_build_verify_activate(&self, sha: &str, repo: &Path, base: &str, releases: &Path) -> Result<(), String> {
         let run = |args: &[&str]| -> Result<(), String> {
+            // batch-job: release runs for as long as its work does
             let out = Command::new("release").args(args).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
             if out.status.success() {
                 Ok(())
@@ -252,12 +256,13 @@ impl World for Real {
         // directly. Redirecting to Stdio::null() here discarded that line entirely; fixed
         // by inheriting stdout/stderr (Command's own default) instead of silencing them.
         // Caught live by testenv's test-overrides.sh (sp-yyk47).
-        let _ = Command::new("overrides.sh").arg("apply").arg(repo).stdin(Stdio::null()).status();
+        let _ = spira_config::bounded::bounded("overrides.sh").arg("apply").arg(repo).stdin(Stdio::null()).status();
     }
     fn install_diff(&self, installer: &Path) -> (i32, String) {
         // units-install is a compiled binary now (sp-31dm0): exec it directly, never
         // through bash -- the old install.sh needed `bash <installer>` because it was a
         // script with no guaranteed +x bit; a binary is run like any other.
+        // batch-job: this runs whatever its caller names, as long as that takes
         let out = Command::new(installer).arg("--diff").stdin(Stdio::null()).output();
         match out {
             Ok(o) => (
@@ -309,7 +314,7 @@ impl World for Real {
         // mail.sh is the `mail` binary now (sp-ooh1k); deps.toml's compat table keeps a
         // spira/mail.sh symlink but skew.sh's own fix called the real name directly
         // rather than lean on that transitional shim -- matched here, sp-yyk47.
-        let mut child = Command::new("mail")
+        let mut child = spira_config::bounded::bounded("mail")
             .args(["send", "operator", "--from", "Skew check <skew@spira>", "--subject", subject, "--kind", "question", "--default", default_action])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -333,7 +338,7 @@ impl World for Real {
     }
 
     fn now_stamp(&self) -> String {
-        let out = Command::new("date").arg("-u").arg("+%Y%m%dT%H%M%SZ").output();
+        let out = spira_config::bounded::bounded("date").arg("-u").arg("+%Y%m%dT%H%M%SZ").output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     }
     fn env(&self, k: &str) -> Result<Option<String>, String> {
@@ -411,7 +416,7 @@ impl World for Real {
 
 /// `exclude.sh harness-in`, fed `text` (raw, possibly multi-line `git` output) on stdin.
 fn pipe_through_exclude(home: &Path, text: &str) -> Vec<String> {
-    let mut child = match Command::new(home.join("exclude.sh")).arg("harness-in").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
+    let mut child = match spira_config::bounded::bounded(home.join("exclude.sh")).arg("harness-in").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };

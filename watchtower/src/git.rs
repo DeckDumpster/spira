@@ -2,10 +2,9 @@
 //! (`git [-C repo] rev-parse --verify --quiet <ref>`, `merge-base --is-ancestor`, `log
 //! --oneline`) — no repo library, because the bash never used one either.
 
-use std::process::Command;
 
 fn git(repo: Option<&str>, args: &[&str]) -> std::process::Output {
-    let mut cmd = Command::new("git");
+    let mut cmd = spira_config::bounded::bounded("git");
     if let Some(r) = repo {
         cmd.arg("-C").arg(r);
     }

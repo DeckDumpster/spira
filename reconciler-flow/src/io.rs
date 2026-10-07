@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 use std::io::Write as _;
@@ -16,7 +16,7 @@ use std::io::Write as _;
 /// an old duckdb, or a query that legitimately returns nothing) is `Ok(vec![])`, not an
 /// error — the caller decides whether "no rows" is itself a gap.
 pub fn duckdb_json(bin: &str, sql: &str) -> Result<Vec<Value>, String> {
-    let out = Command::new(bin)
+    let out = spira_config::bounded::bounded(bin)
         .args(["-json", "-c", sql])
         .stdin(Stdio::null())
         .output()
@@ -53,7 +53,7 @@ fn u64_field(row: &Value, key: &str) -> u64 {
 /// `scope_label` when the harness serves more than one repository, same convention
 /// czar-pass uses for its own detectors; bd supplies only which beads the scope holds.
 pub fn backlog_count(bd_bin: &str, spira_db: &str, scope_label: &str) -> Result<u64, String> {
-    let mut cmd = Command::new(bd_bin);
+    let mut cmd = spira_config::bounded::bounded(bd_bin);
     cmd.arg("-C").arg(spira_db).args([
         "list", "--all",
         "--exclude-type", "epic,event", "--brief", "--json", "--limit", "0",
@@ -261,7 +261,7 @@ pub fn append_backlog_sample(tsd_bin: &str, root: &Path, count: u64) {
     if tsd_bin.is_empty() {
         return;
     }
-    let _ = Command::new(tsd_bin)
+    let _ = spira_config::bounded::bounded(tsd_bin)
         .args(["--family", "backlog", "--root"])
         .arg(root)
         .args(["--field", &format!("count={count}")])
@@ -438,7 +438,7 @@ fn read_flow_floors(desired_dir: &Path) -> Option<(Option<f64>, Option<u64>)> {
 pub fn mail_concierge(mail_sh: &str, subject: &str, body: &str) -> Result<(), String> {
     // `mail` is a compiled binary now (sp-ooh1k), invoked directly by name — never `bash
     // <path>`, which only ever worked while this was a shell script.
-    let mut child = Command::new(mail_sh)
+    let mut child = spira_config::bounded::bounded(mail_sh)
         .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "note"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

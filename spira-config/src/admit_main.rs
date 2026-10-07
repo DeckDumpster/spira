@@ -87,6 +87,7 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
         Some(inner) => (OsString::from(inner), &args[..]),
         None => (args[0].clone(), &args[1..]),
     };
+    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
     let e = Command::new(&prog).args(argv).exec();
     say(&format!("cannot exec {}: {e}", prog.to_string_lossy()));
     ExitCode::from(127)
@@ -203,6 +204,7 @@ fn run(args: &[OsString]) -> ExitCode {
     let inherit = var(admission::INHERIT_ENV);
     let q = admission::Request { run: &run, pool, holder_pid: std::process::id(), who: &who, inherit: inherit.as_deref(), weight };
     let g = admission::acquire_real(&q, &mut |l: &str| say(l));
+    // batch-job: the admitted command is whatever the caller asked to run under admission
     let status = Command::new(prog).args(&cmd[1..]).env(admission::INHERIT_ENV, &g.token).status();
     drop(g);
     match status {

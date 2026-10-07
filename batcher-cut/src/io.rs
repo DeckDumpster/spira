@@ -157,6 +157,7 @@ pub fn bead_reopen(env: &Env, id: &str, cause: &str, note: &str) {
 /// missing binary) is folded into 3 for the same reason — silence must fail closed to "an
 /// aeon still sees this", never to "nobody did anything and the round moved on".
 pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(&env.rebase_stale_bin);
     // rebase-stale finds lib.sh through SPIRA_HOME and refuses without it; this pass may have
     // been given --home rather than an exported SPIRA_HOME (conf.sh sets it unexported).
@@ -570,7 +571,7 @@ pub fn clear_prepared(env: &Env, repo: &str) {
 /// True when `ancestor` is reachable from `descendant` — the prepared round descends from
 /// the base the landed PR left.
 pub fn is_ancestor(repo: &Repo, ancestor: &str, descendant: &str) -> bool {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(&repo.path)
         .args(["merge-base", "--is-ancestor", ancestor, descendant])
@@ -692,7 +693,7 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
 /// sibling a base-clean member lost its merge to, with the files they clashed on.
 pub fn sibling_conflict(repo: &Repo, base_sha: &str, files: &[String], winners: &[(String, String)]) -> Option<(String, Vec<String>)> {
     for (id, tip) in winners {
-        let o = Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]).output().ok()?;
+        let o = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]).output().ok()?;
         let touched = String::from_utf8_lossy(&o.stdout).to_string();
         let shared: Vec<String> = files.iter().filter(|f| touched.lines().any(|l| l == f.as_str())).cloned().collect();
         if !shared.is_empty() {
@@ -713,7 +714,7 @@ pub fn base_conflict(repo: &Repo, base_sha: &str, tip: &str) -> Option<Vec<Strin
 
 /// The paths `tip` conflicts on with `side`, per `merge-tree --write-tree`; None when clean.
 pub fn conflict_files(dir: &Path, side: &str, tip: &str) -> Option<Vec<String>> {
-    let o = Command::new("git")
+    let o = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(dir)
         .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", side, tip])
@@ -823,11 +824,11 @@ pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
 }
 
 fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
-    let diff = Command::new("git").arg("-C").arg(&repo.path).args(["diff", &format!("{base_sha}...{tip}")]).output().ok()?;
+    let diff = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["diff", &format!("{base_sha}...{tip}")]).output().ok()?;
     if !diff.status.success() {
         return None;
     }
-    let mut child = Command::new("git")
+    let mut child = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(&repo.path)
         .args(["patch-id", "--stable"])
@@ -865,7 +866,7 @@ pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
 }
 
 pub fn set_branch(repo: &Repo, branch: &str, sha: &str) {
-    let _ = Command::new("git").arg("-C").arg(&repo.path).args(["branch", "-f", branch, sha]).status();
+    let _ = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["branch", "-f", branch, sha]).status();
 }
 
 pub fn local_branches(repo: &Repo, prefix: &str) -> Vec<String> {
@@ -879,7 +880,7 @@ pub fn local_branches(repo: &Repo, prefix: &str) -> Vec<String> {
 
 pub fn reap_branches(repo: &Repo, prefix: &str) {
     for b in local_branches(repo, prefix) {
-        let _ = Command::new("git")
+        let _ = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(&repo.path)
             .args(["branch", "-D", &b])
@@ -988,6 +989,7 @@ pub const GATE_FENCES: &str = "gate-fences";
 /// is covered with nothing to keep in sync. On a non-zero exit, writes the combined output to
 /// a file under `env.run` and returns its path as the error, for the incident this files.
 pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), String> {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = Command::new("bash")
         .arg(env.home.join("gate.sh"))
         .arg(branch)
@@ -1240,7 +1242,7 @@ pub fn hold_blocking(env: &Env, repo: &str, key: &str) -> Option<String> {
 /// naming every member: a stale test-plan matrix is regenerated and a newly added spira
 /// script is made executable. Returns what it fixed; empty means the tree was left untouched.
 pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member]) -> Result<Vec<&'static str>, String> {
-    let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(wt).args(args), "git");
+    let git = |args: &[&str]| run(spira_config::bounded::bounded("git").arg("-C").arg(wt).args(args), "git");
     let mut fixes = Vec::new();
 
     let added = git(&["diff", "--name-only", "--diff-filter=A", base_sha, "HEAD"])?;
@@ -1255,6 +1257,7 @@ pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member])
     }
 
     if wt.join("spira/plan-matrix.sh").is_file() {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         run(Command::new("bash").arg(wt.join("spira/plan-matrix.sh")).current_dir(wt), "plan-matrix.sh")?;
         if !git(&["status", "--porcelain", "--", "docs/test-plan"])?.trim().is_empty() {
             git(&["add", "--", "docs/test-plan"])?;
@@ -1267,7 +1270,7 @@ pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member])
     }
     let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     let msg = batcher::core::integration_fix_message(&fixes, &ids);
-    let mut c = Command::new("git");
+    let mut c = spira_config::bounded::bounded("git");
     c.arg("-C").arg(wt).args(["-c", &format!("user.name={}", env.git_name), "-c", &format!("user.email={}", env.git_email)]);
     c.args(["commit", "-q", "-F", "-"]).stdin(std::process::Stdio::piped());
     let mut child = c.spawn().map_err(|e| format!("git commit: {e}"))?;
@@ -1308,9 +1311,9 @@ fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &s
     // A bare name (the default, `forge`, since sp-yv4b3) is the launcher-PATH program, run
     // directly; a configured SPIRA_FORGE path is run with bash, as batch.sh did.
     let mut cmd = if repo.forge.components().count() == 1 {
-        Command::new(&repo.forge)
+        spira_config::bounded::bounded(&repo.forge)
     } else {
-        let mut c = Command::new("bash");
+        let mut c = spira_config::bounded::bounded("bash");
         c.arg(&repo.forge);
         c
     };
@@ -1440,6 +1443,7 @@ fn land_local_once(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(St
         let _ = writeln!(acc, "{id}:{tip}");
         acc
     });
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(&env.queue_bin);
     cmd.arg("land-local").arg(&repo.name);
     cmd.arg("--head").arg(head);
@@ -1517,7 +1521,7 @@ pub fn tsd_append_round(env: &Env, fields: &[(&str, String)]) {
 /// One row of `family` through tsd-write; best-effort, like every TSD write here.
 pub fn tsd_append(env: &Env, family: &str, fields: &[(&str, String)]) {
     let Some(bin) = &env.tsd_bin else { return };
-    let mut cmd = Command::new(bin);
+    let mut cmd = spira_config::bounded::bounded(bin);
     cmd.arg("--family").arg(family).arg("--root").arg(&env.run);
     for (k, v) in fields {
         cmd.arg("--field-str").arg(format!("{k}={v}"));

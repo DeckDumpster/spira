@@ -17,14 +17,14 @@
 //! scanning with no patterns at all.
 
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use spira_lint::{all_rules, run, Tree};
 
 const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--emit-allow]\n       spira-lint --only inventory --scan <file>";
 
 fn default_root() -> Option<PathBuf> {
-    let out = Command::new("git").args(["rev-parse", "--show-toplevel"]).output().ok()?;
+    let out = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok()?;
     out.status.success().then(|| PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
 }
 

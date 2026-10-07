@@ -268,7 +268,7 @@ fn unix_now() -> u64 {
 }
 
 fn compute_now_iso() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()
@@ -440,6 +440,7 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
 /// SAME `world_gate` sentinel's own pass does, which also catches a live DRAIN this
 /// hand-rolled check never did.
 fn summon_fayth_czar(_cfg: &Config) {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let _ = Command::new("sentinel")
         .arg("--summon")
         .arg("czar")
@@ -591,7 +592,7 @@ fn parse_field(output: &str, key: &str) -> Option<String> {
 }
 
 fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "-d", ts, "+%s"])
         .stderr(Stdio::null())
         .output()
@@ -763,6 +764,7 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
         let rid = run_id.clone();
         let rp = repo_path.clone();
         det_action(cfg, "deadlock", &desc, move || {
+            // batch-job: runs a gate, build or forge script that takes as long as its work
             let _ = Command::new("bash").arg(&forge).args(["workflow-rerun", &rp, &rid]).status();
         });
         if let Some(st) = state.get_mut("deadlock") {
@@ -927,7 +929,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
 
     let age = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
     let unit_service = format!("{}.service", cfg.land_unit);
-    let is_failed = Command::new(&cfg.systemctl)
+    let is_failed = spira_config::bounded::bounded(&cfg.systemctl)
         .args(["--user", "is-failed", &unit_service])
         .stderr(Stdio::null())
         .output()
@@ -941,8 +943,8 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
         let svc = unit_service.clone();
         let desc = format!("reset-failed + start {}", cfg.land_unit);
         det_action(cfg, "loop-stalled", &desc, move || {
-            let _ = Command::new(&sc).args(["--user", "reset-failed", &svc]).status();
-            let _ = Command::new(&sc).args(["--user", "start", &svc]).status();
+            let _ = spira_config::bounded::bounded(&sc).args(["--user", "reset-failed", &svc]).status();
+            let _ = spira_config::bounded::bounded(&sc).args(["--user", "start", &svc]).status();
         });
         if let Some(st) = state.get_mut("loop-stalled") {
             record_remedy(st, cfg.now_secs, &desc);
@@ -1055,6 +1057,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
                     let rp = repo_path_str.clone();
                     let rid = run_id.clone();
                     det_action(cfg, "ci-stalled", &desc, move || {
+                        // batch-job: runs a gate, build or forge script that takes as long as its work
                         let _ = Command::new("bash").arg(&forge).args(["workflow-rerun", &rp, &rid]).status();
                     });
                     if let Some(st) = state.get_mut(&cis_key) {
@@ -1251,7 +1254,7 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
 /// `certified_pool` (batcher-cut) and `queue_certified_list` (lib.sh) use to scope the machine's
 /// beads to one repository.
 fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
-    let Ok(out) = Command::new("git")
+    let Ok(out) = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo_path)
         .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/*"])
@@ -1274,7 +1277,7 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 /// or unparseable machine reads as depth 0, said on stderr: a stall detector must not invent a
 /// pool it could not see.
 fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
-    let out = match Command::new(&cfg.spira_lc).args(["list", "--state", "CERTIFIED"]).output() {
+    let out = match spira_config::bounded::bounded(&cfg.spira_lc).args(["list", "--state", "CERTIFIED"]).output() {
         Ok(o) if o.status.success() => o.stdout,
         Ok(o) => {
             eprintln!("czar-pass: spira-lc list --state CERTIFIED exited {}", o.status);

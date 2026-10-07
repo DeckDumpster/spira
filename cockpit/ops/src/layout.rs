@@ -846,6 +846,7 @@ impl Layout {
                 // invoked that way, never by a path constructed by hand) — `rebuild` lives
                 // in `$SPIRA_RELEASE/bin`, not under `$SPIRA_COCKPIT`, which is where the
                 // bash scripts it replaces used to live.
+                // batch-job: this runs whatever its caller names, as long as that takes
                 match std::process::Command::new("rebuild").output() {
                     Ok(out) if out.status.success() => {
                         let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -1066,7 +1067,7 @@ fn chrono_like_timestamp() -> String {
         .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("TZ").ok());
-    let mut cmd = std::process::Command::new("date");
+    let mut cmd = spira_config::bounded::bounded("date");
     cmd.arg("+%Y-%m-%dT%H:%M:%S");
     if let Some(tz) = tz {
         cmd.env("TZ", tz);

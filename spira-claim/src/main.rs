@@ -1300,7 +1300,7 @@ fn trace_reopen(run_dir: &std::path::Path, id: &str, cause: &str, actor: &str) {
         .and_then(|a| a.rsplit('/').next().map(str::to_string))
         .filter(|a| !a.is_empty())
         .unwrap_or_else(|| "unknown".into());
-    let ts = std::process::Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().ok()
+    let ts = spira_config::bounded::bounded("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(run_dir.join("reopen.log")) {
         let _ = writeln!(f, "{ts} reopen {id} cause={cause} actor={actor} caller={caller}");

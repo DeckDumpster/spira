@@ -17,7 +17,7 @@ use crate::ports::Git;
 use crate::report::Reporter;
 use regex::Regex;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // land_subject
@@ -64,7 +64,7 @@ pub fn is_work_type(t: &str, close_types: &str) -> bool {
 /// `cmd_ghq`) — there is no `ghq` binary on PATH to exec. This calls that same subcommand
 /// directly, exactly what the bash shim would have called.
 pub fn pr_merged(repo: &Path, branch: &str) -> bool {
-    let mut c = Command::new("bdq");
+    let mut c = spira_config::bounded::bounded("bdq");
     c.current_dir(repo).arg("__ghq").args(["pr", "view", branch, "--json", "state", "-q", ".state"]);
     c.stdin(Stdio::null()).stderr(Stdio::null());
     match c.output() {
@@ -166,7 +166,7 @@ fn bdq_close(id: &str, reason: &str) -> bool {
 /// shim `spira_reap_landed_branch` execs. `Ok(())` sent, `Err(its output)` otherwise
 /// (failed or refused — both are "left for the Sending" from here).
 fn sending_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
-    let mut c = Command::new("sending");
+    let mut c = spira_config::bounded::bounded("sending");
     c.arg("reap-landed-branch");
     if let Some(f) = status_file {
         c.arg("--status-from").arg(f);

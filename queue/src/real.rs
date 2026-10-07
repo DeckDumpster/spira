@@ -252,6 +252,7 @@ impl RealLib {
         let home = self.home_str();
         let mut all = vec![home.as_str()];
         all.extend_from_slice(vals);
+        // batch-job: this runs whatever its caller names, as long as that takes
         let mut cmd = Command::new("bash");
         cmd.stdin(Stdio::piped()).stderr(Stdio::inherit());
         cmd.stdout(if capture { Stdio::piped() } else { Stdio::inherit() });
@@ -290,6 +291,7 @@ fn pb(s: &str) -> Option<PathBuf> {
 /// 2>/dev/null | tr '\n' ' '`, which `real.rs`'s callers already split back apart with
 /// `split_whitespace`.
 fn git_remotes(repo: &str) -> Vec<String> {
+    // batch-job: git history or network operation, as long as the repository is large
     Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -439,7 +441,7 @@ impl Lib for RealLib {
     /// backs this any more. stdout/stderr inherit straight through, exactly as the
     /// dropped seam call's own `capture: false` did.
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path) {
-        let _ = Command::new("gh-intake").args(["closeout", id, sha, &repo.display().to_string()]).status();
+        let _ = spira_config::bounded::bounded("gh-intake").args(["closeout", id, sha, &repo.display().to_string()]).status();
     }
     fn comment(&self, id: &str, text: &str) {
         self.call(Op::Comment, &[id, text], false);
@@ -562,7 +564,7 @@ impl Scripts for RealScripts {
         let _ = ok(Command::new("testenv").args(["suites", "observe-flake", suite, sha]).stdout(Stdio::null()).stderr(Stdio::null()));
     }
     fn mail_operator(&self, subject: &str, body: &str) {
-        let Ok(mut child) = Command::new("mail")
+        let Ok(mut child) = spira_config::bounded::bounded("mail")
             .args(["send", "operator", "--from", "Spira Queue <queue@spira>", "--subject", subject])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -577,6 +579,7 @@ impl Scripts for RealScripts {
         let _ = child.wait();
     }
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32 {
+        // batch-job: this runs whatever its caller names, as long as that takes
         let mut c = Command::new(bin);
         c.arg("cut").arg(repo).arg("--home").arg(&self.home);
         if wait_zero {
@@ -588,6 +591,7 @@ impl Scripts for RealScripts {
         ok(Command::new("czar-fence.sh").arg(class))
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
+        // batch-job: this runs whatever its caller names, as long as that takes
         match Command::new(bin).args(args).env("SPIRA_DB", db).stdin(Stdio::null()).output() {
             Ok(o) => RunOut {
                 rc: o.status.code().unwrap_or(127),
@@ -605,7 +609,7 @@ pub struct RealForge;
 
 impl Forge for RealForge {
     fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<String> {
-        let mut child = Command::new(forge)
+        let mut child = spira_config::bounded::bounded(forge)
             .arg("pr-create")
             .arg(repo)
             .arg(head)

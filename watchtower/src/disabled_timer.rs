@@ -7,7 +7,6 @@
 use crate::incident::{self, Finding};
 use crate::log::log;
 use crate::seams;
-use std::process::Command;
 
 pub struct Cfg {
     pub systemctl: String,
@@ -17,7 +16,7 @@ pub struct Cfg {
 fn systemctl_ok(cfg: &Cfg, args: &[&str]) -> bool {
     let mut full = vec!["--user"];
     full.extend_from_slice(args);
-    Command::new(&cfg.systemctl)
+    spira_config::bounded::bounded(&cfg.systemctl)
         .args(&full)
         .output()
         .map(|o| o.status.success())
@@ -27,7 +26,7 @@ fn systemctl_ok(cfg: &Cfg, args: &[&str]) -> bool {
 fn systemctl_stdout(cfg: &Cfg, args: &[&str]) -> String {
     let mut full = vec!["--user"];
     full.extend_from_slice(args);
-    Command::new(&cfg.systemctl)
+    spira_config::bounded::bounded(&cfg.systemctl)
         .args(&full)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())

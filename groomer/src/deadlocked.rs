@@ -12,7 +12,7 @@
 //! anything, so a bead cleared between this filter and that check is simply skipped there,
 //! silently, never a stale write.
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::seam::Seam;
 
@@ -66,7 +66,7 @@ pub fn candidates_json(candidates: &[Candidate]) -> String {
 }
 
 fn git_ref_exists(path: &str, branch: &str) -> bool {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .args(["-C", path, "show-ref", "--verify", "-q", &format!("refs/heads/{branch}")])
         .stdin(Stdio::null())
         .status()
@@ -75,7 +75,7 @@ fn git_ref_exists(path: &str, branch: &str) -> bool {
 }
 
 fn git_log_subjects(path: &str, branch: &str, n: u32) -> String {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .args(["-C", path, "log", "--format=%s%n%b", "-n", &n.to_string(), branch])
         .stdin(Stdio::null())
         .output()
@@ -84,7 +84,7 @@ fn git_log_subjects(path: &str, branch: &str, n: u32) -> String {
 }
 
 fn git_merges_cleanly(path: &str, base: &str, branch: &str) -> bool {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .args(["-C", path, "merge-tree", "--write-tree", base, branch])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -147,7 +147,7 @@ pub fn run(seam: &dyn Seam, db: &str, apply: bool, spira_claim_bin: &str) -> (i3
     let tmp_str = tmp.to_string_lossy().into_owned();
     args.push(&tmp_str);
     args.extend(["--db", db]);
-    let out = Command::new(spira_claim_bin).args(&args).stdin(Stdio::null()).output();
+    let out = spira_config::bounded::bounded(spira_claim_bin).args(&args).stdin(Stdio::null()).output();
     let _ = std::fs::remove_file(&tmp);
     match out {
         Ok(o) => {

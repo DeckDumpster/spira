@@ -27,6 +27,7 @@ fn confine(self_exe: &std::path::Path, args: &[String]) -> Option<Result<std::co
         Ok(a) => a,
         Err(e) => return Some(Err(e)),
     };
+    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
     let err = std::process::Command::new(&argv[0]).args(&argv[1..]).env(IN_UNIT_ENV, "1").exec();
     Some(Err(format!("cannot exec {}: {err}", argv[0])))
 }

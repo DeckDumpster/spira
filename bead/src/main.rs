@@ -84,6 +84,7 @@ const BDQ_SCRIPT: &str = r#"home="$1"; shift; . "$home/lib.sh" || exit 90; bdq "
 /// Runs `bdq` with inherited stdio (the shape every state-changing call needs: `bd`'s own
 /// stdout/stderr must reach the original caller exactly as it would running the bash).
 fn bdq_status(home: &str, args: &[String]) -> i32 {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     Command::new("bash")
         .arg("-c")
         .arg(BDQ_SCRIPT)
@@ -101,6 +102,7 @@ fn bdq_status(home: &str, args: &[String]) -> i32 {
 /// Runs `bdq` capturing stdout, discarding stderr (`2>/dev/null`, matching every read call
 /// `bead.sh`'s own sweep made).
 fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = Command::new("bash")
         .arg("-c")
         .arg(BDQ_SCRIPT)
@@ -200,7 +202,7 @@ fn schema_sh(home: &str) -> String {
 /// `schema.sh type-of <kind>` — `Ok(bd_type)` or `Err(())` (stderr discarded: `bead.sh`
 /// prints its own "unknown kind" message, never schema.sh's).
 fn schema_type_of(home: &str, kind: &str) -> Result<String, ()> {
-    let out = Command::new(schema_sh(home))
+    let out = spira_config::bounded::bounded(schema_sh(home))
         .arg("type-of")
         .arg(kind)
         .output()
@@ -215,7 +217,7 @@ fn schema_type_of(home: &str, kind: &str) -> Result<String, ()> {
 /// `schema.sh kinds` — passed straight through to stdout by `contract` (bash's own
 /// behaviour: the call sits inline between two of `_bead_contract`'s own `printf`s).
 fn schema_kinds_passthrough(home: &str) -> String {
-    Command::new(schema_sh(home))
+    spira_config::bounded::bounded(schema_sh(home))
         .arg("kinds")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
@@ -226,7 +228,7 @@ fn schema_kinds_passthrough(home: &str) -> String {
 /// non-work path reads from the live schema rather than an inline bash default, so this
 /// bridges rather than duplicating `schema_name`'s own default table.
 fn schema_name(home: &str, key: &str) -> String {
-    Command::new(schema_sh(home))
+    spira_config::bounded::bounded(schema_sh(home))
         .arg("name")
         .arg(key)
         .output()

@@ -4,7 +4,6 @@
 //! systemd (docs/test-plan/instance-lifecycle.md §5).
 
 use std::env;
-use std::process::Command;
 
 /// `$SPIRA_SYSTEMCTL`, defaulting to `systemctl` — the same seam name world.sh and
 /// sentinel.sh both carry, so one stub covers every caller in a test.
@@ -17,7 +16,7 @@ pub fn systemctl_bin() -> String {
 pub fn run(args: &[&str]) -> String {
     let mut a = vec!["--user"];
     a.extend_from_slice(args);
-    Command::new(systemctl_bin())
+    spira_config::bounded::bounded(systemctl_bin())
         .args(&a)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -28,7 +27,7 @@ pub fn run(args: &[&str]) -> String {
 /// nonzero for a merely degraded manager, so only systemctl's own connect failure counts;
 /// without this check an unreachable bus reads as every unit being absent.
 pub fn bus_unreachable() -> Option<String> {
-    let o = Command::new(systemctl_bin()).args(["--user", "is-system-running"]).output().ok()?;
+    let o = spira_config::bounded::bounded(systemctl_bin()).args(["--user", "is-system-running"]).output().ok()?;
     let err = String::from_utf8_lossy(&o.stderr);
     err.contains("Failed to connect").then(|| format!("cannot reach the systemd user bus: {}", err.trim()))
 }
@@ -39,7 +38,7 @@ pub fn bus_unreachable() -> Option<String> {
 pub fn run_ok(args: &[&str]) -> bool {
     let mut a = vec!["--user"];
     a.extend_from_slice(args);
-    Command::new(systemctl_bin())
+    spira_config::bounded::bounded(systemctl_bin())
         .args(&a)
         .output()
         .map(|o| o.status.success())
@@ -50,7 +49,7 @@ pub fn run_ok(args: &[&str]) -> bool {
 pub fn run_lines(args: &[&str]) -> Vec<String> {
     let mut a = vec!["--user"];
     a.extend_from_slice(args);
-    Command::new(systemctl_bin())
+    spira_config::bounded::bounded(systemctl_bin())
         .args(&a)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect())

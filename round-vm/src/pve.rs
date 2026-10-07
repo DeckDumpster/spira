@@ -55,6 +55,7 @@ impl HttpTransport {
             .map_err(|e| e.to_string())?
             .with_root_certificates(roots)
             .with_no_client_auth();
+        // batch-job: Proxmox VM clone and start calls take as long as the hypervisor does
         let agent = ureq::AgentBuilder::new().tls_config(Arc::new(tls)).timeout(Duration::from_secs(60)).build();
         Ok(HttpTransport {
             agent,

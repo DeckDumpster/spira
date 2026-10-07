@@ -47,7 +47,7 @@ impl Real {
         // `<release>/spira` (resolve_home's own contract), so its parent is this binary's
         // own release root.
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
@@ -70,7 +70,7 @@ impl Real {
     fn run_bd_sql(&self, query: &str) -> (bool, String, String) {
         let db = self.env("SPIRA_DB").unwrap_or_default();
         let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
-        let out = Command::new(bd).arg("-C").arg(db).arg("sql").arg(query).stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded(bd).arg("-C").arg(db).arg("sql").arg(query).stdin(Stdio::null()).output();
         match out {
             Ok(o) => (
                 o.status.success(),
@@ -82,7 +82,7 @@ impl Real {
     }
 
     fn run_py(&self, script: &str, args: &[&Path], stdin: Option<&str>) -> String {
-        let mut cmd = Command::new("python3");
+        let mut cmd = spira_config::bounded::bounded("python3");
         cmd.arg(self.census_py().join(script));
         for a in args {
             cmd.arg(a);
@@ -154,7 +154,7 @@ impl World for Real {
         crate::sql::class_fold_map().trim_end_matches('\n').to_string()
     }
     fn deliberate_cause_names(&self) -> Vec<String> {
-        let out = Command::new("spira-claim").arg("deliberate-causes").stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("spira-claim").arg("deliberate-causes").stdin(Stdio::null()).stderr(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => {
                 String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect()
@@ -173,7 +173,7 @@ impl World for Real {
     fn lc_landed(&self, id: &str) -> i32 {
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
         let bin = self.lc_bin();
-        let out = Command::new(bin).args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded(bin).args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => i32::from(String::from_utf8_lossy(&o.stdout).trim() != "LANDED"),
             // rc 1 is spira-lc's NO_ROW: the record holds no row, so nothing says it landed.
@@ -208,7 +208,7 @@ impl World for Real {
     fn bd_list_all_json(&self, label_pattern: &str) -> String {
         let db = self.env("SPIRA_DB").unwrap_or_default();
         let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
-        Command::new(bd)
+        spira_config::bounded::bounded(bd)
             .arg("-C")
             .arg(db)
             .args(["list", "--all", "--label-pattern", label_pattern, "--limit", "0", "--json"])
@@ -239,7 +239,7 @@ impl World for Real {
     }
 
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool {
-        Command::new("git")
+        spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo)
             .args(["branch", "-a", "--list", pattern])
@@ -253,7 +253,7 @@ impl World for Real {
         if let Some(n) = self.env("SPIRA_NOW").and_then(|v| v.parse().ok()) {
             return n;
         }
-        Command::new("date")
+        spira_config::bounded::bounded("date")
             .args(["-u", "+%s"])
             .output()
             .ok()
@@ -263,7 +263,7 @@ impl World for Real {
     fn bd_sql_utc_now_row(&self) -> Result<String, String> {
         let db = self.env("SPIRA_DB").unwrap_or_default();
         let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
-        let out = Command::new(bd)
+        let out = spira_config::bounded::bounded(bd)
             .arg("-C")
             .arg(db)
             .args(["sql", "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS utc_fn"])
@@ -285,14 +285,14 @@ impl World for Real {
         if s.is_empty() {
             return None;
         }
-        let out = Command::new("date").args(["-u", "-d", s, "+%s"]).output().ok()?;
+        let out = spira_config::bounded::bounded("date").args(["-u", "-d", s, "+%s"]).output().ok()?;
         if !out.status.success() {
             return None;
         }
         String::from_utf8_lossy(&out.stdout).trim().parse().ok()
     }
     fn format_epoch_utc(&self, epoch: i64) -> String {
-        Command::new("date")
+        spira_config::bounded::bounded("date")
             .args(["-u", "-d", &format!("@{epoch}"), "+%Y-%m-%d %H:%M:%S"])
             .output()
             .ok()

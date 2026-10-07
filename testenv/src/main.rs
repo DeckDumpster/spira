@@ -1,6 +1,7 @@
 //! testenv — select suites for a tree, build that tree in place, run the suites in the
 //! fixture container, report the verdict. Contract: DESIGN.md.
 
+use std::process::Command;
 use std::io::Read;
 use std::process::ExitCode;
 use testenv::build::Cargo;
@@ -33,7 +34,7 @@ fn spawn_sweep(run: &std::path::Path) {
 
 fn spawn_warm(sub: &[String], run: &std::path::Path, harness: Option<std::path::PathBuf>) {
     use std::os::unix::process::CommandExt;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
@@ -45,6 +46,7 @@ fn spawn_warm(sub: &[String], run: &std::path::Path, harness: Option<std::path::
         Ok((f, g)) => (Stdio::from(f), Stdio::from(g)),
         Err(_) => (Stdio::null(), Stdio::null()),
     };
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(exe);
     if let Some(h) = harness {
         cmd.env("SPIRA_TESTENV_HARNESS", h);

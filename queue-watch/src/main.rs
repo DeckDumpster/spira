@@ -24,7 +24,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{ExitCode, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::core::{step, Event, Limits, RepoState};
@@ -194,7 +194,7 @@ fn stall_incident(repo: &str, pr: &str, text: &str) -> (String, String) {
 /// stall anyway, but a restarted queue-watch process has no memory of that latch.
 fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &str, text: &str) {
     let (ref_, subject) = stall_incident(repo, pr, text);
-    let mut cmd = Command::new("bash");
+    let mut cmd = spira_config::bounded::bounded("bash");
     cmd.arg(incident_sh)
         .envs(spira_config::release_env::child_path_env_for_process())
         .arg("file")

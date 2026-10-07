@@ -52,7 +52,7 @@ pub fn is_suite_transition(repo: &Path, tip: &str, base: &str) -> bool {
             return false;
         }
     };
-    let out = Command::new("git").arg("-C").arg(repo).args(["diff", "--name-only", base, tip]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+    let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(["diff", "--name-only", base, tip]).stdin(Stdio::null()).stderr(Stdio::null()).output();
     match out {
         // grep -F: a fixed-string SUBSTRING match against any changed-path line, not an
         // exact-line match — preserved here rather than tightened, to keep the port's
@@ -177,7 +177,7 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
             return false;
         }
     };
-    let listing = Command::new(forge)
+    let listing = spira_config::bounded::bounded(forge)
         .arg("runs-for-branch")
         .arg(repo)
         .arg(branch)
@@ -196,7 +196,7 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
         }
         let status = it.next().unwrap_or("");
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let cancelled = Command::new(forge).arg("run-cancel").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        let cancelled = spira_config::bounded::bounded(forge).arg("run-cancel").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         if cancelled {
             append_log(&run_dir, "landing.log", &format!("{tag} RUN_CANCEL {now} branch={branch} run={run_id} status={status}"));
         } else {
@@ -218,7 +218,7 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
 pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
     let full_subject = format!("Merge queue: {name} {subject}");
     let full_body = format!("## Alert\n{body}\n");
-    if let Ok(mut child) = Command::new("mail")
+    if let Ok(mut child) = spira_config::bounded::bounded("mail")
         .args(["send", mailbox, "--from", "Spira Queue <queue@spira>", "--subject", &full_subject, "--kind", "alert"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -243,7 +243,7 @@ pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path
         return Divergence::CannotCheck("the queue directory is not configured, so the divergence marker cannot be placed".into());
     }
     let statefile = queue_dir.join(name).join("divergence-alarmed");
-    let status = Command::new("git")
+    let status = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo)
         .args(["merge-base", "--is-ancestor", forge_sha, local_sha])
@@ -263,7 +263,7 @@ pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path
     let foreign_range = format!("{local_sha}..{forge_sha}");
     let already = std::fs::read_to_string(&statefile).ok().map(|s| s.trim().to_string()).unwrap_or_default();
     if already != forge_sha {
-        let foreign = Command::new("git")
+        let foreign = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo)
             .args(["log", "--format=%h %s", &foreign_range])

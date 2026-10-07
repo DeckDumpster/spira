@@ -90,7 +90,7 @@ fn resolved_prod(home: &std::path::Path) -> PathBuf {
 }
 
 fn now_iso() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()
@@ -251,6 +251,7 @@ fn cmd_stop(args: &[String]) -> i32 {
     let planes = selected_planes(args, &[Plane::Work]);
     let halts_work = planes.contains(&Plane::Work);
     let mut round_drain = false;
+    // batch-job: the drain waits for in-flight round work to finish
     let mut round_drain_timeout = std::time::Duration::from_secs(1800);
     let mut i = 0;
     while i < args.len() {
@@ -288,6 +289,7 @@ fn cmd_stop(args: &[String]) -> i32 {
             eprintln!("spira: --round-drain given — waiting up to {}s for it to clear before halting", round_drain_timeout.as_secs());
             let cleared = spira_world::round::wait_for_clear(
                 round_drain_timeout,
+                // batch-job: poll interval of the round drain wait
                 std::time::Duration::from_secs(10),
                 |d| std::thread::sleep(d),
                 std::time::Instant::now,

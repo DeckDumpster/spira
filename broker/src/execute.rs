@@ -1,6 +1,5 @@
 use std::io::Write as _;
 use std::path::Path;
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 use crate::policy::{self, Verb};
@@ -197,7 +196,7 @@ fn repo_map_lookup(repo: &str) -> Result<Option<String>, String> {
 
 fn czar_fence_check(_spira_home: &str, class: &str) -> Result<bool, String> {
     // czar-fence.sh by name on the launcher's PATH (sp-gypjk).
-    let status = Command::new("czar-fence.sh")
+    let status = spira_config::bounded::bounded("czar-fence.sh")
         .arg(class)
         .status()
         .map_err(|e| format!("cannot run czar-fence.sh: {e}"))?;
@@ -206,7 +205,7 @@ fn czar_fence_check(_spira_home: &str, class: &str) -> Result<bool, String> {
 
 fn check_batch_pr(repo_path: &str, number: &str) -> Result<bool, String> {
     let gh = gh_bin();
-    let output = Command::new(&gh)
+    let output = spira_config::bounded::bounded(&gh)
         .args(["pr", "view", number, "--json", "headRefName", "-q", ".headRefName"])
         .current_dir(repo_path)
         .output()
@@ -234,7 +233,7 @@ fn build_gh_args(verb: &Verb, number: &str, reason: &str) -> Vec<String> {
 
 fn gh_exec(verb: &Verb, repo_path: &str, number: &str, reason: &str) -> Result<String, String> {
     let gh = gh_bin();
-    let mut cmd = Command::new(&gh);
+    let mut cmd = spira_config::bounded::bounded(&gh);
     cmd.current_dir(repo_path);
     cmd.envs(crate::token::gh_env()?);
     cmd.args(build_gh_args(verb, number, reason));
@@ -293,7 +292,7 @@ fn post_bead_note(bd: &str, db: &str, bead: &str, record: &Value) {
     let verb    = record["verb"].as_str().unwrap_or("?");
     let msg = format!("broker {}: {} — {}", outcome, verb, detail);
 
-    let mut cmd = Command::new(bd);
+    let mut cmd = spira_config::bounded::bounded(bd);
     if !db.is_empty() { cmd.args(["-C", db]); }
     cmd.args(["note", bead, &msg]);
     let _ = cmd.status();

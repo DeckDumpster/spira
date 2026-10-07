@@ -44,7 +44,7 @@ impl Default for RealLifecycle {
 
 impl Lifecycle for RealLifecycle {
     fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
-        let o = Command::new(&self.bin)
+        let o = spira_config::bounded::bounded(&self.bin)
             .args(["show", id])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -246,7 +246,7 @@ pub struct RealMail {
 
 impl Mail for RealMail {
     fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool {
-        let mut child = match Command::new(&self.mail_bin)
+        let mut child = match spira_config::bounded::bounded(&self.mail_bin)
             .args(["send", "operator", "--from", "gh-intake <intake@spira>", "--subject", subject, "--kind", "note"])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -265,7 +265,7 @@ impl Mail for RealMail {
     /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): stdout discarded, stderr
     /// captured as the error text exactly as `_err="$(... 2>&1 >/dev/null)"` did.
     fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String> {
-        let mut child = Command::new(&self.mail_bin)
+        let mut child = spira_config::bounded::bounded(&self.mail_bin)
             .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

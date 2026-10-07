@@ -18,7 +18,6 @@
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::process::Command;
 
 /// THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk, law). `current` is the
 /// PATH already in force — the launcher put the release's `bin/` and `spira/` at the front —
@@ -168,7 +167,7 @@ pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &
         crate::shell_quote(bd),
         crate::shell_quote(db),
     );
-    let (rc, combined) = match Command::new("/bin/sh").arg("-c").arg(&script).output() {
+    let (rc, combined) = match crate::bounded::bounded("/bin/sh").arg("-c").arg(&script).output() {
         Ok(o) => (o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()),
         Err(e) => (1, format!("spira: could not run {bd}: {e}")),
     };

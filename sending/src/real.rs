@@ -143,6 +143,7 @@ impl Real {
         // `-s sending.seam.sh`: bash still reads the script from stdin; the extra word is only
         // so lib.sh's spira_caller (which names the `*.sh` programs up the process chain in
         // every reap-log line) can name this one — a bare `bash` under a binary names nothing.
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let child = Command::new("bash")
             .args(["-s", "sending.seam.sh"])
             .stdin(Stdio::piped())
@@ -265,7 +266,7 @@ impl World for Real {
             .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "LANDED")
     }
     fn content_on_base(&self, id: &str, proof: &str) {
-        let _ = Command::new("spira-lc")
+        let _ = spira_config::bounded::bounded("spira-lc")
             .args(["content-on-base", id, proof, "sending"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -274,7 +275,7 @@ impl World for Real {
     }
     fn pr_merged_tip(&self, repo: &Path, br: &str) -> Option<String> {
         let o = Command::new("timeout")
-            .arg(self.setting("gh_timeout", "120"))
+            .arg(self.setting("gh_timeout", "5"))
             .arg(&self.gh)
             .args(["pr", "view", br, "--json", "state,headRefOid", "-q", r#"select(.state=="MERGED") | .headRefOid"#])
             .current_dir(repo)

@@ -132,6 +132,7 @@ pub fn parse_conf(stdout: &str) -> Result<Conf, String> {
 }
 
 pub fn run_conf_seam(lib_dir: &Path) -> Result<Conf, String> {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let mut child = Command::new("bash")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -181,6 +182,7 @@ impl Intake for Real {
                 f.suite
             ));
         };
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let mut child = Command::new("bash")
             .arg(incident)
             .arg("file")
@@ -223,7 +225,7 @@ impl Mail for Real {
         let Some(mail) = self.mail.as_ref() else {
             return false;
         };
-        let mut c = Command::new("bash");
+        let mut c = spira_config::bounded::bounded("bash");
         c.arg(mail)
             .args(["send", "operator", "--from", from, "--subject", subject]);
         if let Some(b) = bead {
@@ -248,6 +250,7 @@ impl HostCheck for Real {
     fn count(&self, flag: &str) -> Option<String> {
         // host-check.sh on the launcher's PATH (sp-gypjk); absent or not executable is None.
         let script = crate::util::which_in(&self.path, "host-check.sh")?;
+        // batch-job: child is spawned or exec-replaced, not awaited under a deadline
         let mut child = Command::new("bash")
             .arg(&script)
             .arg(flag)
@@ -273,7 +276,7 @@ impl HostCheck for Real {
 impl Queue for Real {
     fn submit(&self, branch: &str) -> bool {
         // The release's `queue`, by name on the launcher's PATH (sp-gypjk).
-        let mut c = Command::new("queue");
+        let mut c = spira_config::bounded::bounded("queue");
         let err = std::io::stderr();
         c.arg("submit")
             .arg(branch)

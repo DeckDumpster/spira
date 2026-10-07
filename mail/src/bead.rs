@@ -5,7 +5,7 @@
 //! a fake, never a real store (matching aeon's/queue's own ports/real split).
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 
@@ -80,7 +80,7 @@ impl Bd for BdCli {
 
 impl BdCli {
     fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
-        let mut cmd = Command::new(&self.bin);
+        let mut cmd = spira_config::bounded::bounded(&self.bin);
         cmd.arg("-C").arg(&self.db);
         cmd.args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });

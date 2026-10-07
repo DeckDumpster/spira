@@ -8,10 +8,9 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(repo).args(args).output().ok()?;
+    let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -21,7 +20,7 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
 /// `git merge-base --is-ancestor <candidate> <base>` — the fact the migration classifier's
 /// rule 1 (a legacy LANDED record whose tip is an ancestor of base) needs, and the fast path in [`content_on_base`] below.
 pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo)
         .args(["merge-base", "--is-ancestor", candidate, base])
@@ -81,6 +80,7 @@ pub fn landing_lines(repo: &Path, base: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::fs;
 
     struct ScratchRepo {

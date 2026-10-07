@@ -1096,6 +1096,7 @@ pub fn drift_keys() -> Kv {
     let drift_sh = io::home_dir().join("drift.sh");
     let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
     let run_one = |args: &[&str]| {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         std::process::Command::new("bash")
             .envs(spira_config::release_env::child_path_env_for_process())
             .arg(&drift_sh)

@@ -108,7 +108,7 @@ fn host() -> String {
 }
 
 fn git(repo: &str, args: &[&str]) -> Result<String, String> {
-    let o = Command::new("git").arg("-C").arg(repo).args(args).output().map_err(|e| format!("git: {e}"))?;
+    let o = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output().map_err(|e| format!("git: {e}"))?;
     if !o.status.success() {
         return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim()));
     }
@@ -153,7 +153,7 @@ fn file_bead(title: &str, body: &str, priority: u64, run: &Path) -> Result<Strin
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tmp = dir.join(format!("cert-sweep-{}-{}.txt", std::process::id(), now()));
     fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    let out = Command::new("bead.sh")
+    let out = spira_config::bounded::bounded("bead.sh")
         .envs(spira_config::release_env::child_path_env_for_process())
         .args(["file", title, "--for", "builder", "--repo", "spira", "--priority", &priority.to_string(), "--json", "--body-file"])
         .arg(&tmp)
@@ -347,7 +347,7 @@ impl Rt<'_> {
         // default standing in for an unresolved value.
         let db = spira_config::process::cfg("SPIRA_DB")?;
         let bd = spira_config::process::cfg("SPIRA_BD")?;
-        let out = Command::new(&bd)
+        let out = spira_config::bounded::bounded(&bd)
             .args(["-C", &db, "list", "--all", "--limit", "0", "--brief", "--json"])
             .stdin(Stdio::null())
             .output()
@@ -428,6 +428,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
     let rd = run.join("cert-sweep").join(format!("{start}-full-{seq}"));
     fs::create_dir_all(&rd).map_err(|e| format!("{}: {e}", rd.display()))?;
     let log = rd.with_extension("log");
+    // batch-job: round-vm runs for as long as its work does
     let mut child = Command::new("round-vm")
         .args(["run", tree, "--maxpar", &num(f, "maxpar", 16)?.to_string(), "--suites", &picks.join(","), "--results-dir"])
         .arg(&rd)
@@ -459,6 +460,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
 fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<(Vec<Outcome>, String), String> {
     let branch = flag(f, "branch").unwrap_or("cert-sweep/tip");
     git(repo, &["branch", "-f", branch, tip])?;
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new("testenv");
     if let Some(d) = flag(f, "deadline") {
         cmd.args(["--deadline", d]);

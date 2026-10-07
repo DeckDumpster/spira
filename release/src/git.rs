@@ -17,7 +17,7 @@ pub struct RealGit;
 
 impl Git for RealGit {
     fn resolve(&self, repo: &Path, rev: &str) -> Result<String, String> {
-        let out = Command::new("git")
+        let out = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo)
             .args(["rev-parse", "--verify", "--quiet"])
@@ -32,6 +32,7 @@ impl Git for RealGit {
     }
 
     fn archive(&self, repo: &Path, sha: &str, into: &Path) -> Result<(), String> {
+        // batch-job: git history or network operation, as long as the repository is large
         let mut git = Command::new("git")
             .arg("-C")
             .arg(repo)
@@ -40,6 +41,7 @@ impl Git for RealGit {
             .spawn()
             .map_err(|e| format!("cannot run git archive: {e}"))?;
         let stdout = git.stdout.take().ok_or("git archive: no stdout")?;
+        // batch-job: tar runs for as long as its work does
         let tar = Command::new("tar").arg("-x").arg("-C").arg(into).stdin(stdout).status();
         let g = git.wait().map_err(|e| format!("git archive: {e}"))?;
         let t = tar.map_err(|e| format!("cannot run tar: {e}"))?;
@@ -53,7 +55,7 @@ impl Git for RealGit {
     }
 
     fn is_ancestor(&self, repo: &Path, ancestor: &str, of: &str) -> Result<bool, String> {
-        let st = Command::new("git")
+        let st = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo)
             .args(["merge-base", "--is-ancestor", ancestor, of])

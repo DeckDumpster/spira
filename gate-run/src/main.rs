@@ -56,6 +56,7 @@ fn default_run(home: &Path) -> PathBuf {
 /// `spira_home_repo` via the same `lib.sh` seam `Real` uses for the repository map, only reached
 /// when a caller omits `repo-name` (no production caller does — DESIGN.md "Intent").
 fn default_repo_name(home: &Path) -> String {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = std::process::Command::new("bash")
         .arg("-c")
         .arg(". \"$1/lib.sh\" >/dev/null 2>&1 && spira_home_repo")

@@ -23,7 +23,7 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -258,7 +258,7 @@ fn unix_now() -> u64 {
 }
 
 fn compute_now_iso() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()
@@ -292,7 +292,7 @@ struct Check {
 }
 
 fn run_cmd(program: &str, args: &[&str]) -> String {
-    Command::new(program)
+    spira_config::bounded::bounded(program)
         .args(args)
         .stderr(Stdio::null())
         .output()
@@ -302,7 +302,7 @@ fn run_cmd(program: &str, args: &[&str]) -> String {
 }
 
 fn run_cmd_ok(program: &str, args: &[&str]) -> bool {
-    Command::new(program)
+    spira_config::bounded::bounded(program)
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -364,7 +364,7 @@ fn queue_repo_names(queue_dir: &Path) -> Vec<String> {
 // of a small set of known state words on stdout even on a non-zero exit; anything else
 // (empty output, an error message, a missing binary) is genuinely unreadable.
 fn systemctl_state(cfg: &Config, verb: &str, unit: &str) -> Option<String> {
-    let out = Command::new(&cfg.systemctl)
+    let out = spira_config::bounded::bounded(&cfg.systemctl)
         .args(["--user", verb, unit])
         .stderr(Stdio::null())
         .output()
@@ -667,7 +667,7 @@ fn cockpit_remedy(cfg: &Config) -> Remedy {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn on_main_branch(cfg: &Config) -> Option<bool> {
-    let out = Command::new(&cfg.git)
+    let out = spira_config::bounded::bounded(&cfg.git)
         .args(["-C", &cfg.spira_home, "rev-parse", "--abbrev-ref", "HEAD"])
         .stderr(Stdio::null())
         .output()
@@ -790,7 +790,7 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
 
 fn branch_mergeable(cfg: &Config, repo: &Path, base: &str, branch: &str) -> Option<bool> {
     let repo_str = repo.to_string_lossy().to_string();
-    let mb_out = Command::new(&cfg.git)
+    let mb_out = spira_config::bounded::bounded(&cfg.git)
         .args(["-C", &repo_str, "merge-base", base, branch])
         .stderr(Stdio::null())
         .output()
@@ -802,7 +802,7 @@ fn branch_mergeable(cfg: &Config, repo: &Path, base: &str, branch: &str) -> Opti
     if merge_base.is_empty() {
         return None;
     }
-    let mt_out = Command::new(&cfg.git)
+    let mt_out = spira_config::bounded::bounded(&cfg.git)
         .args(["-C", &repo_str, "merge-tree", &merge_base, base, branch])
         .stderr(Stdio::null())
         .output()
@@ -963,7 +963,7 @@ fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
     if !cfg.scope_label.is_empty() {
         labels = format!("{},{}", cfg.scope_label, labels);
     }
-    let child = Command::new("bash")
+    let child = spira_config::bounded::bounded("bash")
         .arg(&cfg.incident_sh)
         .arg("file")
         .arg(&subj)

@@ -19,7 +19,7 @@ use std::time::Duration;
 
 const CANNOT_TELL: i32 = work::CANNOT_TELL;
 const REFUSED: i32 = work::REFUSED;
-const TIMEOUT: Duration = Duration::from_secs(10);
+const TIMEOUT: Duration = Duration::from_secs(5);
 // batch-job: a lane verb's broker-run tool is bounded at 300 s by the broker; wait just past it.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 
@@ -93,7 +93,7 @@ fn read_tip(bead: &str) -> Option<String> {
             return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
         }
     }
-    let out = Command::new("git").args(["rev-parse", "HEAD"]).output().ok()?;
+    let out = spira_config::bounded::bounded("git").args(["rev-parse", "HEAD"]).output().ok()?;
     if !out.status.success() {
         return None;
     }

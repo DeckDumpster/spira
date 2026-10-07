@@ -254,7 +254,7 @@ fn correctable(row: &lifecycle::bead::BeadRow, outcome: &classify::Classificatio
 }
 
 fn git_output_exists(repo: &Path, rev: &str) -> bool {
-    std::process::Command::new("git")
+    spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "--quiet", rev])

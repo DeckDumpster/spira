@@ -19,7 +19,7 @@ impl RealBd {
     /// read as shell syntax.
     fn seam(&self, body: &str, args: &[&str], stdin: Option<&[u8]>) -> (bool, Vec<u8>) {
         let script = format!(". \"$0\" >/dev/null || {{ echo \"sop: cannot source $0 (set SPIRA_HOME)\" >&2; exit 96; }}\n{body}");
-        let mut cmd = Command::new("bash");
+        let mut cmd = spira_config::bounded::bounded("bash");
 cmd.envs(spira_config::release_env::child_path_env_for_process());
         cmd.arg("-c").arg(script).arg(format!("{}/lib.sh", self.spira_home)).args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
@@ -104,7 +104,7 @@ pub struct RealProc;
 
 impl Proc for RealProc {
     fn inventory_scan(&self, text: &str) -> Result<Vec<String>, String> {
-        let mut child = Command::new("spira-lint")
+        let mut child = spira_config::bounded::bounded("spira-lint")
             .args(["--only", "inventory", "--scan", "/dev/stdin"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -156,7 +156,7 @@ impl Clock for RealClock {
     }
 
     fn today(&self) -> String {
-        let out = Command::new("date")
+        let out = spira_config::bounded::bounded("date")
             .env("TZ", &self.tz)
             .args(["+%Y-%m-%d"])
             .stdin(Stdio::null())
@@ -211,7 +211,7 @@ pub fn resolve_out_path(sop_page: Option<&str>, spira_wiki: Option<&str>) -> Opt
 }
 
 fn git_out(args: &[&str], cwd: Option<&str>) -> Option<String> {
-    let mut cmd = Command::new("git");
+    let mut cmd = spira_config::bounded::bounded("git");
     if let Some(d) = cwd {
         cmd.arg("-C").arg(d);
     }

@@ -26,8 +26,8 @@
 //! `/proc/net/unix` (`procfs::listening_socket_holder`), which cannot match this program's
 //! own argv or an unrelated client the way a pattern match can.
 
-use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -267,7 +267,7 @@ impl Rebuild {
         // and is carrying a session identity from whoever started it. `tmux-env.sh` stays
         // bash — it is a peer script `layout` also shells out to, not part of this bead.
         if let Some(scrub) = find_sibling_script("tmux-env.sh") {
-            if let Ok(o) = Command::new("bash").arg(&scrub).arg("scrub").output() {
+            if let Ok(o) = spira_config::bounded::bounded("bash").arg(&scrub).arg("scrub").output() {
                 for line in String::from_utf8_lossy(&o.stdout).lines() {
                     out.push(format!("  {line}"));
                 }
@@ -275,6 +275,7 @@ impl Rebuild {
         }
 
         out.push("\n== dashboards".to_string());
+        // batch-job: this runs whatever its caller names, as long as that takes
         let layout_ok = Command::new(&self.layout_bin)
             .args(["up", "--window", "brain:0"])
             .status()
@@ -312,6 +313,7 @@ impl Rebuild {
         out.push("\n== cockpit".to_string());
         if self.view.is_file() {
             for sub in ["build", "sync"] {
+                // batch-job: this runs whatever its caller names, as long as that takes
                 if let Ok(o) = Command::new(&self.view).arg(sub).output() {
                     for line in String::from_utf8_lossy(&o.stdout).lines() {
                         out.push(format!("  {line}"));
@@ -400,7 +402,7 @@ impl Rebuild {
         }
 
         out.push("\n== watchers".to_string());
-        if let Ok(o) = Command::new("watchd").arg("status").output() {
+        if let Ok(o) = spira_config::bounded::bounded("watchd").arg("status").output() {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
                 out.push(format!("  {line}"));
             }

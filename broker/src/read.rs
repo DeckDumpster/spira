@@ -1,4 +1,3 @@
-use std::process::Command;
 use crate::policy::ReadVerb;
 
 // Safe JSON fields for run-view: status and timing only, no log content.
@@ -91,7 +90,7 @@ fn artifact_download_args(run_id: &str, name: &str, dir: &str) -> Vec<String> {
 }
 
 fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
-    let output = Command::new(gh_bin())
+    let output = spira_config::bounded::bounded(gh_bin())
         .args(run_view_args(run_id))
         .current_dir(repo_path)
         .envs(crate::token::gh_env()?)
@@ -108,7 +107,7 @@ fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
 }
 
 fn gh_artifact_download(repo_path: &str, run_id: &str, name: &str, dir: &str) -> Result<(), String> {
-    let output = Command::new(gh_bin())
+    let output = spira_config::bounded::bounded(gh_bin())
         .args(artifact_download_args(run_id, name, dir))
         .current_dir(repo_path)
         .envs(crate::token::gh_env()?)

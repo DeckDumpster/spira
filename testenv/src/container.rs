@@ -1104,6 +1104,7 @@ pub fn human(bytes: u64) -> String {
 impl Host for RealHost {
     fn podman(&self, args: &[String], io: Io) -> (i32, String) {
         use std::process::{Command, Stdio};
+        // batch-job: podman runs for as long as its work does
         let mut c = Command::new("podman");
         c.args(args).stdin(Stdio::null());
         // `podman run`/`up` starts conmon, which daemonizes and outlives this call; it must
@@ -1149,6 +1150,7 @@ impl Host for RealHost {
         let Ok(g) = f.try_clone() else {
             return Box::new(FailedBuild);
         };
+        // batch-job: podman runs for as long as its work does
         let mut c = Command::new("podman");
         c.args(args).stdin(Stdio::null()).stdout(f).stderr(g);
         crate::util::close_inherited_fds(&mut c);
@@ -1159,6 +1161,7 @@ impl Host for RealHost {
     }
 
     fn exec_replace(&self, args: &[String]) -> i32 {
+        // batch-job: podman runs for as long as its work does
         let mut c = std::process::Command::new("podman");
         c.args(args);
         // A true exec, not a fork: pre_exec still runs, in this process, right before it —
@@ -1201,6 +1204,7 @@ impl Host for RealHost {
         std::env::current_exe().ok()
     }
     fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf> {
+        // batch-job: cargo runs for as long as its work does
         let ok = std::process::Command::new("cargo")
             .args(["build", "--release", "-p", "spira-config"])
             .current_dir(repo_root)
@@ -1221,6 +1225,7 @@ impl Host for RealHost {
             self.now()
         ));
         std::fs::create_dir_all(&dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+        // batch-job: cp runs for as long as its work does
         let copied = std::process::Command::new("cp")
             .arg("-R")
             .arg("--no-preserve=mode,ownership")

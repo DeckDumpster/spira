@@ -9,7 +9,6 @@ use super::Cfg;
 use crate::failed_units;
 use crate::incident::{self, Finding};
 use crate::log::log;
-use std::process::Command;
 
 fn num(env_val: &str) -> Option<i64> {
     if env_val == "?" {
@@ -44,7 +43,7 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
 /// (sp-jgjvh: an incident bead is a work bead). A failed query — bd's or the machine's —
 /// counts as tracked: re-filing on a probe that did not answer is noise.
 fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
-    let out = Command::new(&cfg.bd)
+    let out = spira_config::bounded::bounded(&cfg.bd)
         .args(["-C", &cfg.db, "list", "--external-ref", &format!("incident:failed-unit-{unit}")])
         .args(["--all", "--json", "--limit", "0", "--brief"])
         .output();
@@ -70,7 +69,7 @@ fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
         let should_escalate = decided || (row.escalated && !tracked_by_open_bead(cfg, unit));
         if should_escalate {
             if let Some(inc) = inc {
-                let logs = Command::new(&cfg.journalctl)
+                let logs = spira_config::bounded::bounded(&cfg.journalctl)
                     .args(["--user", "-u", unit, "-n", "3", "--no-pager"])
                     .output()
                     .map(|o| {
@@ -377,7 +376,7 @@ fn moot_sweep(cfg: &Cfg) {
         log(&format!("watchtower: moot-sweep skipped — {sh} is missing or unreadable"));
         return;
     }
-    let ok = Command::new("bash")
+    let ok = spira_config::bounded::bounded("bash")
         .arg(&sh)
         .arg("--apply")
         .output()

@@ -3,7 +3,7 @@
 //! <title> -` with the body on stdin and the same `SPIRA_INCIDENT_*` environment.
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Resolves `$SPIRA_INCIDENT_SH`, falling back to `incident.sh` on PATH — the same
 /// `${SPIRA_INCIDENT_SH:-$(command -v incident.sh)}` every bash call site used.
@@ -106,7 +106,7 @@ impl Finding {
 /// shape of `bash "$INC" file "..." - >/dev/null || true` at every bash call site: a failed
 /// filing is logged by the caller, never fatal to the check that found the thing.
 pub fn file(incident_sh: &str, f: &Finding) -> bool {
-    let mut cmd = Command::new("bash");
+    let mut cmd = spira_config::bounded::bounded("bash");
 cmd.envs(spira_config::release_env::child_path_env_for_process());
     cmd.arg(incident_sh).arg("file").arg(&f.title).arg("-");
     cmd.env("SPIRA_DB", &f.db);

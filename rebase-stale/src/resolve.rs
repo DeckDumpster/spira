@@ -5,9 +5,10 @@
 //! ours first. A stop resolves only when EVERY unmerged path is mechanical; otherwise nothing
 //! is written and the non-mechanical paths come back with their hunks quoted.
 
+use std::process::Command;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::git::Git;
 
@@ -346,6 +347,7 @@ enum Plan {
 
 fn run_argv(argv: &[String], dir: &Path, target: Option<&Path>) -> Result<String, String> {
     let (prog, args) = argv.split_first().ok_or("empty regeneration command")?;
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut c = Command::new(prog);
     c.args(args).current_dir(dir).stdin(Stdio::null());
     if let Some(t) = target {
@@ -455,7 +457,7 @@ pub fn resolve_stop(git: &Git, rules: &Rules) -> Result<usize, Vec<ConflictFile>
         if let Plan::Write(s) = pl {
             std::fs::write(git.dir.join(p), s).map_err(|e| fail_now(p, e.to_string()))?;
             if rules.kind_for(p) == Some(&ResolveKind::KeyListUnion) {
-                let ok = Command::new("bash")
+                let ok = spira_config::bounded::bounded("bash")
                     .arg("-n")
                     .arg(git.dir.join(p))
                     .stderr(Stdio::null())

@@ -206,7 +206,7 @@ pub fn reap_idle(
 
 /// Bytes available to this user on the filesystem holding `p`.
 pub fn free_bytes(p: &Path) -> Option<u64> {
-    let o = std::process::Command::new("df").args(["-Pk"]).arg(p).output().ok()?;
+    let o = spira_config::bounded::bounded("df").args(["-Pk"]).arg(p).output().ok()?;
     if !o.status.success() {
         return None;
     }

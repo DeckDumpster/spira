@@ -2,7 +2,7 @@
 //! `None`, never an empty list: "cannot tell" must not read as "nothing queued".
 
 use serde_json::Value;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 pub const PROGRAM_ENV: &str = "SPIRA_LC_BIN";
 const HARNESS_ACTOR: &str = "harness";
@@ -43,7 +43,7 @@ fn epoch(v: &Value, key: &str) -> Option<i64> {
 }
 
 fn run(args: &[&str]) -> Option<String> {
-    let out = Command::new(program()).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let out = spira_config::bounded::bounded(program()).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 

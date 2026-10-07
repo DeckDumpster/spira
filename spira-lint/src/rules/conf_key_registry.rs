@@ -2,6 +2,7 @@
 //! `convert` → `export --sh` unchanged. Moved from spira-config's
 //! `every_conf_sh_key_survives_convert_and_export` (sp-9nljd). Contract: DESIGN.md.
 
+use std::process::Command;
 use std::collections::BTreeMap;
 
 use spira_config::convert::convert;
@@ -38,7 +39,8 @@ fn conf_keys_via_registry(root: &std::path::Path) -> Option<Vec<String>> {
     if !conf_gen.is_file() || !conf_d.is_dir() {
         return None;
     }
-    let status = std::process::Command::new("bash").arg(&conf_gen).current_dir(root).status().ok()?;
+    // batch-job: this runs whatever its caller names, as long as that takes
+    let status = Command::new("bash").arg(&conf_gen).current_dir(root).status().ok()?;
     if !status.success() {
         return None;
     }

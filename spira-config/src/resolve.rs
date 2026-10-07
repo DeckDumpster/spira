@@ -115,7 +115,7 @@ pub fn derive_repo_filesystem(home: &Path, env: &BTreeMap<String, String>) -> st
     let scrubbed = env
         .iter()
         .filter(|(k, _)| !matches!(k.as_str(), "GIT_DIR" | "GIT_WORK_TREE" | "GIT_INDEX_FILE" | "GIT_PREFIX"));
-    let toplevel = std::process::Command::new("git")
+    let toplevel = crate::bounded::bounded("git")
         .env_clear()
         .envs(scrubbed)
         .arg("-C")
@@ -631,7 +631,7 @@ fn basename(p: &str) -> String {
 }
 
 fn run_git_stdout(args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("git").args(args).output().ok()?;
+    let out = crate::bounded::bounded("git").args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }

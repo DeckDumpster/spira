@@ -11,7 +11,7 @@
 //! per-copy facts (`SPIRA_INSTANCE`), so — like [`crate::env_bootstrap`] — neither lives in
 //! [`crate::resolve`], which stays a pure function of its [`crate::resolve::ResolveInput`].
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// `watch_unit_name <name> <instance>` — MIRRORS `inst_watch_name` in `systemd/units.sh`
 /// (one formula, two callers; conf.sh's own comment on `watch_unit_name`). Pure string
@@ -52,7 +52,7 @@ pub fn resolve_unit(base: &str, kind: &str, instance: &str, systemctl: &str) -> 
 /// reads it. Neither subcommand's stdout is read; only the exit status matters.
 fn loaded(systemctl: &str, unit: &str) -> bool {
     let ok = |args: &[&str]| -> bool {
-        Command::new(systemctl)
+        crate::bounded::bounded(systemctl)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

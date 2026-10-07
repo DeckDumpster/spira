@@ -72,7 +72,7 @@ impl Real {
         // binary's own release root; prepend its bin/+spira/ onto the child's PATH rather
         // than only inheriting whatever PATH this process happened to start with.
         let envs = spira_config::release_env::child_path_env(home.parent(), std::env::var("PATH").ok().as_deref());
-        let mut cmd = Command::new("bash");
+        let mut cmd = spira_config::bounded::bounded("bash");
         cmd.arg("-c").arg(script).envs(envs);
         let out = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output();
         let mut map = BTreeMap::new();
@@ -113,7 +113,7 @@ impl Real {
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): see capture_env's own note —
         // `self.home` is always `<release>/spira`, so its parent is this binary's release.
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 }
@@ -173,11 +173,12 @@ impl World for Real {
     }
 
     fn release_status(&self) -> String {
+        // batch-job: release runs for as long as its work does
         Command::new("release").arg("status").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn spira_config_validate(&self, toml_path: &Path) -> Result<(), String> {
-        let out = Command::new("spira-config").arg("validate").arg(toml_path).stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("spira-config").arg("validate").arg(toml_path).stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(()),
             Ok(o) => Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
@@ -189,7 +190,7 @@ impl World for Real {
         // Exit code deliberately ignored — matching doctor.sh's own `mig="$(spira-config
         // migrate "$toml" 2>&1)"`, which never checked it either; only the text, when
         // non-empty, is logged.
-        Command::new("spira-config")
+        spira_config::bounded::bounded("spira-config")
             .arg("migrate")
             .arg(toml_path)
             .stdin(Stdio::null())
@@ -226,7 +227,7 @@ impl World for Real {
     }
 
     fn overrides_doctor(&self) -> Result<String, String> {
-        let out = Command::new("overrides.sh").arg("doctor").stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("overrides.sh").arg("doctor").stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
             Ok(o) => Err(String::from_utf8_lossy(&o.stdout).into_owned()),
@@ -249,7 +250,7 @@ impl World for Real {
         has_file_within(path, "Cargo.toml", 2)
     }
     fn gate_definition(&self, home: &Path, name: &str) -> Result<String, String> {
-        let out = Command::new("gate").arg("--home").arg(home).arg("--definition").arg(name).stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("gate").arg("--home").arg(home).arg("--definition").arg(name).stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).trim_end().to_string()),
             Ok(o) => Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)).trim().to_string()),
@@ -280,7 +281,7 @@ impl World for Real {
     }
     fn bd_role_warnings(&self, db: &Path, cwd: &Path) -> Option<usize> {
         let o = Command::new("timeout")
-            .arg("60")
+            .arg("5")
             .arg(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("-C")
             .arg(db)
@@ -303,7 +304,7 @@ impl World for Real {
         })
     }
     fn systemd_user_is_active(&self, unit: &str) -> bool {
-        Command::new(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
+        spira_config::bounded::bounded(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
             .args(["--user", "is-active", "--quiet", unit])
             .stdin(Stdio::null())
             .status()
@@ -319,7 +320,7 @@ impl World for Real {
     }
 
     fn dolt_metrics_disabled(&self) -> bool {
-        Command::new(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+        spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
             .args(["config", "--global", "--get", "metrics.disabled"])
             .stdin(Stdio::null())
             .output()
@@ -332,7 +333,7 @@ impl World for Real {
     }
 
     fn bd_first_id(&self, db: &Path) -> Option<String> {
-        let out = Command::new(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("-C")
             .arg(db)
             .args(["list", "--limit", "1", "--json"])
@@ -348,7 +349,7 @@ impl World for Real {
             self.home.display(),
             self.home.display()
         );
-        Command::new("bash").arg("-c").arg(script).arg("--").arg(id).arg(etype).arg(actor).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+        spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").arg(id).arg(etype).arg(actor).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
     }
     fn counter_events_query(&self, id: &str, etype: &str) -> String {
         let out = self.seam("_counter_events_query \"$1\" \"$2\"", &[id, etype]);
@@ -360,7 +361,7 @@ impl World for Real {
     }
 
     fn systemd_failed_units(&self, pattern: &str) -> Result<Vec<String>, String> {
-        let out = Command::new(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
             .args(["--user", "list-units", "--state=failed", "--no-legend", "--plain"])
             .arg(pattern)
             .stdin(Stdio::null())
@@ -374,7 +375,7 @@ impl World for Real {
     fn watchd_manifest(&self) -> Result<String, String> {
         // watchd is the Rust binary now (sp-07yxy's own concurrent landing) -- was
         // watchd.sh; carried into this port per the coordinator's instruction, sp-yyk47.
-        let out = Command::new("watchd").arg("manifest").stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("watchd").arg("manifest").stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
             Ok(_) => Err("watchd manifest failed".into()),
@@ -382,7 +383,7 @@ impl World for Real {
         }
     }
     fn systemd_enabled_unit_files(&self, pattern: &str) -> Result<Vec<String>, String> {
-        let out = Command::new(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
             .args(["--user", "list-unit-files", "--no-legend", "--state=enabled"])
             .arg(pattern)
             .stdin(Stdio::null())
@@ -396,7 +397,7 @@ impl World for Real {
     }
     fn systemd_installed_unit_execs(&self) -> Result<Vec<(String, String, String)>, String> {
         let sc = self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
-        let out = Command::new(&sc)
+        let out = spira_config::bounded::bounded(&sc)
             .args(["--user", "list-unit-files", "--no-legend", "--plain", "spira-*.service", "beads-push.service"])
             .stdin(Stdio::null())
             .output()
@@ -415,7 +416,7 @@ impl World for Real {
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let mut f = line.split_whitespace();
             let (Some(unit), Some(state)) = (f.next(), f.next()) else { continue };
-            let show = Command::new(&sc).args(["--user", "show", unit, "-p", "ExecStart", "--value"]).stdin(Stdio::null()).output();
+            let show = spira_config::bounded::bounded(&sc).args(["--user", "show", unit, "-p", "ExecStart", "--value"]).stdin(Stdio::null()).output();
             let text = show.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
             let path = text.split("path=").nth(1).and_then(|r| r.split([' ', ';']).next()).unwrap_or("").to_string();
             rows.push((unit.to_string(), state.to_string(), path));
@@ -434,7 +435,7 @@ impl World for Real {
     }
 
     fn bd_version(&self) -> Option<String> {
-        let out = Command::new(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("version")
             .stdin(Stdio::null())
             .output()
@@ -453,7 +454,7 @@ impl World for Real {
     }
 
     fn concierge_stray_holders(&self, concierge_sh: &Path) -> Vec<String> {
-        Command::new("bash")
+        spira_config::bounded::bounded("bash")
             .arg(concierge_sh)
             .arg("_stray-holders")
             .stdin(Stdio::null())
@@ -473,7 +474,7 @@ impl World for Real {
         // resolved the right path for the caller's own FAIL message; this call used to
         // throw that resolution away and search PATH a second time, blind, and lose.
         let bin = self.which("sccache").unwrap_or_else(|| PathBuf::from("sccache"));
-        Command::new(bin)
+        spira_config::bounded::bounded(bin)
             .arg("--help")
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -488,7 +489,7 @@ impl World for Real {
         // already running, since sccache's client only ever queries an existing daemon's
         // socket and never re-applies a later invocation's environment to it.
         let bin = self.which("sccache").unwrap_or_else(|| PathBuf::from("sccache"));
-        let mut cmd = Command::new(bin);
+        let mut cmd = spira_config::bounded::bounded(bin);
         cmd.arg("--show-stats").stdin(Stdio::null()).stderr(Stdio::null());
         if let Some(addr) = self.sccache_dav_addr() {
             let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };

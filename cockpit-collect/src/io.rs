@@ -310,7 +310,7 @@ pub fn lib_call_with_stdin(
 f="$2"; shift 2
 "$f" "$@"
 "#;
-    let mut cmd = Command::new("bash");
+    let mut cmd = spira_config::bounded::bounded("bash");
     cmd.arg("-c")
         .arg(SNIPPET)
         .arg("cockpit-collect-lib-bridge")
@@ -375,7 +375,7 @@ pub fn tsd_slots_sample(run: &Path, frag: &Path) {
     let lanes_live = field("SP_SLOTS_LANES_LIVE");
     let ready = field("SP_SLOTS_READY");
     let paused = field("SP_SLOTS_CAPACITY_PAUSED");
-    let _ = Command::new("tsd-write")
+    let _ = spira_config::bounded::bounded("tsd-write")
         .arg("--family")
         .arg("slots")
         .arg("--root")
@@ -393,7 +393,7 @@ pub fn tsd_slots_sample(run: &Path, frag: &Path) {
 
 /// `git -C <repo> <args>`, stdout on success, `None` on any non-zero exit or spawn failure.
 pub fn git(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
+    let out = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -415,7 +415,7 @@ pub fn unit_active(unit: &str) -> Option<bool> {
     if unit == "?" {
         return None;
     }
-    let out = Command::new("systemctl")
+    let out = spira_config::bounded::bounded("systemctl")
         .args(["--user", "is-active", unit])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -429,7 +429,7 @@ pub fn unit_active(unit: &str) -> Option<bool> {
 }
 
 pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
-    let out = Command::new("systemctl")
+    let out = spira_config::bounded::bounded("systemctl")
         .args(["--user", "show", unit, "-p", "InvocationID", "--value"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -452,7 +452,7 @@ pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
 /// same way `spira/cockpit.sh` invoked it (law-units-build-what-they-exec: never construct
 /// a path to it, resolve it off `PATH` like every other caller in the release).
 pub fn run_tool(name: &str, args: &[&str], stdin: Option<&str>) -> Option<String> {
-    let mut cmd = Command::new(name);
+    let mut cmd = spira_config::bounded::bounded(name);
     cmd.args(args).stderr(Stdio::null());
     if let Some(input) = stdin {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
@@ -505,7 +505,7 @@ pub fn proc_cmdline(pid: i64) -> Option<String> {
 /// `ps -o etimes= -p <pid>` — elapsed seconds since the process started. `None` when the
 /// pid is gone or `ps` cannot be read.
 pub fn proc_etimes(pid: i64) -> Option<i64> {
-    let out = Command::new("ps")
+    let out = spira_config::bounded::bounded("ps")
         .args(["-o", "etimes=", "-p", &pid.to_string()])
         .stdin(Stdio::null())
         .stderr(Stdio::null())

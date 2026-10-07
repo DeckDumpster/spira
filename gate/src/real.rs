@@ -188,6 +188,7 @@ impl Real {
     /// `bash -c '. lib.sh >/dev/null 2>&1; <body>' <args…>`.
     fn lib(&self, body: &str, args: &[&str]) {
         let script = format!(". \"$0\" >/dev/null 2>&1 || exit 97\n{body}");
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let _ = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -213,6 +214,7 @@ fn trim_nl(s: String) -> String {
 
 impl World for Real {
     fn context(&self, repo_name: Option<&str>) -> Result<Ctx, String> {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(CONTEXT)
@@ -367,6 +369,7 @@ impl World for Real {
         doc.spira.as_ref()?.certify_par.map(u64::from)
     }
     fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
+        // batch-job: cargo runs for as long as its work does
         let o = Command::new("cargo")
             .args([
                 "metadata",
@@ -483,7 +486,7 @@ impl World for Real {
         if fs::write(&p, content).is_err() {
             return Ok(());
         }
-        let o = Command::new("bash")
+        let o = spira_config::bounded::bounded("bash")
             .arg("-n")
             .arg(&p)
             .stdin(Stdio::null())
@@ -499,7 +502,7 @@ impl World for Real {
         }
     }
     fn exclude_filter(&self, exclude: &Path, names: &str) -> String {
-        let Ok(mut child) = Command::new("bash")
+        let Ok(mut child) = spira_config::bounded::bounded("bash")
             .arg(exclude)
             .arg("filter")
             .stdin(Stdio::piped())
@@ -521,6 +524,7 @@ impl World for Real {
             .unwrap_or_default()
     }
     fn commit_cite(&self, script: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg(script)
             .arg("land")
@@ -550,6 +554,7 @@ impl World for Real {
         // gate fixture builds one — can canonicalize to a path with no `../spira` sibling
         // at all. SPIRA_HOME is passed explicitly, the same value `--home` gave this
         // process, so `skew` finds lib.sh regardless of how its own binary was reached.
+        // batch-job: this runs whatever its caller names, as long as that takes
         let o = Command::new(skew)
             .arg("foreign")
             .arg(repo)
@@ -571,6 +576,7 @@ impl World for Real {
         }
     }
     fn sweep(&self, sweep: &Path, repo: &Path) {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let _ = Command::new("bash")
             .arg(sweep)
             .arg(repo)
@@ -580,6 +586,7 @@ impl World for Real {
             .status();
     }
     fn yield_sh(&self, y: &Path, run: &str, args: &[&str]) {
+        // batch-job: the yield script runs whatever the gate hands it
         let _ = Command::new("bash")
             .arg(y)
             .args(args)
@@ -592,7 +599,7 @@ impl World for Real {
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) {
         // spira-lc's caller verb (lifecycle-cert.sh's lc_certify until sp-arpjt): it reads
         // the switch itself and answers "cannot tell" having touched nothing when it is off.
-        let _ = Command::new("spira-lc")
+        let _ = spira_config::bounded::bounded("spira-lc")
             .args(["certify", bead, tip, outcome, detail, "gate"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -897,6 +904,7 @@ impl World for Real {
             std::thread::sleep(Duration::from_millis(100));
         };
         // A leaked grandchild holding the pipe must not hold the verdict hostage forever.
+        // batch-job: waits for a gate step's output pipe to close
         let buf = rx.recv_timeout(Duration::from_secs(30)).unwrap_or_default();
         (status, trim_nl(String::from_utf8_lossy(&buf).into_owned()))
     }

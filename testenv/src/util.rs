@@ -83,6 +83,7 @@ pub fn nproc() -> u32 {
 
 /// `git -C <dir> <args>`: trimmed stdout on success. Never inherits a caller's GIT_DIR.
 pub fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let o = Command::new("git")
         .arg("-C")
         .arg(dir)

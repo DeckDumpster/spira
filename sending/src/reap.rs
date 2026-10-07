@@ -162,7 +162,7 @@ fn is_queued_state(state: &str) -> bool {
 /// every one of those must be able to make this call LESS restrictive, never more, so a
 /// failure here falls through to bd's own signal, exactly as lib.sh's `|| true` chain does).
 fn lc_state(id: &str) -> Option<String> {
-    let o = Command::new("spira-lc").args(["state", id]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let o = spira_config::bounded::bounded("spira-lc").args(["state", id]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     if !o.status.success() {
         return None;
     }
@@ -257,6 +257,7 @@ pub fn salvage(run: &Path, reaplog_path: &Path, id: &str, w: &Path) -> Result<Op
 }
 
 fn tar_create(repo: &Path, nul_list: &[u8], out_tar: &Path) -> bool {
+    // batch-job: tar runs for as long as its work does
     let child = Command::new("tar")
         .arg("-C")
         .arg(repo)

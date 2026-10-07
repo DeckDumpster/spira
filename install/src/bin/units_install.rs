@@ -316,7 +316,7 @@ fn main() -> ExitCode {
 
     // Linger: unconditional here (systemd/install.sh's own call; the root installer's phase
     // also records a stamp for uninstall — both calls kept, DESIGN.md "Decisions").
-    let _ = Command::new("loginctl").arg("enable-linger").arg(nonempty_env("USER").unwrap_or_else(whoami)).status();
+    let _ = spira_config::bounded::bounded("loginctl").arg("enable-linger").arg(nonempty_env("USER").unwrap_or_else(whoami)).status();
 
     if let Some(cockpit) = nonempty_env("SPIRA_COCKPIT") {
         if let Some(run) = nonempty_env("SPIRA_RUN") {
@@ -365,6 +365,7 @@ fn main() -> ExitCode {
     // `release session-hook install` (sp-7jr34: replaces spira/install-session-hook.sh,
     // which is gone) — this call site is preserved unconditionally, matching
     // systemd/install.sh's own unconditional call.
+    // batch-job: release runs for as long as its work does
     let hook_ok = Command::new("release").args(["session-hook", "install"]).status().map(|s| s.success()).unwrap_or(false);
     if !hook_ok {
         eprintln!("note: the session hook was not registered — run release session-hook install");
@@ -458,7 +459,7 @@ fn main() -> ExitCode {
 }
 
 fn whoami() -> String {
-    Command::new("id").arg("-un").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    spira_config::bounded::bounded("id").arg("-un").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
 }
 
 /// Every file directly under `dir` whose name matches `glob` (a single `*` wildcard, the

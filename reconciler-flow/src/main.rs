@@ -16,7 +16,7 @@ use std::env;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use reconciler_engine::alert::{compose_alert, should_alert};
@@ -168,7 +168,7 @@ fn unix_now() -> u64 {
 }
 
 fn compute_now_iso() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()

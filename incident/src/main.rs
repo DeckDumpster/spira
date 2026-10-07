@@ -85,7 +85,7 @@ fn env_or(name: &str, default: &str) -> String {
 }
 
 fn hostname() -> String {
-    std::process::Command::new("hostname")
+    spira_config::bounded::bounded("hostname")
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -327,7 +327,7 @@ fn require_db(env: &Env) -> ExitCode {
 fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, unit: &str) -> ExitCode {
     let reference = format!("incident:{unit}");
     let when = now_iso();
-    let systemctl = std::process::Command::new("systemctl")
+    let systemctl = spira_config::bounded::bounded("systemctl")
         .args([
             "--user", "show", unit, "-p", "Result", "-p", "ExecMainStatus", "-p", "ExecMainCode", "-p", "NRestarts", "-p", "ActiveState",
             "-p", "SubState", "-p", "InvocationID", "-p", "ExecMainStartTimestamp",
@@ -337,7 +337,7 @@ fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, u
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_else(|| "(systemctl unavailable)\n".to_string());
-    let journal = std::process::Command::new("journalctl")
+    let journal = spira_config::bounded::bounded("journalctl")
         .args(["--user", "-u", unit, "-n", "40", "--no-pager"])
         .output()
         .ok()

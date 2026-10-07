@@ -13,7 +13,6 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
 
 /// What the caller must supply beyond the manifest and host values: the control-plane
 /// suspension predicate (`ctrl.sh`, read once by the caller) and whether the world is halted.
@@ -146,7 +145,7 @@ fn unified_diff(rendered: &str, installed_path: &Path) -> Vec<String> {
     if fs::write(&tmp, rendered).is_err() {
         return Vec::new();
     }
-    let out = Command::new("diff").arg("-u").arg(&tmp).arg(installed_path).output();
+    let out = spira_config::bounded::bounded("diff").arg("-u").arg(&tmp).arg(installed_path).output();
     let _ = fs::remove_file(&tmp);
     match out {
         Ok(o) => String::from_utf8_lossy(&o.stdout).lines().map(|l| format!("    {l}")).collect(),
@@ -324,7 +323,7 @@ fn db_server_wait(ctx: &Ctx) {
     let mut waited = 0u64;
     let mut printed_waiting = false;
     loop {
-        match Command::new(&bd).args(["-C", db, "sql", "select 1"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
+        match spira_config::bounded::bounded(&bd).args(["-C", db, "sql", "select 1"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
             Ok(s) if s.success() => {
                 if waited > 0 {
                     println!("install: beads database answering after {waited}s");

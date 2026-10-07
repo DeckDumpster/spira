@@ -24,7 +24,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use spira_config::repos::Registry;
 
@@ -72,7 +72,7 @@ fn list_beads(cfg: &Config, args: &[&str]) -> Vec<Bead> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn git_branch_exists(repo: &Path, branch: &str) -> bool {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .current_dir(repo)
         .args(["show-ref", "--verify", "-q", &format!("refs/heads/{branch}")])
         .stdin(Stdio::null())
@@ -84,7 +84,7 @@ fn git_branch_exists(repo: &Path, branch: &str) -> bool {
 }
 
 fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
-    let o = Command::new("git").current_dir(repo).args(["rev-list", "--count", range]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let o = spira_config::bounded::bounded("git").current_dir(repo).args(["rev-list", "--count", range]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     if !o.status.success() {
         return None;
     }

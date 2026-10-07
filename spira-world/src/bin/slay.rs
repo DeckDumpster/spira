@@ -20,7 +20,6 @@
 
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
 
 use spira_world::{seam, sysctl};
 
@@ -137,7 +136,7 @@ fn spira_run() -> PathBuf {
 }
 
 fn now_iso() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()
@@ -221,11 +220,11 @@ fn main() {
             String::new()
         };
         if !hbpid.is_empty() {
-            let _ = Command::new("kill").arg(&hbpid).status();
+            let _ = spira_config::bounded::bounded("kill").arg(&hbpid).status();
         }
         let _ = std::fs::remove_file(&hold_pid_file);
         let _ = std::fs::remove_file(&hb_file);
-        let _ = Command::new("spira-lc").args(["unhold", id, "operator", "slay"]).output();
+        let _ = spira_config::bounded::bounded("spira-lc").args(["unhold", id, "operator", "slay"]).output();
         say(&format!(
             "hold: manual hold released for {id} (holder pid {}, heartbeat {})",
             if hpid.is_empty() { "?" } else { &hpid },
@@ -260,11 +259,11 @@ fn main() {
                 say(&format!("aeon: {} pid {pid} is {unit} — stopping the unit", if name.is_empty() { "?" } else { &name }));
                 if !sysctl::run_ok(&["stop", &unit]) {
                     say(&format!("aeon: systemctl stop failed — sending TERM to {pid}"));
-                    let _ = Command::new("kill").args(["-TERM", &pid]).status();
+                    let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
                 }
             } else {
                 say(&format!("aeon: {} pid {pid} has no unit — sending TERM", if name.is_empty() { "?" } else { &name }));
-                let _ = Command::new("kill").args(["-TERM", &pid]).status();
+                let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
             }
             let t0 = epoch();
             loop {
@@ -276,7 +275,7 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if epoch() - t0 >= 60 {
                     say("aeon: still alive after 60s — KILL");
-                    let _ = Command::new("kill").args(["-KILL", &pid]).status();
+                    let _ = spira_config::bounded::bounded("kill").args(["-KILL", &pid]).status();
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     if let Some(pf) = &pf {
                         let _ = std::fs::remove_file(pf);
