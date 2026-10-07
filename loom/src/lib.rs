@@ -335,8 +335,56 @@ async fn app_js_route() -> Response {
     static_response("text/javascript; charset=utf-8", APP_JS)
 }
 
+/// The lifecycle-lens ops view (sp-lpw5ol): the snapshot the cockpit's `lc-view` pane wrote on
+/// its last pass, rendered from the same `View` the pane drew — so the phone page and the pane
+/// cannot disagree. Read from `<run>/lcview/snapshot.json`; never runs `bd`.
+fn lifecycle_snapshot(loom: &Loom) -> Result<(cockpit_ops::lcview::Snapshot, i64), String> {
+    let path = std::path::Path::new(&loom.config().run).join("lcview").join("snapshot.json");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e} — is the lc-view pane running?", path.display()))?;
+    let snap: cockpit_ops::lcview::Snapshot = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    Ok((snap.clone(), now - snap.now))
+}
+
+/// Older than this, the page says the collector has stopped rather than showing old numbers as live.
+const LIFECYCLE_STALE_S: i64 = 60;
+
+async fn lifecycle_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match lifecycle_snapshot(&loom) {
+        Ok((snap, age)) => {
+            let v = cockpit_ops::lcview::view(&snap);
+            (StatusCode::OK, cockpit_ops::lcview::render_html(&v, (age > LIFECYCLE_STALE_S).then_some(age), 10))
+        }
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, format!("<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=10><p>lifecycle view unavailable: {e}</p>")),
+    };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
+async fn lifecycle_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match lifecycle_snapshot(&loom) {
+        Ok((snap, age)) => {
+            let v = cockpit_ops::lcview::view(&snap);
+            (StatusCode::OK, serde_json::json!({ "age_s": age, "stale": age > LIFECYCLE_STALE_S, "view": v }).to_string())
+        }
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, serde_json::json!({ "error": e }).to_string()),
+    };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
+        .route("/lifecycle", get(lifecycle_page_route))
+        .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/api/beads", get(beads_route))
         .route("/api/ops", get(ops_route))
         .route("/", get(page_route))

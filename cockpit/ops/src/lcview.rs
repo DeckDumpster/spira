@@ -6,12 +6,16 @@
 //! title and priority it cannot, and the landing ref's own commits reveal drift (a bead the
 //! lifecycle still calls READY/REWORK whose own commit is on the base). It never runs `bd`.
 //!
-//! Everything below the `Snapshot` is pure, so the frame is tested against fixtures.
+//! One `Snapshot` (what was gathered) → one `View` (everything derived: counts, groups,
+//! orderings) → two renderers: the terminal pane (`render`) and the phone page (`render_html`,
+//! served by loom from the snapshot file the pane writes). Both draw the same `View`, so the
+//! pane and the page cannot disagree about a number. Everything below the gather is pure.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
 /// One lifecycle row, as `spira-lc list` prints it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Row {
     pub id: String,
     pub state: String,
@@ -24,13 +28,13 @@ pub struct Row {
 }
 
 /// What `work list` knows that the lifecycle does not.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Meta {
     pub title: String,
     pub priority: Option<i64>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
     pub release: String,
@@ -44,9 +48,6 @@ pub struct Snapshot {
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
 }
-
-pub const FLOW: [&str; 6] = ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
-pub const SIDE: [&str; 3] = ["REWORK", "DROPPED", "SUPERSEDED"];
 
 /// The ids a commit subject names as its own work: `sp-x: …` or `… merge sp-x (…`.
 pub fn own_ids(subject: &str) -> Vec<String> {
@@ -79,6 +80,63 @@ pub fn own_ids(subject: &str) -> Vec<String> {
     out
 }
 
+// ───────────────────────────── the derived view (shared by both renderers)
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Item {
+    pub id: String,
+    pub prio: String,
+    pub title: String,
+    pub who: String,
+    pub age: String,
+    pub note: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HoldGroup {
+    pub kind: String,
+    pub count: usize,
+    pub top: Vec<(usize, String)>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PipeLine {
+    pub state: String,
+    pub count: usize,
+    pub oldest: String,
+    pub items: Vec<Item>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct View {
+    pub clock: String,
+    pub release: String,
+    pub world: String,
+    pub world_running: bool,
+    pub working: usize,
+    pub ceiling: usize,
+    pub errors: Vec<String>,
+    /// FLOW: (state, count) in pipeline order, LANDED as its 24 h count.
+    pub flow: Vec<(String, usize)>,
+    pub ready: usize,
+    pub ready_held: usize,
+    pub held_pct: usize,
+    pub rework: usize,
+    pub dropped_24h: usize,
+    pub superseded_24h: usize,
+    pub landed_total: usize,
+    pub holds: Vec<HoldGroup>,
+    pub base: String,
+    pub drift: Vec<String>,
+    pub now_items: Vec<Item>,
+    pub pipe: Vec<PipeLine>,
+    pub rework_items: Vec<Item>,
+    pub next_count: usize,
+    pub next: Vec<Item>,
+    pub recent: Vec<Item>,
+}
+
 fn age(secs: i64) -> String {
     let s = secs.max(0);
     if s < 90 {
@@ -93,23 +151,127 @@ fn age(secs: i64) -> String {
 }
 
 fn cut(s: &str, n: usize) -> String {
-    let t: String = s.chars().take(n).collect();
     if s.chars().count() > n {
-        format!("{}…", t.chars().take(n.saturating_sub(1)).collect::<String>())
+        format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
     } else {
-        t
+        s.to_string()
     }
 }
 
-fn prio(m: Option<&Meta>) -> String {
-    m.and_then(|m| m.priority).map(|p| format!("P{p}")).unwrap_or_else(|| "P?".into())
+fn clock(epoch: i64) -> String {
+    let s = epoch.rem_euclid(86_400);
+    format!("{:02}:{:02}Z", s / 3600, (s % 3600) / 60)
 }
 
-fn title(m: Option<&Meta>) -> String {
-    m.map(|m| m.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| "(no title: not an open bead)".into())
+pub fn view(s: &Snapshot) -> View {
+    let count = |st: &str| s.rows.iter().filter(|r| r.state == st).count();
+    let day = |r: &Row| s.now - r.updated_at < 86_400;
+    let prio = |id: &str| s.meta.get(id).and_then(|m| m.priority).map(|p| format!("P{p}")).unwrap_or_else(|| "P?".into());
+    let title = |id: &str| {
+        s.meta.get(id).map(|m| m.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| "(no title: not an open bead)".into())
+    };
+    let item = |r: &Row, age_of: i64, note: String| Item {
+        id: r.id.clone(),
+        prio: prio(&r.id),
+        title: title(&r.id),
+        who: r.holder.as_deref().unwrap_or("").trim_start_matches("aeon-").to_string(),
+        age: age(s.now - age_of),
+        note,
+        state: r.state.clone(),
+    };
+
+    let ready: Vec<&Row> = s.rows.iter().filter(|r| r.state == "READY").collect();
+    let ready_held = ready.iter().filter(|r| !r.holds.is_empty()).count();
+    let mut v = View {
+        clock: clock(s.now),
+        release: cut(&s.release, 9),
+        world: s.world.clone(),
+        world_running: s.world.contains("RUNNING"),
+        working: count("WORKING"),
+        ceiling: s.ceiling,
+        errors: s.errors.clone(),
+        ready: ready.len(),
+        ready_held,
+        held_pct: ready_held * 100 / ready.len().max(1),
+        rework: count("REWORK"),
+        dropped_24h: s.rows.iter().filter(|r| r.state == "DROPPED" && day(r)).count(),
+        superseded_24h: s.rows.iter().filter(|r| r.state == "SUPERSEDED" && day(r)).count(),
+        landed_total: count("LANDED"),
+        base: s.base.clone(),
+        ..Default::default()
+    };
+    v.flow = vec![
+        ("READY".into(), v.ready),
+        ("WORKING".into(), count("WORKING")),
+        ("SUBMITTED".into(), count("SUBMITTED")),
+        ("CERTIFIED".into(), count("CERTIFIED")),
+        ("IN_DELIVERY".into(), count("IN_DELIVERY")),
+        ("LANDED/24h".into(), s.rows.iter().filter(|r| r.state == "LANDED" && day(r)).count()),
+    ];
+
+    let mut by_kind: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    for r in s.rows.iter().filter(|r| !r.holds.is_empty() && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED")) {
+        for k in &r.holds {
+            *by_kind.entry(k.clone()).or_default().entry(cut(r.reason.as_deref().unwrap_or("(no reason)"), 70)).or_default() += 1;
+        }
+    }
+    v.holds = by_kind
+        .into_iter()
+        .map(|(kind, reasons)| {
+            let count = reasons.values().sum();
+            let mut top: Vec<(usize, String)> = reasons.into_iter().map(|(r, n)| (n, r)).collect();
+            top.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            top.truncate(3);
+            HoldGroup { kind, count, top }
+        })
+        .collect();
+
+    let mut drift: Vec<String> =
+        s.rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && s.on_base.contains_key(&r.id)).map(|r| r.id.clone()).collect();
+    drift.sort();
+    v.drift = drift;
+
+    let mut wk: Vec<&Row> = s.rows.iter().filter(|r| r.state == "WORKING").collect();
+    wk.sort_by_key(|r| r.since);
+    v.now_items = wk
+        .iter()
+        .map(|r| {
+            let lease = r.lease_until.map(|l| if l > s.now { format!("lease {}", age(l - s.now)) } else { "lease EXPIRED".into() }).unwrap_or_default();
+            item(r, r.since, lease)
+        })
+        .collect();
+
+    for st in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
+        let mut rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == st).collect();
+        rows.sort_by_key(|r| r.since);
+        if rows.is_empty() {
+            continue;
+        }
+        v.pipe.push(PipeLine {
+            state: st.into(),
+            count: rows.len(),
+            oldest: age(s.now - rows[0].since),
+            items: rows.iter().take(8).map(|r| item(r, r.since, String::new())).collect(),
+        });
+    }
+
+    let mut rw: Vec<&Row> = s.rows.iter().filter(|r| r.state == "REWORK").collect();
+    rw.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
+    v.rework_items = rw.iter().map(|r| item(r, r.updated_at, r.reason.clone().unwrap_or_default())).collect();
+
+    let mut nx: Vec<&Row> = ready.iter().copied().filter(|r| r.holds.is_empty() && !s.on_base.contains_key(&r.id)).collect();
+    nx.sort_by_key(|r| (s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
+    v.next_count = nx.len();
+    v.next = nx.iter().take(12).map(|r| item(r, r.since, String::new())).collect();
+
+    let mut rc: Vec<&Row> = s.rows.iter().collect();
+    rc.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
+    v.recent = rc.iter().take(10).map(|r| item(r, r.updated_at, String::new())).collect();
+    v
 }
 
-/// Colour helpers — plain ANSI so the pane stays a pipe-able text frame.
+// ───────────────────────────── terminal renderer
+
 const B: &str = "\x1b[1m";
 const D: &str = "\x1b[2m";
 const R: &str = "\x1b[0m";
@@ -118,168 +280,222 @@ const YEL: &str = "\x1b[33m";
 const GRN: &str = "\x1b[32m";
 const CYN: &str = "\x1b[36m";
 
-/// The whole frame, top to bottom.
-pub fn render(s: &Snapshot, width: usize) -> Vec<String> {
+pub fn render(v: &View, width: usize) -> Vec<String> {
     let w = width.max(60);
     let mut out = Vec::new();
-    let by_state = |st: &str| -> Vec<&Row> { s.rows.iter().filter(|r| r.state == st).collect() };
-    let count = |st: &str| s.rows.iter().filter(|r| r.state == st).count();
-    let day = |r: &Row| s.now - r.updated_at < 86_400;
-
-    // ── header
-    let working = count("WORKING");
     out.push(format!(
-        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{working}/{}{R}",
-        clock(s.now),
-        cut(&s.release, 9),
-        if s.world.contains("RUNNING") { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&s.world, 30)) },
-        s.ceiling
+        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}",
+        v.clock,
+        v.release,
+        if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 30)) },
+        v.working,
+        v.ceiling
     ));
-    for e in &s.errors {
+    for e in &v.errors {
         out.push(format!("{RED}  source failed: {}{R}", cut(e, w - 18)));
     }
-
-    // ── the state machine, as a flow
-    let ready = by_state("READY");
-    let held: Vec<&&Row> = ready.iter().filter(|r| !r.holds.is_empty()).collect();
-    let landed_24h = s.rows.iter().filter(|r| r.state == "LANDED" && day(r)).count();
-    let mut flow = format!("{B}FLOW{R}   READY {B}{}{R}", ready.len());
-    if !held.is_empty() {
-        let pct = held.len() * 100 / ready.len().max(1);
-        let c = if pct >= 25 { RED } else { YEL };
-        flow.push_str(&format!(" {c}({} held, {pct}%){R}", held.len()));
+    let mut flow = format!("{B}FLOW{R}   READY {B}{}{R}", v.ready);
+    if v.ready_held > 0 {
+        let c = if v.held_pct >= 25 { RED } else { YEL };
+        flow.push_str(&format!(" {c}({} held, {}%){R}", v.ready_held, v.held_pct));
     }
-    for st in &FLOW[1..5] {
-        flow.push_str(&format!(" → {st} {B}{}{R}", count(st)));
+    for (st, n) in &v.flow[1..] {
+        flow.push_str(&format!(" → {st} {B}{n}{R}"));
     }
-    flow.push_str(&format!(" → LANDED {B}{landed_24h}{R}{D}/24h{R}"));
     out.push(flow);
     out.push(format!(
         "       {YEL}REWORK {}{R}  {D}DROPPED {}/24h · SUPERSEDED {}/24h · LANDED {} all time{R}",
-        count("REWORK"),
-        s.rows.iter().filter(|r| r.state == "DROPPED" && day(r)).count(),
-        s.rows.iter().filter(|r| r.state == "SUPERSEDED" && day(r)).count(),
-        count("LANDED")
+        v.rework, v.dropped_24h, v.superseded_24h, v.landed_total
     ));
-
-    // ── holds, grouped by kind and reason: a starved queue shows here first
-    let mut by_kind: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
-    for r in s.rows.iter().filter(|r| !r.holds.is_empty() && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED")) {
-        for k in &r.holds {
-            let reason = r.reason.clone().unwrap_or_default();
-            *by_kind.entry(k.clone()).or_default().entry(cut(&reason, 60)).or_default() += 1;
-        }
-    }
-    if !by_kind.is_empty() {
+    if !v.holds.is_empty() {
         out.push(format!("{B}HOLDS{R}"));
-        for (k, reasons) in &by_kind {
-            let n: usize = reasons.values().sum();
-            let mut top: Vec<_> = reasons.iter().collect();
-            top.sort_by(|a, b| b.1.cmp(a.1));
-            let c = if k == "poison" { RED } else { YEL };
-            out.push(format!("  {c}{k:<9}{R}{B}{n:>4}{R}  {}", top.iter().take(2).map(|(r, n)| format!("{n}× {}", if r.is_empty() { "(no reason)" } else { r })).collect::<Vec<_>>().join(" · ")));
+        for g in &v.holds {
+            let c = if g.kind == "poison" { RED } else { YEL };
+            out.push(format!(
+                "  {c}{:<9}{R}{B}{:>4}{R}  {}",
+                g.kind,
+                g.count,
+                g.top.iter().take(2).map(|(n, r)| format!("{n}× {r}")).collect::<Vec<_>>().join(" · ")
+            ));
         }
     }
-
-    // ── drift: the lifecycle disagrees with the base
-    let mut drift: Vec<&Row> = s.rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && s.on_base.contains_key(&r.id)).collect();
-    drift.sort_by(|a, b| a.id.cmp(&b.id));
-    if !drift.is_empty() {
+    if !v.drift.is_empty() {
         out.push(format!(
             "{RED}{B}DRIFT{R} {RED}{} bead(s) READY/REWORK whose own commit is on {}:{R} {}",
-            drift.len(),
-            s.base,
-            drift.iter().take(6).map(|r| r.id.clone()).collect::<Vec<_>>().join(" ")
+            v.drift.len(),
+            v.base,
+            v.drift.iter().take(6).cloned().collect::<Vec<_>>().join(" ")
         ));
     }
-
-    // ── now: what is being worked
     out.push(format!("{B}NOW{R}    {D}WORKING — holder · bead · lease{R}"));
-    let mut wk = by_state("WORKING");
-    wk.sort_by_key(|r| r.since);
-    if wk.is_empty() {
+    if v.now_items.is_empty() {
         out.push(format!("       {D}nothing is being worked{R}"));
     }
-    for r in wk {
-        let m = s.meta.get(&r.id);
-        let lease = r.lease_until.map(|l| if l > s.now { format!("{}", age(l - s.now)) } else { format!("{RED}expired{R}") }).unwrap_or_else(|| "-".into());
-        out.push(format!(
-            "  {CYN}{:<9}{R} {:<12} {} {:<w2$} {D}{} · lease {}{R}",
-            cut(r.holder.as_deref().unwrap_or("?").trim_start_matches("aeon-"), 9),
-            r.id,
-            prio(m),
-            cut(&title(m), w.saturating_sub(48)),
-            age(s.now - r.since),
-            lease,
-            w2 = w.saturating_sub(48).min(70)
-        ));
+    let tw = w.saturating_sub(48).min(70);
+    for i in &v.now_items {
+        out.push(format!("  {CYN}{:<9}{R} {:<12} {} {:<tw$} {D}{} · {}{R}", cut(&i.who, 9), i.id, i.prio, cut(&i.title, tw), i.age, i.note));
     }
-
-    // ── pipeline: finished work waiting on the machine
     out.push(format!("{B}PIPE{R}   {D}SUBMITTED waits on a gate · CERTIFIED on a round · IN_DELIVERY in one{R}"));
-    for st in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
-        let mut v = by_state(st);
-        v.sort_by_key(|r| r.since);
-        if v.is_empty() {
-            continue;
-        }
-        let oldest = age(s.now - v[0].since);
+    for p in &v.pipe {
         out.push(format!(
-            "  {:<11} {B}{:>3}{R} {D}oldest {oldest}{R}  {}",
-            st,
-            v.len(),
-            v.iter().take(6).map(|r| format!("{} {D}{}{R}", r.id, age(s.now - r.since))).collect::<Vec<_>>().join("  ")
+            "  {:<11} {B}{:>3}{R} {D}oldest {}{R}  {}",
+            p.state,
+            p.count,
+            p.oldest,
+            p.items.iter().take(6).map(|i| format!("{} {D}{}{R}", i.id, i.age)).collect::<Vec<_>>().join("  ")
         ));
     }
-
-    // ── rework: sent back, and why
-    let mut rw = by_state("REWORK");
-    rw.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
-    if !rw.is_empty() {
+    if !v.rework_items.is_empty() {
         out.push(format!("{B}REWORK{R} {D}sent back — bead · why{R}"));
-        for r in rw.iter().take(6) {
-            out.push(format!("  {YEL}{:<12}{R} {} {D}{}{R} {}", r.id, prio(s.meta.get(&r.id)), age(s.now - r.updated_at), cut(r.reason.as_deref().unwrap_or("-"), w.saturating_sub(30))));
+        for i in v.rework_items.iter().take(6) {
+            out.push(format!("  {YEL}{:<12}{R} {} {D}{}{R} {}", i.id, i.prio, i.age, cut(&i.note, w.saturating_sub(30))));
         }
-        if rw.len() > 6 {
-            out.push(format!("  {D}… {} more{R}", rw.len() - 6));
+        if v.rework_items.len() > 6 {
+            out.push(format!("  {D}… {} more{R}", v.rework_items.len() - 6));
         }
     }
-
-    // ── next: claimable, by priority then age
-    let mut nx: Vec<&Row> = ready.iter().copied().filter(|r| r.holds.is_empty() && !s.on_base.contains_key(&r.id)).collect();
-    nx.sort_by_key(|r| (s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
-    out.push(format!("{B}NEXT{R}   {B}{}{R} claimable {D}(READY, unheld, not on the base) — by priority{R}", nx.len()));
-    for r in nx.iter().take(10) {
-        let m = s.meta.get(&r.id);
-        out.push(format!("  {} {:<12} {}", prio(m), r.id, cut(&title(m), w.saturating_sub(20))));
+    out.push(format!("{B}NEXT{R}   {B}{}{R} claimable {D}(READY, unheld, not on the base) — by priority{R}", v.next_count));
+    for i in v.next.iter().take(10) {
+        out.push(format!("  {} {:<12} {}", i.prio, i.id, cut(&i.title, w.saturating_sub(20))));
     }
-
-    // ── recent transitions
-    let mut rc: Vec<&Row> = s.rows.iter().collect();
-    rc.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
     out.push(format!("{B}RECENT{R} {D}last transitions — when · bead · now{R}"));
-    for r in rc.iter().take(8) {
-        let c = match r.state.as_str() {
+    for i in v.recent.iter().take(8) {
+        let c = match i.state.as_str() {
             "LANDED" => GRN,
             "REWORK" | "DROPPED" => YEL,
             _ => "",
         };
-        out.push(format!(
-            "  {D}{:>4}{R} {:<12} {c}{:<11}{R} {}",
-            age(s.now - r.updated_at),
-            r.id,
-            r.state,
-            cut(&title(s.meta.get(&r.id)), w.saturating_sub(34))
-        ));
+        out.push(format!("  {D}{:>4}{R} {:<12} {c}{:<11}{R} {}", i.age, i.id, i.state, cut(&i.title, w.saturating_sub(34))));
     }
-    out.push(format!("{D}source: spira-lc (state) · work list (titles) · {} commits (drift) — no bd{R}", s.base));
+    out.push(format!("{D}source: spira-lc (state) · work list (titles) · {} commits (drift) — no bd{R}", v.base));
     out
 }
 
-fn clock(epoch: i64) -> String {
-    let s = epoch.rem_euclid(86_400);
-    format!("{:02}:{:02}Z", s / 3600, (s % 3600) / 60)
+// ───────────────────────────── phone renderer (served by loom)
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
+
+/// The same `View` as a self-contained, phone-width HTML page. `stale` is the snapshot's age in
+/// seconds when it is old enough to distrust; the page says so rather than showing old numbers
+/// as live.
+pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
+    let mut h = String::new();
+    h.push_str(&format!(
+        "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>\
+<meta http-equiv=refresh content='{refresh_s}'><title>Spira lifecycle</title><style>{CSS}</style></head><body>"
+    ));
+    h.push_str(&format!(
+        "<header><b>LIFECYCLE</b> <span class=dim>{}</span> · release <b>{}</b> · <span class={}>{}</span> · aeons <b>{}/{}</b></header>",
+        esc(&v.clock),
+        esc(&v.release),
+        if v.world_running { "ok" } else { "bad" },
+        if v.world_running { "world RUNNING".to_string() } else { esc(&format!("world {}", v.world)) },
+        v.working,
+        v.ceiling
+    ));
+    if let Some(age_s) = stale {
+        h.push_str(&format!("<p class='banner bad'>Snapshot is {} old — the pane's collector is not running.</p>", age(age_s)));
+    }
+    for e in &v.errors {
+        h.push_str(&format!("<p class='banner bad'>source failed: {}</p>", esc(e)));
+    }
+    h.push_str("<section><h2>Flow</h2><div class=flow>");
+    for (i, (st, n)) in v.flow.iter().enumerate() {
+        let extra = if i == 0 && v.ready_held > 0 {
+            format!("<small class={}>{} held · {}%</small>", if v.held_pct >= 25 { "bad" } else { "warn" }, v.ready_held, v.held_pct)
+        } else {
+            String::new()
+        };
+        h.push_str(&format!("<div class=stage><span>{}</span><b>{n}</b>{extra}</div>", esc(st)));
+    }
+    h.push_str(&format!(
+        "</div><p class=dim><span class=warn>REWORK {}</span> · DROPPED {}/24h · SUPERSEDED {}/24h · LANDED {} all time</p></section>",
+        v.rework, v.dropped_24h, v.superseded_24h, v.landed_total
+    ));
+    if !v.holds.is_empty() {
+        h.push_str("<section><h2>Holds</h2><table>");
+        for g in &v.holds {
+            let tops = g.top.iter().map(|(n, r)| format!("{n}× {}", esc(r))).collect::<Vec<_>>().join("<br>");
+            h.push_str(&format!(
+                "<tr><td class={}>{}</td><td class=num>{}</td><td>{tops}</td></tr>",
+                if g.kind == "poison" { "bad" } else { "warn" },
+                esc(&g.kind),
+                g.count
+            ));
+        }
+        h.push_str("</table></section>");
+    }
+    if !v.drift.is_empty() {
+        h.push_str(&format!(
+            "<section class=bad><h2>Drift</h2><p>{} bead(s) READY/REWORK whose own commit is on {}: {}</p></section>",
+            v.drift.len(),
+            esc(&v.base),
+            esc(&v.drift.join(" "))
+        ));
+    }
+    let table = |title: &str, sub: &str, items: &[Item], cols: &dyn Fn(&Item) -> String| -> String {
+        let mut t = format!("<section><h2>{title} <small class=dim>{sub}</small></h2><table>");
+        if items.is_empty() {
+            t.push_str("<tr><td class=dim>nothing</td></tr>");
+        }
+        for i in items {
+            t.push_str(&cols(i));
+        }
+        t.push_str("</table></section>");
+        t
+    };
+    h.push_str(&table("Now", "working — holder · bead · lease", &v.now_items, &|i| {
+        format!(
+            "<tr><td class=who>{}</td><td><b>{}</b> <span class=dim>{}</span><br>{}</td><td class=dim>{}<br>{}</td></tr>",
+            esc(&i.who),
+            esc(&i.id),
+            esc(&i.prio),
+            esc(&i.title),
+            esc(&i.age),
+            esc(&i.note)
+        )
+    }));
+    h.push_str("<section><h2>Pipeline <small class=dim>submitted waits on a gate · certified on a round</small></h2><table>");
+    if v.pipe.is_empty() {
+        h.push_str("<tr><td class=dim>nothing waiting</td></tr>");
+    }
+    for p in &v.pipe {
+        let ids = p.items.iter().map(|i| format!("{} <span class=dim>{}</span>", esc(&i.id), esc(&i.age))).collect::<Vec<_>>().join(" · ");
+        h.push_str(&format!("<tr><td>{}</td><td class=num>{}</td><td><span class=dim>oldest {}</span><br>{ids}</td></tr>", esc(&p.state), p.count, esc(&p.oldest)));
+    }
+    h.push_str("</table></section>");
+    h.push_str(&table("Rework", "sent back — why", &v.rework_items[..v.rework_items.len().min(10)], &|i| {
+        format!("<tr><td><b>{}</b> <span class=dim>{} · {}</span><br><span class=warn>{}</span></td></tr>", esc(&i.id), esc(&i.prio), esc(&i.age), esc(&i.note))
+    }));
+    h.push_str(&table(&format!("Next ({})", v.next_count), "ready, unheld, not on the base — by priority", &v.next, &|i| {
+        format!("<tr><td class=num>{}</td><td><b>{}</b><br>{}</td></tr>", esc(&i.prio), esc(&i.id), esc(&i.title))
+    }));
+    h.push_str(&table("Recent", "last transitions", &v.recent, &|i| {
+        let c = match i.state.as_str() {
+            "LANDED" => "ok",
+            "REWORK" | "DROPPED" => "warn",
+            _ => "",
+        };
+        format!("<tr><td class=dim>{}</td><td><b>{}</b> <span class={c}>{}</span><br>{}</td></tr>", esc(&i.age), esc(&i.id), esc(&i.state), esc(&i.title))
+    }));
+    h.push_str(&format!(
+        "<footer class=dim>source: spira-lc (state) · work list (titles) · {} commits (drift) — no bd · refreshes every {refresh_s}s</footer></body></html>",
+        esc(&v.base)
+    ));
+    h
+}
+
+const CSS: &str = ":root{--bg:#fff;--fg:#111;--dim:#6b7280;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--line:#e5e7eb}\
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e5e7eb;--dim:#9ca3af;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--line:#1f2937}}\
+body{background:var(--bg);color:var(--fg);font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:12px 16px;max-width:900px}\
+header{font-size:15px;margin-bottom:8px}h2{font-size:14px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.05em}\
+section{border-top:1px solid var(--line);padding-top:4px}table{width:100%;border-collapse:collapse}td{padding:4px 6px 4px 0;vertical-align:top;border-bottom:1px solid var(--line)}\
+.num{text-align:right;font-weight:bold;width:3em}.who{color:#0891b2;width:6em}.dim{color:var(--dim)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}\
+.banner{padding:6px 8px;border:1px solid var(--bad);border-radius:4px}.flow{display:flex;flex-wrap:wrap;gap:6px}\
+.stage{border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:5.5em;display:flex;flex-direction:column}.stage span{font-size:11px;color:var(--dim)}.stage b{font-size:20px}\
+footer{margin-top:14px;font-size:12px}";
 
 #[cfg(test)]
 mod tests {
@@ -314,23 +530,21 @@ mod tests {
         let mut s = snap(vec![row("sp-low", "READY", 1), row("sp-high", "READY", 5), held, row("sp-landed", "LANDED", 3)]);
         s.meta.insert("sp-low".into(), Meta { title: "low".into(), priority: Some(2) });
         s.meta.insert("sp-high".into(), Meta { title: "high".into(), priority: Some(0) });
-        // bd might call sp-landed open and sp-high closed — the view never asks bd.
-        let f = plain(&render(&s, 120));
-        let next = f.split("NEXT").nth(1).unwrap().split("RECENT").next().unwrap();
-        assert!(next.contains("2 claimable"), "{next}");
-        let hi = next.find("sp-high").unwrap();
-        let lo = next.find("sp-low").unwrap();
-        assert!(hi < lo, "P0 before P2:\n{next}");
-        assert!(!next.contains("sp-held") && !next.contains("sp-landed"), "{next}");
+        let v = view(&s);
+        assert_eq!(v.next_count, 2);
+        assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-high", "sp-low"]);
+        let f = plain(&render(&v, 120));
+        assert!(f.contains("2 claimable"), "{f}");
     }
 
     #[test]
     fn a_ready_bead_whose_commit_is_on_the_base_is_drift_not_next() {
         let mut s = snap(vec![row("sp-done", "READY", 1)]);
         s.on_base.insert("sp-done".into(), "abc123".into());
-        let f = plain(&render(&s, 120));
-        assert!(f.contains("DRIFT 1 bead(s)") && f.contains("sp-done"), "{f}");
-        assert!(f.contains("0 claimable"), "{f}");
+        let v = view(&s);
+        assert_eq!(v.drift, vec!["sp-done"]);
+        assert_eq!(v.next_count, 0);
+        assert!(plain(&render(&v, 120)).contains("DRIFT 1 bead(s)"));
     }
 
     #[test]
@@ -342,15 +556,47 @@ mod tests {
             r.reason = Some("repo:spira has no repo-map entry".into());
             rows.push(r);
         }
-        let f = plain(&render(&snap(rows), 120));
+        let f = plain(&render(&view(&snap(rows)), 120));
         assert!(f.contains("READY 4 (3 held, 75%)"), "{f}");
-        assert!(f.contains("ask") && f.contains("3× repo:spira has no repo-map entry"), "{f}");
+        assert!(f.contains("3× repo:spira has no repo-map entry"), "{f}");
     }
 
     #[test]
     fn a_failed_source_is_named_never_an_empty_frame() {
         let mut s = snap(vec![]);
         s.errors.push("spira-lc list: exit 1".into());
-        assert!(plain(&render(&s, 100)).contains("source failed: spira-lc list: exit 1"));
+        let v = view(&s);
+        assert!(plain(&render(&v, 100)).contains("source failed: spira-lc list: exit 1"));
+        assert!(render_html(&v, None, 10).contains("source failed: spira-lc list: exit 1"));
+    }
+
+    #[test]
+    fn the_pane_and_the_page_show_the_same_numbers_from_one_snapshot() {
+        let mut held = row("sp-h", "READY", 2);
+        held.holds = vec!["poison".into()];
+        let mut s = snap(vec![row("sp-r", "READY", 1), held, row("sp-w", "WORKING", 1), row("sp-c", "CERTIFIED", 1), row("sp-x", "REWORK", 1)]);
+        s.on_base.insert("sp-x".into(), "c".into());
+        let v = view(&s);
+        let pane = plain(&render(&v, 120));
+        let page = render_html(&v, None, 10);
+        for (st, n) in &v.flow {
+            assert!(pane.contains(&format!("{st} {n}")) || st == "READY", "pane lacks {st} {n}");
+            assert!(page.contains(&format!("<span>{st}</span><b>{n}</b>")), "page lacks {st} {n}");
+        }
+        assert!(pane.contains("DRIFT 1") && page.contains("1 bead(s) READY/REWORK"));
+        assert!(page.contains(&format!("Next ({})", v.next_count)));
+    }
+
+    #[test]
+    fn a_stale_snapshot_says_so_on_the_page() {
+        assert!(render_html(&view(&snap(vec![])), Some(600), 10).contains("Snapshot is 10m old"));
+    }
+
+    #[test]
+    fn the_snapshot_survives_a_round_trip_through_the_file_loom_reads() {
+        let mut s = snap(vec![row("sp-a", "READY", 1)]);
+        s.meta.insert("sp-a".into(), Meta { title: "t".into(), priority: Some(1) });
+        let back: Snapshot = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(serde_json::to_string(&view(&back)).unwrap(), serde_json::to_string(&view(&s)).unwrap());
     }
 }

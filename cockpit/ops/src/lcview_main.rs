@@ -2,7 +2,7 @@
 //! tools only: `spira-lc list` (state), `work list --json` (titles, priority), the landing ref's
 //! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
-use cockpit_ops::lcview::{own_ids, render, Meta, Row, Snapshot};
+use cockpit_ops::lcview::{own_ids, render, view, Meta, Row, Snapshot};
 use std::collections::HashMap;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -91,6 +91,23 @@ fn gather() -> Snapshot {
     s
 }
 
+/// Write the snapshot loom serves (`/lifecycle`), atomically, so the phone page shows exactly
+/// what this pane just drew. A failure is printed in the frame's place, never swallowed.
+fn publish(s: &Snapshot) {
+    let Ok(run) = spira_config::process::cfg("SPIRA_RUN") else {
+        eprintln!("lc-view: SPIRA_RUN does not resolve — the phone page will go stale");
+        return;
+    };
+    let dir = std::path::Path::new(run.trim()).join("lcview");
+    let tmp = dir.join(".snapshot.json.tmp");
+    let res = std::fs::create_dir_all(&dir)
+        .and_then(|_| std::fs::write(&tmp, serde_json::to_vec(s).unwrap_or_default()))
+        .and_then(|_| std::fs::rename(&tmp, dir.join("snapshot.json")));
+    if let Err(e) = res {
+        eprintln!("lc-view: cannot publish the snapshot under {}: {e}", dir.display());
+    }
+}
+
 fn width() -> usize {
     std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).unwrap_or(120)
 }
@@ -101,12 +118,14 @@ fn main() {
         Some("loop") => {
             let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(10);
             loop {
-                let frame = render(&gather(), width());
+                let snap = gather();
+                publish(&snap);
+                let frame = render(&view(&snap), width());
                 print!("\x1b[H\x1b[2J{}\n", frame.join("\n"));
                 std::thread::sleep(Duration::from_secs(secs));
             }
         }
-        Some("once") | None => println!("{}", render(&gather(), width()).join("\n")),
+        Some("once") | None => println!("{}", render(&view(&gather()), width()).join("\n")),
         Some(other) => {
             eprintln!("usage: lc-view once|loop [secs] (unknown: {other})");
             std::process::exit(2);
