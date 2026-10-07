@@ -109,14 +109,15 @@ pub fn wait_decisions(
     out
 }
 
-/// CHECK 2 (reaper half): WORKING rows whose lease expired more than `grace` ago, not
-/// wait-held → (id, seconds since expiry).
-pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64) -> Vec<(String, i64)> {
+/// CHECK 2 (reaper half): WORKING rows, not wait-held, whose lease expired more than `grace`
+/// ago, or has expired at all with no live holder → (id, seconds since expiry).
+pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64, alive: impl Fn(&str) -> bool) -> Vec<(String, i64)> {
     rows.iter()
         .filter(|r| r.state == "WORKING" && !r.holds.iter().any(|h| h == "wait"))
         .filter_map(|r| {
             let lu = r.lease_until?;
-            (now - lu > grace).then(|| (r.bead_id.clone(), now - lu))
+            let past = now - lu;
+            (past > grace || (past > 0 && !alive(&r.bead_id))).then(|| (r.bead_id.clone(), past))
         })
         .collect()
 }
@@ -349,7 +350,7 @@ impl<'a> Sentinel<'a> {
             .collect();
         let now = self.h.now();
         let mut n = 0;
-        for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace) {
+        for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace, |id| self.holder_alive(id)) {
             if !self.lc_apply(&id, HOLDER_DEAD) {
                 continue;
             }
@@ -578,7 +579,24 @@ mod tests {
                 ..Default::default()
             },
         ];
-        assert_eq!(stale_leases(&rows, 1000, 500), vec![("a".to_string(), 900)]);
+        assert_eq!(stale_leases(&rows, 1000, 500, |_| true), vec![("a".to_string(), 900)]);
+    }
+
+    #[test]
+    fn stale_leases_reap_at_expiry_only_when_the_holder_is_gone() {
+        let row = |id: &str, lu| LcRow {
+            bead_id: id.into(),
+            state: "WORKING".into(),
+            lease_until: Some(lu),
+            ..Default::default()
+        };
+        let rows = vec![row("dead", 900), row("live", 900), row("unexpired", 2000)];
+        let alive = |id: &str| id == "live";
+        assert_eq!(stale_leases(&rows, 1000, 500, alive), vec![("dead".to_string(), 100)]);
+        assert_eq!(
+            stale_leases(&rows, 1500, 500, alive),
+            vec![("dead".to_string(), 600), ("live".to_string(), 600)]
+        );
     }
 
     #[test]
