@@ -30,7 +30,7 @@ means the same thing.
 | `round-vm teardown` | — | 0; stops the mirror daemon for the state dir (nothing running is success) |
 | `round-vm acquire` | `<handle> <addr> <warm\|cold>` | 0 success; 1 gave up (only when `SPIRA_ROUND_VM_MAX_RETRIES` > 0) |
 | `round-vm release <handle>` | nothing | 0 destroyed and verified gone; 1 failed; 2 usage |
-| `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF]` | the remote batch's own output | see 2.2 |
+| `round-vm run <tree-dir> [--suites CSV; absent = whole corpus, longest recorded median first, unrecorded first with an alarm] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
 | `round-vm template <tree-dir>` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
@@ -297,7 +297,7 @@ pub struct Config {
     pub host_pubkey: PathBuf,        // SPIRA_ROUND_VM_HOST_PUBKEY / round_vm_host_pubkey/ <host_key>.pub
     pub host_addr: Option<String>,   // SPIRA_ROUND_VM_HOST_ADDR   / round_vm_host_addr
     pub vcpus: u32,                  // SPIRA_ROUND_VM_VCPUS       / round_vm_vcpus      / 16
-    pub maxpar: u32,                 // SPIRA_ROUND_VM_MAXPAR      / round_vm_maxpar     / 16
+    pub maxpar: u32,                 // SPIRA_ROUND_VM_MAXPAR      / round_vm_maxpar     / empty = vcpus
     pub retry_interval: Duration,    // SPIRA_ROUND_VM_RETRY_INTERVAL / round_vm_retry_interval / 60 s
     pub max_retries: u32,            // SPIRA_ROUND_VM_MAX_RETRIES / round_vm_max_retries/ 0 = forever
     pub acquire_deadline: Duration,  // SPIRA_ROUND_VM_ACQUIRE_DEADLINE secs / 3600; 0 = forever (env only)

@@ -75,6 +75,24 @@ pub trait Host: Sync {
     fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String>;
     /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`.
     fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String>;
+    /// Every suite file name committed in `tree`'s HEAD.
+    fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String>;
+    /// Recorded median wall seconds per suite (`testenv --report`).
+    fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String>;
+}
+
+/// The explicit longest-first suite list for a full-corpus round, naming on stderr every suite
+/// with no recorded time.
+fn lpt_suites(host: &dyn Host, tree: &Path) -> Result<String, String> {
+    let all = host.suites_in(tree)?;
+    if all.is_empty() {
+        return Err(format!("no spira/test-*.sh suites in {}", tree.display()));
+    }
+    let (list, unknown) = crate::lpt::order(&all, &host.suite_medians()?);
+    if !unknown.is_empty() {
+        eprintln!("round-vm run: ALARM — no recorded time, scheduled first: {}", unknown.join(" "));
+    }
+    Ok(list.join(","))
 }
 
 pub struct BatchJob {
@@ -549,6 +567,26 @@ impl Host for GitHost {
         r
     }
 
+    fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String> {
+        let out = git(&["-C", &tree.to_string_lossy(), "ls-tree", "--name-only", "HEAD", "spira/"])?;
+        let mut v: Vec<String> = out
+            .lines()
+            .filter_map(|l| l.strip_prefix("spira/"))
+            .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
+            .map(str::to_string)
+            .collect();
+        v.sort();
+        Ok(v)
+    }
+
+    fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String> {
+        let o = command("testenv").arg("--report").stdin(Stdio::null()).output().map_err(|e| format!("testenv --report: {e}"))?;
+        if !o.status.success() {
+            return Err(format!("testenv --report exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).trim()));
+        }
+        crate::lpt::parse_medians(&String::from_utf8_lossy(&o.stdout))
+    }
+
     fn prepare_mirror(&self, tree: &Path) -> Result<(), String> {
         if self.listen.is_empty() {
             return Err("no listen address for the mirror daemon (SPIRA_ROUND_VM_HOST_ADDR)".into());
@@ -781,6 +819,21 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         }
     };
     let build_image = image_build_declared(env, args, &commit_sha);
+    let ordered;
+    let args = if args.suites.is_none() {
+        match lpt_suites(env.host, &args.tree_dir) {
+            Ok(list) => {
+                ordered = RunArgs { suites: Some(list), ..args.clone() };
+                &ordered
+            }
+            Err(e) => {
+                eprintln!("round-vm run: cannot order the corpus longest-first: {e}");
+                return 2;
+            }
+        }
+    } else {
+        args
+    };
     if let Err(e) = env.host.prepare_mirror(&args.tree_dir) {
         eprintln!("round-vm run: cannot prepare the mirror from {}: {e}", args.tree_dir.display());
         return 2;
@@ -1506,6 +1559,12 @@ mod tests {
         fn mirror_ref(&self, _: &Path, branch: &str, _: &str) -> Result<(), String> {
             if branch == "missing" { Err("no such branch".into()) } else { Ok(()) }
         }
+        fn suites_in(&self, _: &Path) -> Result<Vec<String>, String> {
+            Ok(vec!["test-fast.sh".into(), "test-slow.sh".into()])
+        }
+        fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String> {
+            Ok([("test-fast.sh".to_string(), 2.0), ("test-slow.sh".to_string(), 90.0)].into())
+        }
     }
 
     fn wait_until(cond: impl Fn() -> bool) {
@@ -1784,7 +1843,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo' '' '180' '' ''"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'test-slow.sh,test-fast.sh' '24' '' '/opt/spira/cargo' '' '180' '' ''"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
