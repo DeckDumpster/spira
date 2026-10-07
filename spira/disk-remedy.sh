@@ -26,7 +26,8 @@ shopt -s nullglob
 for w in "$SPIRA_RUN"/worktree/*/; do
     w="${w%/}"
     id="$(basename "$w")"
-    [ "$(spira_bead_status "$id" 2>/dev/null)" = closed ] || continue
+    row="$(lc_bead_row "$id" 2>/dev/null)" || continue
+    case "${row%%$'\t'*}" in LANDED|SUPERSEDED|DROPPED|DONE) ;; *) continue ;; esac
     repo_name="$(bead_repo "$id" 2>/dev/null)"
     repo_path="$(repo_root "$repo_name" 2>/dev/null)" || continue
     spira_destroy_worktree "$id" "$w" "$repo_path" \
