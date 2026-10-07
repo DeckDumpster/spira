@@ -2452,6 +2452,8 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     assert!(argv.contains(&format!("--setenv=SPIRA_RELEASE={new}")), "{argv}");
     assert!(argv.contains(&format!("--setenv=PATH={new}/bin:")), "{argv}");
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
+    assert!(argv.contains("--property=IOSchedulingClass=idle"), "{argv}");
+    assert!(argv.contains("--property=IOWeight=10"), "{argv}");
 }
 
 #[test]

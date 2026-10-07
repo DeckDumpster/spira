@@ -490,6 +490,8 @@ impl<'a> Sentinel<'a> {
         let release = self.current_release();
         vec![
             format!("--property=TimeoutStartSec={timeout}"),
+            "--property=IOSchedulingClass=idle".to_string(),
+            "--property=IOWeight=10".to_string(),
             self.summon_refill_argv(),
             format!("--setenv=SPIRA_RELEASE={release}"),
             format!("--setenv=PATH={release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin"),
