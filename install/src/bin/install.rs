@@ -1103,8 +1103,9 @@ fn main() -> ExitCode {
                 // lc-serve.service was enabled in phase 4, before this store existed, and may
                 // have given up (StartLimitBurst): restart it now and require it to be active —
                 // fail closed, since an aeon cannot claim without it (sp-xfqnr).
-                // batch-job: one start of the socket, one restart of the service; bounded by timeout 30.
+                // batch-job: one start of the socket; bounded by timeout 30.
                 let _ = Command::new("timeout").args(["30", "systemctl", "--user", "start", "lc-serve.socket"]).status();
+                // batch-job: one restart of a service during install; bounded by timeout 30.
                 let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "lc-serve.service"]).status();
                 let mut active = false;
                 for _ in 0..20 {
