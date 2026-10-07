@@ -140,8 +140,19 @@ is "positive control: the fence grep finds a planted CPUQuota=/Nice=" "2" \
 _n_exec="$(grep -c '^ExecStart=' <<< "$rendered")"
 is "positive control: the render holds at least 20 units' ExecStart= lines" "yes" \
     "$([ "${_n_exec:-0}" -ge 20 ] && echo yes || echo "no ($_n_exec)")"
-is "no rendered unit carries CPUQuota=, Nice= or IOSchedulingClass=" "" \
-    "$(grep -E "$_fence_re" <<< "$rendered")"
+_io_fenced='spira-landing-pass-prod.service spira-sop-lint-prod.service'
+_fenced_out="$(awk -v ok="$_io_fenced" -v re="$_fence_re" '
+    /^===== /{n=split(ok,a," ");skip=0;for(i=1;i<=n;i++)if(index($0,"===== " a[i] " =====")==1)skip=1;next}
+    !skip && $0 ~ re' <<< "$rendered")"
+is "no rendered unit outside the IO-fenced pair carries CPUQuota=, Nice= or IOSchedulingClass=" "" "$_fenced_out"
+is "positive control: the exemption skips only the named units" "1" \
+    "$(printf '===== spira-sop-lint-prod.service =====\nNice=19\n===== other.service =====\nNice=5\n' |
+        awk -v ok="$_io_fenced" -v re="$_fence_re" '
+        /^===== /{n=split(ok,a," ");skip=0;for(i=1;i<=n;i++)if(index($0,"===== " a[i] " =====")==1)skip=1;next}
+        !skip && $0 ~ re' | grep -c .)"
+for svc in $_io_fenced; do
+    has "$svc: IO-fenced idle" "$(block "$svc")" "IOSchedulingClass=idle"
+done
 
 for svc in spira-notify-prod.service spira-refresh-prod.service \
            spira-mail-tidy-prod.service; do
