@@ -511,7 +511,9 @@ fn cmd_deps(args: &[String]) -> ExitCode {
 /// existence-only test.
 fn repo_registry() -> Registry {
     let env_map: BTreeMap<String, String> = env::vars().collect();
-    let home = PathBuf::from(env_map.get("SPIRA_HOME").cloned().unwrap_or_default());
+    // Named, never searched for: SPIRA_HOME, else the release this runs from — what every
+    // launcher sets (resolve::locate_home). Neither is no home, and the config cannot resolve.
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
     Registry::from_env(env_map, &home)
 }
 
