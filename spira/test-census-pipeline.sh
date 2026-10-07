@@ -235,6 +235,7 @@ rows += [{"bead_id": i, "state": state(i, "SUBMITTED")} for i in ids(closed_f)]
 print(json.dumps(rows))
 PY
     ;;
+    facts-query) exit 0 ;;
     *) exit 2 ;;
 esac
 STUB

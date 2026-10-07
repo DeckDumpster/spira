@@ -226,10 +226,8 @@ testdb_seed <<'JSONL'
 {"id":"sp-g4","title":"cause row test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
 bead_reopen "sp-g4" rebase-conflict "Reopened: conflict" >/dev/null 2>&1
-_ev_cause="$(timeout 5 "${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
-    "SELECT COALESCE(new_value,'') FROM events WHERE issue_id='sp-g4' AND event_type='reopen'" \
-    2>/dev/null | sed -n '3p' | tr -d ' ')"
-is "bead_reopen writes event_type=reopen with cause in new_value" "rebase-conflict" "$_ev_cause"
+_ev_cause="$(lcfix_fact_causes sp-g4 reopen)"
+is "bead_reopen appends a reopen fact with the cause" "rebase-conflict" "$_ev_cause"
 
 # ======================================================================================
 echo
@@ -272,13 +270,11 @@ want "reopen.log names the non-harness actor (sp-2w29g: not just BEADS_ACTOR uns
 # that case) — the field's presence is what's asserted, not a specific value.
 want "reopen.log names a caller field" "caller=" "$_rt_line"
 
-# COUNTS MUST MATCH EXACTLY (the bead's own acceptance criterion): one events-table row
-# with event_type='reopen', and exactly one matching reopen.log line — not two, not zero.
-_rt_evcount="$(timeout 5 "${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
-    "SELECT COUNT(*) FROM events WHERE issue_id='sp-h1' AND event_type='reopen' AND new_value='batch-eject'" \
-    2>/dev/null | sed -n '3p' | tr -d ' ')"
+# COUNTS MUST MATCH EXACTLY (the bead's own acceptance criterion): one fact of kind
+# 'reopen', and exactly one matching reopen.log line — not two, not zero.
+_rt_evcount="$(lcfix_fact_causes sp-h1 reopen | grep -Fxc batch-eject || true)"
 _rt_logcount="$(grep -Fc 'reopen sp-h1 cause=batch-eject' "$_rt_log" 2>/dev/null || true)"
-is "reopen.log line count matches the events-table row count exactly" "$_rt_evcount" "${_rt_logcount:-0}"
+is "reopen.log line count matches the reopen fact count exactly" "$_rt_evcount" "${_rt_logcount:-0}"
 
 rm -rf "$_rt_run"
 export SPIRA_RUN="$_rt_orig_run"; tl_config SPIRA_RUN="$SPIRA_RUN"

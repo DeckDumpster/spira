@@ -129,7 +129,7 @@ fi
 echo
 echo "an exempt ref does NOT reach SIN:"
 # ======================================================================================
-rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"; : > "$MAIL_LOG"
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG" "$TMP/lc/facts.tsv"; : > "$MAIL_LOG"
 ref="incident:test-exempt-sin"
 title="exempt incident"
 for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
