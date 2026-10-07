@@ -9,7 +9,7 @@ use crate::incident::{self, Finding};
 use crate::log::log;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cond {
@@ -80,19 +80,9 @@ pub(crate) fn unfinished(lc_bin: &str, ids: Vec<String>) -> Option<Vec<String>> 
     Some(out)
 }
 
-fn close_bead(ctx: &Ctx, id: &str, why: &str) -> bool {
-    use std::io::Write;
-    let child = Command::new(ctx.bd)
-        .args(["-C", ctx.db, "close", id, "--reason-file", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    let Ok(mut child) = child else { return false };
-    if let Some(mut si) = child.stdin.take() {
-        let _ = si.write_all(format!("OUTCOME: delivered\n{why}\n").as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+// Through the lifecycle machine (sp-3fue0j), never a raw bd close.
+fn close_bead(_ctx: &Ctx, id: &str, why: &str) -> bool {
+    spira_config::lifecycle_row::close(id, &format!("OUTCOME: delivered\n{why}\n"), "watchtower", None).is_ok()
 }
 
 pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {

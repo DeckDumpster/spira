@@ -62,18 +62,7 @@ impl crate::callers::Bd for LiveBd {
         run(&["close", id, "--force", "--reason", reason]).map(|_| ())
     }
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let out = run(&["list", "--id", &ids.join(","), "--status", "closed", "--limit", "0", "--json"])?;
-        let start = out.find(['[', '{']).ok_or("bd list: no JSON")?;
-        let v: serde_json::Value = serde_json::from_str(&out[start..]).map_err(|e| format!("bd list --json: {e}"))?;
-        let rows = match v {
-            serde_json::Value::Array(a) => a,
-            o => vec![o],
-        };
-        let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-        Ok(rows.iter().filter(|r| text(r, "status") == "closed").map(|r| (text(r, "id"), text(r, "close_reason"))).filter(|(id, _)| !id.is_empty()).collect())
+        crate::bd_facts::closed(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
     }
 }
 

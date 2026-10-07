@@ -9,7 +9,6 @@
 //! Best-effort throughout and always exits 0, since every caller discards the answer.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -61,14 +60,10 @@ pub fn reason(sha: &str) -> String {
     format!("OUTCOME: landed\nClosed by the landing pass: work landed at {shown} (law-closed-is-not-landed).\n")
 }
 
+// Through the machine's own close verb (sp-3fue0j): the row is LANDED by now, so it closes
+// the store alone.
 fn bdq_close(id: &str, reason: &str) -> bool {
-    let Ok(mut child) = Command::new("timeout").args([CALL_SECS, "bdq", "close", id, "--reason-file", "-"]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
-        return false;
-    };
-    if let Some(mut si) = child.stdin.take() {
-        let _ = si.write_all(reason.as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    spira_config::lifecycle_row::close(id, reason, "landing-pass", None).is_ok()
 }
 
 fn show_row(id: &str) -> Option<Row> {

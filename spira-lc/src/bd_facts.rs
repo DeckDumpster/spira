@@ -73,6 +73,35 @@ pub fn roster(bd_bin: &str, db: &str, repo_name: &str) -> Result<Vec<String>, St
     Ok(items.iter().filter_map(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect())
 }
 
+/// `(id, close_reason)` for each of `ids` bd reports closed — reconcile-closed's read
+/// (sp-bc0rlt, sp-3fue0j): like the classifier, it reconciles the machine from bd once, for
+/// the rows a raw `bd close` left READY before every close went through `spira-lc close`.
+pub fn closed(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<(String, String)>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut cmd = Command::new(bd_bin);
+    if !db.is_empty() {
+        cmd.args(["-C", db]);
+    }
+    let out = cmd
+        .args(["list", "--id", &ids.join(","), "--status", "closed", "--limit", "0", "--json"])
+        .output()
+        .map_err(|e| format!("running bd list: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    if !out.status.success() {
+        return Err(format!("{text}{}", String::from_utf8_lossy(&out.stderr)));
+    }
+    let start = text.find(['[', '{']).ok_or("bd list: no JSON")?;
+    let v: serde_json::Value = serde_json::from_str(&text[start..]).map_err(|e| format!("bd list --json: {e}"))?;
+    let rows = match v {
+        serde_json::Value::Array(a) => a,
+        o => vec![o],
+    };
+    let field = |r: &serde_json::Value, k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    Ok(rows.iter().filter(|r| field(r, "status") == "closed").map(|r| (field(r, "id"), field(r, "close_reason"))).filter(|(id, _)| !id.is_empty()).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
