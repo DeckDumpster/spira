@@ -472,7 +472,7 @@ fn usage(verb: &str, msg: &str) -> (i32, String) {
     (CANNOT_TELL, format!("work {verb}: {msg}"))
 }
 
-fn is_bead_id(x: &str) -> bool {
+pub(crate) fn is_bead_id(x: &str) -> bool {
     x.len() > 3 && x[..3].eq_ignore_ascii_case("sp-") && x[3..].chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
 }
 
@@ -891,6 +891,16 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_line_of_prose_or_a_truncated_prefix_is_not_a_bead_id() {
+        for bad in ["SPIRA_BEAD_LANE_OVERRIDE=1", "bead:", "override:", "sp-", "sp", "", "sp-a b", "sp-x/y", "x-abc"] {
+            assert!(!is_bead_id(bad), "{bad:?}");
+        }
+        for ok in ["sp-b411iv", "sp-b411iv.1"] {
+            assert!(is_bead_id(ok), "{ok}");
+        }
+    }
+
     use super::*;
 
     fn v(xs: &[&str]) -> Vec<String> {

@@ -57,6 +57,9 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
     };
+    if !crate::work::is_bead_id(id) {
+        return (CANNOT_TELL, format!("create-bead: {id:?} is not a bead id"));
+    }
     let at = crate::db::now_epoch();
     let script = format!(
         "INSERT INTO bead (bead_id, state, holds, version, updated_at)\n\

@@ -64,6 +64,9 @@ impl crate::callers::Bd for LiveBd {
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
         crate::bd_facts::closed(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
     }
+    fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
+        crate::bd_facts::known(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
+    }
 }
 
 pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
