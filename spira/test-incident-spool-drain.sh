@@ -150,16 +150,15 @@ env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain >/dev/null 2>&1
 
-_precause_cause="$(python3 -c '
+_precause_bid="$(python3 -c '
 import json
 d = json.load(open("'"$STUB_BD_STATE"'"))
 for b in d["beads"].values():
     if b.get("external_ref") == "'"$PRECAUSE_REF"'":
-        for e in d["events"]:
-            if e["issue_id"] == b["id"] and e["event_type"] == "recurred":
-                print(e["new_value"])
+        print(b["id"])
         break
 ')"
+_precause_cause="$(awk -F'\t' -v id="$_precause_bid" '$1 == id && $2 == "recurred" { print $4 }' "$TMP/lc/facts.tsv")"
 is "a spool entry with no CAUSE: line records its recurrence as unrecorded" "unrecorded" "$_precause_cause"
 
 echo

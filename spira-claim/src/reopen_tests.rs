@@ -195,8 +195,9 @@ fn live(tag: &str, bd_body: &str) -> (Live, testkit::TempDir) {
     let dir = testkit::TempDir::new(&format!("spira-claim-reopen-{tag}"));
     std::fs::create_dir_all(dir.join("run")).unwrap();
     let bd = script(&dir, "bd", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
+    let lc = script(&dir, "spira-lc", &RECORD.replace("@LOG@", &dir.join("lc.log").to_string_lossy()));
     let l = Live {
-        store: Store { bd, db: Some("/fake/db".into()), lc: "true".into(), timeout: Duration::from_secs(10) },
+        store: Store { bd, db: Some("/fake/db".into()), lc, timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
@@ -225,18 +226,18 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
 
     let bd_log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
     let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
-    // Exact order: reopen, strip the submitted label, release the claim, write the reopen
-    // event (its own `sql` call — counters.rs's own tests already cover that INSERT byte
-    // for byte, so only its presence and position are pinned here), then the note last.
-    // sp-mve9i: no bd status write — the bead's state is the machine's.
-    assert_eq!(bd_argv.len(), 5, "{bd_log}");
+    // Exact order: reopen, strip the submitted label, release the claim, then the note last;
+    // the reopen cause is a lifecycle fact, never a bd write. No bd status write either:
+    // the bead's state is the machine's.
+    assert_eq!(bd_argv.len(), 4, "{bd_log}");
+    assert!(!bd_log.contains("INSERT INTO events"), "{bd_log}");
     assert!(!bd_log.contains("[--status]"), "{bd_log}");
     assert_eq!(bd_argv[0], "ARGV [-C] [/fake/db] [reopen] [sp-a]");
     assert_eq!(bd_argv[1], "ARGV [-C] [/fake/db] [label] [remove] [sp-a] [spira-submitted]");
     assert_eq!(bd_argv[2], "ARGV [-C] [/fake/db] [assign] [sp-a] []");
-    assert!(bd_argv[3].starts_with("ARGV [-C] [/fake/db] [sql] [INSERT INTO events"), "{}", bd_argv[3]);
-    assert!(bd_argv[3].contains("'sp-a', 'reopen', 'harness', 'batch-eject'"), "{}", bd_argv[3]);
-    assert_eq!(bd_argv[4], "ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]");
+    assert_eq!(bd_argv[3], "ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]");
+    let lc_log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
+    assert!(lc_log.contains("ARGV [fact] [sp-a] [--kind] [reopen] [--actor] [harness] [--cause] [batch-eject]"), "{lc_log}");
     assert!(bd_log.contains("STDIN a human-readable note"), "{bd_log}");
 }
 

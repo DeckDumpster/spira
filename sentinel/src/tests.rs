@@ -1308,9 +1308,10 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
         ]
     );
     assert!(r
-        .find(|s| is_bd(s, "sql")
-            && s.args[3].contains("'sp-b', 'reclaimed', 'harness', 'stale-lease'"))
+        .find(|s| s.prog == "spira-lc"
+            && s.args == ["fact", "sp-b", "--kind", "reclaimed", "--actor", "harness", "--cause", "stale-lease"])
         .is_some());
+    assert!(r.find(|s| is_bd(s, "sql")).is_none(), "a fact is never a bd write");
     let note = r.find(|s| is_bd(s, "note")).unwrap();
     assert_eq!(note.args, vec!["-C", "/db", "note", "sp-b", "--stdin"]);
     assert_eq!(String::from_utf8(note.stdin.unwrap()).unwrap(), "Reclaimed by CHECK 2: in_progress with a lease that expired 333m ago and was never released.");

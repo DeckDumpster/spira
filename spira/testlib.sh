@@ -419,10 +419,12 @@ lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
     # go to the real spira-lc, the first one on PATH that is not this stub.
     local real="" c
     while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
+    printf '#!/usr/bin/env bash\n%s\nexit 2\n' "$_LC_FACTS_BODY" > "$fix/facts-lc"; chmod +x "$fix/facts-lc"
     cat > "$bindir/spira-lc" <<STUB
 #!/usr/bin/env bash
 LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
+case "\$1" in fact|facts|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
 case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
@@ -451,6 +453,66 @@ lc_delivery() {  # lc_delivery <STATE> <id> <mode> <entered_at> <version>
     [ -f "$LC_FIX/show/$2" ] || printf '{"bead":{"tip":"deadbeef"}}' > "$LC_FIX/show/$2"
 }
 
+# The attempt-history facts a spira-lc stand-in keeps (`fact` appends, `facts` reads) in
+# <dir>/facts.tsv, answering in the shape the real binary does: bd-events rows.
+_LC_FACTS_BODY='
+case "${1:-}" in
+    fact)
+        id="${2:-}"; shift 2; kind=""; actor=""; cause=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --kind) kind="$2"; shift 2 ;;
+                --actor) actor="$2"; shift 2 ;;
+                --cause) cause="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        printf "%s\t%s\t%s\t%s\t%s\n" "$id" "$kind" "$actor" "$cause" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(dirname "$0")/facts.tsv"
+        exit 0 ;;
+    facts-query) exit 0 ;;
+    facts)
+        shift
+        LC_FACTS_FILE="$(dirname "$0")/facts.tsv" python3 -c "
+import json, os, sys
+a = sys.argv[1:]
+def flag(n):
+    return a[a.index(n) + 1].split(\",\") if n in a else []
+ids, kinds = flag(\"--ids\"), flag(\"--kinds\")
+rows = []
+try:
+    for line in open(os.environ[\"LC_FACTS_FILE\"]):
+        f = line.rstrip(\"\\n\").split(\"\\t\")
+        if len(f) == 5 and (not ids or f[0] in ids) and (not kinds or f[1] in kinds):
+            rows.append({\"issue_id\": f[0], \"event_type\": f[1], \"new_value\": f[3], \"actor\": f[2], \"created_at\": f[4]})
+except OSError:
+    pass
+print(json.dumps(rows))
+" "$@"
+        exit 0 ;;
+esac
+'
+
+# lc_facts_stub <dir> — a spira-lc that keeps the attempt-history facts itself (`fact`, `facts`;
+# `facts-query` answers an empty table) and hands every other verb to the spira-lc that was on PATH,
+# or answers "cannot tell" when there was none. Prepends <dir> to PATH. For a suite whose fold
+# reads bd events it seeded itself.
+lc_facts_stub() {
+    local dir="${1:?lc_facts_stub needs a directory}" real
+    mkdir -p "$dir"
+    real="$(command -v spira-lc 2>/dev/null || true)"
+    {
+        printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"
+        if [ -n "$real" ]; then printf 'exec %q "$@"\n' "$real"; else printf 'exit 2\n'; fi
+    } > "$dir/spira-lc"
+    chmod +x "$dir/spira-lc"
+    export PATH="$dir:$PATH"
+}
+
+# lc_fact_count <dir> <id> <kind> — how many facts of that kind the stand-in in <dir> holds.
+lc_fact_count() {
+    awk -F'\t' -v id="$2" -v kind="$3" '$1 == id && $2 == kind { n++ } END { print n + 0 }' "$1/facts.tsv" 2>/dev/null || echo 0
+}
+
 # lc_mirror_bd <dir> — a spira-lc whose `list` and `show <id>` answer from the bead store the
 # suite already stubs, translated to lifecycle terms (sp-mve9i: decisions read the lifecycle
 # row, never bd status, so a fixture written in bd words needs its rows in the machine too).
@@ -464,8 +526,7 @@ lc_delivery() {  # lc_delivery <STATE> <id> <mode> <entered_at> <version>
 lc_mirror_bd() {
     local dir="${1:?lc_mirror_bd needs a directory}"
     mkdir -p "$dir"
-    cat > "$dir/spira-lc" <<'STUB'
-#!/usr/bin/env bash
+    { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 # `close` (sp-3fue0j): this mirror's rows ARE the store's, so the close is the store's.
 if [ "$1" = close ]; then
     id="$2"; shift 2; reason=""
@@ -526,6 +587,7 @@ else:
     sys.exit(7)
 ' "$@"
 STUB
+    } > "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
     SPIRA_LC_BIN="$dir/spira-lc"
 }
@@ -645,8 +707,7 @@ except Exception: print("")' 2>/dev/null
 lc_aeon_mirror() {
     local dir="${1:?lc_aeon_mirror needs a directory}"
     mkdir -p "$dir"
-    cat > "$dir/spira-lc" <<'STUB'
-#!/usr/bin/env bash
+    { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
     hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"; exit 0 ;;
@@ -743,6 +804,7 @@ elif verb == "event":
         open(os.path.join(run, "lc-row", i), "w").write("SUBMITTED\n")
 ' "$@"
 STUB
+    } > "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
 }
 

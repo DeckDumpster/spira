@@ -98,13 +98,7 @@ print(" ".join(d["beads"].get("'"$1"'", {}).get("labels", [])))
 '
 }
 has_label() { [[ " $(labels_of "$1") " == *" $2 "* ]]; }
-recur_max() {
-    python3 -c '
-import json
-d = json.load(open("'"$STUB_BD_STATE"'"))
-print(sum(1 for e in d["events"] if e["issue_id"] == "'"$1"'" and e["event_type"] == "recurred"))
-'
-}
+recur_max() { lc_fact_count "$TMP/lc" "$1" recurred; }
 
 # ======================================================================================
 echo
@@ -135,7 +129,7 @@ fi
 echo
 echo "an exempt ref does NOT reach SIN:"
 # ======================================================================================
-rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"; : > "$MAIL_LOG"
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG" "$TMP/lc/facts.tsv"; : > "$MAIL_LOG"
 ref="incident:test-exempt-sin"
 title="exempt incident"
 for i in $(seq 1 "$(( SIN_AT + 1 ))"); do

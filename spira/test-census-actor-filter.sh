@@ -44,6 +44,10 @@ testdb_up census-actor-filter || {
     printf 'SKIP test-census-actor-filter: server testdb not available\n' >&2
     exit 77
 }
+. "$HERE/testlib/lc-fixture.sh"
+lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
+lcfix_follow_testdb
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 tl_config SPIRA_DB="$TESTDB_DIR"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"

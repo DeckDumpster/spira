@@ -64,6 +64,22 @@ lcfix_down() {
     LCFIX_DIR=""
 }
 
+# lcfix_reset_facts — forget every attempt-history fact; a suite that resets its bd fixture
+# between sections resets these with it (lcfix_follow_testdb).
+lcfix_reset_facts() { lcfix_sql -q "DELETE FROM event WHERE machine='fact'" >/dev/null 2>&1; }
+
+# lcfix_fact_causes <id> <kind> — the cause of each fact of that kind, one per line, oldest first.
+lcfix_fact_causes() {
+    spira-lc facts --ids "$1" --kinds "$2" 2>/dev/null \
+        | python3 -c 'import json, sys; [print(r["new_value"]) for r in json.load(sys.stdin)]'
+}
+
+# lcfix_follow_testdb — from here on, testdb_reset also clears the facts.
+lcfix_follow_testdb() {
+    eval "$(declare -f testdb_reset | sed '1s/testdb_reset/_lcfix_testdb_reset_bd/')"
+    testdb_reset() { _lcfix_testdb_reset_bd "$@" && lcfix_reset_facts; }
+}
+
 lcfix_env() {
     printf 'SPIRA_TOML=%s SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD=' \
         "$SPIRA_TOML" "$SPIRA_LC_HOST" "$SPIRA_LC_PORT" "$SPIRA_LC_DB" "$SPIRA_LC_DATA_DIR" "$SPIRA_LC_USER"

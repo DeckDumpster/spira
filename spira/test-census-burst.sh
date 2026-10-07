@@ -26,6 +26,7 @@ testdb_up census-burst || {
     exit 77
 }
 # shellcheck disable=SC1090
+lc_facts_stub "$TMP/lc"
 . "$HERE/lib.sh"
 
 _insert_event_at() {   # <bead_id> <event_type> <cause> <utc_ts>

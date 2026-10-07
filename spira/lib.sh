@@ -538,7 +538,7 @@ lc_event_bead() {
 # DepthExceeded, when stack-depth exceeds stack-max-depth. The trailing three args are the
 # caller's own stack proposal, forwarded as given; omitted, an unstacked claim.
 #
-# An applied claim writes the `claimed` events row the attempt counters fold.
+# An applied claim appends the `claimed` fact the attempt counters fold.
 lc_claim_bead() {
     local id="$1" holder="$2" lease_until="$3" stack="${4:-}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
     [ -n "$stack" ] || stack='{}'

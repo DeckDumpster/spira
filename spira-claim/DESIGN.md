@@ -61,11 +61,16 @@ Diagnostics go to stderr, one line, prefixed `spira-claim:`.
 
 ### Data in: where it comes from
 
-- **Events** — bd's `events` table, read with ONE `bd -C <db> sql --json` per ≤200 ids
-  (chunked so the query argv is bounded no matter how many beads are asked about; bd sql
-  takes its query only as argv). Only the columns and event types this program folds are
-  selected, and `new_value` is truncated to 120 chars (a close reason can be kilobytes).
-  `--events FILE|-` replaces the fetch with rows the caller already has (tests, replay).
+- **Events** — bd's `events` table (its own claim/close/reopen rows and the history written
+  before the move), read with ONE `bd -C <db> sql --json` per ≤200 ids (chunked so the query
+  argv is bounded no matter how many beads are asked about; bd sql takes its query only as
+  argv), plus the **facts** the harness appends to the lifecycle event log — `spira-lc fact`
+  writes `requeued`, `reopen`, `reclaimed`, `poison.cleared`, `claimed`, `recurred`, `lapsed`
+  as machine `fact` rows, `spira-lc facts --ids` reads them back in bd's row shape — fetched
+  per the same chunk. A fact read that cannot tell is exit 2, never zero facts. Only the
+  columns and event types this program folds are selected, and `new_value` is truncated to 120
+  chars (a close reason can be kilobytes). `--events FILE|-` replaces both fetches with rows
+  the caller already has (tests, replay).
 - **Ready set** — bd `ready`/`list --json` rows, from `--ready FILE` or stdin. Never argv
   (law-payloads-go-on-stdin; sp-o4trx's E2BIG outage at 142 beads).
 - **Epic lookup** — `{"prio":{epic:prio}, "started":[epic,...]}`, from `--epics FILE` or

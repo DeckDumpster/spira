@@ -518,6 +518,7 @@ fn cli_deadlocked_treats_apply_as_a_bare_flag_not_a_value_consumer() {
 struct FakeStore {
     store: Store,
     _bd: Tmp,
+    _lc: Tmp,
 }
 
 impl std::ops::Deref for FakeStore {
@@ -528,11 +529,34 @@ impl std::ops::Deref for FakeStore {
 }
 
 fn fake_bd(script: &str) -> FakeStore {
+    fake_bd_lc(script, "echo '[]'")
+}
+
+fn fake_bd_lc(script: &str, lc_script: &str) -> FakeStore {
     let p = tmp_exe(&format!("#!/bin/sh\n{script}\n"));
+    let lc = tmp_exe(&format!("#!/bin/sh\n{lc_script}\n"));
     FakeStore {
-        store: Store { bd: p.to_string(), db: Some("/fake/db".into()), lc: "/nonexistent".into(), timeout: std::time::Duration::from_secs(10) },
+        store: Store { bd: p.to_string(), db: Some("/fake/db".into()), lc: lc.to_string(), timeout: std::time::Duration::from_secs(10) },
         _bd: p,
+        _lc: lc,
     }
+}
+
+#[test]
+fn store_events_are_bd_history_plus_lifecycle_facts() {
+    let st = fake_bd_lc(
+        r#"echo '[{"issue_id":"a","event_type":"claimed","new_value":"","created_at":"2026-09-28T10:00:00Z"}]'"#,
+        r#"echo '[{"issue_id":"a","event_type":"requeued","new_value":"gate-red","actor":"harness","created_at":"2026-09-28T11:00:00Z"}]'"#,
+    );
+    let rows = st.events(&["a".into()]).unwrap();
+    assert_eq!(rows.iter().map(|r| r.event_type.as_str()).collect::<Vec<_>>(), ["claimed", "requeued"]);
+}
+
+#[test]
+fn a_fact_read_that_cannot_tell_is_not_zero_facts() {
+    let st = fake_bd_lc("echo '[]'", "echo 'cannot tell: db down'; exit 2");
+    let e = st.events(&["a".into()]).unwrap_err();
+    assert!(e.contains("spira-lc facts"), "{e}");
 }
 
 #[test]
@@ -546,7 +570,7 @@ fn store_events_parses_and_fails_closed() {
     assert!(empty.events(&["a".into()]).is_err(), "empty stdout is not zero rows");
     let garbage = fake_bd("echo 'Warning: schema migration needed'");
     assert!(garbage.events(&["a".into()]).is_err());
-    assert!(fail.lifecycle_snapshot().is_err());
+    assert!(fake_bd_lc("exit 0", "exit 1").lifecycle_snapshot().is_err());
 }
 
 #[test]

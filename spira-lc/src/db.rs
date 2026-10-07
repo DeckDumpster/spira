@@ -47,10 +47,15 @@ pub struct Conn {
 // batch-job: install-time schema DDL, bounded at 120 s; not a query on any serving path.
 pub const ADMIN_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// census's aggregate over the whole fact history, windowed per class: not a point query.
+// batch-job: census report, bounded at 30 s.
+pub const FACTS_QUERY_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The socket limit a verb's connection uses.
 pub fn io_timeout_for(verb: &str) -> std::time::Duration {
     match verb {
         "admin-apply-ddl" | "admin-migrate" => ADMIN_IO_TIMEOUT,
+        "facts-query" => FACTS_QUERY_IO_TIMEOUT,
         _ => std::time::Duration::from_secs(5),
     }
 }
@@ -140,6 +145,15 @@ impl Conn {
         };
         crate::slow::record(started.elapsed(), script);
         result
+    }
+
+    /// Append one already-built event INSERT in its own transaction (a fact: no row is mutated).
+    pub fn append_event(&self, insert_sql: &str) -> Result<(), DbError> {
+        match self.run_script(&format!("START TRANSACTION;\n{insert_sql};\nCOMMIT;\n")) {
+            Ok(_) => Ok(()),
+            Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain INSERT lost a race — unexpected".into())),
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
     }
 
     /// Insert one event row in its own transaction. Used both for logical refusals (no row
@@ -469,5 +483,7 @@ mod io_timeout_tests {
             assert_eq!(io_timeout_for(v), std::time::Duration::from_secs(5), "{v} keeps the 5 s query cap");
         }
         assert!(ADMIN_IO_TIMEOUT <= std::time::Duration::from_secs(120), "bounded");
+        assert_eq!(io_timeout_for("facts-query"), FACTS_QUERY_IO_TIMEOUT);
+        assert_eq!(io_timeout_for("facts"), std::time::Duration::from_secs(5));
     }
 }

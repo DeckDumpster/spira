@@ -90,11 +90,7 @@ echo "a second failure of the same unit dedupes to a recurrence, not a second be
 sysinc "spira-test-unit.service" >/dev/null 2>&1
 _second_bid="$(bead_of "spira-test-unit.service")"
 is "the second filing finds the same bead (dedup on incident:<unit>)" "$bid" "$_second_bid"
-_recur_events="$(python3 -c '
-import json
-d = json.load(open("'"$STUB_BD_STATE"'"))
-print(sum(1 for e in d["events"] if e["issue_id"] == "'"$bid"'" and e["event_type"] == "recurred"))
-')"
+_recur_events="$(lc_fact_count "$TMP/lc" "$bid" recurred)"
 is "the second failure is recorded as one recurrence" "1" "$_recur_events"
 
 # ======================================================================================

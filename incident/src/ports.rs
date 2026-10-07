@@ -50,55 +50,21 @@ pub trait Bd {
     /// A cheap reachability probe (`bd list --limit 1`) — used to distinguish "no open
     /// incident" from "the database could not be reached" when the dedup scan is empty.
     fn reachable(&self, db: &str) -> bool;
-    /// Raw `bd -C db sql "<query>"`; Err when bd itself could not be reached/run.
-    fn sql(&self, db: &str, query: &str) -> Result<String, String>;
+    /// One attempt-history fact in the lifecycle event log (`spira-lc fact`), true when written.
+    fn fact(&self, id: &str, kind: &str, cause: &str) -> bool;
+    /// How many facts of `kind` the log holds for `id`; None when it could not be read.
+    fn fact_count(&self, id: &str, kind: &str) -> Option<usize>;
 }
 
-/// The events-table counters (`bump_recur`/`recurs_of`, lib.sh) built on top of `Bd::sql`.
-pub fn bump_recur(bd: &dyn Bd, db: &str, id: &str, cause: &str) {
-    let uuid = uuid_v4();
-    let q = format!(
-        "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('{uuid}', '{id}', 'recurred', 'incident', '{cause}', UTC_TIMESTAMP())"
-    );
-    let _ = bd.sql(db, &q);
+/// The recurrence counter (`bump_recur`/`recurs_of`): `recurred` facts in the lifecycle event log.
+pub fn bump_recur(bd: &dyn Bd, id: &str, cause: &str) {
+    let _ = bd.fact(id, "recurred", cause);
 }
 
-/// `None` means the query failed and the count is genuinely unknown (blind), never 0 —
+/// `None` means the log could not be read and the count is genuinely unknown (blind), never 0 —
 /// law-absence-needs-a-positive-control (sp-39yd3).
-pub fn recurs_of(bd: &dyn Bd, db: &str, id: &str) -> Option<u32> {
-    let q = format!("SELECT COUNT(*) FROM events WHERE issue_id='{id}' AND event_type='recurred'");
-    let out = bd.sql(db, &q).ok()?;
-    // bd's tabular output for a single-column SELECT: a header line, a separator line,
-    // then the value (incident-stub-bd.py mirrors this exactly: "header" / "----" / N).
-    let line = out.lines().nth(2)?;
-    line.trim().parse::<u32>().ok()
-}
-
-fn uuid_v4() -> String {
-    // A dependency-free v4 UUID: 122 random bits from the OS CSPRNG via a /dev/urandom
-    // read, formatted per RFC 4122. Only used as an events-row primary key, never compared
-    // or parsed back, so format fidelity (not a crypto property) is what matters.
-    let mut bytes = [0u8; 16];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
-        .is_err()
-    {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = ((nanos >> (i * 8)) & 0xff) as u8;
-        }
-    }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!(
-        "{}{}{}{}-{}{}-{}{}-{}{}-{}{}{}{}{}{}",
-        hex[0], hex[1], hex[2], hex[3], hex[4], hex[5], hex[6], hex[7], hex[8], hex[9], hex[10], hex[11], hex[12],
-        hex[13], hex[14], hex[15]
-    )
+pub fn recurs_of(bd: &dyn Bd, id: &str) -> Option<u32> {
+    bd.fact_count(id, "recurred").map(|n| n as u32)
 }
 
 pub trait Mailer {

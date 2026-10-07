@@ -7,47 +7,21 @@
 use super::*;
 
 #[test]
-fn insert_sql_shape() {
-    let q = insert_sql("u1", "sp-a", "requeued", "harness", "merge-conflict");
-    assert!(q.starts_with("INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ("));
-    assert!(q.contains("UTC_TIMESTAMP()"), "{q}");
-    assert!(!q.contains("NOW()"), "sp-yyih8: must never use server-local NOW(): {q}");
-    assert!(q.contains("'u1'") && q.contains("'sp-a'") && q.contains("'requeued'") && q.contains("'harness'") && q.contains("'merge-conflict'"));
+fn fact_args_name_the_kind_actor_and_cause() {
+    let a = fact_args("harness", "sp-a", "requeued", "merge-conflict");
+    assert_eq!(a, ["fact", "sp-a", "--kind", "requeued", "--actor", "harness", "--cause", "merge-conflict"]);
 }
 
 #[test]
-fn insert_sql_strips_quotes_from_the_cause() {
-    // bash's own version interpolated the cause unescaped, a latent injection risk this
-    // port closes two ways: bounded_cause strips quote/backslash/control characters
-    // before store::sql_quote ever sees the value, so there is nothing left to escape.
-    let q = insert_sql("u1", "sp-a", "requeued", "harness", "o'hara\"; drop table events; --");
-    assert!(q.contains("'ohara; drop table events; --'"), "{q}");
+fn fact_args_strip_quotes_from_the_cause() {
+    let a = fact_args("harness", "sp-a", "requeued", "o'hara\"; drop table events; --");
+    assert_eq!(a[7], "ohara; drop table events; --");
 }
 
 #[test]
-fn count_sql_shape() {
-    let q = count_sql("sp-a", "__doctor_probe__");
-    assert_eq!(q, "SELECT COUNT(*) FROM events WHERE issue_id='sp-a' AND event_type='__doctor_probe__'");
-}
-
-#[test]
-fn parse_scalar_count_reads_the_third_line() {
-    // bd sql's own 3-row shape: header, separator, data (test-census-pipeline.sh's own
-    // comment on the same shape: "header/separator/data").
-    let out = "count(*)\n--------\n7\n";
-    assert_eq!(parse_scalar_count(out), Some(7));
-}
-
-#[test]
-fn parse_scalar_count_strips_padding() {
-    let out = "count(*)\n--------\n   42  \n";
-    assert_eq!(parse_scalar_count(out), Some(42));
-}
-
-#[test]
-fn parse_scalar_count_none_on_garbage() {
-    assert_eq!(parse_scalar_count("\n\n"), None);
-    assert_eq!(parse_scalar_count("a\nb\nnot-a-number\n"), None);
+fn fact_args_bound_a_runaway_cause() {
+    let a = fact_args("harness", "sp-a", "requeued", &"y".repeat(5000));
+    assert!(a[7].len() <= 200, "{}", a[7].len());
 }
 
 #[test]

@@ -43,6 +43,17 @@ impl RealBd {
         }
     }
 
+    fn run_lc(&self, args: &[&str]) -> Result<(i32, String, String), String> {
+        let mut cmd = Command::new("timeout");
+        cmd.arg(self.timeout_secs.to_string()).arg(spira_config::lifecycle_row::lc_bin()).args(args);
+        let out = cmd.output().map_err(|e| format!("spira-lc: {e}"))?;
+        Ok((
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        ))
+    }
+
     fn run_stdin(&self, db: &str, args: &[&str], stdin_body: &str) -> Result<(i32, String, String), String> {
         let mut cmd = Command::new("timeout");
         cmd.arg(self.timeout_secs.to_string())
@@ -269,12 +280,16 @@ impl Bd for RealBd {
     fn reachable(&self, db: &str) -> bool {
         self.run(db, &["list", "--limit", "1"]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
-    fn sql(&self, db: &str, query: &str) -> Result<String, String> {
-        let (rc, out, err) = self.run(db, &["sql", query])?;
+    fn fact(&self, id: &str, kind: &str, cause: &str) -> bool {
+        let args = ["fact", id, "--kind", kind, "--actor", "incident", "--cause", cause];
+        self.run_lc(&args).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    }
+    fn fact_count(&self, id: &str, kind: &str) -> Option<usize> {
+        let (rc, out, _) = self.run_lc(&["facts", "--ids", id, "--kinds", kind]).ok()?;
         if rc != 0 {
-            return Err(err);
+            return None;
         }
-        Ok(out)
+        serde_json::from_str::<Vec<serde_json::Value>>(json_only(&out)).ok().map(|v| v.len())
     }
 }
 
