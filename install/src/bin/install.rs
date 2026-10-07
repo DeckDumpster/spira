@@ -1209,6 +1209,7 @@ fn clean_partial_init(db: &str, dbname: &str, port: u16) {
     let _ = std::fs::remove_dir_all(Path::new(db).join(".beads"));
     let _ = std::fs::remove_dir_all(Path::new(db).join(".dolt"));
     if dbname.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && !dbname.is_empty() {
+        // batch-job: dropping the partial database; bounded at 30 s.
         let _ = Command::new("timeout").args(["30", "dolt", "--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", &format!("DROP DATABASE IF EXISTS `{dbname}`")]).stdin(Stdio::null()).output();
     }
 }
