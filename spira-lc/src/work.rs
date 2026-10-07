@@ -291,6 +291,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("groom unwanted", &["groomer"]),
     ("incident list", &["ops", "czar"]),
     ("incident file", &["ops", "czar"]),
+    ("incident collapse", &["ops", "czar"]),
     ("sop match", &["ops"]),
     ("sop show", &["ops"]),
     ("sop list", &["ops"]),
@@ -1081,6 +1082,16 @@ mod tests {
         assert_eq!(plan("queue", "-", &call(&["eject", "sp-a1", "--red"], "czar")).unwrap(), vec![tool("queue", &["eject", "sp-a1", "--red"])]);
         assert_eq!(plan("strand", "-", &call(&["detect-livelocked"], "groomer")).unwrap(), vec![tool("strand", &["detect-livelocked"])]);
         assert_eq!(plan("sop", "-", &call(&["show", "x"], "ops")).unwrap(), vec![tool("sop", &["show", "x"])]);
+    }
+
+    #[test]
+    fn ops_may_collapse_a_duplicate_incident_and_a_builder_may_not() {
+        assert!(permitted(&op_key("incident", &v(&["collapse", "sp-a1", "--of", "sp-b2"])), Some("ops")).is_ok());
+        assert!(permitted("incident collapse", Some("builder")).is_err());
+        assert_eq!(
+            plan("incident", "-", &call(&["collapse", "sp-a1", "--of", "sp-b2"], "ops")).unwrap(),
+            vec![Step::Tool { program: "incident.sh", args: v(&["collapse", "sp-a1", "--of", "sp-b2"]), stdin: None }]
+        );
     }
 
     #[test]

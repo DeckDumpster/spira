@@ -5,6 +5,7 @@
 //!   incident file <title> [-|<file>]  file one from an arbitrary payload
 //!   incident drain                    file everything the spool is holding
 //!   incident list                     open incidents
+//!   incident collapse <dup> --of <keep>  mark <dup> a duplicate of <keep> and label it for the meter
 //!
 //! `backfill-ref-labels`, `retire-unsatisfiable-delivers` and `repair-mismatch-delivers`
 //! are retired (DESIGN.md §Decisions): one-time migrations with no live caller, already
@@ -565,8 +566,27 @@ fn main() -> ExitCode {
             cmd_drain(&env_cfg, &bd, &mailer, &clock)
         }
         Some("list") => cmd_list(&env_cfg, &bd),
+        Some("collapse") => {
+            let (Some(dup), Some("--of"), Some(keep), None) = (args.get(1), args.get(2).map(String::as_str), args.get(3), args.get(4)) else {
+                eprintln!("usage: incident collapse <dup> --of <keep>");
+                return ExitCode::from(2);
+            };
+            let Some(db) = env_cfg.db.as_deref() else {
+                return require_db(&env_cfg);
+            };
+            match run::collapse(&bd, db, dup, keep) {
+                Ok(()) => {
+                    println!("collapsed {dup} into {keep}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("incident collapse: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         _ => {
-            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents");
+            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents\n  incident collapse <dup> --of <keep>  mark a duplicate incident");
             ExitCode::from(1)
         }
     }

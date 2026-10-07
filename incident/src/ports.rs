@@ -43,6 +43,8 @@ pub trait Bd {
     /// `bd -C db dep relate <a> <b>`: a bidirectional see-also link (sp-nmlna: a fresh
     /// incident to the terminal one it recurs).
     fn relate(&self, db: &str, a: &str, b: &str) -> bool;
+    /// `bd -C db duplicate <id> --of <survivor>`.
+    fn duplicate(&self, db: &str, id: &str, survivor: &str) -> bool;
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String>;
     fn show_created_at(&self, db: &str, id: &str) -> Option<String>;
     /// A cheap reachability probe (`bd list --limit 1`) — used to distinguish "no open

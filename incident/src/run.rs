@@ -379,6 +379,25 @@ pub fn iso_now_public(epoch: i64) -> String {
     format!("{date}T{:02}:{:02}:{:02}Z", secs_of_day / 3600, (secs_of_day % 3600) / 60, secs_of_day % 60)
 }
 
+/// Collapse `dup` into `survivor`: bd's `duplicate`, then the `duplicate-of:` label that
+/// keeps the dedup meter from counting the pair as live surplus. Refuses before any write
+/// when the two are the same bead or `dup` already carries a `duplicate-of:` label.
+pub fn collapse(bd: &dyn Bd, db: &str, dup: &str, survivor: &str) -> Result<(), String> {
+    if dup.eq_ignore_ascii_case(survivor) {
+        return Err(format!("{dup} cannot be a duplicate of itself"));
+    }
+    if let Some(l) = bd.label_list(db, dup).into_iter().find(|l| l.starts_with("duplicate-of:")) {
+        return Err(format!("{dup} is already collapsed ({l})"));
+    }
+    if !bd.duplicate(db, dup, survivor) {
+        return Err(format!("bd duplicate {dup} --of {survivor} failed"));
+    }
+    if !bd.label_add(db, dup, &format!("duplicate-of:{survivor}")) {
+        return Err(format!("{dup} was marked duplicate but the duplicate-of:{survivor} label could not be added; the meter will still count it"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,6 +416,7 @@ mod tests {
         bodies: RefCell<HashMap<String, String>>,
         reopened: RefCell<Vec<String>>,
         related: RefCell<Vec<(String, String)>>,
+        duplicated: RefCell<Vec<(String, String)>>,
         labels: RefCell<HashMap<String, Vec<String>>>,
         notes: RefCell<HashMap<String, Vec<String>>>,
         next_id: RefCell<u32>,
@@ -471,6 +491,10 @@ mod tests {
             self.related.borrow_mut().push((a.to_string(), b.to_string()));
             true
         }
+        fn duplicate(&self, _db: &str, id: &str, survivor: &str) -> bool {
+            self.duplicated.borrow_mut().push((id.to_string(), survivor.to_string()));
+            true
+        }
         fn show_closed_at(&self, _db: &str, id: &str) -> Option<String> {
             self.rows.borrow().iter().find(|r| r.id == id).and_then(|r| r.closed_at.clone())
         }
@@ -483,6 +507,24 @@ mod tests {
         fn sql(&self, _db: &str, _query: &str) -> Result<String, String> {
             Ok("header\n----\n0\n".to_string())
         }
+    }
+
+    #[test]
+    fn collapse_marks_the_duplicate_and_labels_it_for_the_meter() {
+        let bd = FakeBd::new();
+        bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: BeadStatus::Open, external_ref: None, labels: vec![], closed_at: None });
+        collapse(&bd, "db", "sp-a", "sp-b").unwrap();
+        assert_eq!(*bd.duplicated.borrow(), vec![("sp-a".to_string(), "sp-b".to_string())]);
+        assert_eq!(bd.label_list("db", "sp-a"), vec!["duplicate-of:sp-b".to_string()]);
+    }
+
+    #[test]
+    fn collapse_refuses_self_and_already_collapsed_before_writing() {
+        let bd = FakeBd::new();
+        assert!(collapse(&bd, "db", "sp-a", "sp-a").is_err());
+        bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: BeadStatus::Open, external_ref: None, labels: vec!["duplicate-of:sp-c".into()], closed_at: None });
+        assert!(collapse(&bd, "db", "sp-a", "sp-b").unwrap_err().contains("already collapsed"));
+        assert!(bd.duplicated.borrow().is_empty());
     }
 
     struct FakeMailer {
