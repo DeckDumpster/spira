@@ -47,7 +47,7 @@ fn up_then_down_leaves_nothing_behind() {
     let fake = Fake::default();
     up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap();
     let work = dir.join("work");
-    for p in ["release", "origin.git", "work", "run", "config/sim.toml", "bin/gh", "gh"] {
+    for p in ["release", "origin.git", "work", "run", "config/sim.toml", "bin/gh", "bin/round-vm", "gh"] {
         assert!(dir.join(p).exists(), "{p}");
     }
     let rev = |r: &str| {
@@ -64,6 +64,8 @@ fn up_then_down_leaves_nothing_behind() {
     let probe = env.lines().find_map(|l| l.strip_prefix("SIM_PROBE=")).expect("world up writes SIM_PROBE");
     assert_eq!(probe, spira_sim::world::probe_command(&std::env::current_exe().unwrap(), &dir.canonicalize().unwrap()));
     assert!(probe.ends_with(&format!(" probe '{}'", dir.canonicalize().unwrap().display())), "{probe}");
+    assert!(env.contains(&format!("SIM_WORLD={}\n", dir.canonicalize().unwrap().display())), "{env}");
+    assert_eq!(std::fs::read_to_string(dir.join("gate-verdict")).unwrap(), "green\n", "a world starts green");
     down(&dir, &fake).unwrap();
     assert!(!dir.exists());
     assert_eq!(fake.downs.load(Ordering::SeqCst), 1);

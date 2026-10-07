@@ -1490,6 +1490,7 @@ dependencies = [
 name = "spira-sim"
 version = "0.1.0"
 dependencies = [
+ "queue",
  "serde",
  "serde_json",
  "sim",
