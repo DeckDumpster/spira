@@ -74,7 +74,7 @@ pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64) -> Result<MainEnd, Stri
             "round-vm: harness fault — the round VM did not come up, its container died, or round-vm itself failed".to_string()
         }
         INSTALL_FAILED_RC => "round-vm: harness fault — install failed".to_string(),
-        124 | 137 => format!("round-vm: harness fault — exceeded the {wall_secs}s wall bound"),
+        124 | 137 => format!("round-vm: harness fault — over-cap: exceeded the {wall_secs}s wall bound, no verdict (not a functional red)"),
         c => format!("round-vm: harness fault — exit {c}, outside round-vm's contract (0-4)"),
     };
     Err(format!("{why}{}", stderr_tail(stderr)))
@@ -484,7 +484,7 @@ mod tests {
             assert!(e.contains("could not determine which binary"), "rc {rc} lost round-vm's stderr: {e}");
         }
         assert!(corpus_end(101, err, 600).unwrap_err().contains("exit 101"));
-        assert!(corpus_end(124, "", 600).unwrap_err().contains("600s wall bound"));
+        assert!(corpus_end(124, "", 600).unwrap_err().contains("over-cap: exceeded the 600s wall bound"));
         let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", 600).unwrap_err();
         assert!(mismatch.contains("suite list mismatch, not a harness fault"), "{mismatch}");
     }
