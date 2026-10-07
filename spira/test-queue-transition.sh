@@ -174,6 +174,10 @@ callcount()     { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()   { : > "$CALL_LOG"; }
 publish_file()  { cat "$QDIR/$REPONAME/publish" 2>/dev/null; }
 
+# passed — the full-suite local pass a green round records for its head (sp-x334k): publish refuses a
+# local/main head without one, so every publish here stands on the pass production would have.
+passed() { spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round >/dev/null; }
+
 # landmode <name> -> "<repo_land> <spira_landref>", read fresh out of the CURRENT repo-map —
 # a subshell sourcing the copied lib.sh under the exact same env the commands above use, so
 # an assertion never trusts its own memory of what it just wrote.
@@ -184,7 +188,7 @@ echo
 echo "1 — to-forge on a repo with nothing new to publish still flips the row"
 # ============================================================================
 BASE0="$(remote_main)"
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "1: to-forge succeeds" || bad "1: to-forge succeeds" "got rc=$rc out=$out"
 want "1: names the new mode" "queue.forge" "$out"
 want "1: repo-map land column now reads queue.forge" "queue.forge" "$(row)"
@@ -216,7 +220,7 @@ land sp-tr1 one.txt one
 HEAD1="$(localmain)"
 nowant "3 setup: production has not moved yet" "$HEAD1" "$(remote_main)"
 
-out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "3: to-forge succeeds on a green publish" || bad "3: to-forge succeeds on a green publish" "got rc=$rc out=$out"
 is "3: production (origin/main) now equals local/main's old tip EXACTLY" "$HEAD1" "$(remote_main)"
 is "3: repo_land now reads queue at origin/main" "queue origin/main" "$(landmode "$REPONAME")"
@@ -240,7 +244,7 @@ land sp-tr2 two.txt two
 HEAD2="$(localmain)"
 PRE_MAIN="$(remote_main)"
 
-out="$(CHECK_STATUS=red queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=red queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "4: to-forge refuses on a red publish" || bad "4: to-forge refuses on a red publish" "got rc=$rc out=$out"
 want "4: names the red refusal" "red" "$out"
 is "4: repo-map row is untouched (still queue.local)" "queue.local local/main" "$(landmode "$REPONAME")"
@@ -252,7 +256,7 @@ is "4: local/main still exists at its post-land tip" "$HEAD2" "$(localmain)"
 # Prove the refusal really changed nothing, not merely that it reported failure: settle the
 # SAME publish green through the ordinary path, then confirm a retried transition succeeds.
 CHECK_STATUS=green verdict >/dev/null
-out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "4: after settling green, the retried transition succeeds" \
     || bad "4: after settling green, the retried transition succeeds" "got rc=$rc out=$out"
 is "4: production now carries the previously-red round" "$HEAD2" "$(remote_main)"
@@ -274,7 +278,7 @@ git -C "$CLONE" commit -q --allow-empty -m "foreign: not from local/main"
 timeout 5 git -C "$CLONE" push -q origin main
 FOREIGN="$(git -C "$CLONE" rev-parse main)"
 
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "5: to-forge refuses when the forge diverged" || bad "5: to-forge refuses when the forge diverged" "got rc=$rc out=$out"
 [ "$(callcount pr-create)" -eq 0 ] && ok "5: no PR was opened" || bad "5: no PR was opened" "$(cat "$CALL_LOG")"
 is "5: repo-map row is untouched (still queue.local)" "queue.local local/main" "$(landmode "$REPONAME")"
@@ -288,7 +292,7 @@ git -C "$REMOTE" update-ref refs/heads/main "$PRE_MAIN" >/dev/null 2>&1
 echo
 echo "6 — the reverse flip syncs to the forge's CURRENT tip, not a stale one"
 # ============================================================================
-out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "6 setup: forward flip succeeds" || bad "6 setup: forward flip succeeds" "got rc=$rc out=$out"
 FORWARD_TIP="$(remote_main)"
 
@@ -311,12 +315,12 @@ echo
 echo "7 — a bead IN_DELIVERY on spira-lc refuses the transition; once LANDED it proceeds"
 # ============================================================================
 lcfix_seed sp-trbusy IN_DELIVERY "$(localmain)"
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "7: to-forge refuses with work in delivery" || bad "7: to-forge refuses with work in delivery" "got rc=$rc out=$out"
 want "7: names the bead in delivery" "sp-trbusy" "$out"
 is "7: repo-map row is untouched (still queue.local)" "queue.local local/main" "$(landmode "$REPONAME")"
 lcfix_seed sp-trbusy LANDED "$(localmain)"
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "7: the same transition proceeds once the bead is LANDED" \
     || bad "7: the same transition proceeds once the bead is LANDED" "got rc=$rc out=$out"
 
