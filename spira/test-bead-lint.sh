@@ -191,7 +191,7 @@ file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
     FILE_RC=$?
 }
 blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depends on
-    SPIRA_DB="$SPIRA_DB" "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep list "$1" --type blocks --json 2>/dev/null \
+    SPIRA_DB="$SPIRA_DB" timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep list "$1" --type blocks --json 2>/dev/null \
         | python3 -c 'import json,sys; print(" ".join(d.get("depends_on_id") or d.get("id") for d in json.load(sys.stdin)))'
 }
 

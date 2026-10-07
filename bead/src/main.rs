@@ -103,6 +103,10 @@ fn bdq_status(home: &str, args: &[String]) -> i32 {
 /// Runs `bdq` capturing stdout, discarding stderr (`2>/dev/null`, matching every read call
 /// `bead.sh`'s own sweep made).
 fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
+    bdq_capture_with(home, args, Stdio::null())
+}
+
+fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String) {
     // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = Command::new("bash")
         .arg("-c")
@@ -114,7 +118,7 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
         // release's bin/+spira/ on the CHILD's PATH, never only inherited.
         .envs(spira_config::release_env::child_path_env_for_process())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(stderr)
         .output();
     match out {
         Ok(o) => (
@@ -137,22 +141,8 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 fn bdq_create(home: &str, args: &[String], incident: Option<&str>) -> i32 {
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(BDQ_SCRIPT)
-        .arg("bdq")
-        .arg(home)
-        .args(args)
-        .envs(spira_config::release_env::child_path_env_for_process())
-        .stdout(Stdio::piped())
-        .output();
-    let out = match out {
-        Ok(o) => o,
-        Err(_) => return 127,
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
     print!("{stdout}");
-    let code = out.status.code().unwrap_or(1);
     let Some(incident) = incident else { return code };
     if code != 0 {
         return code;
