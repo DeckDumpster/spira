@@ -329,6 +329,12 @@ impl Pool {
         Ok(released)
     }
 
+    /// The VMs `owner` holds leases on, without releasing them.
+    pub fn leased_to(&self, owner: ProcId) -> Vec<Vm> {
+        self.with_state(|s| s.leases.iter().filter(|l| l.owner == Some(owner)).map(|l| l.vm.clone()).collect())
+            .unwrap_or_default()
+    }
+
     /// Releases every VM `owner` holds: its leases and a provision it had in flight (a `run`
     /// being interrupted).
     pub fn release_owned_by(&self, owner: ProcId, factory: &dyn Fn() -> Result<Attempt, String>) {
