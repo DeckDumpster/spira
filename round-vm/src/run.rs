@@ -363,6 +363,15 @@ pub(crate) fn git(args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// The addresses on each line of `ip -br addr`, prefix lengths stripped.
+fn host_addresses(ip_br_addr: &str) -> Vec<String> {
+    ip_br_addr
+        .lines()
+        .flat_map(|l| l.split_whitespace().skip(2))
+        .map(|a| a.split('/').next().unwrap_or(a).to_string())
+        .collect()
+}
+
 fn pid_alive(pid: i32) -> bool {
     // SAFETY: signal 0 only checks existence.
     pid > 0 && unsafe { libc::kill(pid, 0) } == 0
@@ -437,6 +446,16 @@ impl Host for GitHost {
         if self.listen.is_empty() {
             return Err("no listen address for the mirror daemon (SPIRA_ROUND_VM_HOST_ADDR)".into());
         }
+        let out = command("ip").args(["-br", "addr"]).stdin(Stdio::null()).output().map_err(|e| format!("ip -br addr: {e}"))?;
+        let addrs = host_addresses(&String::from_utf8_lossy(&out.stdout));
+        if !out.status.success() || !addrs.iter().any(|a| a == &self.listen) {
+            return Err(format!(
+                "{} is not an address of this host (ip -br addr: {}); the host's address has changed — \
+                 set round_vm_host_addr (and sccache_dav_addr) to the current one with spira-config set, then re-activate the release",
+                self.listen,
+                addrs.join(" ")
+            ));
+        }
         fs::create_dir_all(&self.state_dir).map_err(|e| e.to_string())?;
         let mirror = self.state_dir.join("mirror.git");
         let m = mirror.to_string_lossy().to_string();
@@ -448,10 +467,16 @@ impl Host for GitHost {
 
         let pidfile = self.state_dir.join("git-daemon.pid");
         let running = |p: &Path| fs::read_to_string(p).ok().and_then(|s| s.trim().parse().ok()).map(pid_alive).unwrap_or(false);
+        let addrfile = self.state_dir.join("git-daemon.addr");
+        let bound_to = fs::read_to_string(&addrfile).ok().map(|s| s.trim().to_string());
         if running(&pidfile) {
-            return Ok(());
+            if bound_to.as_deref() == Some(self.listen.as_str()) {
+                return Ok(());
+            }
+            stop_mirror(&self.state_dir)?;
         }
         let _ = fs::remove_file(&pidfile);
+        let _ = fs::remove_file(&addrfile);
         let st = command("git")
             .arg("daemon")
             .arg("--reuseaddr")
@@ -468,7 +493,7 @@ impl Host for GitHost {
             .map_err(|e| format!("git daemon: {e}"))?;
         for _ in 0..20 {
             if running(&pidfile) {
-                return Ok(());
+                return fs::write(&addrfile, &self.listen).map_err(|e| format!("{}: {e}", addrfile.display()));
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -1146,6 +1171,14 @@ mod tests {
     }
 
     #[test]
+    fn host_addresses_reads_ip_br_addr() {
+        let out = "lo UNKNOWN 127.0.0.1/8 ::1/128\neth0 UP 192.168.15.174/22 fe80::1/64\n";
+        let a = host_addresses(out);
+        assert!(a.iter().any(|x| x == "192.168.15.174") && a.iter().any(|x| x == "127.0.0.1"));
+        assert!(!a.iter().any(|x| x == "192.168.1.56"));
+    }
+
+    #[test]
     fn a_real_mirror_daemon_listens_where_told_and_teardown_closes_it() {
         let d = TempDir::new();
         let tree = d.path().join("tree");
@@ -1160,6 +1193,17 @@ mod tests {
         let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into() };
         host.prepare_mirror(&tree).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(), "daemon not listening");
+        let old_pid = fs::read_to_string(state.join("git-daemon.pid")).unwrap();
+        host.prepare_mirror(&tree).unwrap();
+        assert_eq!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon on the right address is kept");
+        fs::write(state.join("git-daemon.addr"), "192.0.2.1").unwrap();
+        host.prepare_mirror(&tree).unwrap();
+        assert_ne!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon recorded on another address is restarted");
+        assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1");
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+        let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into() };
+        let e = foreign.prepare_mirror(&tree).unwrap_err();
+        assert!(e.contains("not an address of this host") && e.contains("spira-config set"), "{e}");
         stop_mirror(&state).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener survived teardown");
     }
