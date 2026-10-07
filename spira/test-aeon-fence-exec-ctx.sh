@@ -32,8 +32,8 @@ fence_read() {   # fence_read <file> -> BLOCK or ALLOW for the Read tool
     case "$out" in *'"decision":"block"'*) echo BLOCK ;; *) echo ALLOW ;; esac
 }
 
-is "the admin credential cannot be read with the Read tool" BLOCK "$(fence_read /home/x/.config/spira/spira-lc-admin.credential)"
+is "the admin credential cannot be read with the Read tool" BLOCK "$(fence_read /cfg/spira/spira-lc-admin.credential)"
 is "the admin credential cannot be catted" BLOCK "$(fence 'cat ~/.config/spira/spira-lc-admin.credential')"
-is "the service credential is not the admin credential's fence" ALLOW "$(fence_read /home/x/.config/spira/spira-lc.credential)"
+is "the service credential is not the admin credential's fence" ALLOW "$(fence_read /cfg/spira/spira-lc.credential)"
 
 tl_summary

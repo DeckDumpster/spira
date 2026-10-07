@@ -138,7 +138,7 @@ want "and skips 0002's column, which schema.sql already made" "0002-since.sql: b
 echo
 echo "every migration applied: the service user alone decides it, no admin credential (sp-p1z81)"
 printf 'SELECT 1;\n' > "$TMP/select.sql"
-out="$(as_root env SPIRA_LC_PASSWORD="" spira-lc admin-apply-ddl "$TMP/select.sql" 2>&1)"
+out="$(as_root env SPIRA_LC_PASSWORD="" SPIRA_LC_ADMIN_PASSWORD="" spira-lc admin-apply-ddl "$TMP/select.sql" 2>&1)"
 want "positive control: root with an empty password is refused here, as in production" "Access denied" "$out"
 out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "admin-migrate with only the service user succeeds" 0 $rc
