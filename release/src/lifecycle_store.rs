@@ -226,6 +226,45 @@ pub fn ensure_admin(
     Ok((make(pw), format!("root's password set; credential written to {} (0600)", cred_path.display())))
 }
 
+/// Once root has a password, every `bd` on this box connects as root with it: the beads
+/// credentials file (`$BEADS_CREDENTIALS_FILE`, else `~/.config/beads/credentials` — bd's own
+/// password lookup after `BEADS_DOLT_PASSWORD`) carries it, 0600, in the `[host:port]` section
+/// bd resolves. Without it, closing passwordless root locked every bd client out ("Access
+/// denied for user 'root'"). Any other section is kept; this one is replaced.
+pub fn ensure_beads_credential(file: &Path, host: &str, port: u16, password: &str) -> Result<String, String> {
+    let header = format!("[{host}:{port}]");
+    let old = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("cannot read {}: {e}", file.display())),
+    };
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in old.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            skipping = t == header;
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!("{header}\npassword = {password}\n"));
+    if out == old {
+        return Ok(format!("bd credential for {host}:{port} already in {}", file.display()));
+    }
+    if let Some(parent) = file.parent() {
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let tmp = file.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    f.write_all(out.as_bytes()).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, file).map_err(|e| format!("cannot replace {}: {e}", file.display()))?;
+    Ok(format!("bd credential for {host}:{port} written to {} (0600)", file.display()))
+}
+
 /// Run the whole phase. `run(args, env)` invokes `spira-lc <args>` under `env` and returns
 /// (exit code, combined output); it is injected so tests can watch every call. Fails closed
 /// on the first step that does not exit 0, naming the step; returns the per-step lines to
@@ -273,6 +312,21 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_beads_credential_section_is_written_0600_and_replaced_not_duplicated() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = testkit::TempDir::new("lc-beads-cred");
+        let f = d.path().join("beads/credentials");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "[10.0.0.1:3307]\npassword = other\n[127.0.0.1:3307]\npassword = old\n").unwrap();
+        ensure_beads_credential(&f, "127.0.0.1", 3307, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "[10.0.0.1:3307]\npassword = other\n[127.0.0.1:3307]\npassword = new\n");
+        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+        let msg = ensure_beads_credential(&f, "127.0.0.1", 3307, "new").unwrap();
+        assert!(msg.contains("already"), "{msg}");
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
