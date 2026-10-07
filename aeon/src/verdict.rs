@@ -1,10 +1,6 @@
 //! After the session (DESIGN.md §4.6): the wiki commit and the verdict fences. Closed is not
 //! landed — every fence reads the commit graph or the store, never the session's word.
 //!
-//! The reopen causes are consts: census.sh folds `sp-requeue-<cause>` for every cause that is
-//! both a bead_reopen cause and a REQUEUE_CAUSE here (test-census-events.sh sp-ytw2h scans
-//! for them).
-
 use std::path::Path;
 
 use crate::bd;

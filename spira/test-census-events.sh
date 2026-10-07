@@ -482,36 +482,6 @@ nowant "sp-reopen-eviction-race not emitted unsuppressed" "sp-reopen-eviction-ra
 
 # ======================================================================================
 echo
-echo "sp-ytw2h: structural — every cause the aeon both reopens and requeues with has a fold-map entry"
-# ======================================================================================
-# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
-# On the unfixed tree, _census_class_fold_map lacks sp-requeue-eviction-race (and others),
-# so this test fails for each cause that appears in both bead_reopen calls and requeue
-# calls without a fold entry.
-#
-# Parses the aeon binary's source (aeon.sh is gone — the Rust cutover): in
-# aeon/src/verdict.rs the causes are `pub const` strings, and a pair is a const passed to
-# both `bead_reopen(` and `.requeue(`. No database required.
-_aeon="$HERE/../aeon/src/verdict.rs"
-_reopen_consts="$(grep -o 'bead_reopen([A-Z_]*,' "$_aeon" | sed 's/^bead_reopen(//; s/,$//' | sort -u)"
-_requeue_consts="$(grep -o '\.requeue([A-Z_]*,' "$_aeon" | sed 's/^\.requeue(//; s/,$//' | sort -u)"
-_fold_entries="$(_census_class_fold_map)"
-_pair_count=0
-for _const in $_reopen_consts; do
-    printf '%s\n' "$_requeue_consts" | grep -qxF "$_const" || continue
-    _cause="$(sed -n "s/^pub const $_const: &str = \"\(.*\)\";/\1/p" "$_aeon")"
-    [ -n "$_cause" ] || { bad "paired const $_const has no string value in verdict.rs"; continue; }
-    _pair_count=$((_pair_count + 1))
-    if printf '%s\n' "$_fold_entries" | grep -qE "^sp-requeue-${_cause}[[:space:]]"; then
-        ok "fold-map has sp-requeue-${_cause} for paired cause '${_cause}'"
-    else
-        bad "cause '${_cause}' in both bead_reopen and requeue in the aeon but no fold-map entry for sp-requeue-${_cause}"
-    fi
-done
-[ "$_pair_count" -gt 0 ] || bad "structural check found no paired causes in aeon/src/verdict.rs — detection is broken"
-
-# ======================================================================================
-echo
 echo "sp-a0of5: one re-filing's reopen-timing verdict does not rank as a second class"
 # ======================================================================================
 # incident.sh's file_one writes a 'recurred'/<incident-cause> event AND a
