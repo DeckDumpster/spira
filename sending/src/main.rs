@@ -61,6 +61,11 @@ fn die(msg: &str) -> ExitCodeLike {
     2
 }
 
+fn fail(msg: &str) -> ExitCodeLike {
+    eprintln!("sending: {msg}");
+    1
+}
+
 type ExitCodeLike = i32;
 
 /// Builds the `Real` world the chokepoint subcommands that touch bd need (destroy-worktree,
@@ -71,7 +76,7 @@ type ExitCodeLike = i32;
 fn real_world(status: Option<String>) -> Result<Real, String> {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe).ok_or("cannot find lib.sh (set SPIRA_HOME)")?;
-    Ok(Real::minimal(home, status))
+    Ok(Real::minimal(home, real::run_dir()?, status))
 }
 
 fn cmd_destroy_worktree(mut args: Vec<String>) -> ExitCodeLike {
@@ -151,7 +156,11 @@ fn cmd_prune(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("prune <repo>");
     }
-    let reaplog_path = real::reaplog_path();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
     i32::from(!reap::prune_worktrees(&reaplog_path, Path::new(&args[0])))
 }
 
@@ -159,8 +168,11 @@ fn cmd_salvage(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 2 {
         return die("salvage <id> <worktree-path>");
     }
-    let run = real::run_dir();
-    let reaplog_path = real::reaplog_path();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
     i32::from(reap::salvage(&run, &reaplog_path, &args[0], Path::new(&args[1])).is_err())
 }
 
@@ -175,7 +187,10 @@ fn cmd_holder_alive(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("holder-alive <id>");
     }
-    let run = real::run_dir();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
     i32::from(!reap::holder_alive(&run, &args[0]))
 }
 
@@ -202,7 +217,11 @@ fn cmd_reaplog(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 2 && args.len() != 3 {
         return die("reaplog <verb> <id> [<detail>]");
     }
-    let reaplog_path = real::reaplog_path();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
     reap::reaplog(&reaplog_path, &args[0], &args[1], args.get(2).map(String::as_str).unwrap_or(""));
     0
 }

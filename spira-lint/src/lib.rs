@@ -346,6 +346,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::env_set_var_leak::EnvSetVarLeak),
         Box::new(rules::call_deadline::CallDeadline),
         Box::new(rules::hash_iter_output::HashIterOutput),
+        Box::new(rules::process_exit_in_library::ProcessExitInLibrary),
         Box::new(rules::plan_matrix::PlanMatrix::default()),
         Box::new(rules::plan_lint::PlanLint::default()),
         Box::new(rules::testdb_mode_lint::TestdbModeLint::default()),
@@ -565,7 +566,7 @@ mod tests {
     /// The tree-walking rules over one small fixture tree: one planted violation per rule is
     /// found, named by its rule, and nothing else is. The rules that hold named files to a
     /// contract (event-taxonomy, gate-workflow, conf-key-registry, lib-sh-shims), and
-    /// tmp-leak, config-literal-fallback chmod-exec-leak and env-set-var-leak, which read Rust, are
+    /// tmp-leak, config-literal-fallback chmod-exec-leak, env-set-var-leak and process-exit-in-library, which read Rust, are
     /// fixtured in their own modules.
     #[test]
     fn all_rules_over_a_fixture_tree() {
@@ -590,7 +591,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "release-spawn-env", "config-literal-fallback", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
+        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "release-spawn-env", "config-literal-fallback", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();
