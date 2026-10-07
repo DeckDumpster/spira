@@ -131,20 +131,22 @@ impl Conn {
     /// Times only the statements: the wait for the session lock is queueing, not a slow query.
     fn run_script_on(&self, session: &Mutex<Option<Wire>>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
-        let started = std::time::Instant::now();
+        let session_started = std::time::Instant::now();
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
-        let result = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
+        let wire = reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database)));
+        crate::slow::record(session_started.elapsed(), "CONNECT");
+        match wire {
             Ok(mut wire) => {
+                let started = std::time::Instant::now();
                 let out = wire.exec(script);
+                crate::slow::record(started.elapsed(), script);
                 if out.is_ok() {
                     *guard = Some(wire);
                 }
                 out
             }
             Err(e) => Err(e),
-        };
-        crate::slow::record(started.elapsed(), script);
-        result
+        }
     }
 
     /// Append one already-built event INSERT in its own transaction (a fact: no row is mutated).
