@@ -1995,14 +1995,8 @@ fn probe_failure_is_reported() {
     assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
 }
 
-// ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
-// hazard): every test below that resolves config takes this lock. `spira_config::repos::
-// registry_env` now drops any inherited `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` outright and
-// resolves them only from `$SPIRA_TOML` (per Ryan 2026-10-05: one source of config) — so a
-// test that used to hand them to `resolve_repos`/`Registry::from_env` as a plain env map
-// now needs a real `spira_config::process::fixture_toml` fixture and the real `SPIRA_TOML`
-// env var pinned at it instead.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// `resolve_repos` reads `$SPIRA_TOML` only (`spira_config::repos::registry_env` drops
+// inherited repo-map keys), so tests here pin it through `testkit::env`.
 
 /// `resolve_repos` (sp-k6lku, "wave 4.13"): a trait seam over the registry, not a bash
 /// probe — the fixture here is a real repo-map FILE, the thing `spira_config::repos`
@@ -2014,8 +2008,6 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// seam had).
 #[test]
 fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
-    let _g = ENV_LOCK.lock().unwrap();
-    let saved = std::env::var("SPIRA_TOML").ok();
     let d = testkit::TempDir::new("sentinel-resolve-repos");
     let home = d.join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -2031,17 +2023,14 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
         &d,
         &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
     );
-    std::env::set_var("SPIRA_TOML", &toml);
+    let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
 
     let mut vars = std::collections::BTreeMap::new();
     vars.insert("SPIRA_REPO".to_string(), home.to_string_lossy().into_owned());
 
     let repos = crate::resolve_repos(&vars, &home);
 
-    match saved {
-        Some(v) => std::env::set_var("SPIRA_TOML", v),
-        None => std::env::remove_var("SPIRA_TOML"),
-    }
+    drop(env);
 
     let spira = repos.iter().find(|r| r.name == "spira").expect("home repo always present");
     assert_eq!(spira.root, None, "unmapped — never a guessed default of the home checkout");
@@ -2060,12 +2049,9 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
 // at a real `spira_config::process::fixture_toml` fixture (every key declared, including
 // the ones `resolve()` now refuses to guess, e.g. SPIRA_REPO_MAP) instead of a nonexistent
 // path — it still never depends on, or interferes with, a real operator spira.toml on the
-// machine running this suite. `ENV_LOCK` (declared above, shared with the repo-registry
-// test) is what keeps this safe under parallel test threads.
+// machine running this suite. `testkit::env` keeps this safe under parallel test threads.
 #[test]
 fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
-    let _g = ENV_LOCK.lock().unwrap();
-    let saved = std::env::var("SPIRA_TOML").ok();
     let w = World::new("probe-merge");
     std::fs::create_dir_all(w.home.join("conf.d")).unwrap();
     std::fs::write(
@@ -2079,7 +2065,7 @@ fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     // fixture's own baked-in value (it declares a different one) to agree with the assert
     // below.
     let toml = spira_config::process::fixture_toml(&w.dir, &[("SPIRA_CI_PARK_MAX", "9")]);
-    std::env::set_var("SPIRA_TOML", toml);
+    let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
 
     // @vars already carries SPIRA_HOME_REPO_RESOLVED from the (fixed) script itself —
     // merge_resolved_config must never override it — and nothing else, matching the
@@ -2089,10 +2075,7 @@ fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     r.on(move |_| ok(raw));
     let ctx = crate::probe(&r, &w.home, false);
 
-    match saved {
-        Some(v) => std::env::set_var("SPIRA_TOML", v),
-        None => std::env::remove_var("SPIRA_TOML"),
-    }
+    drop(env);
 
     let ctx = ctx.unwrap();
     assert_eq!(ctx.get("SPIRA_HOME_REPO_RESOLVED"), Some("spira"), "the script's own value must survive the merge");

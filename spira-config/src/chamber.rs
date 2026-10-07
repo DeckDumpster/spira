@@ -48,7 +48,7 @@ use crate::{discover, load, SpiraToml};
 /// so it is unit-testable without a `discover()` call touching this process's real
 /// environment — the same reason `persona_model_from_doc` exists alongside `persona_model`
 /// below, and the same hazard: a test that called the `discover`-touching half directly
-/// would need `crate::ENV_LOCK` (test-only, sp-dh4fv/sp-mz7dn's crate-wide serialization
+/// would need `testkit::env` (the workspace-wide env serialization
 /// against another test's `std::env::set_var`), and holding that lock here while a caller
 /// above is ALSO holding it to drive its own env mutation would deadlock (`std::sync::Mutex`
 /// is not reentrant) — so this half takes no lock and touches no env at all.
@@ -469,7 +469,7 @@ pub fn persona_model(fayth: &str, default: Option<&str>) -> String {
 /// The pure lookup [`persona_model`] runs once it has a document (or none) in hand —
 /// split out so it can be unit-tested without touching the process environment, which
 /// [`discover`] reads and which every test in this crate's binary shares (see
-/// `locate::tests::ENV_LOCK`'s own comment on why that hazard is real).
+/// `testkit::env` for why that hazard is real).
 fn persona_model_from_doc(doc: Option<&SpiraToml>, fayth: &str, default: &str) -> String {
     doc.and_then(|d| d.persona.get(fayth))
         .map(|p| p.model.clone())
@@ -630,7 +630,7 @@ mod tests {
     /// is missing — mirroring a `conf.d` registry where not every label has a file (never
     /// an error: a `.fayth` referencing an unresolved key just sees it absent). Pure: no
     /// process environment touched, so unlike `fayth_label_overlay` itself (which calls
-    /// `discover()` and so needs the crate-wide `ENV_LOCK` serialization any REAL test of
+    /// `discover()` and so needs the crate-wide `testkit::env` serialization any REAL test of
     /// it would require — see `persona_model`/`persona_model_from_doc`'s identical split
     /// for why that half is exercised only by the end-to-end proof, not a unit test here).
     #[test]
@@ -677,7 +677,7 @@ mod tests {
     }
 
     /// The sp-xsnid repro, pinned at the `fayth_predicate` level rather than through a
-    /// real resolved config (which would need `ENV_LOCK`/`discover()` — see
+    /// real resolved config (which would need `testkit::env`/`discover()` — see
     /// `fayth_label_overlay`'s own split): a fayth whose `FAYTH_LABELS` references a
     /// variable this overlay never supplies refuses, naming the exact reference, rather
     /// than handing back an empty string a caller would read as "match everything".
@@ -704,16 +704,11 @@ mod tests {
     /// `fayth_get`'s own bash subshell would actually inherit, not refuse.
     #[test]
     fn fayth_predicate_falls_back_to_the_ambient_environment_when_in_process_resolution_fails() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = testkit::TempDir::new("fayth-predicate-ambient-fallback");
         write_fayth(&dir, "spike", "FAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_SPIKE_LABEL\"\nFAYTH_EXCLUDE_LABELS=\"spira-poison\"\n");
-        let saved = std::env::var("SPIRA_SPIKE_LABEL").ok();
-        std::env::set_var("SPIRA_SPIKE_LABEL", "research");
+        let env = testkit::env(&[("SPIRA_SPIKE_LABEL", Some("research"))]);
         let got = fayth_predicate(&dir, "spike");
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_SPIKE_LABEL", v),
-            None => std::env::remove_var("SPIRA_SPIKE_LABEL"),
-        }
+        drop(env);
         assert_eq!(got.unwrap().labels, "research");
     }
 

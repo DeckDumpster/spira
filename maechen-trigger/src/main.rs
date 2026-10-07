@@ -329,8 +329,7 @@ mod tests {
         // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
         // lives), never the throwaway fixture dir.
         let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        env::set_var("SPIRA_HOME", &real_home);
-        env::set_var("SPIRA_TOML", &toml);
+        let _g = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
 
         let cfg = load_cfg().expect("a complete fixture toml must resolve every key this crate needs");
         assert_eq!(cfg.max_beads, 7, "the fixture's override must reach load_cfg");

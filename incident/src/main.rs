@@ -616,14 +616,12 @@ mod tests {
         // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
         // lives), never unset: `cfg()` cannot resolve at all without it.
         let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        std::env::set_var("SPIRA_HOME", &real_home);
-        std::env::set_var("SPIRA_TOML", &toml);
-        std::env::set_var("SPIRA_WATCHER_INTERVAL_S", "99");
+        let _g = testkit::env(&[
+            ("SPIRA_HOME", real_home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+            ("SPIRA_WATCHER_INTERVAL_S", Some("99")),
+        ]);
 
         assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("1800".to_string()), "the declared value, never the environment override");
-
-        std::env::remove_var("SPIRA_WATCHER_INTERVAL_S");
-        std::env::remove_var("SPIRA_TOML");
-        std::env::remove_var("SPIRA_HOME");
     }
 }

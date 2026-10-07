@@ -492,14 +492,6 @@ fn is_work_type_cmd(ty: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Serialises this file's env-mutating tests against each other and against anything
-    /// else in this binary that might read these same names — same reasoning as
-    /// `landing_pass::testutil::serial` (not reusable here: it is private to the lib
-    /// crate, and this test lives in the bin crate).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
     // law-a-binary-resolves-the-config-it-reads: `run_dir` must get a real answer from the
     // one source of config, not a crash, whenever $SPIRA_TOML names a real config file — the
     // production defect this originally guarded against was a landing-pass call silently
@@ -513,27 +505,20 @@ mod tests {
     // such test in this same test binary would not get an independent answer.
     #[test]
     fn run_dir_resolves_through_the_one_source_of_config() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = testkit::TempDir::new("landing-pass-run-dir");
         let home = dir.join("home");
         fs::create_dir_all(home.join("conf.d")).unwrap();
         let run_path = dir.join("the-run-dir");
         let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_RUN", run_path.to_str().unwrap())]);
 
-        let saved: Vec<(&str, Option<std::ffi::OsString>)> =
-            ["SPIRA_RUN", "SPIRA_HOME", "SPIRA_TOML"].iter().map(|k| (*k, std::env::var_os(k))).collect();
-        std::env::remove_var("SPIRA_RUN");
-        std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("SPIRA_TOML", &toml);
+        let env = testkit::env(&[
+            ("SPIRA_RUN", None),
+            ("SPIRA_HOME", home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+        ]);
 
         let got = run_dir();
-
-        for (k, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
+        drop(env);
 
         assert_eq!(got.expect("run_dir must resolve through $SPIRA_TOML"), run_path);
     }

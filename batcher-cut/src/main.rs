@@ -967,14 +967,6 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    // Serialises the one test in this crate that drives `spira_config::process::cfg` (through
-    // `env_for`) off a real `$SPIRA_TOML`: `process::config()` resolves and caches ONCE per
-    // process (a `OnceLock`), so this must be the only call anywhere in this binary's test
-    // suite that reaches it — same pattern as release's `ENV_LOCK`/`PathGuard`
-    // (release/src/tests.rs).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     // THE ONE DOOR (per Ryan 2026-10-05: one source of config): env_for() reads every
     // registered key through `spira_config::process::cfg`/`cfg_parse`, never its own
@@ -983,32 +975,21 @@ mod tests {
     // written to `spira.toml` reaches `Env` end to end, through the real resolver.
     #[test]
     fn env_for_reads_every_registered_key_through_the_one_door() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_toml = env::var_os("SPIRA_TOML");
-        let saved_home = env::var_os("SPIRA_HOME");
-
         let dir = testkit::TempDir::new("batcher-cut-env-for");
         let toml = spira_config::process::fixture_toml(
             &dir,
             &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600")],
         );
-        env::set_var("SPIRA_TOML", &toml);
         // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
         // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every
         // key `env_for` asks for.
-        env::set_var("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira"));
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+        let g = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str())]);
 
         let o = Opts { cmd: "cut".into(), repo: "r".into(), run: None, db: None, home: None, round_vm: None, suites: None, members: None, evidence: None };
         let env_ = env_for(&o, dir.join("home"), dir.join("run"));
 
-        match saved_toml {
-            Some(v) => env::set_var("SPIRA_TOML", v),
-            None => env::remove_var("SPIRA_TOML"),
-        }
-        match saved_home {
-            Some(v) => env::set_var("SPIRA_HOME", v),
-            None => env::remove_var("SPIRA_HOME"),
-        }
+        drop(g);
         let env_ = env_.expect("env_for resolves through the one door given a complete spira.toml");
         let _ = std::fs::remove_dir_all(&dir);
 

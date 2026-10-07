@@ -149,7 +149,7 @@ fn ctx() -> Ctx {
         ("SPIRA_RUN", RUN),
         ("SPIRA_VERDICT_TTL", "86400"),
         ("SPIRA_CERTIFY_PAR", "2"),
-        ("HOME", "/home/u"),
+        ("HOME", "/fixture-home"),
         ("SPIRA_RELEASE", "/rel"),
         // The box's own tool tail (sp-c7b85) — cargo, for the tree builds a gate step runs.
         ("SPIRA_PATH", "/box/.cargo/bin"),
@@ -263,7 +263,7 @@ impl Fake {
             admission_only_slot_free: Cell::new(None),
         }
     }
-    fn set_var(&self, k: &str, v: &str) {
+    fn put_var(&self, k: &str, v: &str) {
         self.ctx
             .borrow_mut()
             .as_mut()
@@ -746,7 +746,7 @@ fn a_current_branch_is_judged_as_itself() {
 fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.set_var("PATH", "/inherited/.cargo/bin:/checkout/target/release:/usr/bin");
+    f.put_var("PATH", "/inherited/.cargo/bin:/checkout/target/release:/usr/bin");
     assert_eq!(f.run(), PASS);
     assert_eq!(
         f.env_of(0, "PATH"),
@@ -760,7 +760,7 @@ fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
 fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_resolve_config() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.set_var("SPIRA_TOML", "/box/spira.toml");
+    f.put_var("SPIRA_TOML", "/box/spira.toml");
     assert_eq!(f.run(), PASS);
     assert_eq!(f.env_of(0, "SPIRA_TOML"), "/box/spira.toml");
 }
@@ -769,7 +769,7 @@ fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_reso
 fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.set_var("SPIRA_PATH", "/x/spira-releases/def/bin");
+    f.put_var("SPIRA_PATH", "/x/spira-releases/def/bin");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=release-unset"), "{}", f.verdict_line());
     assert!(f.stderr().contains("spira-releases"), "{}", f.stderr());
@@ -780,7 +780,7 @@ fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs()
 fn an_unset_spira_release_is_no_verdict_naming_it_and_nothing_runs() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.set_var("SPIRA_RELEASE", "");
+    f.put_var("SPIRA_RELEASE", "");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=release-unset"), "{}", f.verdict_line());
     assert!(f.stderr().contains("SPIRA_RELEASE is not set"));
@@ -1628,7 +1628,7 @@ fn a_fresh_cached_pass_skips_admission_and_the_trial() {
 #[test]
 fn a_stale_cached_pass_runs_again() {
     let f = Fake::new();
-    f.set_var("SPIRA_VERDICT_TTL", "10");
+    f.put_var("SPIRA_VERDICT_TTL", "10");
     let k = key_for(&f, "", "none");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/verdicts/{k}")),
@@ -1653,7 +1653,7 @@ fn only_a_pass_is_cached() {
 #[test]
 fn ejected_suites_come_from_the_ejected_file() {
     let f = Fake::new();
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-x.sh,test-y.sh\nignored\n".into(),
@@ -1676,7 +1676,7 @@ fn ejected_suites_come_from_the_ejected_file() {
 fn a_sidecar_under_the_retired_landstate_ledger_is_not_read() {
     // sp-2c1n0: the ledger is deleted; a stale `<id>.ejected` left under it forces nothing.
     let f = Fake::new();
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(PathBuf::from(format!("{RUN}/landstate/sp-a.ejected")), "test-z.sh\n".into());
     f.run();
     assert_eq!(f.env_of(0, "SPIRA_GATE_EJECTED_SUITES"), "");
@@ -1688,7 +1688,7 @@ fn a_sidecar_under_the_retired_landstate_ledger_is_not_read() {
 fn admission_times_out_as_no_verdict() {
     let f = Fake::new();
     f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "5");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f
         .stderr()
@@ -1700,7 +1700,7 @@ fn admission_times_out_as_no_verdict() {
 fn a_full_gate_pool_is_said_naming_its_holders_and_a_taken_slot_names_the_branch() {
     let f = Fake::new();
     f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "5");
     assert_eq!(f.run(), NOVERDICT);
     assert_eq!(f.stderr().matches("gate: waiting for a gate slot: 2 of 2 held by fake").count(), 1, "{}", f.stderr());
     // POSITIVE CONTROL: a free pool says nothing about waiting, records who holds the slot, and
@@ -1716,7 +1716,7 @@ fn a_full_gate_pool_is_said_naming_its_holders_and_a_taken_slot_names_the_branch
 fn fences_only_certification_takes_no_admission_slot() {
     let f = Fake::new();
     f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.put_var("SPIRA_GATE_SUITES", "off");
     assert_eq!(f.run(), PASS);
     assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "off");
 }
@@ -1725,7 +1725,7 @@ fn fences_only_certification_takes_no_admission_slot() {
 fn a_held_tree_times_out_and_meters_the_wait() {
     let f = Fake::new();
     f.lock_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "3");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "3");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=lock-timeout"));
     let row = f.appended.borrow()[0].clone();
@@ -1760,7 +1760,7 @@ fn a_signal_is_no_verdict() {
 fn the_waiting_message_prints_exactly_once() {
     let f = Fake::new();
     f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "3");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "3");
     f.run();
     let waits = f
         .stderr()
@@ -1808,7 +1808,7 @@ fn a_limit_raised_in_the_live_config_admits_an_already_waiting_gate() {
     f.admission_only_slot_free.set(Some(3));
     f.certify_par_live_after.set(1); // first poll still sees the frozen par (2)
     f.certify_par_live.set(Some(3)); // every poll after that sees the raised one
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "5");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(
         f.stderr().contains("gate: waiting for a gate slot: 2 of 2 held by fake"),
@@ -1847,7 +1847,7 @@ fn certification_events_follow_the_outcome() {
         (1, "test-b.sh RED", 1, "infra"),
     ] {
         let f = Fake::new();
-        f.set_var("SPIRA_GATE_BEAD", "sp-a");
+        f.put_var("SPIRA_GATE_BEAD", "sp-a");
         f.runs
             .borrow_mut()
             .insert(MERGE_SHA.into(), (rc, out.into()));
@@ -2117,7 +2117,7 @@ fn returned(f: Fake, suites: &str) -> Fake {
             .borrow_mut()
             .insert(at.into(), (0, "fences ok".into()));
     }
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         format!("{suites}\n"),
@@ -2234,7 +2234,7 @@ fn a_fences_only_branch_still_reruns_the_named_suites() {
 #[test]
 fn a_beads_suites_off_certification_still_selects_its_covered_suites() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
-    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.put_var("SPIRA_GATE_SUITES", "off");
     f.runs
         .borrow_mut()
         .insert(MERGE_SHA.into(), (0, String::new()));
@@ -2242,8 +2242,8 @@ fn a_beads_suites_off_certification_still_selects_its_covered_suites() {
     assert_eq!(f.env_of(0, "SPIRA_GATE_COVERED"), "", "no bead: fences only, as the batcher's cut");
 
     let f = unit_fake(&["spira-config/src/lib.rs"]);
-    f.set_var("SPIRA_GATE_SUITES", "off");
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_SUITES", "off");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.runs
         .borrow_mut()
         .insert(MERGE_SHA.into(), (0, String::new()));
@@ -2252,10 +2252,10 @@ fn a_beads_suites_off_certification_still_selects_its_covered_suites() {
     assert_eq!(f.env_of(0, "SPIRA_GATE_COVERED"), "1");
 
     let f = unit_fake(&["spira-config/src/lib.rs"]);
-    f.set_var("SPIRA_GATE_SUITES", "off");
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_SUITES", "off");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "5");
     assert_eq!(f.run(), NOVERDICT, "covered suites run under the admission pool");
     assert!(f.verdict_line().contains("reason=admission-timeout"));
 }
@@ -2266,7 +2266,7 @@ fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
     // unions SPIRA_GATE_EJECTED_SUITES in, so the promise "recertification will force these
     // suites" was never kept. The re-entry phase keeps it.
     let f = returned(unit_fake(&["spira/lib.sh"]), "test-b.sh");
-    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.put_var("SPIRA_GATE_SUITES", "off");
     f.runs
         .borrow_mut()
         .insert(MERGE_SHA.into(), (0, String::new()));
@@ -2278,14 +2278,14 @@ fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
 #[test]
 fn suites_off_with_named_suites_takes_an_admission_slot() {
     let f = returned(Fake::new(), "test-b.sh");
-    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.put_var("SPIRA_GATE_SUITES", "off");
     f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "5");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=admission-timeout"));
 
     let f = Fake::new();
-    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.put_var("SPIRA_GATE_SUITES", "off");
     f.admission_free.set(false);
     assert_eq!(
         f.run(),
@@ -2326,7 +2326,7 @@ fn a_named_suite_the_gate_strings_budget_deferred_is_rerun_alone() {
 #[test]
 fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-gone.sh,../evil.sh\n".into(),
@@ -2345,7 +2345,7 @@ fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
 #[test]
 fn a_branch_that_deletes_a_named_suite_is_answered_by_the_deletion() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-del.sh\n".into(),
@@ -2365,7 +2365,7 @@ fn a_branch_that_deletes_a_named_suite_is_answered_by_the_deletion() {
 #[test]
 fn a_named_suite_on_neither_the_base_nor_the_branch_still_refuses() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-typo.sh\n".into(),
@@ -2383,7 +2383,7 @@ fn the_batchers_ejected_sidecar_drives_the_rerun() {
     f.runs
         .borrow_mut()
         .insert(MERGE_SHA.into(), (0, "fences ok".into()));
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-b.sh\n".into(),
@@ -2499,7 +2499,7 @@ fn a_red_fence_in_unit_mode_runs_no_unit_phase() {
 #[test]
 fn the_unit_phases_share_the_gate_timeout() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    f.set_var("SPIRA_GATE_TIMEOUT", "10");
+    f.put_var("SPIRA_GATE_TIMEOUT", "10");
     f.phase_secs.set(6);
     assert_eq!(f.run(), NOVERDICT);
     assert!(
@@ -2589,7 +2589,7 @@ fn no_verdict_other_than_pass_certifies() {
     assert!(cert_written(&f).is_none());
     let f = hex_fake();
     f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "1");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "1");
     assert_eq!(f.run(), NOVERDICT);
     assert!(cert_written(&f).is_none());
 }
@@ -2642,7 +2642,7 @@ fn suites_mode_still_records_what_the_branch_touches() {
 fn a_no_verdict_trial_is_recorded_as_one() {
     let f = Fake::new();
     f.lock_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "3");
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "3");
     assert_eq!(f.run(), NOVERDICT);
     let v = tsd_row(&f);
     assert_eq!(v["status"], "NO_VERDICT");
@@ -3009,8 +3009,8 @@ fn a_red_inside_the_suites_step_is_still_judged_on_the_base_per_suite() {
 #[test]
 fn the_runners_budget_knobs_reach_the_gate_command() {
     let f = Fake::new();
-    f.set_var("SPIRA_TESTENV_SETUP_SHARE", "70");
-    f.set_var("SPIRA_TESTENV_WARM_SLOTS", "0");
+    f.put_var("SPIRA_TESTENV_SETUP_SHARE", "70");
+    f.put_var("SPIRA_TESTENV_WARM_SLOTS", "0");
     f.run();
     assert_eq!(f.env_of(0, "SPIRA_TESTENV_SETUP_SHARE"), "70");
     assert_eq!(f.env_of(0, "SPIRA_TESTENV_WARM_SLOTS"), "0");
@@ -3160,7 +3160,7 @@ fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
 #[test]
 fn a_configured_shared_store_reaches_the_build_as_webdav_vars() {
     let f = Fake::new();
-    f.set_var("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    f.put_var("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_ENDPOINT"), "http://192.168.1.56:9431");
     assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_KEY_PREFIX"), "/");
@@ -3198,7 +3198,7 @@ fn an_absent_build_cache_refuses_a_building_trial_before_anything_builds() {
 #[test]
 fn the_opt_out_is_loud_and_reaches_the_command() {
     let f = Fake::new();
-    f.set_var("SPIRA_BUILD_CACHE", "off");
+    f.put_var("SPIRA_BUILD_CACHE", "off");
     *f.wrapper.borrow_mut() = Ok(spira_config::build::Wrapper::Off);
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.wrapper_asked.borrow()[0].1, "off");
@@ -3420,7 +3420,7 @@ fn a_phase_that_outlasts_the_deadline_is_no_verdict_naming_the_phase() {
 #[test]
 fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
     let f = Fake::new();
-    f.set_var("SPIRA_GATE_TIMEOUT", "10");
+    f.put_var("SPIRA_GATE_TIMEOUT", "10");
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, String::new()));
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=timeout"), "{}", f.verdict_line());
@@ -3449,7 +3449,7 @@ fn a_phase_killed_at_its_cap_is_not_a_deadline() {
 #[test]
 fn a_gate_with_no_declared_deadline_refuses() {
     let f = Fake::new();
-    f.set_var("SPIRA_GATE_DEADLINE", "");
+    f.put_var("SPIRA_GATE_DEADLINE", "");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=config"), "{}", f.verdict_line());
 }

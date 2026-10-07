@@ -18,7 +18,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::Duration;
 use testkit::TempDir;
 
@@ -677,29 +676,16 @@ fn verify_pre_activate_runs_with_the_release_under_verifications_own_env() {
 /// its own `bin/tool`; the *caller's* real `PATH` is pointed at A's `bin/` before verifying
 /// B, and the probe script (same as above) still finds B's own `tool` and names B as
 /// `SPIRA_RELEASE` — proving the child's env is built from the release passed to `verify`,
-/// not inherited. Serialised (`ENV_LOCK`) and restored via `PathGuard` because this is the
-/// one test in this crate that touches the real process environment.
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct PathGuard(Option<std::ffi::OsString>);
-impl Drop for PathGuard {
-    fn drop(&mut self) {
-        match &self.0 {
-            Some(p) => std::env::set_var("PATH", p),
-            None => std::env::remove_var("PATH"),
-        }
-    }
-}
+/// not inherited. Its `PATH` edit goes through `testkit::env`.
 
 #[test]
 fn verify_uses_the_release_under_verification_even_when_the_callers_shell_path_points_at_another_release() {
-    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let w = World::with_git(FakeGit { extra: vec![("spira/pre-activate.sh".into(), PATH_PROBE.into(), true)], ..Default::default() });
     w.build(A).unwrap();
     w.build(B).unwrap();
 
-    let _restore = PathGuard(std::env::var_os("PATH"));
-    std::env::set_var("PATH", w.rel(A).join("bin"));
+    let a_bin = w.rel(A).join("bin");
+    let _env = testkit::env(&[("PATH", a_bin.to_str())]);
 
     let with = VerifyOpts { pre_activate: true, system_dirs: vec![] };
     assert_eq!(verify::verify(&w.cfg, B, &with).unwrap(), Vec::<String>::new());

@@ -636,24 +636,6 @@ fn extract_semver(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Guards the two tests below that must prove resolution goes through `self.env("PATH")`
-    /// rather than this PROCESS's own ambient one — which, under an ordinary `cargo test`
-    /// shell, already contains `~/.cargo/bin` and would make the bug invisible (the real
-    /// `sccache` answers instead of the fake one, "passing" for the wrong reason). Scoped
-    /// to just these two tests; nothing else here touches process env, and both take this
-    /// lock for their entire body before restoring the real PATH.
-    static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct PathGuard(Option<std::ffi::OsString>);
-    impl Drop for PathGuard {
-        fn drop(&mut self) {
-            match &self.0 {
-                Some(p) => std::env::set_var("PATH", p),
-                None => std::env::remove_var("PATH"),
-            }
-        }
-    }
-
     /// sccache 0.18.0's real `--help` output (captured live, built with `--features
     /// webdav`) — the exact text [`World::sccache_help`]'s caller (`check_sccache`) parses
     /// for the "Enabled features:" block. A fake script printing anything else would not
@@ -679,13 +661,10 @@ mod tests {
     /// production under a launcher's trimmed `env -i ... PATH=...`.
     #[test]
     fn sccache_help_resolves_through_self_env_path_not_the_bare_ambient_one() {
-        let _lock = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = PathGuard(std::env::var_os("PATH"));
         // The exact shape of the production repro (`env -i ... PATH=$R/bin:/usr/bin:/bin
         // doctor`): no `~/.cargo/bin`, so a bare `Command::new("sccache")` finds nothing —
         // this process's OWN ambient PATH, inherited by `cargo test`'s shell, would
         // otherwise still contain the real cargo-installed sccache and hide the bug.
-        std::env::set_var("PATH", "/usr/bin:/bin");
         let d = testkit::TempDir::new("doctor-real-sccache-help");
         let bin = fake_sccache(d.path(), REAL_SCCACHE_018_HELP);
         let mut env = BTreeMap::new();
@@ -699,7 +678,7 @@ mod tests {
         // config_files_passes_when_every_registered_key_resolves`.
         let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let toml = spira_config::process::fixture_toml(d.path(), &[]);
-        let _cfg_env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
+        let _cfg_env = testkit::env(&[("PATH", Some("/usr/bin:/bin")), ("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
         let help = real.sccache_help().expect("the fake script is reachable through self.env(\"PATH\")");
         assert!(help.contains("WebDAV:    true"), "{help}");
         // check_sccache (lib.rs) is the actual caller this bug broke: FAIL became OK only
@@ -714,9 +693,6 @@ mod tests {
     /// when one is configured.
     #[test]
     fn sccache_show_stats_resolves_through_self_env_path_and_carries_the_store_vars() {
-        let _lock = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = PathGuard(std::env::var_os("PATH"));
-        std::env::set_var("PATH", "/usr/bin:/bin");
         let d = testkit::TempDir::new("doctor-real-show-stats");
         let log = d.path().join("calls.log");
         let script = format!(
@@ -742,7 +718,7 @@ mod tests {
         // either one winning the race leaves the same, valid resolution behind.
         let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let toml = spira_config::process::fixture_toml(d.path(), &[]);
-        let _cfg_env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
+        let _cfg_env = testkit::env(&[("PATH", Some("/usr/bin:/bin")), ("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
         let stats = real.sccache_show_stats().expect("reachable through self.env(\"PATH\")");
         assert!(stats.contains("webdav"), "{stats}");
         let calls = std::fs::read_to_string(&log).unwrap();

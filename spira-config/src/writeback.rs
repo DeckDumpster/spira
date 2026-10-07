@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 
 /// The facts `writeback` decides from. Every field is a plain value, never read from the
-/// environment here, so this is testable without the crate's `ENV_LOCK`.
+/// environment here, so this is testable without `testkit::env`.
 pub struct WritebackInput<'a> {
     /// `SPIRA_CONFIG_WRITE=1` — the explicit escape hatch: the candidate is returned
     /// unchanged, no redirect, no writability check.
