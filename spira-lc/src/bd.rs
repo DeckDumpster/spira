@@ -7,7 +7,10 @@
 use std::process::Command;
 
 fn bd_bin() -> Result<String, String> {
-    spira_config::process::cfg("SPIRA_BD")
+    // SPIRA_BD resolves empty when unset (no default in its registry entry); an empty program
+    // name fails every call, so the door's store half silently never ran in such a setup
+    // (test-aeon-prod-dirty, sp-swh8b8). Empty means bd on PATH, as every other bd caller reads it.
+    spira_config::process::cfg("SPIRA_BD").map(|b| if b.trim().is_empty() { "bd".to_string() } else { b })
 }
 
 fn run(args: &[&str]) -> Result<String, String> {
