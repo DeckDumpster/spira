@@ -122,6 +122,9 @@ echo "         a hold LABEL alone is not a hold (sp-psztcc)"
 out="$(HELD_IDS=sp-unc7a,sp-unc7b classify "[$(bead sp-unc7a ""), $(bead sp-unc7b "")]")"
 nowant "poison-held bead not flagged by unclaimable check" "sp-unc7a" "$out"
 nowant "ask-held bead not flagged by unclaimable check"    "sp-unc7b" "$out"
+# An ask bead (the question itself) is not work and never unclaimable — by kind or by its ask label (sp-zf2x7x).
+out="$(classify '[{"id":"sp-unc7d","title":"a question","status":"open","issue_type":"decision","labels":["needs-ryan"]}]')"
+nowant "an ask/decision bead is never reported unclaimable" "sp-unc7d" "$out"
 out="$(classify "[$(bead sp-unc7c spira-poison)]")"
 want "a stale spira-poison label with no hold is still judged (positive control)" "UNCLAIMABLE sp-unc7c" "$out"
 
