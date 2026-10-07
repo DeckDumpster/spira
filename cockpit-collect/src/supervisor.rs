@@ -950,6 +950,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn run_probe_body_success_writes_ok_fragment() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let run = TempDir::new("cc-run-ok");
         let mut cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
@@ -964,6 +965,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn run_probe_body_first_failure_is_fault_not_stale() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let run = TempDir::new("cc-run-fault");
         let mut cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
@@ -979,6 +981,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn run_probe_body_failure_after_success_is_stale_and_keeps_values() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let run = TempDir::new("cc-run-stale");
         let mut cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
