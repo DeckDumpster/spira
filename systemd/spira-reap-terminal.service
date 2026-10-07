@@ -11,8 +11,6 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/b
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/sending reap-terminal
 TimeoutStartSec=900
-CPUQuota=50%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/reap-terminal.log
 StandardError=append:@SPIRA_RUN@/reap-terminal.log
 
