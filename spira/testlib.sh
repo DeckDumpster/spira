@@ -632,7 +632,8 @@ except Exception: print("")' 2>/dev/null
 #   else a claim this stand-in applied ($SPIRA_RUN/lc-claim/<id>, the holder) → WORKING;
 #   else bd in_progress → WORKING (holder = assignee); anything else → READY.
 # A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
-# Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0),
+# Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0), `hold <id> <kind> <reason>`
+# (appended to $SPIRA_RUN/lc-holds.log, exit 0),
 # `unclaim <id> <actor>` (spira-lc's own rule: a WORKING row is released only by its holder,
 # else exit 1; any other state is already released, 0), and
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
@@ -648,6 +649,7 @@ lc_aeon_mirror() {
 #!/usr/bin/env bash
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
+    hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"; exit 0 ;;
     *) for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
 esac
 [ "$1" = create-bead ] && exit 0

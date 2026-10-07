@@ -35,7 +35,7 @@ pub fn ready_raw_args(no_loop_label: &str) -> Vec<String> {
 pub fn lifecycle_ready_ids(lc: &HashMap<String, LifecycleRow>) -> Vec<String> {
     let mut ids: Vec<String> = lc
         .values()
-        .filter(|r| matches!(r.state, BeadState::Ready | BeadState::Rework) && r.holds.iter().all(|h| *h == HoldKind::Wait))
+        .filter(|r| matches!(r.state, BeadState::Ready | BeadState::Rework) && r.snoozed_until.is_none() && r.holds.iter().all(|h| *h == HoldKind::Wait))
         .map(|r| r.bead_id.clone())
         .collect();
     ids.sort();
@@ -225,7 +225,7 @@ pub fn matching<'a>(rows: &'a [ReadyRow], inc: &[String], exc: &[String]) -> Vec
     rows.iter().filter(|r| !is_deferred(r, now) && labels_match(r, inc, exc)).collect()
 }
 
-fn now_epoch() -> i64 {
+pub(crate) fn now_epoch() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 

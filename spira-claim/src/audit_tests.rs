@@ -100,6 +100,7 @@ fn poisoned_reads_the_lifecycle_snapshot_never_the_label() {
             holds: [HoldKind::Poison].into(),
             stack_depth: 0,
             tip: None,
+            snoozed_until: None,
         },
     );
     let out = run(
@@ -117,6 +118,7 @@ fn poisoned_reads_the_lifecycle_snapshot_never_the_label() {
             holds: Default::default(),
             stack_depth: 0,
             tip: None,
+            snoozed_until: None,
         },
     );
     let out2 = run(
