@@ -138,7 +138,7 @@ cockpit_idx_for() {
 # answer (failure or timeout): an empty list on success means "no sessions", not "unknown".
 live_ids() {
   local out
-  out=$(timeout "${COCKPIT_HUNK_TIMEOUT:-10}" "$HUNK" session list 2>/dev/null) || return 1
+  out=$(timeout "${COCKPIT_HUNK_TIMEOUT:-5}" "$HUNK" session list 2>/dev/null) || return 1
   printf '%s\n' "$out" | grep -oiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || true
 }
 
