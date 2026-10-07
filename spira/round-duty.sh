@@ -7,8 +7,7 @@
 #
 # Every event is printed (the watcher log) and also appended to the Concierge inbox as
 # "[watch:round-duty] <event>". A failed inbox write never drops the event: the log line is
-# already written. NEW ASK <id>: <title> is one per bead newly carrying SPIRA_ASK_LABEL; the
-# beads present at the first poll are the baseline and are not announced.
+# already written.
 #
 # A $SPIRA_RUN/rounds/<round>.running marker means a round's corpus is in progress and
 # suppresses ROUND DUE. Nothing guarantees the marker is removed, and a leftover one silences
@@ -23,38 +22,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 ROUNDS="$SPIRA_RUN/rounds"
 HEALTH_FILE="$SPIRA_RUN/watchd/round-duty.health"
-_rd_last_due=0 _rd_last_c="" _rd_last_change=0 _rd_asks_tick=0 _rd_asks_seeded=0
-declare -A _rd_lines _rd_asks_seen
+_rd_last_due=0 _rd_last_c="" _rd_last_change=0
+declare -A _rd_lines
 
 _rd_say() {
     printf '%s %s\n' "$(date -u +%FT%TZ)" "$1"
     { mkdir -p "$(dirname "$SPIRA_CONCIERGE_INBOX")" \
         && printf '%s [watch:round-duty] %s\n' "$(date -u +%FT%TZ)" "$1" >> "$SPIRA_CONCIERGE_INBOX"; } 2>/dev/null
     return 0
-}
-
-_rd_asks() {
-    local id title json
-    _rd_asks_tick=$((_rd_asks_tick + 1))
-    [ $((_rd_asks_tick % 4)) -eq 1 ] || return 0
-    json="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 0
-    while IFS=$'\t' read -r id title; do
-        [ -n "$id" ] || continue
-        [ -n "${_rd_asks_seen[$id]:-}" ] && continue
-        _rd_asks_seen[$id]=1
-        [ "$_rd_asks_seeded" -eq 1 ] && _rd_say "NEW ASK $id: $title"
-    done < <(printf '%s' "$json" | tr -d '\n' \
-        | grep -oE '"id": *"[^"]+", *"title": *"([^"\\]|\\.)*"' \
-        | sed -E 's/^"id": *"([^"]+)", *"title": *"(.*)"$/\1\t\2/' | cut -c1-170)
-    # A work bead parked by the machine carries the ask as a hold on its row, never a label
-    # (sp-psztcc), so the label listing above cannot see it.
-    while read -r id; do
-        [ -n "$id" ] || continue
-        [ -n "${_rd_asks_seen[$id]:-}" ] && continue
-        _rd_asks_seen[$id]=1
-        [ "$_rd_asks_seeded" -eq 1 ] && _rd_say "NEW ASK HOLD $id (spira-lc show $id names why)"
-    done < <(spira-lc list-held ask 2>/dev/null)
-    _rd_asks_seeded=1
 }
 
 _rd_certified() {
@@ -99,7 +74,6 @@ _rd_tick() {
     c="$(_rd_certified)"; now="$(date +%s)"
     [ "$c" != "$_rd_last_c" ] && { _rd_last_c="$c"; _rd_last_change=$now; }
     idle=$(( now - _rd_last_change ))
-    _rd_asks
     _rd_live_markers
     if [ "$_rd_live" -eq 0 ] && { [ "$c" -ge "$SPIRA_ROUND_MIN" ] \
             || { [ "$c" -ge 1 ] && [ "$idle" -ge "$SPIRA_ROUND_IDLE_CUT" ]; }; }; then
