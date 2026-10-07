@@ -216,6 +216,14 @@ fn fixture() -> (Fx, Fake) {
         f.put(id, b("closed"));
         f.lc_landed.insert(id.to_string());
     }
+    // sp-rewritten: LANDED, the base commit naming it touches the same file with other bytes
+    // (a queue cut), so cherry sees the branch commit unapplied.
+    git(&r, &["checkout", "-q", "-b", "spira/sp-rewritten", "main"]);
+    commit_file(&r, "shared-rewritten.txt", "branch bytes\n", "sp-rewritten: add content");
+    git(&r, &["checkout", "-q", "main"]);
+    commit_file(&r, "shared-rewritten.txt", "queue-cut bytes\n", "sp-rewritten: add content (cut)");
+    f.put("sp-rewritten", b("closed"));
+    f.lc_landed.insert("sp-rewritten".into());
     git(&r, &["checkout", "-q", "spira/sp-cherry"]);
     commit_file(&r, "sp-cherry-extra.txt", "never landed\n", "sp-cherry: one more commit, after landing");
     git(&r, &["checkout", "-q", "main"]);
@@ -288,6 +296,7 @@ fn every_branch_gets_the_shells_disposition() {
         ("sp-sq", Disp::ReapSquashMerged),
         ("sp-otherpr", Disp::SendOtherPr),
         ("sp-cherry", Disp::KeepCherryUnapplied),
+        ("sp-rewritten", Disp::SendOtherPr),
         ("sp-unlanded", Disp::KeepUnlanded),
         ("sp-noone", Disp::OrphanNoBead),
         ("sp-stray", Disp::SendContentLanded),
@@ -350,7 +359,7 @@ fn one_pass_sends_reaps_keeps_archives_and_holds() {
     assert!(out.contains("SENT sp-orphan  home spira/sp-orphan  orphaned worktree (branch was already gone)"), "{out}");
     assert!(!f.called("destroy .landing.repo"));
     assert!(f.called("prune"));
-    assert!(out.ends_with("LOG sending: 9 sent, 0 failed"), "{out}");
+    assert!(out.ends_with("LOG sending: 10 sent, 0 failed"), "{out}");
 }
 
 #[test]

@@ -120,7 +120,7 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     // this branch, so every commit unique to it must already be on the base (git cherry), or
     // this would delete work under a LANDED that is true about the past.
     if b.is_some() && c.w.lc_landed(id) {
-        if g.cherry_unapplied(lr, br) {
+        if g.cherry_unapplied(lr, br) && !g.landed_by_subject(lr, br, id, 2000) {
             return Disp::KeepCherryUnapplied;
         }
         return Disp::SendOtherPr;

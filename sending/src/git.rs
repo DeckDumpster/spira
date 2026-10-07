@@ -84,6 +84,30 @@ impl Git<'_> {
         self.out(&["cherry", base, br]).is_some_and(|s| s.lines().any(|l| l.starts_with('+')))
     }
 
+    /// A queue cut rewrites hashes, so `cherry` cannot see a landed commit. Landed by name:
+    /// <base> holds commits naming <id> (within the last `window`) that between them touch
+    /// every path <br> changes since the merge base, so no path of the branch's own is unlanded.
+    pub fn landed_by_subject(&self, base: &str, br: &str, id: &str, window: u32) -> bool {
+        let n = format!("-n{window}");
+        let grep = format!("--grep={id}");
+        let Some(log) = self.out(&["log", "--format=%H %s", n.as_str(), "-F", grep.as_str(), base]) else { return false };
+        let named = |s: &str| s.match_indices(id).any(|(i, _)| !s[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-'));
+        let shas: Vec<&str> = log.lines().filter(|l| named(l.split_once(' ').map_or("", |x| x.1))).filter_map(|l| l.split(' ').next()).collect();
+        if shas.is_empty() {
+            return false;
+        }
+        let Some(mb) = self.out(&["merge-base", base, br]) else { return false };
+        let Some(mut own) = self.out(&["diff", "--name-only", mb.trim(), br]).map(|s| s.lines().map(String::from).collect::<Vec<_>>()) else { return false };
+        if own.is_empty() {
+            return false;
+        }
+        for sha in shas {
+            let Some(files) = self.out(&["show", "--name-only", "--format=", sha]) else { return false };
+            own.retain(|p| !files.lines().any(|f| f == p));
+        }
+        own.is_empty()
+    }
+
     /// The first five paths `diff --name-only base br` names.
     pub fn diff_names(&self, base: &str, br: &str) -> String {
         self.out(&["diff", "--name-only", base, br])
