@@ -79,6 +79,20 @@ testdb_seed <<JSONL
 {"id":"tst-closed","title":"closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
 
+LCBIN="$TMP/lcbin"; mkdir -p "$LCBIN" "$TMP/lcstate"
+cat > "$LCBIN/spira-lc" <<'LC'
+#!/usr/bin/env bash
+[ "${1:-}" = state ] || exit 2
+[ "${SPIRA_TEST_LC_FAIL:-}" = "$2" ] && { printf 'lc-stub: simulated machine failure\n' >&2; exit 2; }
+[ -f "$SPIRA_TEST_LC_STATE/$2" ] || exit 1
+cat "$SPIRA_TEST_LC_STATE/$2"
+LC
+chmod +x "$LCBIN/spira-lc"
+export SPIRA_TEST_LC_STATE="$TMP/lcstate"
+printf 'WORKING\n' > "$TMP/lcstate/tst-holder"
+printf 'LANDED\n' > "$TMP/lcstate/tst-closed"
+PATH="$LCBIN:$PATH"
+
 out="$(holds.sh --repo fixture spira/batch.sh)"; rc=$?
 wantrc "holder case exits 0"                     0 "$rc"
 want   "holder case names the open holder"       "$(printf 'tst-holder\tspira/batch.sh')" "$out"
@@ -92,34 +106,15 @@ is     "untouched path reports nothing" "" "$empty_out"
 
 # ===========================================================================================
 echo
-echo "T2: bd unreadable — fail closed, never mistaken for a clean empty result"
+echo "T2: lifecycle machine unreadable — fail closed, never mistaken for a clean empty result"
 # ===========================================================================================
 
-REAL_BD="$(command -v bd)"
-STUB_BD="$TMP/bd-stub"
-cat > "$STUB_BD" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-    [ "\$a" = "tst-holder" ] && { printf 'bd-stub: simulated store failure\n' >&2; exit 1; }
-done
-exec "$REAL_BD" "\$@"
-EOF
-chmod +x "$STUB_BD"
-
-# SPIRA_BD is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
-# tl_config, not the env prefix below, which no process reads it from any more. T3 below
-# claims through a real aeon, so the override must go back to testdb_up's own SPIRA_BD
-# once this case is done.
-_ORIG_SPIRA_BD="$SPIRA_BD"
-tl_config SPIRA_BD="$STUB_BD"
-unk_out="$(holds.sh --repo fixture spira/batch.sh 2>/dev/null)"
+unk_out="$(SPIRA_TEST_LC_FAIL=tst-holder holds.sh --repo fixture spira/batch.sh 2>/dev/null)"
 unk_rc=$?
-if [ "$unk_rc" -ne 0 ]; then ok "holds.sh exits non-zero when bd is unreadable"
-else bad "holds.sh exits non-zero when bd is unreadable" "got exit 0"; fi
-# Exit 0 with empty stdout means "checked, found nothing"; this run's exit code is the ONLY
-# thing telling it apart from that — its (also empty) stdout looks identical either way.
+if [ "$unk_rc" -ne 0 ]; then ok "holds.sh exits non-zero when the lifecycle machine is unreadable"
+else bad "holds.sh exits non-zero when the lifecycle machine is unreadable" "got exit 0"; fi
 unset unk_out
-tl_config SPIRA_BD="$_ORIG_SPIRA_BD"
+PATH="${PATH#"$LCBIN:"}"
 
 # ===========================================================================================
 echo
