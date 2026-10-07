@@ -1559,6 +1559,7 @@ fn check4_poisons_asks_mails_and_clears() {
         })
         .unwrap();
     assert!(env_of(&ask, "SPIRA_MAIL_REPEAT_CONSIDERED").is_none());
+    assert_eq!(ask.args[..2], ["send", "concierge"], "a poison alert is the concierge's, never the operator's");
     let body = String::from_utf8(ask.stdin.unwrap()).unwrap();
     assert!(body.starts_with("## Question\nSpira bead sp-p — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?\n\n## Default\nif the work is correct"), "{body}");
     assert!(body.contains("BEAD    sp-p  [open, PNone, open ?]\nTITLE   Poison me"));

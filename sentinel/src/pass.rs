@@ -265,7 +265,7 @@ impl<'a> Sentinel<'a> {
         o
     }
 
-    /// `[ -x mail ] && mail send operator --from … --subject … --kind question
+    /// `[ -x mail ] && mail send concierge --from … --subject … --kind question
     /// --default … <<body` → true only when the ask was accepted.
     pub fn mail(
         &self,
@@ -280,7 +280,7 @@ impl<'a> Sentinel<'a> {
             "mail",
             vec![
                 "send".into(),
-                "operator".into(),
+                "concierge".into(),
                 "--from".into(),
                 from.into(),
                 "--subject".into(),
