@@ -52,12 +52,13 @@ behavior:
   event_scheduler: "OFF"
 YAML
 
+# batch-job: long-lived test server, stopped by the suite trap
 "$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         up=1
         break
     fi
@@ -65,6 +66,7 @@ for _ in $(seq 1 50); do
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
+# batch-job: bulk seed of the 10k rows runs through this
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
