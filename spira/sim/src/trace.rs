@@ -13,6 +13,14 @@ pub fn duckdb_bin() -> String {
     std::env::var("SPIRA_SIM_DUCKDB").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "duckdb".to_string())
 }
 
+pub fn duckdb_available() -> bool {
+    let ok = Command::new("timeout").arg("5").arg(duckdb_bin()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    if !ok {
+        eprintln!("SKIPPED: no duckdb binary ({}); install provisions it (spira/deps.toml)", duckdb_bin());
+    }
+    ok
+}
+
 pub struct Event {
     pub seq: u64,
     pub vtime: u64,

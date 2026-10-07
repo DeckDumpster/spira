@@ -65,6 +65,9 @@ fn go(w: &Path, seed: u64, landed_at: u32, broken: bool) -> spira_sim::verbs::Ru
 
 #[test]
 fn a_run_that_reaches_its_goal_holds_every_invariant() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
     let w = world("sim-verbs-ok");
     let r = go(&w, 7, 3, false);
     assert!(r.goal_reached && r.failures().is_empty(), "{:?}", r.failures());
@@ -72,6 +75,9 @@ fn a_run_that_reaches_its_goal_holds_every_invariant() {
 
 #[test]
 fn a_seeded_violation_fails_naming_seed_and_seq() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
     let w = world("sim-verbs-bad");
     let r = go(&w, 7, 3, true);
     let f = r.failures();
@@ -80,6 +86,9 @@ fn a_seeded_violation_fails_naming_seed_and_seq() {
 
 #[test]
 fn an_unreached_goal_fails_naming_the_seed() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
     let w = world("sim-verbs-unreached");
     let r = go(&w, 9, 10_000, false);
     assert_eq!(r.failures(), vec!["goal sp-x:LANDED unreached: seed 9".to_string()]);
@@ -87,6 +96,9 @@ fn an_unreached_goal_fails_naming_the_seed() {
 
 #[test]
 fn replaying_an_identical_run_reports_no_divergence() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
     let w = world("sim-verbs-replay");
     go(&w, 7, 100_000, false);
     assert_eq!(replay_world(&w, 7).unwrap(), None);
@@ -94,6 +106,9 @@ fn replaying_an_identical_run_reports_no_divergence() {
 
 #[test]
 fn replaying_a_perturbed_run_reports_the_first_differing_seq() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
     let w = world("sim-verbs-perturbed");
     go(&w, 7, 100_000, false);
     let path = Trace::dir_of(&w).join("events.jsonl");
@@ -110,6 +125,9 @@ fn replaying_a_perturbed_run_reports_the_first_differing_seq() {
 
 #[test]
 fn step_resumes_without_re_executing_recorded_events() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
     let w = world("sim-verbs-step");
     let runs = Rc::new(Cell::new(0));
     run_scenario(&w, SCENARIO, 7, Box::new(Count(runs.clone())), Box::new(Script { snaps: 0, landed_at: 4, broken: false })).unwrap();

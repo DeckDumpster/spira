@@ -17,10 +17,10 @@ echo "test-spira-config-only-door.sh"
 # `spira-lint/src/rules/lockfile_lint.rs` (sp-ufbkh) parses a tree's Cargo.lock to compare
 # locked package versions against the base — a separate document (Cargo's own lockfile
 # format), never spira.toml.
-# `sim/src/actors.rs` and `sim/src/fit.rs` parse the simulator's own actors.toml and
-# durations.toml, never spira.toml.
+# `sim/src/actors.rs`, `sim/src/fit.rs` and `spira/sim/src/drive.rs` parse the simulator's own actors.toml,
+# durations.toml and scenario files, never spira.toml.
 # spira/deps.toml is read only through `spira_config::deps`; no other crate parses it.
-EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/lockfile_lint.rs sim/src/actors.rs sim/src/fit.rs"
+EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/lockfile_lint.rs sim/src/actors.rs sim/src/fit.rs spira/sim/src/drive.rs"
 
 # The lines of $1 before its first `#[cfg(test)]` module, with comment-only lines dropped —
 # production code only, so a doc comment describing the file (or a test fixture that must
