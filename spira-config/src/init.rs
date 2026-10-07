@@ -113,6 +113,11 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
         let dir = out.parent().unwrap_or(Path::new("."));
         a.insert("repo_map".into(), dir.join("repo-map").display().to_string());
     }
+    // The lifecycle credential install creates (phase 1.5): pinned now, because its registered
+    // default names the file only once it exists — here, it does not yet.
+    if a.get("lc_password_file").is_none_or(|v| v.is_empty()) {
+        a.insert("lc_password_file".into(), crate::resolve::lc_credential_default(reg.env));
+    }
     let row_keys: Vec<&str> = HOME_REPO_ROW.iter().map(|(k, _, _)| *k).collect();
     let mut doc = crate::SpiraToml::default();
     for (k, v) in &a {
@@ -133,6 +138,7 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     let all = crate::resolve::resolve_with_defaults(input!(Some(&doc))).map_err(|e| format!("cannot compute the registered defaults: {e}"))?;
     let declared = crate::spira_value_map(&doc, true);
     let mut unset = Vec::new();
+    let mut no_default = Vec::new();
     for (key, v) in &all.values {
         let path = key_path(key);
         let field = path.trim_start_matches("spira.").to_ascii_uppercase();
@@ -141,22 +147,24 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
         }
         // A list key resolves to its words; a key that is not a [spira] field (a fixed gate
         // constant) is not the operator's to declare.
-        // An empty default of a typed key is "unset": it has no spelling, so it is left out.
         let as_list = || serde_json::to_string(&v.split_whitespace().collect::<Vec<_>>()).unwrap_or_default();
         let as_bool = || match v.as_str() {
             "0" => "false".to_string(),
             "1" => "true".to_string(),
             o => o.to_string(),
         };
-        if v.is_empty() && crate::set_path(&doc, &path, "").is_err() {
-            continue;
-        }
         match crate::set_path(&doc, &path, v)
             .or_else(|e| crate::set_path(&doc, &path, &as_list()).or_else(|_| crate::set_path(&doc, &path, &as_bool())).map_err(|_| e)) {
             Ok(d) => doc = d,
             Err(e) if e.contains("unknown field") => {} // a fixed constant, not a [spira] key
+            Err(_) if v.is_empty() => no_default.push(path.trim_start_matches("spira.").to_string()),
             Err(e) => unset.push(format!("{path} = {v:?} ({e})")),
         }
+    }
+    // A typed key with no registered default cannot be declared empty, and its readers need a
+    // value: it is the operator's to answer, never this function's to invent.
+    if !no_default.is_empty() {
+        return Err(format!("no registered default for typed key(s) — answer them: {}", no_default.join(", ")));
     }
     let text = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     let checked = crate::validate(&text)?;
@@ -316,9 +324,22 @@ mod tests {
 
     fn full() -> BTreeMap<String, String> {
         parse_answers(
-            "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = /b/db\nrun = /b/run\nreleases = \"/b/rel\"\nspira.dolt_data = /b/dolt\noperated = 0\n",
+            concat!(
+                "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = /b/db\nrun = /b/run\nreleases = \"/b/rel\"\nspira.dolt_data = /b/dolt\noperated = 0\n",
+                "batch_maxpar = 2\nbatch_mem_per_suite_mib = 192\ncertify_par = 2\ncompile_par = 2\nczar_stage_deadlock = shadow\n",
+                "lanes_max_live = 2\nmax_live_aeons = 6\nsuites_budget = 1800\nsummon_lock_wait = 30\ntest_par = 2\n",
+            ),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_typed_key_with_no_registered_default_must_be_answered() {
+        let d = testkit::TempDir::new("spira-config-init-nodefault");
+        let mut a = full();
+        a.remove("summon_lock_wait");
+        let e = render(&a, &d.path().join("spira.toml"), &reg()).unwrap_err();
+        assert!(e.contains("summon_lock_wait") && !e.contains("certify_par"), "{e}");
     }
 
     #[test]

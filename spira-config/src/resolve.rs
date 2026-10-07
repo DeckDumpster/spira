@@ -538,20 +538,7 @@ fn resolve_colon(
         Some(v) if !(GENERATING.get() && v.is_empty()) => Ok(v),
         _ if GENERATING.get() => default(),
         Some(v) => Ok(v),
-        None => unset_or_undeclared(key, default),
-    }
-}
-
-/// An undeclared key is refused — except a TYPED key (a number, a bool, an enum) whose
-/// registered default is the empty string: "unset" (no ceiling, derive at run time) has no
-/// spelling in its type, so leaving it out is the only way to declare it. A string key can
-/// say `""` and must.
-fn unset_or_undeclared(key: &str, default: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
-    let path = format!("spira.{}", key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase());
-    let typed = crate::set_path(&SpiraToml::default(), &path, "").is_err_and(|e| !e.contains("unknown field"));
-    match default() {
-        Ok(d) if typed && d.is_empty() => Ok(d),
-        _ => Err(undeclared(key)),
+        None => Err(undeclared(key)),
     }
 }
 
@@ -581,7 +568,7 @@ fn resolve_eq(
     match seed(key, env, toml_map) {
         Some(v) => Ok(v),
         None if GENERATING.get() => default(),
-        None => unset_or_undeclared(key, default),
+        None => Err(undeclared(key)),
     }
 }
 
