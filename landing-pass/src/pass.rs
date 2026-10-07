@@ -120,6 +120,7 @@ impl<'a> Pass<'a> {
     /// A red gate that already wrote REWORK leaves the bead claimable; the reopen's resume
     /// note and requeue bump are then ours to record.
     pub(crate) fn record_rework(&self, id: &str, cause: &str, note: &str) {
+        self.log(&format!("CHECK6 {id}: bead is now REWORK (gate red) — recording the resume note and requeue bump, not reopening"));
         self.lib.note(id, note);
         self.lib.bump_requeue(id, cause);
     }
