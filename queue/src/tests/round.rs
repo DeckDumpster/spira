@@ -183,6 +183,40 @@ fn certify_never_reads_a_harness_fault_as_green_or_red() {
 }
 
 #[test]
+fn certify_faults_on_an_unreadable_or_missing_suite_verdict() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let spira = t.s().run.join("worktree").join(".round-spira").join("spira");
+    fs::create_dir_all(&spira).unwrap();
+    for s in ["test-a.sh", "test-b.sh"] {
+        fs::write(spira.join(s), "").unwrap();
+    }
+    let ok = |s: &str| (s.to_string(), "ok".to_string());
+    for (results, want) in [
+        (vec![ok("test-a.sh"), ("test-b.sh".into(), "".into())], "test-b.sh (verdict \"\")"),
+        (vec![ok("test-a.sh"), ("test-b.sh".into(), "garbage".into())], "test-b.sh (verdict \"garbage\")"),
+        (vec![ok("test-a.sh")], "test-b.sh (no result)"),
+    ] {
+        *t.scripts.round_vm_results.borrow_mut() = results;
+        assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+        assert!(t.err().contains(want) && t.err().contains("not judged"), "{}", t.err());
+        assert!(!certified_tree_exists(&t) && kv_of(&t, "round")["phase"] == "fault");
+    }
+    *t.scripts.round_vm_results.borrow_mut() = vec![ok("test-a.sh"), ("test-b.sh".into(), "skip".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(certified_tree_exists(&t));
+}
+
+#[test]
+fn the_blocking_only_reader_passed_what_unjudgeable_now_refuses() {
+    let found = vec![("test-a.sh".to_string(), String::new()), ("test-b.sh".to_string(), "garbage".to_string())];
+    let old_reds: Vec<_> = found.iter().filter(|(_, s)| super::super::ops::round::BLOCKING.contains(&s.as_str())).collect();
+    assert!(old_reds.is_empty(), "control: the old reader found nothing wrong");
+    assert!(super::super::ops::round::unjudgeable(Path::new("/nonexistent"), &found).is_some());
+}
+
+#[test]
 fn attest_names_the_worktrees_own_head_and_nothing_else() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
