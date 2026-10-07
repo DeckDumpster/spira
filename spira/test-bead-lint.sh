@@ -183,10 +183,12 @@ testdb_seed <<'JSONL'
 {"id":"sp-lint-fil-work","title":"ordinary parent","status":"open","issue_type":"task","labels":["spira","repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
 JSONL
 
+printf 'harness | /tmp/harness | push | origin/main | | true | plan\n' > "$TMP/repos.tbl"
 file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
-    FILE_OUT="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-        SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \
-        SPIRA_ALARM_LABEL="incident-test" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test" \
+        SPIRA_REPO_MAP="$TMP/repos.tbl"
+    FILE_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \
         bead.sh file "remedy for $1" --for builder --repo harness --parent "$1" 2>"$TMP/file.err")"
     FILE_RC=$?
 }
@@ -196,7 +198,7 @@ blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depe
 }
 
 file_under sp-lint-fil-inc
-wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"; cat "$TMP/file.err" | sed "s/^/# err: /"
+wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"
 want   "the incident now blocks on the new remedy" "$(printf %s "$FILE_OUT" | head -n1)" "$(blocks_of sp-lint-fil-inc)"
 
 file_under sp-lint-fil-work
