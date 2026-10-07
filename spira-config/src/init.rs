@@ -118,6 +118,22 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     if a.get("lc_password_file").is_none_or(|v| v.is_empty()) {
         a.insert("lc_password_file".into(), crate::resolve::lc_credential_default(reg.env));
     }
+    // The bd every process runs: found once, here, on this box's PATH (what conf.sh's
+    // env-bootstrap derived on every source); nothing derives it after the cutover. Not found
+    // is an input the operator must answer.
+    if a.get("bd").is_none_or(|v| v.is_empty()) {
+        let path = crate::env_bootstrap::path_tail(
+            reg.env.get("PATH").map(String::as_str).unwrap_or(""),
+            a.get("path").map(String::as_str).unwrap_or(""),
+            reg.env.get("HOME").map(String::as_str).unwrap_or(""),
+        );
+        match crate::env_bootstrap::resolve_bd(&path) {
+            bd if bd.starts_with('/') => {
+                a.insert("bd".into(), bd);
+            }
+            _ => return Err("no bd on PATH — install beads, or answer bd with its absolute path".into()),
+        }
+    }
     let row_keys: Vec<&str> = HOME_REPO_ROW.iter().map(|(k, _, _)| *k).collect();
     let mut doc = crate::SpiraToml::default();
     for (k, v) in &a {
@@ -327,7 +343,7 @@ mod tests {
             concat!(
                 "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = /b/db\nrun = /b/run\nreleases = \"/b/rel\"\nspira.dolt_data = /b/dolt\noperated = 0\n",
                 "batch_maxpar = 2\nbatch_mem_per_suite_mib = 192\ncertify_par = 2\ncompile_par = 2\nczar_stage_deadlock = shadow\n",
-                "lanes_max_live = 2\nmax_live_aeons = 6\nsuites_budget = 1800\nsummon_lock_wait = 30\ntest_par = 2\n",
+                "lanes_max_live = 2\nmax_live_aeons = 6\nsuites_budget = 1800\nsummon_lock_wait = 30\ntest_par = 2\nbd = /b/bin/bd\n",
             ),
         )
         .unwrap()
@@ -340,6 +356,22 @@ mod tests {
         a.remove("summon_lock_wait");
         let e = render(&a, &d.path().join("spira.toml"), &reg()).unwrap_err();
         assert!(e.contains("summon_lock_wait") && !e.contains("certify_par"), "{e}");
+    }
+
+    #[test]
+    fn bd_is_pinned_from_path_or_refused_by_name() {
+        let d = testkit::TempDir::new("spira-config-init-bd");
+        std::fs::create_dir_all(d.path().join("bin")).unwrap();
+        testkit::write_exe(&d.path().join("bin/bd"), "#!/bin/sh\n");
+        let mut a = full();
+        a.remove("bd");
+        let env: BTreeMap<String, String> = [("HOME".to_string(), "/b/home".to_string()), ("PATH".to_string(), d.path().join("bin").display().to_string())].into_iter().collect();
+        let r = Registry { conf_d: reg().conf_d, env: &env };
+        let text = render(&a, &d.path().join("spira.toml"), &r).unwrap();
+        assert!(text.contains(&format!("bd = \"{}\"", d.path().join("bin/bd").display())), "{text}");
+        let none: BTreeMap<String, String> = [("HOME".to_string(), "/b/home".to_string()), ("PATH".to_string(), "/nonexistent".to_string())].into_iter().collect();
+        let e = render(&a, &d.path().join("spira.toml"), &Registry { conf_d: reg().conf_d, env: &none }).unwrap_err();
+        assert!(e.contains("no bd on PATH"), "{e}");
     }
 
     #[test]

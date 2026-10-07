@@ -718,7 +718,11 @@ fn record_without_a_notes_repo_is_a_usage_error() {
 
 /// The registry this tree ships, as the real install-tarball reads it out of the tarball.
 fn registry() -> spira_config::init::Registry<'static> {
-    let env: &'static std::collections::BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "/home/test".to_string())].into_iter().collect()));
+    // A bd on the box's PATH, as the real install-tarball's PATH carries one.
+    let bin: &'static testkit::TempDir = Box::leak(Box::new(testkit::TempDir::new("acc-registry-bd")));
+    testkit::write_exe(bin.path().join("bd"), "#!/bin/sh\n");
+    let env: &'static std::collections::BTreeMap<String, String> =
+        Box::leak(Box::new([("HOME".to_string(), "/home/test".to_string()), ("PATH".to_string(), bin.path().display().to_string())].into_iter().collect()));
     spira_config::init::Registry { conf_d: Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")), env }
 }
 
