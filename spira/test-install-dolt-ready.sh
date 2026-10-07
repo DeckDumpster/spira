@@ -344,7 +344,11 @@ reset_state() {
 start_listener() {
     python3 "$TMP/listener.py" "$_DOLT_PORT" &
     _LISTENER_PID=$!
-    sleep 0.3
+    local _i
+    for _i in $(seq 1 100); do
+        python3 -c "import socket,sys; socket.create_connection(('127.0.0.1',int(sys.argv[1])),1).close()" "$_DOLT_PORT" 2>/dev/null && return 0
+        sleep 0.1
+    done
 }
 
 stop_listener() {
