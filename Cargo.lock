@@ -1469,8 +1469,12 @@ dependencies = [
 name = "spira-sim"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
+ "sim",
+ "spira-config",
  "testkit",
+ "toml",
 ]
 
 [[package]]

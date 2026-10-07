@@ -2,7 +2,7 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim ghctl <state-dir> <verb> ...";
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
@@ -32,6 +32,9 @@ fn run(args: &[String]) -> Result<(), String> {
             print!("{}", gh::ctl(&PathBuf::from(dir), rest)?);
             return Ok(());
         }
+        Some("run") => return run_main(&cwd, &args[1..], &env),
+        Some("step") => return step_main(&args[1..]),
+        Some("replay") => return replay_main(&args[1..]),
         _ => {}
     }
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
@@ -51,4 +54,98 @@ fn gh_main(state: &std::path::Path, cwd: &std::path::Path, args: &[String]) -> R
         std::process::exit(out.code);
     }
     Ok(())
+}
+
+fn flags(args: &[String], known: &[&str], bare: &[&str]) -> Result<(Vec<String>, std::collections::BTreeMap<String, String>), String> {
+    let (mut pos, mut set) = (Vec::new(), std::collections::BTreeMap::new());
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if bare.contains(&a.as_str()) {
+            set.insert(a.clone(), String::new());
+        } else if known.contains(&a.as_str()) {
+            set.insert(a.clone(), it.next().ok_or(format!("usage: {a} needs a value"))?.clone());
+        } else if a.starts_with("--") {
+            return Err(format!("usage: unknown flag {a}"));
+        } else {
+            pos.push(a.clone());
+        }
+    }
+    Ok((pos, set))
+}
+
+fn seed_of(set: &std::collections::BTreeMap<String, String>) -> Result<Option<u64>, String> {
+    set.get("--seed").map(|s| s.parse().map_err(|_| format!("usage: --seed {s:?} is not a number"))).transpose()
+}
+
+fn report(r: &spira_sim::verbs::RunResult) -> Result<(), String> {
+    let failures = r.failures();
+    if failures.is_empty() {
+        println!("sim: ok seed {}", r.seed);
+        return Ok(());
+    }
+    Err(failures.join("\nsim: "))
+}
+
+fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
+    use spira_sim::drive::{ProcessExec, ProcessProbe, parse_scenario};
+    let (pos, set) = flags(args, &["--seed", "--world"], &["--keep"])?;
+    let [scenario] = pos.as_slice() else { return Err(USAGE.to_string()) };
+    let text = std::fs::read_to_string(scenario).map_err(|e| format!("{scenario}: {e}"))?;
+    let sc = parse_scenario(&text)?;
+    let seed = match seed_of(&set)? {
+        Some(s) => s,
+        None => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos() as u64,
+    };
+    world::refuse_production(env)?;
+    let (dir, owned) = match set.get("--world") {
+        Some(w) => (PathBuf::from(w), false),
+        None => {
+            let d = std::env::temp_dir().join(format!("sim-run-{}-{seed}", std::process::id()));
+            world::up(cwd, &d, "HEAD", env, &ProcessSteps::default())?;
+            (d, true)
+        }
+    };
+    let probe = ProcessProbe::for_world(&dir, sc.epoch)?;
+    if sc.goal.is_some() && probe.probe.is_none() {
+        return Err(format!("the world configures no SIM_PROBE, so goal {:?} cannot be observed", sc.goal.unwrap_or_default()));
+    }
+    let exec = ProcessExec { world: dir.clone(), epoch: sc.epoch };
+    let result = spira_sim::verbs::run_scenario(&dir, &text, seed, Box::new(exec), Box::new(probe));
+    let outcome = result.and_then(|r| report(&r));
+    if owned && outcome.is_ok() && !set.contains_key("--keep") {
+        world::down(&dir, &ProcessSteps::default())?;
+    } else {
+        eprintln!("sim: world kept at {}", dir.display());
+    }
+    outcome
+}
+
+fn step_main(args: &[String]) -> Result<(), String> {
+    use spira_sim::drive::{ProcessExec, ProcessProbe};
+    let (pos, set) = flags(args, &["--until"], &[])?;
+    let [dir] = pos.as_slice() else { return Err(USAGE.to_string()) };
+    let dir = PathBuf::from(dir);
+    let until = set.get("--until").map(|u| spira_sim::verbs::parse_until(u)).transpose()?;
+    let text = std::fs::read_to_string(dir.join("scenario.toml")).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let epoch = spira_sim::drive::parse_scenario(&text)?.epoch;
+    let probe = ProcessProbe::for_world(&dir, epoch)?;
+    let exec = ProcessExec { world: dir.clone(), epoch };
+    report(&spira_sim::verbs::step_world(&dir, until, Box::new(exec), Box::new(probe))?)
+}
+
+fn replay_main(args: &[String]) -> Result<(), String> {
+    let (pos, set) = flags(args, &["--seed"], &[])?;
+    let ([dir], Some(seed)) = (pos.as_slice(), seed_of(&set)?) else { return Err(USAGE.to_string()) };
+    match spira_sim::verbs::replay_world(&PathBuf::from(dir), seed)? {
+        None => {
+            println!("sim: replay seed {seed}: no divergence");
+            Ok(())
+        }
+        Some(d) => Err(format!(
+            "replay seed {seed} diverges at seq {}: recorded {} replayed {}",
+            d.seq,
+            d.recorded.as_deref().unwrap_or("(none)"),
+            d.replayed.as_deref().unwrap_or("(none)")
+        )),
+    }
 }

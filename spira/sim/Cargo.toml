@@ -19,6 +19,10 @@ path = "src/bin/sim-agent.rs"
 
 [dependencies]
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+sim = { path = "../../sim" }
+spira-config = { path = "../../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }
