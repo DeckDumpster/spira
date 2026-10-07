@@ -1,6 +1,7 @@
 //! round-vm — a pool of one ephemeral round VM from the hypervisor. See DESIGN.md.
 
 pub mod alarm;
+pub mod ci_yield;
 pub mod cli;
 pub mod config;
 pub mod pool;
