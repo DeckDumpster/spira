@@ -21,16 +21,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
@@ -82,16 +77,7 @@ as_user() {
     "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u "$u" -p "$p" --no-tls "$@" # batch-job: fixture SQL against the suite's private server
 }
 
-# PIN CARGO_TARGET_DIR EXPLICITLY (same hazard as test-batcher-cut.sh): a suite runs
-# inside testenv-batch.sh's own podman exec, which sets its own CARGO_TARGET_DIR for the
-# suites that build Rust under test. Trusting $REPO/target here builds into that redirected
-# directory instead, and this suite's own binary lookup finds nothing there — SEEN RED
-# without this pin, as "cargo build" reporting success while the lookup path stayed empty.
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build.log")"
-BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -99,9 +85,11 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+tl_config SPIRA_LC_PASSWORD_FILE="" SPIRA_LC_ADMIN_PASSWORD_FILE=""
 
 "$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
+cat "$TMP/schema.log" >&2
 
 
 seed_row() {   # seed_row <bead-id> <state> <version>
