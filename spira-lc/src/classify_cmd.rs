@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn a_bead_with_one_repo_label_names_that_repository() {
-        assert_eq!(repo_label(&labels(&["repo:demo", "needs-operator"])), Ok(Some("demo".to_string())));
+        assert_eq!(repo_label(&labels(&["repo:demo", "ask-x"])), Ok(Some("demo".to_string())));
     }
 
     #[test]

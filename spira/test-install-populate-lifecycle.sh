@@ -78,7 +78,7 @@ printf '%s\n' "\$sub" >> "$BD_LOG"
 exec "$REAL_BD" "\$@"
 EOF
 chmod +x "$TMP/bd-logged"
-tl_config SPIRA_RUN="$TMP/run" SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_BD="$TMP/bd-logged" SPIRA_ASK_LABEL=needs-operator \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_BD="$TMP/bd-logged" SPIRA_ASK_LABEL=ask-x \
     || bail "cannot declare the suite's config"
 printf '[repo.demo]\npath = "%s"\nmode = "queue"\nbase = "main"\n' "$GITREPO" > "$TMP/repos.toml"
 export SPIRA_TOML="$SPIRA_TOML:$TMP/repos.toml"

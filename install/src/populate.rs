@@ -83,14 +83,14 @@ mod tests {
     use super::*;
 
     fn inputs() -> Inputs {
-        Inputs { bd_bin: "bd".into(), bd_db: "/db".into(), landstate_dir: "/run/landstate".into(), queue_dir: "/run/queue".into(), ask_label: Some("needs-operator".into()) }
+        Inputs { bd_bin: "bd".into(), bd_db: "/db".into(), landstate_dir: "/run/landstate".into(), queue_dir: "/run/queue".into(), ask_label: Some("ask-x".into()) }
     }
 
     #[test]
     fn the_argv_is_the_classifiers_every_bead_mode_with_every_path() {
         let a = args(&inputs());
         assert_eq!(a[..2], ["classify".to_string(), "--every-bead".to_string()]);
-        for (flag, v) in [("--bd-db", "/db"), ("--landstate-dir", "/run/landstate"), ("--queue-dir", "/run/queue"), ("--ask-label", "needs-operator"), ("--bd-bin", "bd")] {
+        for (flag, v) in [("--bd-db", "/db"), ("--landstate-dir", "/run/landstate"), ("--queue-dir", "/run/queue"), ("--ask-label", "ask-x"), ("--bd-bin", "bd")] {
             let at = a.iter().position(|x| x == flag).unwrap_or_else(|| panic!("{flag} missing"));
             assert_eq!(a[at + 1], v);
         }
