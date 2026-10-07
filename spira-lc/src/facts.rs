@@ -58,7 +58,7 @@ pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-pub fn select_sql(ids: &[String], kinds: &[String]) -> String {
+pub fn select_sql(ids: &[String], kinds: &[String], since: Option<i64>) -> String {
     let list = |v: &[String]| v.iter().map(|i| format!("'{}'", rows::escape(i))).collect::<Vec<_>>().join(",");
     let mut sql = format!(
         "SELECT lc_key AS issue_id, event AS event_type, SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')), ''), 1, {READ_MAX}) AS new_value, actor, `at` FROM event WHERE machine = '{MACHINE}'"
@@ -68,6 +68,9 @@ pub fn select_sql(ids: &[String], kinds: &[String]) -> String {
     }
     if !kinds.is_empty() {
         sql.push_str(&format!(" AND event IN ({})", list(kinds)));
+    }
+    if let Some(t) = since {
+        sql.push_str(&format!(" AND `at` > {t}"));
     }
     sql.push_str(" ORDER BY lc_key, seq");
     sql
@@ -94,9 +97,14 @@ pub fn shape(rows: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
-/// `facts [--ids a,b] [--kinds x,y]`: the facts, oldest first per bead.
+/// `facts [--ids a,b] [--kinds x,y] [--since EPOCH]`: the facts, oldest first per bead.
 pub fn cmd_facts(args: &[String], conn: &Conn) -> (i32, String) {
-    match conn.query(&select_sql(&csv(args, "--ids"), &csv(args, "--kinds"))) {
+    let since = match flag(args, "--since").map(|v| v.parse::<i64>()) {
+        Some(Err(_)) => return (CANNOT_TELL, "facts: --since must be an epoch second".into()),
+        Some(Ok(t)) => Some(t),
+        None => None,
+    };
+    match conn.query(&select_sql(&csv(args, "--ids"), &csv(args, "--kinds"), since)) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(shape(r))).unwrap()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
@@ -183,10 +191,11 @@ mod tests {
 
     #[test]
     fn the_select_scopes_to_the_fact_machine_and_the_asked_ids() {
-        let q = select_sql(&["sp-a".into(), "o'x".into()], &["claimed".into()]);
+        let q = select_sql(&["sp-a".into(), "o'x".into()], &["claimed".into()], None);
         assert!(q.contains("machine = 'fact'") && q.contains("'sp-a','o\\'x'") && q.contains("event IN ('claimed')"), "{q}");
-        let all = select_sql(&[], &[]);
-        assert!(!all.contains("lc_key IN") && !all.contains("event IN"), "{all}");
+        let all = select_sql(&[], &[], None);
+        assert!(!all.contains("lc_key IN") && !all.contains("event IN") && !all.contains("`at` >"), "{all}");
+        assert!(select_sql(&[], &[], Some(1_700_000_000)).contains("AND `at` > 1700000000"));
     }
 
     #[test]

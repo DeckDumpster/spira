@@ -43,6 +43,18 @@ pub fn deliberate_causes_sql_list(causes: &[String]) -> String {
 
 /// `_census_events_sql [since_epoch_s]`.
 pub fn events_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
+    events_sql_with(since_formatted, causes, &[])
+}
+
+/// [`events_sql`] for bd's table, whose `reopened` rows are paired with cause rows that now live
+/// in the lifecycle log: `recorded` names the beads whose cause is there, so a reopen whose
+/// cause row bd cannot see is not reported as unrecorded.
+pub fn events_sql_with(since_formatted: Option<&str>, causes: &[String], recorded: &[String]) -> String {
+    let recorded_clause = if recorded.is_empty() {
+        String::new()
+    } else {
+        format!(" AND issue_id NOT IN ({})", deliberate_causes_sql_list(recorded))
+    };
     let conflict_fold = "(event_type = 'requeued' AND new_value = 'merge-conflict')";
     let rebase_aeon_fold = "(event_type = 'requeued' AND new_value = 'rebase-conflict')";
     let eviction_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race')";
@@ -62,7 +74,7 @@ pub fn events_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
         "event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT {conflict_fold} AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT {rebase_aeon_fold} AND NOT {eviction_fold} AND NOT {prod_dirty_fold} AND NOT {unfinished_fold} AND NOT {desc_hash_fold} AND NOT {unjudged_fold} AND NOT {reopen_timing_exclude} AND NOT {deliberate_fold} AND {actor_filter}{sc}"
     );
     let unrecorded_cond = format!(
-        "event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc})"
+        "event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc}){recorded_clause}"
     );
     let main = ranked_part("event_type, COALESCE(new_value, '')", "event_type, new_value", &main_cond, "event_type, new_value", "");
     let folded = [
@@ -188,6 +200,15 @@ mod tests {
     fn events_sql_applies_the_watermark_to_every_part() {
         let sql = events_sql(Some("2023-11-14 22:13:20"), &causes());
         assert_eq!(sql.matches("AND created_at > '2023-11-14 22:13:20'").count(), 8);
+    }
+
+    #[test]
+    fn a_reopen_recorded_in_the_lifecycle_log_is_not_unrecorded() {
+        let plain = events_sql(None, &causes());
+        assert!(!plain.contains("issue_id NOT IN ('"), "no recorded list unless one is given");
+        let with = events_sql_with(None, &causes(), &["sp-a".to_string(), "o'x".to_string()]);
+        assert_eq!(with.matches("AND issue_id NOT IN ('sp-a', 'o''x')").count(), 1, "only the unrecorded branch carries it");
+        assert!(with.contains("event_type = 'reopened'"));
     }
 
     #[test]

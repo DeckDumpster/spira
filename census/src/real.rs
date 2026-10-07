@@ -8,6 +8,9 @@ use crate::ports::World;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// One bd query carries the recorded ids as a literal list, and argv is bounded.
+const MAX_RECORDED_IDS: usize = 4000;
+
 pub struct Real {
     pub home: PathBuf,   // spira/ — where conf.sh, lib.sh and census/*.py live
     pub scratch: PathBuf, // a process-lifetime scratch dir, removed on drop
@@ -104,15 +107,49 @@ impl Real {
     /// bd's events and the lifecycle facts, one table: the history written before the move
     /// lives in bd, everything since in the lifecycle log. Either leg failing fails the query.
     fn run_events_sql(&self, query: &str) -> (bool, String, String) {
-        let (bd_ok, bd_out, bd_err) = self.run_bd_sql(query);
+        self.run_both_sql(query, query)
+    }
+
+    fn run_both_sql(&self, bd_query: &str, fact_query: &str) -> (bool, String, String) {
+        let (bd_ok, bd_out, bd_err) = self.run_bd_sql(bd_query);
         if !bd_ok {
             return (false, bd_out, bd_err);
         }
-        let (lc_ok, lc_out, lc_err) = self.run_fact_sql(query);
+        let (lc_ok, lc_out, lc_err) = self.run_fact_sql(fact_query);
         if !lc_ok {
             return (false, lc_out, format!("lifecycle facts: {lc_err}"));
         }
         (true, format!("{bd_out}\n{lc_out}"), String::new())
+    }
+
+    /// Beads whose reopen cause (a `reopen` fact, or a merge-conflict requeue) is in the
+    /// lifecycle log since `since`: what bd's own `reopened` rows cannot see for themselves.
+    fn recorded_cause_ids(&self, since: Option<i64>) -> Result<Vec<String>, String> {
+        let mut cmd = Command::new("timeout");
+        cmd.arg("30").arg(spira_config::lifecycle_row::lc_bin()).args(["facts", "--kinds", "reopen,requeued"]);
+        if let Some(t) = since.filter(|&t| t > 0) {
+            cmd.args(["--since", &t.to_string()]);
+        }
+        let out = cmd.stdin(Stdio::null()).output().map_err(|e| format!("spira-lc: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("lifecycle facts: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).map_err(|e| format!("lifecycle facts: {e}"))?;
+        let mut ids: Vec<String> = rows
+            .iter()
+            .filter(|r| {
+                let kind = r.get("event_type").and_then(|v| v.as_str()).unwrap_or("");
+                let cause = r.get("new_value").and_then(|v| v.as_str()).unwrap_or("");
+                kind == "reopen" || (kind == "requeued" && cause == "merge-conflict")
+            })
+            .filter_map(|r| r.get("issue_id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        ids.sort();
+        ids.dedup();
+        if ids.len() > MAX_RECORDED_IDS {
+            return Err(format!("lifecycle facts: {} beads with a recorded cause is more than one query can carry", ids.len()));
+        }
+        Ok(ids)
     }
 
     fn run_py(&self, script: &str, args: &[&Path], stdin: Option<&str>) -> String {
@@ -161,11 +198,14 @@ impl World for Real {
     /// moves here rather than into `crate::sql`.
     fn census_events_run_sql(&self, since: Option<i64>) -> Result<String, String> {
         let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
-        let query = crate::sql::events_sql(since_formatted.as_deref(), &self.deliberate_cause_names());
+        let causes = self.deliberate_cause_names();
+        let fact_query = crate::sql::events_sql(since_formatted.as_deref(), &causes);
+        let recorded = self.recorded_cause_ids(since.filter(|&s| s > 0))?;
+        let bd_query = crate::sql::events_sql_with(since_formatted.as_deref(), &causes, &recorded);
         let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
         let mut last_stderr = String::new();
         for attempt in 1..=3 {
-            let (ok, out, err) = self.run_events_sql(&query);
+            let (ok, out, err) = self.run_both_sql(&bd_query, &fact_query);
             if ok {
                 return Ok(out);
             }
