@@ -46,8 +46,6 @@ rm -f "$TMP/run/rounds/"*; : > "$TMP/run/rounds/300.result"
 (sleep 1.5; echo "red sp-aaa" >> "$TMP/run/rounds/300.result"; sleep 1; echo "round 300: no verdict from any VM" >> "$TMP/run/rounds/300.result") &
 out="$(run watch --interval 1 --ticks 5)"; wait
 want "a result line is announced" "ROUND RESULT 300: red sp-aaa" "$out"
-nowant "a verdict-bearing result is not a no-verdicts condition" "ROUND NO VERDICTS 300: the round produced no verdicts — a fault of the round machinery (VM, mirror, host address), not of the candidates; fix it before cutting another
-$(date -u +%Y)x" "$out"
 want "a verdict-less result is reported as its own condition" "ROUND NO VERDICTS 300" "$out"
 [ "$(printf '%s\n' "$out" | grep -c 'ROUND NO VERDICTS')" = 1 ]; is "only the verdict-less line raises it" "0" "$?"
 
