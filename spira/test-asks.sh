@@ -34,9 +34,14 @@ nowant "a baseline ask is not announced" "NEW ASK sp-old" "$out"
 want "the ask is appended to the inbox" "[watch:asks] NEW ASK sp-new: decide X" "$(cat "$INBOX")"
 is "the cursor is moved past the delivered line" "1" "$(cat "$CUR" 2>/dev/null)"
 
-rm -f "$CUR"
-echo '[{"id":"sp-old","title":"already open"},{"id":"sp-new","title":"decide X"},{"id":"sp-n2","title":"and Y"}]' > "$ASKS"
-(WINBOX="$TMP" arun watch --interval 1 --ticks 2 >> "$LOG")
+rm -f "$CUR" "$TMP/run/watchd/asks.health"
+echo '[{"id":"sp-old","title":"already open"}]' > "$ASKS"
+(WINBOX="$TMP" arun watch --interval 1 --ticks 6 >> "$LOG") &
+wpid=$!
+for _ in $(seq 100); do [ -e "$TMP/run/watchd/asks.health" ] && break; sleep 0.1; done
+echo '[{"id":"sp-old","title":"already open"},{"id":"sp-n2","title":"and Y"}]' > "$ASKS"
+wait "$wpid"
+grep -q "NEW ASK sp-n2" "$LOG"; is "the ask reached the log though the inbox write failed" "0" "$?"
 [ -e "$CUR" ]; is "a failed inbox write leaves the cursor alone" "1" "$?"
 
 arun health >/dev/null; is "health passes after a fresh poll" "0" "$?"
