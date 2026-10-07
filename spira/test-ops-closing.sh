@@ -230,4 +230,11 @@ wantrc "temporarily fixed matches" 0 "$CRF_RC"
 crf "a TEMPORARY workaround was used, in lowercase"
 wantrc "matching is case-insensitive" 0 "$CRF_RC"
 
+OPS_MD="$HERE/chamber/ops.md"
+if grep -Eq 'commit that page|SOP page is normally' "$OPS_MD"; then _rc=1; else _rc=0; fi
+wantrc "ops.md does not tell the aeon to commit a page the broker wrote" 0 "$_rc"
+grep -q "not in your worktree" "$OPS_MD"; wantrc "ops.md says where sop write puts the page" 0 "$?"
+_probe="commit that page"; printf '%s\n' "$_probe" | grep -Eq 'commit that page|SOP page is normally'
+wantrc "the matcher fires on the old instruction" 0 "$?"
+
 tl_summary
