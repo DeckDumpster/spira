@@ -83,11 +83,14 @@ for f in "$DIR"/law-*.txt; do
     # THE TEXT GOES IN AS ONE ARGUMENT READ FROM THE FILE, never interpolated into a
     # double-quoted string: backticks and $( ) in a statute are command substitution, and a
     # statute is prose about shell (law-commit-messages-via-stdin).
-    if _bd_err="$(timeout 5 bd -C "$SPIRA_DB" remember --key "$key" "$(cat "$f")" 2>&1 >/dev/null)"; then
+    # batch-job: a one-time seed of every statute into a freshly initialised store; the first
+    # writes into a new database ran past 5 s under load and failed the install (R1 acceptance,
+    # 2026-10-07), so each write gets a bounded 30 s.
+    if _bd_err="$(timeout 30 bd -C "$SPIRA_DB" remember --key "$key" "$(cat "$f")" 2>&1 >/dev/null)"; then
         printf '  wrote %s\n' "$key"; wrote=$((wrote+1))
     else
         printf '  FAILED %s\n' "$key" >&2
-        [ -n "$_bd_err" ] && printf '    %s\n' "$(printf '%s\n' "$_bd_err" | head -1)" >&2
+        printf '    %s\n' "${_bd_err:-no output (timed out after 30 s, or bd was killed)}" | head -1 >&2
         failed=$((failed+1))
     fi
     unset _bd_err
