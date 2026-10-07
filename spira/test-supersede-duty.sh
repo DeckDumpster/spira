@@ -38,15 +38,16 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
+# batch-job: long-lived fixture server
 "$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
 SERVER_PID=$!
 up=0
 for _ in $(seq 1 50); do
-    "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && { up=1; break; }
+    timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && { up=1; break; }
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
 export SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle \
     SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=""
