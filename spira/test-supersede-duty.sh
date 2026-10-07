@@ -56,7 +56,7 @@ wantrc "schema applies cleanly" 0 $?
 seed() { root_sql --use-db spira_lifecycle sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,0)" >/dev/null 2>&1; }
 request() {   # request <bead> <successor>: the event `work superseded-by` applies
     spira-lc event bead "$1" --expect READY --version 0 --actor aeon \
-        --kind "{\"Hold\":{\"kind\":\"operator\",\"cause\":\"supersede-request\",\"detail\":\"$2\"}}" >/dev/null 2>&1
+        --kind "{\"Hold\":{\"kind\":\"Operator\",\"cause\":\"supersede-request\",\"detail\":\"$2\"}}" >/dev/null 2>&1
 }
 state_of() { spira-lc state "$1" 2>/dev/null; }
 

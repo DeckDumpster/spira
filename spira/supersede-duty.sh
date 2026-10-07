@@ -40,7 +40,7 @@ for r in rows:
     try: ev = json.loads(r.get("evidence") or "{}")
     except Exception: continue
     h = ev.get("Hold") if isinstance(ev, dict) else None
-    if h and h.get("kind") == "operator":
+    if h and str(h.get("kind")).lower() == "operator":
         by = h.get("detail") if h.get("cause") == "supersede-request" else None
 if not by: sys.exit(1)
 print(by)'
