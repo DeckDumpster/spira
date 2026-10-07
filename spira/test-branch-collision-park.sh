@@ -253,8 +253,9 @@ park_out5="$(park_branch_collisions "$out5")"
 nowant "case 5: a dirty closed holder is never freed" "FREED sp-root4" "$park_out5"
 wt4_state=gone; [ -e "$SPIRA_RUN/worktree/sp-hold4" ] && wt4_state=present
 is     "case 5: sp-hold4's worktree survives — dirty holders are never touched" "present" "$wt4_state"
-labels5="$(bdq label list sp-root4 2>/dev/null)"
-want "case 5: sp-root4 parks with $SPIRA_ASK_LABEL like any other unfreeable collision" "$SPIRA_ASK_LABEL" "$labels5"
+# Parked = an ask hold on the row (sp-psztcc), read back through the lifecycle stand-in.
+holds5="$(spira-lc holds sp-root4 2>/dev/null)"
+want "case 5: sp-root4 parks with an ask hold like any other unfreeable collision" "ask" "$holds5"
 
 # ==========================================================================================
 echo
@@ -274,8 +275,9 @@ park_out6="$(park_branch_collisions "$out6")"
 nowant "case 6: a closed holder with a live session is never freed" "FREED sp-root5" "$park_out6"
 wt5_state=gone; [ -e "$SPIRA_RUN/worktree/sp-hold5" ] && wt5_state=present
 is     "case 6: sp-hold5's worktree survives — a live holder is never touched" "present" "$wt5_state"
-labels6="$(bdq label list sp-root5 2>/dev/null)"
-want "case 6: sp-root5 parks with $SPIRA_ASK_LABEL like any other unfreeable collision" "$SPIRA_ASK_LABEL" "$labels6"
+# Parked = an ask hold on the row (sp-psztcc), read back through the lifecycle stand-in.
+holds6="$(spira-lc holds sp-root5 2>/dev/null)"
+want "case 6: sp-root5 parks with an ask hold like any other unfreeable collision" "ask" "$holds6"
 rm -f "$SPIRA_RUN/hold-sp-hold5.pid"
 
 tl_summary
