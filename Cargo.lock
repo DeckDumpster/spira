@@ -239,6 +239,7 @@ dependencies = [
  "bead",
  "libc",
  "regex",
+ "serde",
  "serde_json",
  "spira-config",
  "testkit",
@@ -730,6 +731,7 @@ name = "loom"
 version = "1.0.0"
 dependencies = [
  "axum",
+ "cockpit-ops",
  "serde_json",
  "spira-config",
  "testkit",

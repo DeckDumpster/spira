@@ -553,12 +553,12 @@ mod tests {
         for i in 0..3 {
             let mut r = row(&format!("sp-h{i}"), "READY", 1);
             r.holds = vec!["ask".into()];
-            r.reason = Some("repo:spira has no repo-map entry".into());
+            r.reason = Some("repo:spira is not in the map".into());
             rows.push(r);
         }
         let f = plain(&render(&view(&snap(rows)), 120));
         assert!(f.contains("READY 4 (3 held, 75%)"), "{f}");
-        assert!(f.contains("3× repo:spira has no repo-map entry"), "{f}");
+        assert!(f.contains("3× repo:spira is not in the map"), "{f}");
     }
 
     #[test]

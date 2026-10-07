@@ -204,8 +204,10 @@ impl Conf {
         p
     }
 
+    /// The ops pane is the lifecycle lens (`lc-view`, sp-lpw5ol), which replaced `health`:
+    /// it reads state only from the lifecycle machine and publishes the phone page's snapshot.
     pub fn health_cmd(&self) -> String {
-        format!("{}health loop", self.rel_prefix())
+        format!("{}lc-view loop 10", self.rel_prefix())
     }
 
     pub fn down_marker(&self) -> PathBuf {
@@ -229,6 +231,7 @@ impl Conf {
 /// `script` is argv[1] when `exe` is a shell running a script.
 pub fn classify_argv(exe: &str, script: &str, mail_exe: Option<&str>) -> Option<Role> {
     if exe.ends_with("/health") || exe == "health" || script.ends_with("/health.sh") || script.ends_with("/health")
+        || exe.ends_with("/lc-view") || exe == "lc-view"
     {
         return Some(Role::Health);
     }
@@ -315,6 +318,9 @@ mod tests {
     #[test]
     fn classify_argv_matches_health_by_script_suffix_never_substring() {
         assert_eq!(classify_argv("bash", "/opt/spira/cockpit/health.sh", None), Some(Role::Health));
+        // The lifecycle lens is the ops pane now (sp-lpw5ol).
+        assert_eq!(classify_argv("/home/u/.local/bin/lc-view", "loop", None), Some(Role::Health));
+        assert_eq!(classify_argv("lc-view", "", None), Some(Role::Health));
         // A system prompt that merely mentions the path as argv text (not argv[0]/[1] of a
         // shell) must not classify — callers only ever pass exe/script, not the whole line,
         // which is what makes this safe: "argv position, never substring".
