@@ -53,11 +53,19 @@ fn parse_ids(s: &str) -> Vec<String> {
     }
 }
 
+/// A lifecycle key: `sp-` then a non-empty tail of alphanumerics, `.`, `-` or `_` — prose and bare prefixes are not.
+fn is_row_key(x: &str) -> bool {
+    x.len() > 3
+        && x[..3].eq_ignore_ascii_case("sp-")
+        && x[3..].chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        && x.chars().last().is_some_and(|c| c != '-')
+}
+
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
     };
-    if !crate::work::is_bead_id(id) {
+    if !is_row_key(id) {
         return (CANNOT_TELL, format!("create-bead: {id:?} is not a bead id"));
     }
     let at = crate::db::now_epoch();

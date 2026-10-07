@@ -108,7 +108,8 @@ pub fn known(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<String>, Stri
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut cmd = Command::new(bd_bin);
+    let mut cmd = Command::new("timeout");
+    cmd.args(["5", bd_bin]);
     if !db.is_empty() {
         cmd.args(["-C", db]);
     }
