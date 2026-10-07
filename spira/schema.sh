@@ -159,7 +159,7 @@ schema_custom_types() {
 # operator's box baked into a repository meant to be cloned, which inventory.sh refuses and
 # test-conf.sh fails the gate on.
 _sql_scalar()     { bd -C "$SPIRA_DB" sql "$1" 2>/dev/null | sed -n '3p' | tr -d ' '; }
-_store_types()    { bd -C "$SPIRA_DB" types 2>/dev/null | sed -n '/Configured custom types/,$p' | tail -n +2 | tr -d ' ' | grep -v '^$'; }
+_store_types()    { bd -C "$SPIRA_DB" config get types.custom 2>/dev/null | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$'; }
 _store_statuses() { bd -C "$SPIRA_DB" config get status.custom 2>/dev/null | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$'; }
 
 schema_contract() {
