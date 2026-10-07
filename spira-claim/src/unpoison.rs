@@ -790,17 +790,8 @@ impl crate::reopen::World for Live {
         }
     }
 
-    fn bd_reopen(&mut self, id: &str) -> Result<(), String> {
-        // The bead's state is the machine's: bd status is inert (sp-mve9i).
-        self.bd_ok(&["reopen", id], None).map(|_| ())
-    }
-
-    fn remove_submitted_label(&mut self, id: &str, label: &str) {
-        let _ = self.bd_ok(&["label", "remove", id, label], None);
-    }
-
-    fn release_claim(&mut self, id: &str) -> Result<(), String> {
-        self.store.release_claim(id)
+    fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {
+        self.store.lc_reopen(id, cause, &self.beads_actor)
     }
 
     fn write_reopen_event(&mut self, id: &str, cause: &str) {

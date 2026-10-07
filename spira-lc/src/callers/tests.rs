@@ -460,10 +460,18 @@ struct FakeBd {
     closed: Vec<(String, String)>,
     /// bead id -> close reason, for beads bd reports closed.
     reasons: BTreeMap<String, String>,
+    reopened: Vec<String>,
     down: bool,
 }
 
 impl Bd for FakeBd {
+    fn reopen(&mut self, id: &str) -> Result<(), String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        self.reopened.push(id.into());
+        Ok(())
+    }
     fn issue_type(&mut self, id: &str) -> Result<String, String> {
         if self.down {
             return Err("bd down".into());
@@ -775,4 +783,87 @@ fn a_landing_close_leaves_the_row_to_the_delivery_and_is_refused_outside_it() {
     assert_eq!(f.state("sp-r"), "READY");
     assert_eq!(bd.closed.len(), 3, "nothing closed");
     assert_eq!(close(&v(&["sp-r", "--reason", "x", "--landing", "--superseded-by", "sp-z"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
+}
+
+// ---- reopen (sp-swh8b8): the machine's return-to-rework --------------------------------
+
+fn reopen_kinds(f: &Fake) -> Vec<String> {
+    f.events.iter().map(|e| e.5.clone()).collect()
+}
+
+fn claimable_by_a_builder(f: &mut Fake, id: &str) -> bool {
+    let row = &f.beads[id];
+    let o = lifecycle::bead::apply(
+        row,
+        &BeadEvent {
+            expect: row.state,
+            version: row.version,
+            kind: BeadEventKind::Claim { holder: "aeon-2".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4 },
+            actor: "aeon-2".into(),
+            at: None,
+        },
+    );
+    o.applied
+}
+
+#[test]
+fn reopen_records_the_event_each_row_state_implies_and_leaves_the_bead_claimable() {
+    let cases: [(BeadState, &str, &[&str]); 6] = [
+        (BeadState::Submitted, "REWORK", &[r#"{"GateRed":{"tip":"abc","reason":"suites-failed"}}"#]),
+        (BeadState::Certified, "REWORK", &[r#""Deliver""#, r#"{"Returned":{"reason":"push-rejected"}}"#]),
+        (BeadState::InDelivery, "REWORK", &[r#"{"Returned":{"reason":"push-rejected"}}"#]),
+        (BeadState::Working, "READY", &[r#""Release""#]),
+        (BeadState::Ready, "READY", &[]),
+        (BeadState::Rework, "REWORK", &[]),
+    ];
+    for (from, to, want) in cases {
+        let mut f = Fake::default();
+        f.bead("sp-o", from).tip = Some("abc".into());
+        let mut bd = FakeBd::default();
+        let a = reopen_cmd(&v(&["sp-o", "rebase-conflict", "aeon-1"]), &mut f, &mut bd);
+        assert_eq!(bd.reopened, vec!["sp-o".to_string()], "{from:?}: the store follows the row");
+        assert_eq!(a.code, APPLIED, "{from:?}: {}", a.stderr);
+        assert_eq!(f.state("sp-o"), to, "{from:?}");
+        let got = reopen_kinds(&f);
+        if from == BeadState::Submitted {
+            assert_eq!(got, [r#"{"GateRed":{"tip":"abc","reason":"suites-failed"}}"#], "{from:?}");
+        } else {
+            assert_eq!(got, want, "{from:?}");
+        }
+        assert!(claimable_by_a_builder(&mut f, "sp-o"), "{from:?}: a reopened bead must be claimable again");
+    }
+}
+
+#[test]
+fn reopen_refuses_a_terminal_row_and_a_missing_row_and_an_unreachable_machine() {
+    for st in [BeadState::Landed, BeadState::Superseded, BeadState::Dropped, BeadState::Done] {
+        let mut f = Fake::default();
+        f.bead("sp-t", st);
+        let mut bd = FakeBd::default();
+        let a = reopen_cmd(&v(&["sp-t", "gate-red"]), &mut f, &mut bd);
+        assert_eq!(a.code, REFUSED, "{st:?}");
+        assert!(f.events.is_empty(), "{st:?}: a terminal row gets no event");
+        assert!(bd.reopened.is_empty(), "{st:?}: nor a store reopen");
+    }
+    // No row: an alert or an ask, whose state is bd's — reopened in the store alone.
+    let mut bd = FakeBd::default();
+    assert_eq!(reopen_cmd(&v(&["sp-none"]), &mut Fake::default(), &mut bd).code, APPLIED);
+    assert_eq!(bd.reopened, vec!["sp-none".to_string()]);
+    let mut bd = FakeBd::default();
+    assert_eq!(reopen_cmd(&v(&["sp-t"]), &mut Fake { down: true, ..Default::default() }, &mut bd).code, CANNOT_TELL);
+    assert!(bd.reopened.is_empty(), "an unreadable machine reopens nothing");
+    let mut bd = FakeBd { down: true, ..Default::default() };
+    let mut f = Fake::default();
+    f.bead("sp-s", BeadState::Submitted).tip = Some("abc".into());
+    assert_eq!(reopen_cmd(&v(&["sp-s"]), &mut f, &mut bd).code, CANNOT_TELL, "the store reopen failing is reported");
+}
+
+#[test]
+fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
+    let mut f = Fake::default();
+    f.bead("sp-e", BeadState::Certified);
+    f.beads.get_mut("sp-e").unwrap().holds.insert(HoldKind::Operator);
+    assert_eq!(reopen_cmd(&v(&["sp-e", "eject"]), &mut f, &mut FakeBd::default()).code, APPLIED);
+    assert_eq!(reopen_kinds(&f).last().unwrap(), r#"{"Returned":{"reason":"batch-ejected"}}"#);
+    assert!(f.beads["sp-e"].holds.contains(&HoldKind::Operator), "reopening is not an unhold");
 }

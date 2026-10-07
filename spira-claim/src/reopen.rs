@@ -62,18 +62,10 @@ pub trait World {
     /// The `$SPIRA_RUN/ejected/<id>` sidecar the gate reads unconditionally — best-effort
     /// (bash: `printf ... && mv -f ... || true`).
     fn write_ejected(&mut self, id: &str, suites: &str);
-    /// `bdq reopen "$id"` — the first of the two steps whose failure sets the exit code.
-    fn bd_reopen(&mut self, id: &str) -> Result<(), String>;
-    /// `bdq label remove "$id" "$submitted_label"` — best-effort (bash: `|| true`). A
-    /// reopen means rework, so a bead still wearing the submitted label (added by the one
-    /// reopen this never touches: the work-close-converted conversion itself) would be
-    /// unclaimable (`fayth_exclude`) and never land.
-    fn remove_submitted_label(&mut self, id: &str, label: &str);
-    /// `release_claim "$id"` — the second step whose failure sets the exit code. Clearing
-    /// the assignee is what makes a reopen a reopen (see lib.sh's own comment on
-    /// `bead_reopen`): without it the bead goes back to the board wearing a dead aeon's
-    /// name, visible and ready, but unclaimable.
-    fn release_claim(&mut self, id: &str) -> Result<(), String>;
+    /// The machine's return-to-rework (`spira-lc reopen`): the lifecycle row records the
+    /// event its state implies and the bead is claimable again. A bead with no row has no
+    /// state to diverge and is `Ok`; a terminal row is refused.
+    fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String>;
     /// `_bump_write_event "$id" reopen "$cause"` — ALWAYS treated as succeeded. The bash
     /// wrapper it shims (`_bump_write_event`, lib.sh) swallows its child's own output and
     /// exit code and unconditionally `return 0`s, so `bead_reopen`'s trailing `|| rc=1`
@@ -85,20 +77,18 @@ pub trait World {
 }
 
 /// `bead_reopen <id> <cause> [note] [suites]`'s own argument defaults
-/// (`local id="$1" cause="${2:-unrecorded}" note="${3:-}" suites="${4:-}"`), plus the
-/// resolved submitted-label this call needs (`${SPIRA_SUBMITTED_LABEL:-spira-submitted}`).
+/// (`local id="$1" cause="${2:-unrecorded}" note="${3:-}" suites="${4:-}"`).
 #[derive(Debug, Clone)]
 pub struct Opts {
     pub id: String,
     pub cause: String,
     pub note: String,
     pub suites: String,
-    pub submitted_label: String,
 }
 
 /// `bead_reopen`'s own stderr line, printed by the caller (main.rs) when [`run`] returns
 /// non-zero: `printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n'`.
-pub const FAILURE_REASON: &str = "bd refused the reopen, the release or the note";
+pub const FAILURE_REASON: &str = "the lifecycle machine refused the reopen, or bd the note";
 
 /// `bead_reopen`. Returns the exit code (`rc` in bash: 0, or 1 if `bdq reopen`,
 /// `release_claim` or the note each separately failed).
@@ -110,17 +100,8 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
         w.write_ejected(&o.id, &o.suites);
     }
 
-    if w.bd_reopen(&o.id).is_err() {
-        rc = 1;
-    }
-
-    // A REOPEN MEANS REWORK, so a submitted bead stops being submitted — except the one
-    // reopen that ADDS the label (the conversion itself), left alone.
-    if !exempt {
-        w.remove_submitted_label(&o.id, &o.submitted_label);
-    }
-
-    if w.release_claim(&o.id).is_err() {
+    // A deliberate conversion carries the bead's row forward untouched.
+    if !exempt && w.lc_reopen(&o.id, &o.cause).is_err() {
         rc = 1;
     }
 

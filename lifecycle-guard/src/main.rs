@@ -1,4 +1,5 @@
 mod bd_close;
+mod bd_reopen;
 mod bd_status;
 mod hold_label;
 mod brief;
@@ -163,6 +164,7 @@ fn run_one(root: &Path, rules: &Rules, gate: bool) -> Result<(usize, Vec<Finding
     findings.extend(bd_close::scan_rust(&rust_files, root));
     let every: Vec<PathBuf> = shell_files.iter().chain(&brief_files).chain(&rust_files).cloned().collect();
     findings.extend(hold_label::scan(&every, root));
+    findings.extend(bd_reopen::scan_rust(&rust_files, root));
     Ok((scanned, findings))
 }
 

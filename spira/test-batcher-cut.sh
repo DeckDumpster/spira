@@ -288,6 +288,13 @@ case "${1:-}" in
     event) f="${SPIRA_RUN:-/nonexistent}/lc-stub/${3:-}"
            case "$*" in *Returned*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
            exit 0 ;;
+    # reopen (sp-swh8b8): the door moves the row, then reopens the store — open, unassigned,
+    # no submitted label; here only the store half, the row being this fixture's file.
+    reopen) b="${TESTDB_BD:-$(spira-config get spira.bd 2>/dev/null)}"; d="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+            "${b:-bd}" ${d:+-C "$d"} update "$2" --status open --assignee "" >/dev/null 2>&1
+            "${b:-bd}" ${d:+-C "$d"} label remove "$2" "$(spira-config get spira.submitted_label 2>/dev/null || echo spira-submitted)" >/dev/null 2>&1
+            f="${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}"; [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; }
+            exit 0 ;;
     *) exit 0 ;;
 esac
 LCSTUB

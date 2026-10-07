@@ -384,13 +384,28 @@ STUB
 # --reason or --reason-file), and exports SPIRA_LC_BIN at it. Without <bd>/<db> they are read at
 # each call as the real verb reads them — spira.bd / spira.db from $SPIRA_TOML — so a suite
 # that re-declares SPIRA_BD between runs closes through the bd it declared last. Every other
-# verb exits 7, so a suite that needs rows uses lc_fix_init instead.
+# verb but close and reopen exits 7, so a suite that needs rows uses lc_fix_init instead.
 lc_close_stub() {
     local dir="${1:?lc_close_stub needs a directory}" bd="${2:-}" db="${3:-}"
     mkdir -p "$dir"
+    # Every other verb goes to the real spira-lc — the first on PATH that is not this stub —
+    # since the stub is also put first on PATH: some callers (spira-claim's Store) run spira-lc
+    # by name, never through SPIRA_LC_BIN.
+    local real="" c
+    while IFS= read -r c; do [ "$c" -ef "$dir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
     cat > "$dir/spira-lc" <<STUB
 #!/usr/bin/env bash
-[ "\$1" = close ] || exit 7
+bd="$bd"; db="$db"
+[ -n "\$bd" ] || bd="\$(spira-config get spira.bd 2>/dev/null)"; [ -n "\$bd" ] || bd=bd
+[ -n "\$db" ] || db="\$(spira-config get spira.db 2>/dev/null)"
+# reopen (sp-swh8b8): the rowless door reopens the store — open, unassigned, not submitted.
+if [ "\$1" = reopen ]; then
+    "\$bd" \${db:+-C "\$db"} update "\$2" --status open --assignee "" || exit 2
+    sub="\$(spira-config get spira.submitted_label 2>/dev/null)"
+    [ -n "\$sub" ] && "\$bd" \${db:+-C "\$db"} label remove "\$2" "\$sub" >/dev/null 2>&1
+    exit 0
+fi
+if [ "\$1" != close ]; then [ -n "$real" ] && exec "$real" "\$@"; exit 7; fi
 id="\$2"; shift 2; reason=""
 while [ \$# -gt 0 ]; do
     case "\$1" in
@@ -400,13 +415,11 @@ while [ \$# -gt 0 ]; do
         *) shift ;;
     esac
 done
-bd="$bd"; db="$db"
-[ -n "\$bd" ] || bd="\$(spira-config get spira.bd 2>/dev/null)"; [ -n "\$bd" ] || bd=bd
-[ -n "\$db" ] || db="\$(spira-config get spira.db 2>/dev/null)"
 exec "\$bd" \${db:+-C "\$db"} close "\$id" --force --reason "\$reason"
 STUB
     chmod +x "$dir/spira-lc"
     SPIRA_LC_BIN="$dir/spira-lc"; export SPIRA_LC_BIN
+    case ":$PATH:" in *":$dir:"*) ;; *) PATH="$dir:$PATH"; export PATH ;; esac
 }
 # A spira-lc for landing-pass suites, installed by name into <bindir> (already first on the
 # suite's PATH) so the pass's lifecycle probe answers. `list` reads rows like lc_fix_init's;
@@ -426,6 +439,15 @@ LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
 case "\$1" in fact|facts|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
 case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
+# reopen (sp-swh8b8): the door reopens the store after the row; here the row is the fixture's,
+# so only the store half runs.
+if [ "\$1" = reopen ]; then
+    b="\$(spira-config get spira.bd 2>/dev/null)"; d="\$(spira-config get spira.db 2>/dev/null)"
+    "\${b:-bd}" \${d:+-C "\$d"} update "\$2" --status open --assignee "" >/dev/null || exit 2
+    sub="\$(spira-config get spira.submitted_label 2>/dev/null)"
+    [ -n "\$sub" ] && "\${b:-bd}" \${d:+-C "\$d"} label remove "\$2" "\$sub" >/dev/null 2>&1
+    exit 0
+fi
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
     list)
@@ -539,6 +561,12 @@ if [ "$1" = close ]; then
         esac
     done
     exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" close "$id" --force --reason "$reason"
+fi
+# reopen (sp-swh8b8): this mirror's rows ARE the store's, so the reopen is the store's.
+if [ "$1" = reopen ]; then
+    "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" update "$2" --status open --assignee "" >/dev/null || exit 2
+    [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" label remove "$2" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1
+    exit 0
 fi
 if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
 else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi
@@ -694,7 +722,8 @@ except Exception: print("")' 2>/dev/null
 #   else a claim this stand-in applied ($SPIRA_RUN/lc-claim/<id>, the holder) → WORKING;
 #   else bd in_progress → WORKING (holder = assignee); anything else → READY.
 # A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
-# Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0), `hold <id> <kind> <reason>`
+# Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0),
+# `reopen <id> <cause>` (row pinned REWORK, claim dropped, bd reopened), `hold <id> <kind> <reason>`
 # (appended to $SPIRA_RUN/lc-holds.log, exit 0),
 # `unclaim <id> <actor>` (spira-lc's own rule: a WORKING row is released only by its holder,
 # else exit 1; any other state is already released, 0), and
@@ -711,6 +740,13 @@ lc_aeon_mirror() {
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
     hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"; exit 0 ;;
+    reopen)
+        # sp-swh8b8: the row moves to REWORK first, then the store follows (open, unassigned),
+        # exactly as spira-lc's own reopen door does; the claim this stand-in recorded is dropped.
+        mkdir -p "${SPIRA_RUN:?}/lc-row"; printf 'REWORK %s\n' "${3:-reopen}" > "$SPIRA_RUN/lc-row/${2:?}"
+        rm -f "$SPIRA_RUN/lc-claim/$2"
+        BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" update "$2" --status open --assignee "" >/dev/null 2>&1
+        exit 0 ;;
     *) for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
 esac
 [ "$1" = create-bead ] && exit 0
@@ -839,6 +875,9 @@ threading.Thread(target=watchdog, daemon=True).start()
 sub = os.environ.get("SPIRA_SUBMITTED_LABEL") or "spira-submitted"
 # Holds are the row's (sp-psztcc): a hold/unhold event is recorded here and shown on the row.
 holds = {}
+# State moves the events record (sp-swh8b8): a reopen is a lifecycle transition, which a row
+# derived from bd's status alone could never show.
+moved = {}
 def bd(args):
     env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
     o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args, "--json"],
@@ -852,7 +891,7 @@ def bd(args):
 def row(b):
     st = b.get("status") or "open"
     labels = b.get("labels") or []
-    state = "SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY")
+    state = moved.get(b["id"]) or ("SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY"))
     return {"bead_id": b["id"], "state": state, "holds": json.dumps(sorted(holds.get(b["id"], set()))), "version": "1",
             "holder": (b.get("assignee") or None) if state == "WORKING" else None}
 def answer(args):
@@ -870,6 +909,10 @@ def answer(args):
             holds.get(bid, set()).discard(kind["Unhold"]["kind"].lower())
         elif kind == "AskWithdrawn":
             holds.get(bid, set()).discard("ask")
+        elif isinstance(kind, dict) and ("GateRed" in kind or "Returned" in kind):
+            moved[bid] = "REWORK"
+        elif kind in ("Release", "HolderDead"):
+            moved[bid] = "READY"
         return 0, ""
     return 2, "cannot tell: stand-in lifecycle service"
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

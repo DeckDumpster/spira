@@ -467,13 +467,11 @@ close_landed_queue_waiters() {
 # sp-du8bv): it decides from the pass's one store snapshot instead of one `bd children` per
 # candidate, which cost 302 s a pass. `sentinel --open-children` runs it alone.
 
-# bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon
-# can claim it: withdraws a CERTIFIED lifecycle row (unless <cause> is admission-exempt — see
-# _census_deliberate_reopen_causes below), writes the <suites> sidecar ($SPIRA_RUN/ejected/), reopens, strips the
-# submitted label, releases the claim and records the cause. Ported to spira-claim (wave
-# 4.19, sp-3wfcb, row I, safety note (c7)); see spira-claim/src/reopen.rs for the contract
-# and the scar (a reopen that keeps the assignee is claimable by nobody). Non-zero RC means
-# bdq reopen, release_claim or the note each separately failed.
+# bead_reopen <id> <cause> [note] [suites] — hand a bead back to its builder through the
+# lifecycle machine (`spira-lc reopen`: the row records the event its state implies; a cause
+# that is admission-exempt leaves the row alone), write the <suites> sidecar
+# ($SPIRA_RUN/ejected/), record the cause and the note. bd's status, label and assignee are
+# not written. Non-zero RC means the machine refused the reopen or the note failed.
 bead_reopen() {
     spira-claim reopen "$@"
 }

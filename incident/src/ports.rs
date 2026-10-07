@@ -38,8 +38,8 @@ pub trait Bd {
     fn label_list(&self, db: &str, id: &str) -> Vec<String>;
     fn note(&self, db: &str, id: &str, text: &str) -> bool;
     fn set_state(&self, db: &str, id: &str, kv: &str) -> bool;
-    /// `bd -C db reopen <id>`.
-    fn reopen(&self, db: &str, id: &str) -> bool;
+    /// `spira-lc reopen <id> <cause>`: the machine's return-to-rework.
+    fn reopen(&self, db: &str, id: &str, cause: &str) -> bool;
     /// `bd -C db dep relate <a> <b>`: a bidirectional see-also link (sp-nmlna: a fresh
     /// incident to the terminal one it recurs).
     fn relate(&self, db: &str, a: &str, b: &str) -> bool;

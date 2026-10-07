@@ -567,6 +567,62 @@ fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
     }
 }
 
+/// The ReturnedReason a reopen's free-text cause earns: an eject is the batch's own, anything
+/// else a CERTIFIED or in-delivery bead is handed back for is the base having moved.
+fn reopen_returned_reason(cause: &str) -> ReturnedReason {
+    match cause {
+        "eject" | "batch-eject" => ReturnedReason::BatchEjected,
+        "base-withdrawn" => ReturnedReason::BaseWithdrawn,
+        _ => ReturnedReason::PushRejected,
+    }
+}
+
+/// `reopen <id> [cause] [actor]` — hand a bead back to its builder: the machine's
+/// return-to-rework, recording the event the row's own state implies. SUBMITTED GateRed ·
+/// CERTIFIED Deliver then Returned · IN_DELIVERY Returned · WORKING Release · READY or REWORK
+/// nothing (already there) · terminal refused. A hold stays on the row: reopening is not an
+/// unhold.
+///
+/// Exit: 0 reopened, or already open · 1 no row · 2 cannot tell · 3 refused (terminal, or the
+/// event lost its CAS).
+fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
+    let refuse = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc reopen: {id}: {why}\n"), ..Default::default() };
+    let v = match show(m, id) {
+        Ok(v) => v,
+        Err(rc) => return Answer::code(rc),
+    };
+    let (state, version) = (bead_field(&v, "state"), bead_field(&v, "version"));
+    if state.is_empty() || version.is_empty() {
+        return Answer::code(NO_ROW);
+    }
+    let send = |m: &mut dyn Machine, expect: &str, version: &str, kind: BeadEventKind| {
+        event(m, "bead", id, expect, version, actor, &serde_json::to_string(&kind).unwrap_or_default())
+    };
+    let returned = BeadEventKind::Returned { reason: reopen_returned_reason(cause) };
+    let rc = match state.as_str() {
+        "READY" | "REWORK" => return Answer::code(APPLIED),
+        "WORKING" => send(m, &state, &version, BeadEventKind::Release).0,
+        "SUBMITTED" => {
+            let kind = BeadEventKind::GateRed { tip: bead_field(&v, "tip"), reason: gate_red_reason(cause) };
+            send(m, &state, &version, kind).0
+        }
+        "IN_DELIVERY" => send(m, &state, &version, returned).0,
+        "CERTIFIED" => match send(m, &state, &version, BeadEventKind::Deliver).0 {
+            APPLIED => match state_version(m, id) {
+                Some((st, ver, _)) if st == "IN_DELIVERY" => send(m, &st, &ver, returned).0,
+                _ => CANNOT_TELL,
+            },
+            rc => rc,
+        },
+        other => return refuse(format!("{other} is terminal — a finished bead is not reopened")),
+    };
+    match rc {
+        APPLIED => Answer::code(APPLIED),
+        REFUSED => refuse("the row moved under the reopen (lost the compare-and-swap)".into()),
+        rc => Answer::code(rc),
+    }
+}
+
 /// The bd half a verb needs: an epic's own close. Behind a trait so the compositions below
 /// are unit-testable without bd.
 pub trait Bd {
@@ -578,6 +634,40 @@ pub trait Bd {
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String>;
     /// The subset of `ids` that bd has a bead for, in any status.
     fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String>;
+    /// The store half of a reopen: bd status open, no assignee, no submitted label — so a bead
+    /// the machine handed back reads open wherever bd is still read (sp-swh8b8). Idempotent.
+    fn reopen(&mut self, id: &str) -> Result<(), String>;
+}
+
+/// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
+/// [`close`]: the row records the transition its state implies FIRST (see the caller verb's
+/// table), and only then is the store reopened, so bd never says open while the row says done.
+/// A bead with no row (an alert, an ask — rowless, bd is its only state) is reopened in the
+/// store alone. Terminal, refused or unreadable: nothing is written to the store.
+pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let Some(id) = args.first().filter(|s| !s.is_empty()) else {
+        return usage("reopen <bead-id> [cause] [actor]");
+    };
+    let cause = args.get(1).cloned().unwrap_or_default();
+    let actor = actor_or(args.get(2), "reopen");
+    match show(m, id) {
+        Err(NO_ROW) => {}
+        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc reopen: {id}: the lifecycle row is unreadable — nothing reopened\n"), ..Default::default() },
+        Ok(_) => {
+            let a = reopen(m, id, &cause, &actor);
+            if a.code != APPLIED {
+                return a;
+            }
+        }
+    }
+    match bd.reopen(id) {
+        Ok(()) => Answer::code(APPLIED),
+        Err(e) => Answer {
+            code: CANNOT_TELL,
+            stderr: format!("spira-lc reopen: {id}: the row is handed back but the store reopen failed: {}\n", e.trim()),
+            ..Default::default()
+        },
+    }
 }
 
 /// The terminal event a bead closed in bd with `reason` earns on its lifecycle row:

@@ -160,6 +160,32 @@ pub fn close(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -
     close_with(&lc_bin(), id, reason, actor, superseded_by)
 }
 
+/// Return a bead to its builder through the lifecycle machine (`spira-lc reopen`, sp-swh8b8):
+/// the row records the event its own state implies. No row (exit 1) is nothing to reopen and is
+/// `Ok`; a terminal row (3) or an unreachable machine (2) is an error. Every Rust reopener
+/// calls this rather than handing bd a `reopen` (lifecycle-guard's `bd-reopen-rust`).
+pub fn reopen_with(bin: &str, id: &str, cause: &str, actor: &str) -> Result<(), String> {
+    let out = Command::new("timeout")
+        .args([LC_TIMEOUT_SECS, bin, "reopen", id, cause, actor])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    match out.status.code() {
+        Some(0 | 1) => Ok(()),
+        code => Err(format!(
+            "{bin} reopen {id} exited {}: {}{}",
+            code.map_or("signal".into(), |c| c.to_string()),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+    }
+}
+
+/// [`reopen_with`] through the configured `spira-lc`.
+pub fn reopen(id: &str, cause: &str, actor: &str) -> Result<(), String> {
+    reopen_with(&lc_bin(), id, cause, actor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +259,17 @@ mod tests {
         assert!(calls.starts_with("close sp-a --reason-file - --actor operator --superseded-by sp-b\ntwo\nlines"), "{calls}");
         assert!(close_with(&refused, "sp-a", "r", "operator", None).unwrap_err().contains("exited 3"));
     }
-}
 
+    #[test]
+    fn reopen_hands_spira_lc_the_cause_and_actor_and_fails_only_on_a_refusal_or_silence() {
+        let t = testkit::TempDir::new("lcreopen");
+        assert_eq!(reopen_with(&stub(t.path(), 0), "sp-a", "eject", "harness"), Ok(()));
+        assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "reopen sp-a eject harness\n");
+        let t1 = testkit::TempDir::new("lcreopen-norow");
+        assert_eq!(reopen_with(&stub(t1.path(), 1), "sp-a", "c", "a"), Ok(()), "no row: nothing to reopen");
+        for exit in [2, 3] {
+            let tn = testkit::TempDir::new("lcreopen-bad");
+            assert!(reopen_with(&stub(tn.path(), exit), "sp-a", "c", "a").unwrap_err().contains(&format!("exited {exit}")));
+        }
+    }
+}

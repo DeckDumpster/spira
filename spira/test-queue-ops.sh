@@ -200,7 +200,8 @@ out="$(run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 for certified, unbatched bead" || bad "exit 0" "rc=$rc out=$out"
 want "reports the certified-unbatched case" "certified, not yet batched" "$out"
 is   "the withdrawn bead is returned to REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej-cert)"
-want "bd reopen called" "reopen sp-ej-cert" "$(cat "$BD_LOG")"
+# The reopen door (sp-swh8b8) moves the row, then reopens the store: bd sees an update, never a raw reopen.
+want "the store is reopened after the row" "update sp-ej-cert --status open" "$(cat "$BD_LOG")"
 
 echo
 echo "eject: --suites reaches the bead's comment, and the bead is returned to REWORK:"
@@ -513,8 +514,8 @@ is "real bd: the ejected bead is REWORK on spira-lc" "REWORK" "$(lcfix_state sp-
 
 bead_st="$(field sp-ej01 status)"
 [ "$bead_st" = "closed" ] && ok "real bd: bd status is left unmoved by eject" || bad "real bd: bd status unmoved" "status=$bead_st"
-assignee="$(field sp-ej01 assignee)"
-[ -z "$assignee" ] && ok "real bd: assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
+# (No assignee check: a batch eject hands the bead back on its lifecycle row; bd's assignee is
+# content no claim reads, and no reopen path writes it any more — sp-swh8b8.)
 comment_out="$(B comments sp-ej01 2>/dev/null || true)"
 [ -n "$comment_out" ] && ok "real bd: comment posted to bead" || bad "real bd: comment posted" "no output from bd comments"
 
