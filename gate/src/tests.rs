@@ -3435,6 +3435,18 @@ fn phase_caps_sum_under_the_deadline() {
 }
 
 #[test]
+fn a_phase_killed_at_its_cap_is_not_a_deadline() {
+    use crate::engine::killed_verdict;
+    let ph = |n: &str, s: u64| vec![("gate".to_string(), 8), (n.to_string(), s)];
+    let at_cap = killed_verdict(&ph("base-fences", 90), 300, 100, "c", "o");
+    assert_eq!(at_cap.reason, "phase-cap");
+    assert!(at_cap.msg.contains("base-fences") && at_cap.msg.contains("90s cap"), "{}", at_cap.msg);
+    assert_eq!(killed_verdict(&ph("base-fences", 40), 300, 300, "c", "o").reason, "deadline");
+    assert_eq!(killed_verdict(&ph("base-fences", 90), 100, 100, "c", "o").reason, "deadline");
+    assert_eq!(killed_verdict(&ph("reentry", 500), 300, 100, "c", "o").reason, "deadline");
+}
+
+#[test]
 fn a_gate_with_no_declared_deadline_refuses() {
     let f = Fake::new();
     f.set_var("SPIRA_GATE_DEADLINE", "");
