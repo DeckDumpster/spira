@@ -379,6 +379,20 @@ impl World for Real {
         let _ = std::fs::create_dir_all(p);
     }
 
+    fn queue_lock_held(&self, repo_name: &str) -> bool {
+        use std::os::unix::io::AsRawFd;
+        let dir = match std::env::var("SPIRA_QUEUE_DIR") {
+            Ok(d) if !d.is_empty() => PathBuf::from(d),
+            _ => match std::env::var("SPIRA_RUN") {
+                Ok(r) => PathBuf::from(r).join("queue"),
+                Err(_) => return false,
+            },
+        };
+        let Ok(f) = std::fs::OpenOptions::new().read(true).open(dir.join(repo_name).join("lock")) else { return false };
+        // SAFETY: flock on a descriptor we own; released when `f` drops.
+        let got = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+        !got
+    }
     fn stamp_read(&self, key: &str) -> Option<String> {
         // SPIRA_RUN is a registered key; a resolution failure here is real and must refuse
         // loudly rather than be read as "no stamp dir configured."
