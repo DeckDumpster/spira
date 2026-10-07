@@ -23,16 +23,6 @@ fn extract_bead_id_reads_past_a_warning_prefix() {
     assert_eq!(extract_bead_id("Created issue: sp-ab12.3"), Some("sp-ab12".into()));
 }
 
-#[test]
-fn bead_finished_is_closed_or_submitted_and_unreadable_is_not() {
-    assert!(bead_finished(r#"[{"id":"sp-1","status":"closed"}]"#));
-    assert!(bead_finished(r#"{"id":"sp-1","status":"open","labels":["spira-submitted"]}"#));
-    assert!(bead_finished("warning: skew\n[{\"status\":\"closed\"}]"));
-    assert!(!bead_finished(r#"[{"id":"sp-1","status":"open","labels":["plan"]}]"#));
-    assert!(!bead_finished("Error: no such bead"));
-    assert!(!bead_finished("[]"));
-}
-
 /// Local acceptance on d40bbb589: under the lifecycle cutover the model finishes with `work
 /// submit` and never closes the bead, so a bd-only stage 4 read "not closed" while the
 /// history already said SUBMITTED.
@@ -324,10 +314,6 @@ impl Fake {
             ("bd", ["-C", _, "ready", ..]) => {
                 let json = format!("[{}]", self.probes.borrow().iter().map(|i| format!("{{\"id\":\"{i}\"}}")).collect::<Vec<_>>().join(","));
                 Out { rc: 0, text: format!("{json}\nwarning: schema skew\n"), out: json }
-            }
-            ("bd", ["-C", _, "show", _, "--json"]) => {
-                let json = r#"[{"status":"open","labels":["spira-submitted"]}]"#;
-                Out { rc: 0, text: format!("{json}\nwarning: schema skew\n"), out: json.into() }
             }
             ("bd", ["-C", _, "list", "--all", "--json"]) => {
                 if self.bead_count_fails {

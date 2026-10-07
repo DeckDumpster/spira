@@ -264,13 +264,9 @@ impl Run<'_> {
         unit_set(&self.systemctl(&["list-unit-files", "--no-legend"]).out)
     }
 
-    /// The model's part is over: the bead store says closed/submitted, or (the lifecycle
-    /// cutover: a model finishes with `work submit` and never closes the bead itself) its
-    /// lifecycle history has reached SUBMITTED.
+    /// The model's part is over: its lifecycle history has reached SUBMITTED (a model finishes
+    /// with `work submit` and never closes the bead itself).
     fn bead_finished(&self, id: &str) -> bool {
-        if bead_finished(&self.h.run(&self.bd(&["show", id, "--json"])).out) {
-            return true;
-        }
         let hist = self.h.run(&self.tool("spira-lc").args(["history", id]));
         hist.rc == 0 && lifecycle_submitted(&lifecycle_states(&hist.out))
     }
