@@ -836,6 +836,20 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
 
 const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
 
+/// An ask citing a bead no lifecycle row names is refused by name, never delivered.
+fn uncited_bead(args: &[String], conn: &Conn) -> Option<(i32, String)> {
+    if args.iter().any(|a| a == "--dry-run") {
+        return None;
+    }
+    let at = args.iter().position(|a| a == "--bead")?;
+    let bead = args.get(at + 1)?;
+    match rows::fetch_bead(conn, bead) {
+        Ok(Some(_)) => None,
+        Ok(None) => Some((REFUSED, format!("refused: work ask --bead {bead}: no such bead; nothing was sent"))),
+        Err(e) => Some((CANNOT_TELL, format!("cannot tell: whether {bead} exists ({e:?}); nothing was sent"))),
+    }
+}
+
 fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, String) {
     let call = split_reserved(rest);
     let steps = match plan(verb, bound, &call) {
@@ -857,6 +871,9 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 crate::bd::tool(&prog, &args, stdin.as_deref(), actor, TOOL_SECS)
             }
             Step::Ask { args, stdin, classify_as } => {
+                if let Some(refusal) = uncited_bead(&args, conn) {
+                    return (refusal.0, out + &refusal.1);
+                }
                 let prog = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail"));
                 crate::bd::tool_env_noisy(&prog, &args, Some(&stdin), actor, TOOL_SECS, &[("BEAD_ID", &classify_as)])
             }
