@@ -66,7 +66,8 @@ W="$T/world"
 t0="$(date +%s%N)"
 out="$(SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 sim_world up "$W" 2>&1)"; rc=$?
 ms=$(( ($(date +%s%N) - t0) / 1000000 ))
-wantrc "up with SPIRA_SIM_RELEASE succeeds" 0 "$rc" || printf '# %s\n' "$out"
+wantrc "up with SPIRA_SIM_RELEASE succeeds" 0 "$rc"
+[ "$rc" = 0 ] || printf '%s\n' "$out" | sed 's/^/# up: /'
 printf '# world up took %d ms\n' "$ms"
 [ "$ms" -lt 30000 ] && ok "up took under 30 s ($ms ms)" || bad "up took under 30 s" "$ms ms"
 is     "up called no cargo" "" "$(cat "$T/cargo.log")"
@@ -82,7 +83,8 @@ fi
     || bad "the world's config was written by the release's spira-config" "no $W/config/sim.toml"
 
 out="$(sim_world down "$W" 2>&1)"; rc=$?
-wantrc "down succeeds" 0 "$rc" || printf '# %s\n' "$out"
+wantrc "down succeeds" 0 "$rc"
+[ "$rc" = 0 ] || printf '%s\n' "$out" | sed 's/^/# down: /'
 [ ! -e "$W" ] && ok "down removed the world" || bad "down removed the world" "$W exists"
 [ -n "$fx" ] && [ ! -e "$fx" ] && ok "down removed the Dolt fixture" || bad "down removed the Dolt fixture" "$fx exists"
 [ -x "$SIM" ] && ok "down left the prebuilt release alone" || bad "down left the prebuilt release alone" "$SIM gone"
