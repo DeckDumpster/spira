@@ -209,7 +209,7 @@ lcfix_seed sp-ej-suites CERTIFIED "$TIP03"
 out="$(run eject sp-ej-suites --reason 'suite reds' --suites 'test-x.sh,test-y.sh')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with --suites" || bad "exit 0 with --suites" "rc=$rc out=$out"
 is   "REWORK on spira-lc with --suites" "REWORK" "$(lcfix_state sp-ej-suites)"
-want "the reopen is recorded as a judged eject" "eject-red" "$(cat "$BD_LOG")"
+want "the reopen is recorded as a judged eject" "eject-red" "$(lcfix_fact_causes sp-ej-suites reopen)"
 want "the comment names the suites recertification must force" \
     "Recertification will force these suites regardless of SPIRA_CERTIFY_SUITES: test-x.sh,test-y.sh" "$(cat "$BD_LOG")"
 

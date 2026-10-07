@@ -174,6 +174,7 @@ FAKESCRIPT
 chmod +x "$TMP/dolt"
 
 mkdir -p "$TMP/run" "$TMP/doctor-home"
+lc_facts_stub "$TMP/lc"
 touch "$TMP/run/cockpit.env"
 
 run_doctor() {
@@ -183,7 +184,7 @@ run_doctor() {
         SPIRA_DB="$DB"
     env -i \
         SPIRA_TOML="$SPIRA_TOML" \
-        PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TMP/lc:$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/doctor-home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$FIXTURE/spira" \
