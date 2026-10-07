@@ -114,7 +114,9 @@ BD_OK="$TMP/bin/bd-ok"
 printf '#!/usr/bin/env bash\nprintf "Closed.\\n"\nexit 0\n' > "$BD_OK"
 chmod +x "$BD_OK"
 
-# COCKPIT_DB/SPIRA_DB unchanged from run_resolve's tl_config declaration above.
+# COCKPIT_DB/SPIRA_DB unchanged from run_resolve's tl_config declaration above; the close goes
+# through spira-lc (sp-3fue0j), so its stand-in closes through this case's healthy bd.
+lc_close_stub "$TMP/lc" "$BD_OK" "$DB"
 stdout_out=$(
   BD_BIN="$BD_OK" \
   resolve sp-test-id "close reason" 2>/dev/null
