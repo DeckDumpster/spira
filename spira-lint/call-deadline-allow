@@ -8,7 +8,6 @@
 1 batcher-cut/src/main.rs
 5 batcher-cut/src/vm.rs
 1 bead/src/bin/bdq.rs
-1 bead/src/claimdesc.rs
 5 bead/src/main.rs
 4 broker/src/execute.rs
 2 broker/src/read.rs
@@ -33,10 +32,8 @@
 1 gate/src/main.rs
 11 gate/src/real.rs
 3 gh-intake/src/real.rs
-1 groomer/src/cmds.rs
 4 groomer/src/deadlocked.rs
-4 groomer/src/seam.rs
-1 groomer/src/sweep.rs
+5 groomer/src/seam.rs
 1 groomer/src/unpoison.rs
 3 incident/src/main.rs
 1 incident/src/real.rs
@@ -57,7 +54,7 @@
 6 queue/src/ops/helpers.rs
 7 queue/src/real.rs
 2 rebase-stale/src/resolve.rs
-4 rebase-stale/src/seam.rs
+2 rebase-stale/src/seam.rs
 2 reconciler-alert/src/io.rs
 4 reconciler-flow/src/io.rs
 1 reconciler-flow/src/main.rs
