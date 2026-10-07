@@ -239,6 +239,7 @@ dependencies = [
  "bead",
  "libc",
  "regex",
+ "serde_json",
  "spira-config",
  "testkit",
 ]
