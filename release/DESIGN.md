@@ -198,6 +198,14 @@ Edits are made on the TOML value, not the typed schema this binary links, which 
 the other release's keys. No instant satisfies both schemas when a release both adds and drops
 a key; the exposure is the flip, not the deploy.
 
+The binary running `verify` or `activate` is the new release's, so it resolves its own config
+from the layers with the whole delta already applied (a scratch copy; the files in force are
+untouched until step 2) — otherwise its registry refuses the keys `activate` is about to write.
+
+After a successful flip `activate` runs the new release's own `bin/unit-ensure`, which installs
+and enables the units the release adds (`switch` only rewrites units already on disk). Its
+failure is an activation error, never a silent miss; the release stays active.
+
 ### Hotfix: activate an unlanded commit
 
 `activate <sha> --hotfix "<reason>"` activates as above and records

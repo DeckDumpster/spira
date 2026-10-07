@@ -66,6 +66,8 @@ struct FakeGit {
     extra: Vec<(String, String, bool)>,
     /// Add a `spira-config` binary crate to the workspace, for a release that validates config.
     validator: bool,
+    /// Add a `unit-ensure` binary crate to the workspace, for a release that installs its own units.
+    unit_ensure: bool,
     /// A config delta that only the release built from this sha carries.
     delta_for: Option<(String, String)>,
     ancestors: RefCell<BTreeSet<(String, String)>>,
@@ -86,7 +88,15 @@ impl Git for FakeGit {
         }
     }
     fn archive(&self, _repo: &Path, sha: &str, into: &Path) -> Result<(), String> {
-        let members = if self.validator { "[\"tool\", \"spira-config\"]" } else { "[\"tool\"]" };
+        let members = match (self.validator, self.unit_ensure) {
+            (true, _) => "[\"tool\", \"spira-config\"]",
+            (false, true) => "[\"tool\", \"unit-ensure\"]",
+            (false, false) => "[\"tool\"]",
+        };
+        if self.unit_ensure {
+            file(&into.join("unit-ensure/Cargo.toml"), "[package]\nname = \"unit-ensure\"\nversion = \"0.0.0\"\n");
+            file(&into.join("unit-ensure/src/main.rs"), "fn main() {}\n");
+        }
         file(&into.join("Cargo.toml"), &format!("[workspace]\nmembers = {members}\n"));
         if self.validator {
             file(&into.join("spira-config/Cargo.toml"), "[package]\nname = \"spira-config\"\nversion = \"0.0.0\"\n");
@@ -1797,4 +1807,47 @@ fn activate_waits_for_a_running_oneshot_to_exit() {
     activate::activate(&c, B, None).unwrap();
     assert_eq!(sc.state("spira-job-prod.service").unwrap().active, "inactive");
     assert!(sc.exits_after.borrow()["spira-job-prod.service"] == 0, "activation polled the oneshot until it exited");
+}
+
+// ---------------------------------------------------------------- activation installs new units
+
+fn build_with_unit_ensure(w: &World, sha: &str, body: String) {
+    let cargo = FakeCargo { bins: vec!["tool", "unit-ensure"], bodies: vec![("unit-ensure", body)] };
+    w.build_with(sha, &cargo, vec![]).unwrap();
+}
+
+#[test]
+fn activate_runs_the_new_releases_unit_ensure_so_units_it_adds_get_installed() {
+    let w = World::with_git(FakeGit { unit_ensure: true, ..Default::default() });
+    let marker = w.sb.p().join("ensured");
+    build_with_unit_ensure(&w, B, format!("#!/bin/sh\necho \"$SPIRA_HOME $SPIRA_RELEASE\" > {}\n", marker.display()));
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    let rel = w.rel(B).display().to_string();
+    assert_eq!(fs::read_to_string(&marker).unwrap().trim(), format!("{rel}/spira {rel}"), "run from the new release, not the one the caller was on");
+}
+
+#[test]
+fn a_failing_unit_ensure_is_a_loud_activation_error_and_the_release_stays_active() {
+    let w = World::with_git(FakeGit { unit_ensure: true, ..Default::default() });
+    build_with_unit_ensure(&w, B, "#!/bin/sh\necho 'cannot render spira-new-prod.timer' >&2\nexit 1\n".into());
+    let sc = FakeSystemctl::new(w.units());
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains("unit-ensure could not install its new units"), "{e}");
+    assert_eq!(w.current().as_deref(), Some(B));
+}
+
+#[test]
+fn config_for_resolution_has_the_delta_applied_without_touching_the_files_in_force() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), before);
+    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    let (dir, staged) = config_delta::staged_for_resolution(&spec, Some(&w.cfg.releases), B).unwrap().expect("the release has a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("new_key = 300") && !text.contains("old_key"), "{text}");
+    assert_eq!(cfg_text(&w), before);
+    let _ = fs::remove_dir_all(dir);
+    assert!(config_delta::staged_for_resolution(&spec, Some(&w.cfg.releases), A).unwrap().is_none(), "no release, no delta, nothing to stage");
 }

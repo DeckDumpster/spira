@@ -157,36 +157,11 @@ pub struct Txn {
     pub undo: Delta,
 }
 
-/// Resolve `delta` against the layers `$SPIRA_TOML` names, and have `rel`'s own `spira-config`
-/// validate the result. Nothing on disk changes. An added key already present in any layer
-/// is the operator's and is left as it is.
-pub fn scratch_dir() -> Result<PathBuf, String> {
-    let d = std::env::temp_dir().join(format!(
-        "release-config-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-    ));
-    fs::create_dir_all(&d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
-    Ok(d)
-}
-
-pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta) -> Result<Txn, String> {
-    let spec = cfg.toml_spec().ok_or("this release declares config changes but SPIRA_TOML names no file to apply them to")?;
-    let files: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
-    if files.is_empty() {
-        return Err("this release declares config changes but SPIRA_TOML names no file to apply them to".into());
-    }
-    let (mut modes, mut original_text, mut original) = (Vec::new(), Vec::new(), Vec::new());
-    for f in &files {
-        let text = fs::read_to_string(f).map_err(|e| format!("cannot read {}: {e}", f.display()))?;
-        let Value::Table(t) = text.parse::<Value>().map_err(|e| format!("{}: {e}", f.display()))? else {
-            return Err(format!("{}: not a TOML table", f.display()));
-        };
-        modes.push(fs::metadata(f).map(|m| m.permissions().mode() & 0o7777).unwrap_or(0o644));
-        original_text.push(text);
-        original.push(t);
-    }
-    let mut pre = original.clone();
+/// `delta` applied to `original`: the tables with the added keys (an added key already in
+/// any layer is the operator's and stays), then with the dropped keys also removed, and what
+/// undoes both.
+fn apply(original: &[Table], delta: &Delta) -> Result<(Vec<Table>, Vec<Table>, Delta), String> {
+    let mut pre = original.to_vec();
     let mut undo = Delta::default();
     for (k, v) in &delta.added {
         if pre.iter().any(|t| get(t, k).is_some()) {
@@ -207,6 +182,71 @@ pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta) -> Result<Txn, String> {
             undo.added.insert(k.clone(), v);
         }
     }
+    Ok((pre, post, undo))
+}
+
+fn read_layers(spec: &str) -> Result<(Vec<PathBuf>, Vec<u32>, Vec<String>, Vec<Table>), String> {
+    let files: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
+    if files.is_empty() {
+        return Err("this release declares config changes but SPIRA_TOML names no file to apply them to".into());
+    }
+    let (mut modes, mut original_text, mut original) = (Vec::new(), Vec::new(), Vec::new());
+    for f in &files {
+        let text = fs::read_to_string(f).map_err(|e| format!("cannot read {}: {e}", f.display()))?;
+        let Value::Table(t) = text.parse::<Value>().map_err(|e| format!("{}: {e}", f.display()))? else {
+            return Err(format!("{}: not a TOML table", f.display()));
+        };
+        modes.push(fs::metadata(f).map(|m| m.permissions().mode() & 0o7777).unwrap_or(0o644));
+        original_text.push(text);
+        original.push(t);
+    }
+    Ok((files, modes, original_text, original))
+}
+
+/// The layers `spec` names with the release's whole delta applied, staged in a scratch dir:
+/// what a binary of `sha` must resolve its config from BEFORE `activate` has written the
+/// delta, since that binary's registry requires the keys the delta adds and its schema
+/// refuses the keys the delta drops. `None` when the release declares no delta, or the
+/// releases directory (`releases` flag, else `spira.releases` in the layers) cannot be told —
+/// the caller's plain resolution then reports whatever is wrong.
+pub fn staged_for_resolution(spec: &str, releases: Option<&Path>, sha: &str) -> Result<Option<(PathBuf, String)>, String> {
+    let (_, _, _, original) = read_layers(spec)?;
+    let from_layers = original.iter().rev().find_map(|t| get(t, "spira.releases").and_then(Value::as_str)).filter(|s| !s.is_empty()).map(PathBuf::from);
+    let Some(releases) = releases.map(Path::to_path_buf).or(from_layers) else { return Ok(None) };
+    let rel = releases.join(sha);
+    let Some(delta) = load(&rel)? else { return Ok(None) };
+    let (_, post, _) = apply(&original, &delta)?;
+    let dir = scratch_dir()?;
+    let mut staged = Vec::new();
+    for (i, t) in post.iter().enumerate() {
+        let p = dir.join(format!("layer{i}.toml"));
+        let text = toml::to_string_pretty(&Value::Table(t.clone())).map_err(|e| e.to_string())?;
+        if let Err(e) = fs::write(&p, text) {
+            let _ = fs::remove_dir_all(&dir);
+            return Err(format!("cannot write {}: {e}", p.display()));
+        }
+        staged.push(p.display().to_string());
+    }
+    Ok(Some((dir, staged.join(":"))))
+}
+
+/// Resolve `delta` against the layers `$SPIRA_TOML` names, and have `rel`'s own `spira-config`
+/// validate the result. Nothing on disk changes. An added key already present in any layer
+/// is the operator's and is left as it is.
+pub fn scratch_dir() -> Result<PathBuf, String> {
+    let d = std::env::temp_dir().join(format!(
+        "release-config-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    fs::create_dir_all(&d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
+    Ok(d)
+}
+
+pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta) -> Result<Txn, String> {
+    let spec = cfg.toml_spec().ok_or("this release declares config changes but SPIRA_TOML names no file to apply them to")?;
+    let (files, modes, original_text, original) = read_layers(&spec)?;
+    let (pre, post, undo) = apply(&original, delta)?;
     let txn = Txn { files, modes, original_text, original, pre, post, undo };
     txn.validate(cfg, rel)?;
     Ok(txn)
