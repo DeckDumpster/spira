@@ -34,6 +34,16 @@ fn is_own(path: &str) -> bool {
     path == OWN_SOURCE || path == DENY_FILE
 }
 
+/// The release's vendored third-party binaries (`vendor/bin/**`: the aerc build-tarball.sh
+/// builds into a release tree, never tracked in git). Their bytes are someone else's — an
+/// upstream's test addresses and maintainers' mail — not this harness's history, and no
+/// edit here could change them; the fast tier scans a release tree, where they sit.
+const VENDORED: &str = "vendor/bin/";
+
+fn is_vendored(path: &str) -> bool {
+    path.starts_with(VENDORED)
+}
+
 /// The deny file's lines, `#`-comment stripped, blank lines dropped — extra ERE fragments
 /// the operator adds to the structural patterns.
 pub fn deny_fragments(text: &str) -> Vec<String> {
@@ -96,7 +106,7 @@ impl Rule for Inventory {
             .map_err(|reason| LintError::BadAllow { file: DENY_FILE.to_string(), line: 0, reason })?;
         let mut out = Vec::new();
         for e in files {
-            if is_own(&e.path) {
+            if is_own(&e.path) || is_vendored(&e.path) {
                 continue;
             }
             let Some(content) = tree.content(e) else { continue };
@@ -187,6 +197,18 @@ mod tests {
         );
         t.git(&["add", "."]);
         assert!(run(&t).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_vendored_binary_is_never_flagged_but_the_same_bytes_elsewhere_are() {
+        let t = TempDir::new("inv-vendor");
+        t.git_init();
+        t.write("vendor/bin/aerc", "maintainer: aerc-devel@lists.sr.ht\n");
+        t.write("vendor/binary-notes.txt", "maintainer: aerc-devel@lists.sr.ht\n");
+        t.git(&["add", "-f", "."]);
+        let got = run(&t).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("vendor/binary-notes.txt"), "{got:?}");
     }
 
     #[test]

@@ -736,7 +736,9 @@ this way).
 
 **Scope.** The whole walk (tracked and untracked-not-ignored) minus this rule's own source
 (`spira-lint/src/rules/inventory.rs`, which spells out every pattern) and `spira/
-inventory-deny`. The exemption is applied inside the check, not in `applies_to`, so an empty
+inventory-deny`, and the release's vendored third-party binaries under `vendor/bin/` (the
+aerc a release tree carries; its bytes are an upstream's, and the fast tier scans a release
+tree). The exemption is applied inside the check, not in `applies_to`, so an empty
 *repository* refuses while an all-exempt one does not read as one — matching the bash
 original's plain `${#tracked[@]} -gt 0` check.
 
