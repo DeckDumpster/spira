@@ -188,8 +188,8 @@ impl Steps for ProcessSteps {
         let toml = config.join("lc.toml");
         let credential = config.join("lc-credential");
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
-        self.config_set(release, &toml, "SPIRA_LC_PASSWORD_FILE", &credential.display().to_string())?;
-        self.config_set(release, &toml, "SPIRA_LC_SOCKET", "")?;
+        self.config_set(release, &toml, "spira.lc_password_file", &credential.display().to_string())?;
+        self.config_set(release, &toml, "spira.lc_socket", "")?;
         let lc = |verb: &str, arg: PathBuf| run(lc_command(release, config, &port).arg(verb).arg(arg), CALL_DEADLINE).map(|_| ());
         lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
         lc("admin-migrate", lifecycle.join("migrations"))
@@ -309,15 +309,13 @@ pub fn probe_command(sim: &Path, world: &Path) -> String {
     format!("{} probe {}", q(sim), q(world))
 }
 
+/// The world's config settings, as `spira-config set` pairs. `spira-config set`
+/// validates the whole document after every write, so the repository section goes in as
+/// one JSON table: set field by field, `repo.sim.path` alone is refused (no `mode` yet).
+/// `spira.lifecycle_enforce` is retired (sp-v62vn) and no longer set.
 pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
-    let kv = |k: &str, v: &str| (k.to_string(), v.to_string());
-    vec![
-        kv("spira.lifecycle_enforce", "true"),
-        kv("repo.sim.path", &work.display().to_string()),
-        kv("repo.sim.mode", "queue.local"),
-        kv("repo.sim.base", LANDING_BASE),
-        kv("spira.gh", &gh.display().to_string()),
-    ]
+    let repo = serde_json::json!({ "path": work.display().to_string(), "mode": "queue.local", "base": LANDING_BASE });
+    vec![("repo.sim".to_string(), repo.to_string()), ("spira.gh".to_string(), gh.display().to_string())]
 }
 
 /// Where the world's Dolt fixture lives. Nested inside testenv, `TESTDB_ROOT` is the

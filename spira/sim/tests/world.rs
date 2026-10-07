@@ -59,7 +59,9 @@ fn up_then_down_leaves_nothing_behind() {
     assert_eq!(rev("local/main"), rev("origin/main"));
     assert_eq!(rev("local/main"), rev("main"));
     let cfg = std::fs::read_to_string(dir.join("config/sim.toml")).unwrap();
-    assert!(cfg.contains("repo.sim.mode=queue.local") && cfg.contains("spira.lifecycle_enforce=true"));
+    assert!(cfg.contains(r#""mode":"queue.local""#) && cfg.contains(r#""base":"local/main""#), "{cfg}");
+    assert!(cfg.contains(&format!(r#""path":"{}""#, work.display())), "{cfg}");
+    assert!(!cfg.contains("lifecycle_enforce"), "{cfg}");
     assert!(cfg.contains(&format!("spira.gh={}", dir.join("bin/gh").display())));
     let env = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
     assert!(env.contains("SIM_GH_DIR="));
