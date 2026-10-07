@@ -53,7 +53,8 @@ pub trait RoundRunner {
 pub trait RoundOps {
     /// S's suspect order among `members` (covers-touching first).
     fn suspects(&self, suite: &str, members: &[Id]) -> Vec<Id>;
-    fn eject(&mut self, member: &Member, suites: &[String]);
+    /// `owner`: the member's own tip owns the red; a stacked dependent leaves as collateral.
+    fn eject(&mut self, member: &Member, suites: &[String], owner: bool);
     /// Reset the round tree to the base and merge `survivors`; the members that actually
     /// merged (a fresh conflict drops one).
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String>;
@@ -347,7 +348,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         for m in &members {
             if let Some(s) = out.get(&m.id) {
-                ops.eject(m, s);
+                ops.eject(m, s, d.owners.contains_key(&m.id));
             }
         }
         let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
@@ -517,6 +518,7 @@ pub(crate) mod tests {
     pub struct Ops {
         pub touch: BTreeMap<String, Vec<String>>,
         pub ejected: Vec<(String, Vec<String>)>,
+        pub owner_flags: Vec<(String, bool)>,
         pub rebuilt: Vec<Vec<String>>,
         pub incidents: Vec<(String, Vec<String>)>,
         pub can_fix: bool,
@@ -537,8 +539,9 @@ pub(crate) mod tests {
             v.extend(members.iter().filter(|m| !t.contains(m)).cloned());
             v
         }
-        fn eject(&mut self, member: &Member, suites: &[String]) {
+        fn eject(&mut self, member: &Member, suites: &[String], owner: bool) {
             self.ejected.push((member.id.clone(), suites.to_vec()));
+            self.owner_flags.push((member.id.clone(), owner));
         }
         fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
             self.rebuilt.push(survivors.iter().map(|m| m.id.clone()).collect());
@@ -714,6 +717,7 @@ pub(crate) mod tests {
         let ids: Vec<&str> = ops.ejected.iter().map(|(i, _)| i.as_str()).collect();
         assert_eq!(ids, ["m1", "m2"]);
         assert_eq!(ops.rebuilt, vec![vec!["m3".to_string()]]);
+        assert_eq!(ops.owner_flags, [("m1".to_string(), true), ("m2".to_string(), false)], "the owner keeps its charge; the dependent is collateral");
     }
 
     #[test]

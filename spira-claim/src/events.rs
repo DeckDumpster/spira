@@ -111,7 +111,7 @@ pub fn classify(cause: &str) -> ReturnClass {
         }
         // A batch gate failure attributed to this bead (landing.sh CHECK 6): judged.
         "batch-eject" => return ReturnClass::Judged,
-        "eject" | "queue-eject" | "ejected" | "eviction-race" | "slain" | "closed-never-landed-batch-ready" => {
+        "eject" | "queue-eject" | "queue-eject-collateral" | "ejected" | "eviction-race" | "slain" | "closed-never-landed-batch-ready" => {
             return ReturnClass::HarnessReturn
         }
         _ => {}
@@ -369,6 +369,14 @@ mod tests {
         let closes = after.iter().filter(|r| r.event_type == "closed").count() as i64;
         let exempt = after.iter().filter(|r| r.event_type == "requeued" && is_legacy_exempt(&v(r))).count() as i64;
         (claims - closes - exempt).max(0) as u32
+    }
+
+    #[test]
+    fn a_collateral_ejection_is_free_and_an_owners_is_charged() {
+        let free = fold(B, &rows(&[("claimed", ""), ("reopen", "queue-eject-collateral")]));
+        assert_eq!((free.attempts, free.requeues), (0, 0));
+        let owned = fold(B, &rows(&[("claimed", ""), ("reopen", "queue-eject-local")]));
+        assert_eq!((owned.attempts, owned.requeues), (1, 1));
     }
 
     #[test]
@@ -752,6 +760,8 @@ mod tests {
             ("base_withdrawn: sp-a abc123", RebaseReturn),
             ("eject", HarnessReturn),
             ("queue-eject", HarnessReturn),
+            ("queue-eject-collateral", HarnessReturn),
+            ("queue-eject-local", Judged),
             ("ejected", HarnessReturn),
             ("eviction-race", HarnessReturn),
             ("slain", HarnessReturn),

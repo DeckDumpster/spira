@@ -1056,6 +1056,8 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
     }
 }
 
+pub const EJECT_COLLATERAL_CAUSE: &str = "queue-eject-collateral";
+
 /// Eject one member from the round before it ever reaches CI: reopen its bead and withdraw its
 /// certification on the lifecycle machine ([`lc_withdraw`]) with a note naming
 /// every suite it turned red, with a distinct cause so census can tell a local ejection from a CI one. `queue-eject-local` is a distinct reopen cause from the retired verdict.sh's `queue-eject`,
@@ -1064,14 +1066,16 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
 /// The suites also go to bead_reopen's fourth argument, which writes the `<id>.ejected`
 /// sidecar, as the retired verdict.sh's own ejection did (sp-p3srm): the gate's re-entry check reads it
 /// first.
-pub fn eject_member(env: &Env, repo_name: &str, id: &str, suites: &[String], first_fails: &[(String, String)]) {
+pub fn eject_member(env: &Env, repo_name: &str, id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool) {
     let suites_csv = suites.join(",");
     let note = format!(
-        "Ejected by the merge queue's local attribution (pre-PR): spira/{id} turned red on: {}.{}",
+        "Ejected by the merge queue's local attribution (pre-PR): spira/{id} {} red on: {}.{}",
+        if owner { "turned" } else { "is stacked on a member that turned" },
         suites.join(", "),
         first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
-    let _ = lib_call(env, "bead_reopen", [id, "queue-eject-local", note.as_str(), suites_csv.as_str()]);
+    let cause = if owner { "queue-eject-local" } else { EJECT_COLLATERAL_CAUSE };
+    let _ = lib_call(env, "bead_reopen", [id, cause, note.as_str(), suites_csv.as_str()]);
     lc_withdraw(env, id);
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(env.run.join("landing.log")) {
         use std::io::Write;
@@ -2274,7 +2278,7 @@ mod eject_tests {
         let rec = |f: &str| format!("{f}() {{ (IFS=$'\\t'; printf '{f}\\t%s\\n' \"$*\") >> '{}'; }}\n", log.display());
         fs::write(d.join("lib.sh"), rec("bead_reopen")).unwrap();
         let e = super::lifecycle_tests_env(&d);
-        eject_member(&e, "spira", "sp-m2", &["test-a.sh".into(), "test-b.sh".into()], &[("test-a.sh".into(), "FAIL widget".into())]);
+        eject_member(&e, "spira", "sp-m2", &["test-a.sh".into(), "test-b.sh".into()], &[("test-a.sh".into(), "FAIL widget".into())], true);
         let calls = fs::read_to_string(&log).unwrap();
         let lines: Vec<Vec<&str>> = calls.lines().map(|l| l.split('\t').collect()).collect();
         assert_eq!(lines.len(), 1, "{calls}");
@@ -2317,7 +2321,7 @@ mod lc_withdraw_tests {
             let mut e = super::lifecycle_tests_env(&d);
             e.lc_bin = Some(lc_stub(&d, "CERTIFIED"));
             if eject {
-                eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[]);
+                eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[], true);
             } else {
                 let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
                 withdraw_for_conflict(&e, &repo, "sp-a", 2, &["x.rs".into()]);
@@ -2342,7 +2346,7 @@ mod lc_withdraw_tests {
         fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
         let mut e = super::lifecycle_tests_env(&d);
         e.lc_bin = Some(lc_stub(&d, "REWORK"));
-        eject_member(&e, "spira", "sp-a", &[], &[]);
+        eject_member(&e, "spira", "sp-a", &[], &[], true);
         let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
         assert!(!calls.contains("event "), "{calls}");
     }
