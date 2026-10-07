@@ -9,7 +9,7 @@
 # "[watch:asks] <event>". Beads open at the first poll are the baseline and are not announced.
 # Once every line in the log reached the inbox the cursor is moved to the end of the log, so
 # watchd notify does not re-escalate asks the inbox already delivered; a failed inbox write
-# leaves the cursor alone.
+# holds the cursor for the life of the process, so those lines still escalate.
 #
 # covers: spira/asks.sh spira/watchers spira/conf.d/SPIRA_ASK_*
 set -uo pipefail
@@ -75,7 +75,6 @@ cmd_watch() {
     done
     while :; do
         _as_mark_delivered
-        _as_inbox_failed=0
         _as_tick
         _as_write_health "$interval"
         tick=$((tick + 1))
