@@ -58,13 +58,13 @@ behavior:
   event_scheduler: "OFF"
 YAML
 
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: the suite's own disposable sql-server, killed by cleanup
 SERVER_PID=$!
 
 # Wait for the listener, rather than a fixed sleep: the suite must not flake on a slow box.
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: readiness probe against the suite's private server
         up=1
         break
     fi
@@ -72,14 +72,14 @@ for _ in $(seq 1 50); do
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture SQL against the suite's private server
 # as_user <user> <password> <dolt-args...> — a separate function, not an override appended
 # after root_sql's own -u/-p, because relying on "the last -u/-p flag wins" is a guess
 # about dolt's flag parser this suite has no reason to make.
 as_user() {
     local u="$1" p="$2"
     shift 2
-    "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u "$u" -p "$p" --no-tls "$@"
+    "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u "$u" -p "$p" --no-tls "$@" # batch-job: fixture SQL against the suite's private server
 }
 
 # PIN CARGO_TARGET_DIR EXPLICITLY (same hazard as test-batcher-cut.sh): a suite runs
