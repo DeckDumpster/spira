@@ -203,12 +203,13 @@ is   "invalid-closed trigger: exits 0"             0 "$tr_rc"
 want "invalid-closed trigger: log mentions rows"   "invalid-closed trigger:" "$tr_out"
 
 # Verify bead filed with closed-record rows in description.
+# batch-job: fixture bd call against the suite's throwaway store
 tr_bead="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$TR_SCOPE,$TR_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["id"] if d else "")' 2>/dev/null \
     || echo "")"
 is "invalid-closed trigger: bead filed" "1" "$([ -n "$tr_bead" ] && echo 1 || echo 0)"
-tr_desc="$("$SPIRA_BD" -C "$SPIRA_DB" show "$tr_bead" 2>/dev/null || echo "")"
+tr_desc="$("$SPIRA_BD" -C "$SPIRA_DB" show "$tr_bead" 2>/dev/null || echo "")" # batch-job: fixture bd call against the suite's throwaway store
 want "trigger bead description: INVALID-CLOSED row" "INVALID-CLOSED"  "$tr_desc"
 want "trigger bead description: bead id present"    "sp-cr-trig1"     "$tr_desc"
 
@@ -226,6 +227,7 @@ tr_out2="$(env -i HOME="$T" \
     "$TRIGSH" 2>&1)"; tr_rc2=$?
 is   "dedup second run: exits 0"      0          "$tr_rc2"
 want "dedup second run: logs skip"    "skipping" "$tr_out2"
+# batch-job: fixture bd call against the suite's throwaway store
 tr_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$TR_SCOPE,$TR_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)"
@@ -265,6 +267,7 @@ ant_out="$(env -i HOME="$T" \
 is     "allowlisted only: trigger exits 0"    0            "$ant_rc"
 want   "allowlisted only: logs no trigger"    "no trigger" "$ant_out"
 nowant "allowlisted only: no rows trigger"    "invalid-closed trigger:" "$ant_out"
+# batch-job: fixture bd call against the suite's throwaway store
 ant_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$ANT_SCOPE,$ANT_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)"
@@ -321,13 +324,14 @@ e2e_trig1="$(env -i HOME="$T" \
 is   "e2e: trigger run 1 exits 0"           0                      "$e2e_rc1"
 want "e2e: trigger log mentions rows"        "invalid-closed trigger:" "$e2e_trig1"
 
+# batch-job: fixture bd call against the suite's throwaway store
 e2e_sweep_id="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$E2E_SCOPE,$E2E_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["id"] if d else "")' 2>/dev/null \
     || echo "")"
 [ -n "$e2e_sweep_id" ] || bad "e2e: no sweep bead filed" ""
 
-e2e_desc="$("$SPIRA_BD" -C "$SPIRA_DB" show "$e2e_sweep_id" 2>/dev/null || echo "")"
+e2e_desc="$("$SPIRA_BD" -C "$SPIRA_DB" show "$e2e_sweep_id" 2>/dev/null || echo "")" # batch-job: fixture bd call against the suite's throwaway store
 want "e2e: sweep bead has bead A row" "sp-cr-e2e-a" "$e2e_desc"
 want "e2e: sweep bead has bead B row" "sp-cr-e2e-b" "$e2e_desc"
 want "e2e: sweep bead has bead C row" "sp-cr-e2e-c" "$e2e_desc"
@@ -342,6 +346,7 @@ e2e_trig2="$(env -i HOME="$T" \
     SPIRA_TOML="$SPIRA_TOML" \
     "$TRIGSH" 2>&1)"
 want "e2e: second trigger run logs skipping" "skipping" "$e2e_trig2"
+# batch-job: fixture bd call against the suite's throwaway store
 e2e_bead_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$E2E_SCOPE,$E2E_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)"
@@ -349,10 +354,11 @@ is "e2e: second trigger files nothing new" "1" "${e2e_bead_count:-0}"
 
 # Step 3: simulate Maechen pass decisions.
 # A → reopen (admission).
-"$SPIRA_BD" -C "$SPIRA_DB" reopen "sp-cr-e2e-a" 2>/dev/null || true
+"$SPIRA_BD" -C "$SPIRA_DB" reopen "sp-cr-e2e-a" 2>/dev/null || true # batch-job: fixture bd call against the suite's throwaway store
 # B → allowlist (quotation).
 printf 'sp-cr-e2e-b quotation: reason names the flag list, not a remainder\n' > "$ALLOW_FILE"
 # C → file follow-up bead, then add bead C to the allowlist citing it (clears UNFILED-FOLLOW).
+# batch-job: fixture bd call against the suite's throwaway store
 FOLLOW_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "follow-up: schema migration for e2e-c" \
     --type task --label "$E2E_SCOPE,plan" --priority 3 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+')" || FOLLOW_ID="sp-fake99"

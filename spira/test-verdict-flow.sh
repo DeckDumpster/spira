@@ -56,6 +56,7 @@ ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 run() { mail "$@"; }
 
 bead_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -65,6 +66,7 @@ print(d[0].get("status") or "")' 2>/dev/null
 }
 
 bead_close_reason() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -74,6 +76,7 @@ print(d[0].get("close_reason") or "")' 2>/dev/null
 }
 
 bead_open_deps() {   # count open BLOCKING deps only; relates-to links are not blockers
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -84,6 +87,7 @@ print(len([x for x in deps if x.get("status") != "closed" and x.get("dependency_
 }
 
 bead_relates_count() {   # count relates-to deps in either direction — direction is not the point
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -94,6 +98,7 @@ print(len([x for x in deps if x.get("dependency_type") == "relates-to"]))' 2>/de
 }
 
 bead_notes() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json

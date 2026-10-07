@@ -145,17 +145,17 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$LTMP/server.yaml" > "$LTMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$LTMP/server.yaml" > "$LTMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 LC_SERVER_PID=$!
 trap 'kill "$LC_SERVER_PID" >/dev/null 2>&1; testdb_drop; rm -rf "$T"' EXIT INT TERM
 
 up=0
 for _ in $(seq 1 50); do
-    "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && { up=1; break; }
+    "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && { up=1; break; } # batch-job: fixture dolt call against the suite's private store
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "lifecycle dolt sql-server never came up: $(cat "$LTMP/server.log")"
-root_lc_sql() { "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls "$@"; }
+root_lc_sql() { "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
 root_lc_sql sql < "$REPO/lifecycle/schema.sql" >"$LTMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?

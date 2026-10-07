@@ -296,16 +296,16 @@ printf 'base\n' > "$BRANCH_REPO/readme"
 git -C "$BRANCH_REPO" add readme
 git -C "$BRANCH_REPO" commit -q -m "base"
 BARE="$TMP/bare-remote"
-git clone --quiet --bare "$BRANCH_REPO" "$BARE"
+timeout 5 git clone --quiet --bare "$BRANCH_REPO" "$BARE"
 git -C "$BRANCH_REPO" remote add origin "$BARE"
-git -C "$BRANCH_REPO" fetch --quiet origin
+timeout 5 git -C "$BRANCH_REPO" fetch --quiet origin
 git -C "$BRANCH_REPO" checkout -q -b spira/test-bead
 printf 'aeon work\n' > "$BRANCH_REPO/work"
 git -C "$BRANCH_REPO" add work
 git -C "$BRANCH_REPO" commit -q -m "spira/test-bead: work"
-git -C "$BRANCH_REPO" push -q origin spira/test-bead
+timeout 5 git -C "$BRANCH_REPO" push -q origin spira/test-bead
 git -C "$BRANCH_REPO" checkout -q main
-git -C "$BRANCH_REPO" fetch --quiet origin
+timeout 5 git -C "$BRANCH_REPO" fetch --quiet origin
 
 BRANCH_MAP="$TMP/branch-repo-map"
 printf '%s|%s|pr\n'   "branchrepo" "$BRANCH_REPO" >  "$BRANCH_MAP"

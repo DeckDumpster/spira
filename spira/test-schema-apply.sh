@@ -61,23 +61,23 @@ done
 
 echo
 echo "NEGATIVE — detection notices a missing CHECK (proved in a fixture, never in production)"
-( cd "$T" && dolt init -b main >/dev/null 2>&1 )
-dolt --data-dir "$T" sql -q "create database fx; use fx; create table issues (id varchar(64) primary key, priority int, issue_type varchar(32));" >/dev/null 2>&1
+( cd "$T" && dolt init -b main >/dev/null 2>&1 ) # batch-job: fixture dolt call against the suite's private store
+dolt --data-dir "$T" sql -q "create database fx; use fx; create table issues (id varchar(64) primary key, priority int, issue_type varchar(32));" >/dev/null 2>&1 # batch-job: fixture dolt call against the suite's private store
 q="select count(*) as n from information_schema.table_constraints where table_name='issues' and constraint_type='CHECK' and constraint_name='spira_priority_range';"
-fx(){ dolt --data-dir "$T" sql -q "use fx; $1" 2>/dev/null | sed -n '4p' | tr -d '| '; }
+fx(){ dolt --data-dir "$T" sql -q "use fx; $1" 2>/dev/null | sed -n '4p' | tr -d '| '; } # batch-job: fixture dolt call against the suite's private store
 
 [ "$(fx "$q")" = "0" ] && ok "absent constraint detected as absent" || bad "absent" "got [$(fx "$q")]"
-dolt --data-dir "$T" sql -q "use fx; alter table issues add constraint spira_priority_range check (priority between 0 and 4);" >/dev/null 2>&1
+dolt --data-dir "$T" sql -q "use fx; alter table issues add constraint spira_priority_range check (priority between 0 and 4);" >/dev/null 2>&1 # batch-job: fixture dolt call against the suite's private store
 [ "$(fx "$q")" = "1" ] && ok "control — present constraint detected as present" || bad "present" "got [$(fx "$q")]"
-dolt --data-dir "$T" sql -q "use fx; alter table issues drop constraint spira_priority_range;" >/dev/null 2>&1
+dolt --data-dir "$T" sql -q "use fx; alter table issues drop constraint spira_priority_range;" >/dev/null 2>&1 # batch-job: fixture dolt call against the suite's private store
 [ "$(fx "$q")" = "0" ] && ok "dropped constraint detected as gone — the bd-upgrade scenario" || bad "dropped" "got [$(fx "$q")]"
 
 echo
 echo "and the constraint actually refuses, in the fixture"
-dolt --data-dir "$T" sql -q "use fx; alter table issues add constraint spira_priority_range check (priority between 0 and 4);" >/dev/null 2>&1
-out="$(dolt --data-dir "$T" sql -q "use fx; insert into issues values ('x',9,'task');" 2>&1)"
+dolt --data-dir "$T" sql -q "use fx; alter table issues add constraint spira_priority_range check (priority between 0 and 4);" >/dev/null 2>&1 # batch-job: fixture dolt call against the suite's private store
+out="$(dolt --data-dir "$T" sql -q "use fx; insert into issues values ('x',9,'task');" 2>&1)" # batch-job: fixture dolt call against the suite's private store
 want "priority 9 refused by the CHECK" "spira_priority_range" "$out"
-out="$(dolt --data-dir "$T" sql -q "use fx; insert into issues values ('y',2,'task');" 2>&1)"
+out="$(dolt --data-dir "$T" sql -q "use fx; insert into issues values ('y',2,'task');" 2>&1)" # batch-job: fixture dolt call against the suite's private store
 [[ "$out" != *"violated"* ]] && ok "control — priority 2 accepted" || bad "control" "good write refused: $out"
 
 # ======================================================================================

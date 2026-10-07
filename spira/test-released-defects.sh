@@ -54,7 +54,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 ORIGIN="$TMP/origin.git"
 REPO="$TMP/repo"
 git init -q --bare -b main "$ORIGIN"
-git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name t
 
@@ -62,7 +62,7 @@ git -C "$REPO" config user.name t
 printf 'base\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -qm "base"
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # CASE 1 — RELEASED: intro lands first, fix lands later.
 # Commit Ca: names the introducing bead sp-intro-a.
@@ -83,7 +83,7 @@ printf 'ef\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-intro-e sp-fix-f — introduced and fixed in one unit"
 
 # Push all commits to remote so origin/main is current
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # --------------------------------------------------------------------------------------
 # GRAPH FIXTURE: the closed-bug discovered-from graph, in the same shape

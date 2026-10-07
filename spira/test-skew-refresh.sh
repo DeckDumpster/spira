@@ -44,7 +44,7 @@ git -C "$ORIGIN" add spira/
 git -C "$ORIGIN" commit -q -m "advance"
 AHEAD_COMMIT="$(git -C "$ORIGIN" rev-parse HEAD)"
 
-git clone -q "$ORIGIN" "$REPO"
+timeout 5 git clone -q "$ORIGIN" "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
 git -C "$REPO" remote set-head origin --auto >/dev/null 2>&1 || true
@@ -271,17 +271,17 @@ git -C "$QREPO" config user.email "test@test"
 git -C "$QREPO" config user.name "test"
 git -C "$QREPO" commit -q --allow-empty -m "queue base"
 git -C "$QREPO" remote add origin "$QORIGIN"
-git -C "$QREPO" push -q origin main
-git -C "$QREPO" fetch -q origin
+timeout 5 git -C "$QREPO" push -q origin main
+timeout 5 git -C "$QREPO" fetch -q origin
 git -C "$QREPO" remote set-head origin --auto >/dev/null 2>&1 || true
 
 # Advance origin/main while QREPO's checkout stays behind.
 _QCLONE="$(mktemp -d "$TMP/qclone-XXXXX")"
-git clone -q "$QORIGIN" "$_QCLONE"
+timeout 5 git clone -q "$QORIGIN" "$_QCLONE"
 git -C "$_QCLONE" commit -q --allow-empty -m "origin advances"
-git -C "$_QCLONE" push -q origin main
+timeout 5 git -C "$_QCLONE" push -q origin main
 rm -rf "$_QCLONE"
-git -C "$QREPO" fetch -q origin
+timeout 5 git -C "$QREPO" fetch -q origin
 
 QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
 [ "$(git -C "$QREPO" rev-parse HEAD)" != "$QUEUE_NEW" ] \

@@ -66,7 +66,7 @@ mk_repo() {   # mk_repo <dir>
     git -C "$d" commit -q --allow-empty -m base
     git -C "$d" remote add origin "${d}.git"
     git init -q --bare -b main "${d}.git"
-    git -C "$d" push -q origin main
+    timeout 5 git -C "$d" push -q origin main
     git -C "$d" remote set-head origin main
 }
 QREPO="$TMP/qrepo"; PREPO="$TMP/prepo"; QLREPO="$TMP/qlrepo"

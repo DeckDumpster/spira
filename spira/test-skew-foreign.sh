@@ -164,7 +164,7 @@ echo
 echo "foreign — split-checkout (dev source exempt when SPIRA_REPO is a different prod checkout):"
 
 # prod — a second clone of home, simulating the production checkout.
-git clone -q "$WS/home" "$WS/prod" 2>/dev/null
+timeout 5 git clone -q "$WS/home" "$WS/prod" 2>/dev/null
 sig "$WS/prod"
 
 # With SPIRA_REPO pointing at prod and repo-map pointing home at $WS/home, a branch

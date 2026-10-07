@@ -31,18 +31,19 @@ echo "test-set-state-semantics.sh"
 # ---------------------------------------------------------------------------
 echo
 echo "set-state: two calls to the same dimension leave exactly one label:"
-b="$(bd -C "$SPIRA_DB" create "set-state atomicity test" -l plan --silent 2>/dev/null | tr -d '[:space:]')"
+b="$(bd -C "$SPIRA_DB" create "set-state atomicity test" -l plan --silent 2>/dev/null | tr -d '[:space:]')" # batch-job: fixture bd call against the suite's throwaway store
 [ -n "$b" ] || bail "fixture bead created: bd create returned nothing"
 ok "fixture bead created ($b)"
 
-bd -C "$SPIRA_DB" set-state "$b" "branch=feat/first"  --reason "first"  >/dev/null 2>&1
-v1="$(bd -C "$SPIRA_DB" state "$b" branch 2>/dev/null)"
+bd -C "$SPIRA_DB" set-state "$b" "branch=feat/first"  --reason "first"  >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+v1="$(bd -C "$SPIRA_DB" state "$b" branch 2>/dev/null)" # batch-job: fixture bd call against the suite's throwaway store
 is "after first set-state: branch dimension is feat/first" "feat/first" "$v1"
 
-bd -C "$SPIRA_DB" set-state "$b" "branch=feat/second" --reason "second" >/dev/null 2>&1
-v2="$(bd -C "$SPIRA_DB" state "$b" branch 2>/dev/null)"
+bd -C "$SPIRA_DB" set-state "$b" "branch=feat/second" --reason "second" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+v2="$(bd -C "$SPIRA_DB" state "$b" branch 2>/dev/null)" # batch-job: fixture bd call against the suite's throwaway store
 is "after second set-state: branch dimension is feat/second" "feat/second" "$v2"
 
+# batch-job: fixture bd call against the suite's throwaway store
 branch_count="$(bd -C "$SPIRA_DB" show "$b" --json 2>/dev/null \
     | python3 -c 'import json,sys
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -57,6 +58,7 @@ is "exactly one branch: label after two set-state calls" "1" "$branch_count"
 # ---------------------------------------------------------------------------
 echo
 echo "set-state: each call creates an event bead:"
+# batch-job: fixture bd call against the suite's throwaway store
 event_count="$(bd -C "$SPIRA_DB" list --all --json 2>/dev/null \
     | python3 -c "import json,sys
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]

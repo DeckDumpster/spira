@@ -64,8 +64,8 @@ git_work="$TMP/lrepo-work"
 git init -q -b main "$git_work"
 git -C "$git_work" commit -q --allow-empty -m base
 git -C "$git_work" remote add origin "$LREMOTE"
-git -C "$git_work" push -q origin main
-git -C "$git_work" fetch -q origin
+timeout 5 git -C "$git_work" push -q origin main
+timeout 5 git -C "$git_work" fetch -q origin
 
 LMAP="$TMP/lrepo-map"
 printf 'lrepo | %s | push | origin/main | |\n' "$git_work" > "$LMAP"
@@ -145,6 +145,7 @@ child() {   # child <id> <status> <parent>
     printf '{"id":"%s","title":"child %s","description":"d","status":"%s","issue_type":"task","labels":["spira","plan"],"dependencies":[{"issue_id":"%s","depends_on_id":"%s","type":"parent-child"}]}\n' \
         "$1" "$1" "$2" "$1" "$3"
 }
+# batch-job: fixture bd call against the suite's throwaway store
 status_of() { "$BD" -C "$DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
     | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d[0] if isinstance(d,list) else d).get("status") or "")'; }
 

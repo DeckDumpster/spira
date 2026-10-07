@@ -35,8 +35,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
@@ -233,8 +233,8 @@ certify sp-h base.txt "h-content"
 # advance main under sp-h with a conflicting change, then fetch so base moved.
 printf 'main-advance\n' > "$REPO/base.txt"
 git -C "$REPO" add base.txt && git -C "$REPO" commit -q -m "main: advance base.txt"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 
 out5="$(openbatch fixture-repo)"
 want "5. names base conflict" "sp-h: conflicts with base" "$out5"

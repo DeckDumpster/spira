@@ -43,7 +43,7 @@ mkdir -p "$TMP/home"
 # ---------------------------------------------------------------------------
 ORIGIN="$TMP/origin.git"; REPO="$TMP/repo"
 git init -q --bare -b main "$ORIGIN"
-git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name t
 mkdir -p "$REPO/spira"
@@ -54,7 +54,7 @@ printf 'key=val\n' > "$REPO/spira/conf.sh"
 printf '[[compat]]\nname = "mail"\nalias = "mail.sh"\n' > "$REPO/spira/deps.toml"
 git -C "$REPO" add .
 git -C "$REPO" commit -qm "fixture: initial"
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # ---------------------------------------------------------------------------
 # STUB "mail" BINARY — enough of `list` to prove the symlinks forward argv identically.
@@ -120,7 +120,7 @@ echo
 echo "4. a real, tracked spira/mail.sh is never clobbered by the compat symlink"
 # ============================================================================
 REPO2="$TMP/repo2"
-git clone -q "$ORIGIN" "$REPO2" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$REPO2" 2>/dev/null
 git -C "$REPO2" config user.email t@t
 git -C "$REPO2" config user.name t
 printf '#!/usr/bin/env bash\necho REAL_TRACKED_MAIL_SH\n' > "$REPO2/spira/mail.sh"

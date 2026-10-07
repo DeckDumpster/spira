@@ -55,17 +55,17 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 LC_SERVER_PID=$!
 lc_up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
         lc_up=1; break
     fi
     sleep 0.2
 done
 [ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
+lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
 SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"; mkdir -p "$SPIRA_RUN"
 # SPIRA_LC_PASSWORD_FILE/SPIRA_LC_SOCKET are registered keys; undeclared, they resolve to

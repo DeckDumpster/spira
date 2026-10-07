@@ -171,10 +171,10 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$T/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$T/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$T/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # A FRESH $SPIRA_HOME so the real chamber's builder.fayth is never touched, and a fixture
 # builder.fayth still declares its OWN (now unused) FAYTH_MODEL — proving spira.toml wins
@@ -262,6 +262,7 @@ for _kv in "db=$SPIRA_DB" "bd=$SPIRA_BD" "agent=$SPIRA_AGENT"; do
     spira-config set "spira.${_kv%%=*}" "${_kv#*=}" "$TOML" >/dev/null || { echo "cannot declare spira.${_kv%%=*}" >&2; exit 1; }
 done
 
+# batch-job: fixture bd call against the suite's throwaway store
 BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "persona-model bead launch" --type task \
     -l "test-persona-model-bead,repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID" ] || { printf 'test-persona-model: could not create bead\n' >&2; exit 1; }

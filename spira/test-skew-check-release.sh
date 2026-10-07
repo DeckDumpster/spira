@@ -469,7 +469,7 @@ CK_BASE="$(git -C "$ORIGIN_CK" rev-parse HEAD)"
 printf '# v2\n' >> "$ORIGIN_CK/spira/lib.sh"
 git -C "$ORIGIN_CK" add spira/lib.sh
 git -C "$ORIGIN_CK" commit -q -m "advance"
-git clone -q "$ORIGIN_CK" "$CLONE_CK"
+timeout 5 git clone -q "$ORIGIN_CK" "$CLONE_CK"
 git -C "$CLONE_CK" config user.email "test@test"
 git -C "$CLONE_CK" config user.name "test"
 git -C "$CLONE_CK" remote set-head origin --auto >/dev/null 2>&1 || true

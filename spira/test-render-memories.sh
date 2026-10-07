@@ -222,6 +222,7 @@ echo "=== the seam agrees with a real bd read (one real-bd case) ==="
 . "$HERE/testdb.sh"
 testdb_require test-render-memories
 if testdb_up render-memories >/dev/null 2>&1; then
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-rm-live" \
         "Live statute body, read for real." >/dev/null 2>&1
     tl_config SPIRA_STATUTE_CORE="law-rm-live" SPIRA_MEMORIES_CACHE="" SPIRA_BD="$SPIRA_BD"

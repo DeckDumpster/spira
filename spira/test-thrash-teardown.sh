@@ -44,10 +44,10 @@ export SPIRA_SUMMON_JITTER=0
 tl_config SPIRA_SUMMON_JITTER=0
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
@@ -150,6 +150,7 @@ run_aeon() {
     echo $?
 }
 bead_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys, json
@@ -158,6 +159,7 @@ d = d if isinstance(d, list) else [d]
 print(d[0].get("status", ""))' 2>/dev/null
 }
 bead_notes() {
+    # batch-job: fixture bd call against the suite's throwaway store
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys, json

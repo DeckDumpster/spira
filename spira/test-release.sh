@@ -50,7 +50,7 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 ORIGIN="$TMP/origin.git"
 REPO="$TMP/repo"
 git init -q --bare -b trunk "$ORIGIN"
-git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name t
 
@@ -58,7 +58,7 @@ git -C "$REPO" config user.name t
 printf 'base\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -qm "initial commit"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 # Three bead commits landing on trunk.
 printf 'a\n' >> "$REPO/f"; git -C "$REPO" add f
@@ -70,7 +70,7 @@ git -C "$REPO" commit -qm "sp-bbb — second bead"
 printf 'c\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-ccc — third bead"
 
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 # --------------------------------------------------------------------------------------
 # HARNESS FIXTURE: copy the scripts to a temp dir; point SPIRA_HOME there.
@@ -129,7 +129,7 @@ echo "2. SECOND TAG — only beads landed after the first tag are included"
 # Add one more commit after the first release tag.
 printf 'd\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-ddd — fourth bead"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 tag2="$(run_cut fixture 2>&1)"
 rc2=$?
@@ -190,7 +190,7 @@ echo "6. BEAD-LESS MOVEMENT — commits without bead ids still create a tag"
 # has a unit to point at.
 printf 'no-bead\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "fix typo in documentation"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 tag_nobead="$(run_cut fixture 2>&1)"
 rc_nobead=$?
@@ -208,7 +208,7 @@ echo "7. PR LISTING — --pr argument appears in the tag message"
 # given --pr so that show and audits can trace the tag back to the CI run.
 printf 'another\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-zzz — a bead commit"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 tag_pr="$(run_cut fixture --pr 42 2>&1)"
 rc_pr=$?

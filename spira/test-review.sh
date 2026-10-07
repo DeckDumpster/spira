@@ -56,14 +56,14 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 ORIGIN="$TMP/origin.git"
 REPO="$TMP/repo"
 git init -q --bare -b trunk "$ORIGIN"
-git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name t
 
 printf 'base\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -qm "initial commit"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 printf 'a\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-aaa — first bead"
@@ -71,7 +71,7 @@ git -C "$REPO" commit -qm "sp-aaa — first bead"
 printf 'b\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-bbb — second bead"
 
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 # ---- harness fixture -------------------------------------------------------
 SH="$TMP/spira"
@@ -216,7 +216,7 @@ echo "3. BLOCK — review exits 1 and files findings as beads"
 # Cut a second release tag (one new commit) for the block scenario.
 printf 'c\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-ccc — third bead"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 TAG2="$(run_release cut fixture)"
 [ -n "$TAG2" ] || { echo "SETUP FAILED: could not cut second release tag"; exit 1; }
 

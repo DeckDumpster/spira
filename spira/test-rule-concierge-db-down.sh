@@ -70,6 +70,7 @@ SPIRA_BD="$(command -v bd-embedded)"
 # same way (sfail round 3, pattern 3/7).
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$DB"
 
+# batch-job: fixture bd call against the suite's throwaway store
 bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 \
     || bail "could not seed the fixture"
 
@@ -159,7 +160,7 @@ out_brief_up=$(run_concierge_brief); rc_brief_up=$?
 is "concierge brief against a reachable, non-empty store exits 0" "0" "$rc_brief_up"
 
 # NEGATIVE CONTROL A: reachable store, genuinely no law- memories left.
-bd -C "$DB" forget law-dbdown-seed >/dev/null 2>&1
+bd -C "$DB" forget law-dbdown-seed >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 out_brief_empty=$(run_concierge_brief); rc_brief_empty=$?
 if [ "$rc_brief_empty" -ne 0 ]; then ok "concierge brief against a genuinely empty store exits non-zero"
 else bad "concierge brief against a genuinely empty store exits non-zero" "got rc=0"; fi
@@ -167,7 +168,7 @@ want   "and says the statute book rendered empty"        "rendered empty" "$out_
 nowant "and does NOT claim the database is unreachable"  "cannot reach"   "$out_brief_empty"
 
 # NEGATIVE CONTROL B: same store, now unreachable — the case this bead is about.
-bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1
+bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 break_store
 out_brief_down=$(run_concierge_brief); rc_brief_down=$?
 if [ "$rc_brief_down" -ne 0 ]; then ok "concierge brief against an unreachable store exits non-zero"

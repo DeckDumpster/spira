@@ -73,11 +73,11 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 echo "test-submitted-lands.sh"
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
-git -C "$REPO" fetch -q origin
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main 2>/dev/null || true
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
@@ -148,7 +148,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -177,7 +177,7 @@ sending() {
     SPIRA_REPO="$REPO" \
         command sending 2>&1
 }
-on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
+on_base() { timeout 5 git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 branch_tip() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }
 
 # ======================================================================================
@@ -237,8 +237,8 @@ git -C "$REPO" worktree remove --force "$TMP/wt3"
 seed sp-sl3 SUBMITTED "$(branch_tip sp-sl3)"
 git -C "$REPO" checkout -q main 2>/dev/null; git -C "$REPO" reset -q --hard origin/main
 git -C "$REPO" merge -q --no-ff -m "Merge pull request #3 from spira/sp-sl3" spira/sp-sl3
-git -C "$REPO" push -q origin main 2>/dev/null
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" fetch -q origin
 is   "setup: open and SUBMITTED before the sweep" "open SUBMITTED" "$(field sp-sl3 status) $(lcfix_state sp-sl3)"
 out="$(sending)"
 want "the Sending sends the landed branch"             "sp-sl3" "$out"

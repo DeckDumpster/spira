@@ -62,12 +62,12 @@ ln -s "$HERE/conf.d" "$FX/conf.d"
 # this host is not guaranteed to be "main", and base="origin/main" below is literal. A fetch
 # after the pushes makes origin/main resolve locally too — push alone never updates it.
 git init -q --bare -b main "$T/origin.git"
-git clone -q "$T/origin.git" "$T/repo" 2>/dev/null
+timeout 5 git clone -q "$T/origin.git" "$T/repo" 2>/dev/null
 git -C "$T/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
-git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
+timeout 5 git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
 git -C "$T/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "land sp-a"
 TIP_A="$(git -C "$T/repo" rev-parse HEAD)"
-git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
+timeout 5 git -C "$T/repo" push -q origin HEAD:main 2>/dev/null
 timeout 5 git -C "$T/repo" fetch -q origin 2>/dev/null
 
 cat > "$FX/spira.toml" <<EOF

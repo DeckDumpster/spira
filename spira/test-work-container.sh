@@ -93,19 +93,19 @@ behavior:
   event_scheduler: "OFF"
 YAML
 
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
         up=1; break
     fi
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
 # Same pin as test-lifecycle-container.sh: this suite runs inside testenv-batch.sh's own
 # podman exec, which sets its own CARGO_TARGET_DIR.
@@ -168,7 +168,7 @@ want "show: bd's own title is in it" "aeon semantic layer container-tier fixture
 before_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
 out="$(work_as "$BID" note "left by the container-tier suite" 2>&1)"; rc=$?
 is "note: exits 0" "0" "$rc"
-note_text="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$BID" 2>&1)"
+note_text="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$BID" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 want "note: text landed on the bd bead" "left by the container-tier suite" "$note_text"
 after_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
 is "note: emits no lifecycle event (bd, non-lifecycle, per design §3.5)" "$before_events" "$after_events"
@@ -205,13 +205,13 @@ seed_bead "$STK"
 root_sql --use-db spira_lifecycle sql -q \
     "UPDATE bead SET state='WORKING', holder='aeon-stacked', version=1, stack=JSON_OBJECT('$PREREQ','oldtip') WHERE bead_id='$STK'" >/dev/null 2>&1
 
-before_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)"
+before_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 out="$("$LC_BIN" event bead "$STK" --expect WORKING --version 1 --actor test --kind "{\"BaseWithdrawn\":{\"prereq\":\"$PREREQ\",\"tip\":\"oldtip\"}}" 2>&1)"; rc=$?
 is "base_withdrawn on a WORKING dependent: applied (exit 0)" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead WHERE bead_id='$STK'" -r json 2>&1)"
 want "base_withdrawn: the dependent stays WORKING, not sent to REWORK" "\"state\":\"WORKING\"" "$row"
 want "base_withdrawn: the reason names the withdrawn prerequisite and tip" "base_withdrawn: $PREREQ oldtip" "$row"
-after_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)"
+after_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 [ "$after_note" != "$before_note" ] && ok "base_withdrawn: the WORKING holder is told (a note landed on the bead)" \
     || bad "base_withdrawn: the WORKING holder is told (a note landed on the bead)" "bd show did not change"
 want "base_withdrawn: the note names the holder" "aeon-stacked" "$after_note"
@@ -255,7 +255,7 @@ out="$(work_as "$BID" file-followup "a followup filed by the container-tier suit
 is "file-followup: exits 0" "0" "$rc"
 new_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
 [ -n "$new_id" ] || bail "file-followup produced no new bead id"
-child_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$new_id" --json 2>&1)"
+child_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$new_id" --json 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 want "file-followup: the new bead's parent is the bound bead, not asked for" "\"parent\": \"$BID\"" "$child_json"
 nowant "file-followup: did not inherit the bound bead's branch label" "branch:" "$child_json"
 

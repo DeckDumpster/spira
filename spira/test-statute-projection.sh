@@ -101,13 +101,13 @@ echo "=== rule.sh: commits wiki/notes/common-law.md itself (sp-4fl2e) ==="
 # message — a real git checkout is required to prove the tree ends up clean, not a stub.
 
 WIKI_CL_ORIGIN="$TMP/wiki-cl.git"; git init -q --bare -b main "$WIKI_CL_ORIGIN"
-WIKI_CL="$TMP/wiki-cl"; git clone -q "$WIKI_CL_ORIGIN" "$WIKI_CL" 2>/dev/null
+WIKI_CL="$TMP/wiki-cl"; timeout 5 git clone -q "$WIKI_CL_ORIGIN" "$WIKI_CL" 2>/dev/null
 git -C "$WIKI_CL" config user.email "test@spira"; git -C "$WIKI_CL" config user.name "test"
 mkdir -p "$WIKI_CL/wiki/notes"
 printf '# common law\n' > "$WIKI_CL/wiki/notes/common-law.md"
 git -C "$WIKI_CL" add wiki/notes/common-law.md
 git -C "$WIKI_CL" commit -qm "seed common-law"
-git -C "$WIKI_CL" push -q origin main 2>/dev/null
+timeout 5 git -C "$WIKI_CL" push -q origin main 2>/dev/null
 
 # Stands in for law-synth.sh: appends to common-law.md the way a real regenerate would.
 CL_HOOK="$TMP/cl-hook.sh"
@@ -355,6 +355,7 @@ testdb_reset || { bad "testdb_reset (statute_keys fixture)" "failed"; }
 
 # 3 law- entries against WIKI_TMP's 10 ### headings: 3 < 10/2 → MISMATCH.
 for i in 1 2 3; do
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-statute-keys-mismatch-test-$i" \
         "Mismatch test statute $i." >/dev/null 2>&1 || true
 done
@@ -365,6 +366,7 @@ nowant "statute_keys: mismatch → SP_STATUTE_SKEW is not OK"         "SKEW=OK" 
 
 # Add 8 more law- entries so db has 11 (>= 10/2 = 5, in fact exceeds page).
 for i in $(seq 4 11); do
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-statute-keys-ok-test-$i" \
         "OK test statute $i." >/dev/null 2>&1 || true
 done
