@@ -37,7 +37,7 @@ _rd_asks() {
     local id title json
     _rd_asks_tick=$((_rd_asks_tick + 1))
     [ $((_rd_asks_tick % 4)) -eq 1 ] || return 0
-    json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 0
+    json="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 0
     while IFS=$'\t' read -r id title; do
         [ -n "$id" ] || continue
         [ -n "${_rd_asks_seen[$id]:-}" ] && continue

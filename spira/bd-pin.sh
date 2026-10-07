@@ -32,6 +32,7 @@ case "$cmd" in
     write)
         # `bd migrate schema` exits 0 on match and prints "✓ Schema already at vNN".
         # NN is the highest migration this binary knows, which is what we pin.
+        # batch-job: schema migration over the whole store
         if ! _out="$(timeout 30 bd -C "$SPIRA_DB" migrate schema 2>&1)"; then
             printf 'bd-pin: bd migrate schema failed — cannot determine migration count\n' >&2
             printf '%s\n' "$_out" | head -3 >&2
@@ -43,7 +44,7 @@ case "$cmd" in
             printf '%s\n' "$_out" | head -3 >&2
             exit 1
         fi
-        _ver="$(bd version 2>/dev/null | head -1 || printf 'unknown')"
+        _ver="$(timeout 5 bd version 2>/dev/null | head -1 || printf 'unknown')"
         _bd_bin="$(command -v bd 2>/dev/null || true)"
         _sha="$(sha256sum "$_bd_bin" 2>/dev/null | awk '{print $1}' || printf 'unknown')"
         mkdir -p "$(dirname "$PIN_FILE")"

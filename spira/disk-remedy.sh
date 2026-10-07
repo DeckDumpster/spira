@@ -35,6 +35,8 @@ for w in "$SPIRA_RUN"/worktree/*/; do
 done
 
 if command -v podman >/dev/null 2>&1; then
+    # batch-job: image prune walks the whole store
     podman image prune -f >/dev/null 2>&1
+    # batch-job: volume prune walks the whole store
     podman volume prune -f >/dev/null 2>&1
 fi

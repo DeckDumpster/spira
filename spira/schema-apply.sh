@@ -60,7 +60,7 @@ run()  {
     fi
     return "$_rc"
 }
-sql()  { bd -C "$DB" sql "$1" 2>&1; }
+sql()  { timeout 5 bd -C "$DB" sql "$1" 2>&1; }
 sqlq() { sql "$1" | sed -n '3p' | tr -d ' '; }
 
 # THE ENGINE MUST BE ABLE TO CARRY THE SQL HALF AT ALL. bd in embedded mode answers
@@ -85,7 +85,7 @@ fi
 # type and a typo: with a type unregistered, `bd create --type <it>` is refused outright
 # (verified both directions). An existing record whose type was later unregistered survives.
 want_types="$(schema.sh custom-types | paste -sd, -)"
-have_types="$(bd -C "$DB" config get types.custom 2>/dev/null | tail -1)"
+have_types="$(timeout 5 bd -C "$DB" config get types.custom 2>/dev/null | tail -1)"
 if [ "$want_types" = "$have_types" ]; then say "custom types already exact: $want_types"
 else say "custom types: [$have_types] -> [$want_types]"
      run "bd -C '$DB' config set types.custom '$want_types' >/dev/null"
@@ -95,7 +95,7 @@ fi
 # awaiting_ci is deliberately NOT here — it is a gh:run gate, because a status still requires
 # every reader to remember to exclude it while a gate makes the bead not ready.
 want_st="$(schema.sh statuses | paste -sd, -)"
-have_st="$(bd -C "$DB" config get status.custom 2>/dev/null | tail -1)"
+have_st="$(timeout 5 bd -C "$DB" config get status.custom 2>/dev/null | tail -1)"
 if [ "$want_st" = "$have_st" ]; then say "custom statuses already exact: $want_st"
 else say "custom statuses: [$have_st] -> [$want_st]"
      run "bd -C '$DB' config set status.custom '$want_st' >/dev/null"

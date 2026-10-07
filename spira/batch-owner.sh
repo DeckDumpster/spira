@@ -12,7 +12,7 @@
 # log that case, since it means teardown did not do what it was asked.
 _batch_owner_release() {
     local cname="$1" ownerfile="$2"
-    podman container exists "$cname" 2>/dev/null && return 1
+    timeout 5 podman container exists "$cname" 2>/dev/null && return 1
     rm -f "$ownerfile"
 }
 
@@ -50,10 +50,11 @@ _batch_sweep_dead_owners() {
         [ -n "$_sw_pid" ] || continue
         [ -d "/proc/$_sw_pid" ] && continue  # still alive
         _sw_cname="${_sw_f#/tmp/}"; _sw_cname="${_sw_cname%.owner}"
+        # batch-job: podman stop waits out the container grace period
         podman stop "$_sw_cname" >/dev/null 2>&1 || true
-        podman rm   "$_sw_cname" >/dev/null 2>&1 || true
-        podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
-        podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
+        timeout 5 podman rm   "$_sw_cname" >/dev/null 2>&1 || true
+        timeout 5 podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
+        timeout 5 podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
         rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
         rm -f "$_sw_f"
         printf 'swept orphan container %s (owner pid %s gone)\n' "$_sw_cname" "$_sw_pid"
@@ -68,16 +69,17 @@ _batch_sweep_dead_owners() {
 # One line per sweep on stdout.
 _batch_sweep_ownerless() {
     local min_age="${1:-3600}" name_prefix="${2:-spira-batch-}" _sw_cname _sw_started _sw_started_epoch _sw_age
-    for _sw_cname in $(podman ps -a --filter "name=^${name_prefix}" --format '{{.Names}}' 2>/dev/null); do
+    for _sw_cname in $(timeout 5 podman ps -a --filter "name=^${name_prefix}" --format '{{.Names}}' 2>/dev/null); do
         [ -f "/tmp/${_sw_cname}.owner" ] && continue  # governed by the dead-owner arm
-        _sw_started="$(podman container inspect --format '{{.State.StartedAt}}' "$_sw_cname" 2>/dev/null)" || continue
+        _sw_started="$(timeout 5 podman container inspect --format '{{.State.StartedAt}}' "$_sw_cname" 2>/dev/null)" || continue
         _sw_started_epoch="$(date -d "$_sw_started" +%s 2>/dev/null)" || continue
         _sw_age=$(( $(date +%s) - _sw_started_epoch ))
         [ "$_sw_age" -ge "$min_age" ] || continue
+        # batch-job: podman stop waits out the container grace period
         podman stop "$_sw_cname" >/dev/null 2>&1 || true
-        podman rm   "$_sw_cname" >/dev/null 2>&1 || true
-        podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
-        podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
+        timeout 5 podman rm   "$_sw_cname" >/dev/null 2>&1 || true
+        timeout 5 podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
+        timeout 5 podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
         rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
         printf 'swept ownerless container %s (age %ss, no owner file)\n' "$_sw_cname" "$_sw_age"
     done

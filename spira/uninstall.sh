@@ -398,7 +398,7 @@ if [ "$_un_purge_db" = 1 ]; then
     printf '\n--purge-database: counting beads...\n'
     _un_bead_count=0
     if [ -d "${SPIRA_DB:-}/.beads" ] && command -v "${SPIRA_BD:-bd}" >/dev/null 2>&1; then
-        _un_bead_count="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --all --format=json 2>/dev/null \
+        _un_bead_count="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --all --format=json 2>/dev/null \
             | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
     fi
     printf 'The database at %s contains %s bead(s).\n' "$SPIRA_DB" "$_un_bead_count"

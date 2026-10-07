@@ -39,7 +39,7 @@ fi
 rc=0
 git -C "$wiki" commit -m "$msg" 2>/dev/null || rc=$?
 if [ "$rc" -eq 0 ]; then
-    git -C "$wiki" push 2>/dev/null || true
+    timeout 5 git -C "$wiki" push 2>/dev/null || true
 fi
 exec {_wc_lockfd}>&-
 exit "$rc"

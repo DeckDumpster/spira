@@ -50,7 +50,7 @@ marker="post-deploy verify [$release]"
 checked=0; failed=0; rc=0
 
 for id in $(printf '%s\n' "${ids[@]}" | sort -u); do
-    shown="$("$BD" -C "$SPIRA_DB" show "$id" --json 2>/dev/null \
+    shown="$(timeout 5 "$BD" -C "$SPIRA_DB" show "$id" --json 2>/dev/null \
         | python3 -c 'import json,sys
 d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d
 print(next((l[5:] for l in d.get("labels") or [] if l.startswith("repo:")), ""))
@@ -60,7 +60,7 @@ print(d.get("description") or "")' 2>/dev/null)" || continue
     [ -n "$line" ] || continue
     cmd="${line%% => *}"; want=""
     case "$line" in *" => "*) want="${line#* => }" ;; esac
-    if "$BD" -C "$SPIRA_DB" comments "$id" 2>/dev/null | grep -qF "$marker"; then
+    if timeout 5 "$BD" -C "$SPIRA_DB" comments "$id" 2>/dev/null | grep -qF "$marker"; then
         printf 'verify-landed: %s already checked for %s\n' "$id" "$release"; continue
     fi
     checked=$((checked+1))
@@ -73,7 +73,7 @@ print(d.get("description") or "")' 2>/dev/null)" || continue
     short="$(printf '%s' "$out" | head -c 2000)"
     if [ "$ok" = 1 ]; then
         printf 'verify-landed: PASS %s\n' "$id"
-        "$BD" -C "$SPIRA_DB" comments add "$id" \
+        timeout 5 "$BD" -C "$SPIRA_DB" comments add "$id" \
             "$marker PASS: $cmd -> exit $crc. Output: $short" >/dev/null 2>&1 || rc=1
     else
         failed=$((failed+1))
@@ -89,7 +89,7 @@ print(d.get("description") or "")' 2>/dev/null)" || continue
             --for builder --repo "$repo" --priority 1 \
             --parent "$id" --body-file "$bodyf" >/dev/null || rc=1
         rm -f "$bodyf"
-        "$BD" -C "$SPIRA_DB" comments add "$id" \
+        timeout 5 "$BD" -C "$SPIRA_DB" comments add "$id" \
             "$marker FAIL: $cmd -> exit $crc; follow-up filed." >/dev/null 2>&1 || rc=1
     fi
 done

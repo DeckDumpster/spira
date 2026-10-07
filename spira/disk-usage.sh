@@ -27,7 +27,7 @@ if [ "${#paths[@]}" -eq 0 ]; then
     explicit=0
     paths=(/)
     [ -n "${SPIRA_DOLT_DATA:-}" ] && paths+=("$SPIRA_DOLT_DATA")
-    pm_root="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)"
+    pm_root="$(timeout 5 podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)"
     [ -n "$pm_root" ] && paths+=("$pm_root")
 fi
 

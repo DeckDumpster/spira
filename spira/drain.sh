@@ -28,6 +28,7 @@ VERDICT=0; [ "${1:-}" = "--verdict" ] && VERDICT=1
 
 open_in() {   # open_in <db> -> count of non-closed beads, or ? if unreadable
     local db="$1" n
+    # batch-job: lists every bead in a rig store while draining
     n=$(timeout 180 bd -C "$db" list --all --limit 0 --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -60,6 +61,7 @@ printf '\nGAS TOWN — agents genuinely alive (gt agents, not directory counts)\
 # fully populated town as empty and would have called it safe to retire. The documented
 # liveness source is `gt status --json` -> .rigs[].agents[].running (CLAUDE.md), and /proc
 # is the cross-check that owes nothing to either command's formatting.
+# batch-job: town status across every rig while draining
 alive=$( (cd "$TOWN" && timeout 240 gt status --json 2>/dev/null) | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -97,6 +99,7 @@ if [ "$alive" != "?" ] && [ "${alive:-0}" -eq 0 ] && [ "$procs" -gt 0 ]; then
 fi
 
 printf '\nGAS TOWN — work still in flight outside beads\n'
+# batch-job: merge-queue listing across the town while draining
 mq=$( (cd "$TOWN" && timeout 180 gt mq 2>/dev/null) | grep -cE '^\s*[a-z]{2}-' || true )
 printf '  merge queue   %s\n' "${mq:-?}"
 prs=0
@@ -111,9 +114,11 @@ for r in $(repo_names); do
     # Spira's own work — which opens PRs in these same repos, in pr land mode — would
     # register as a blocker, so the verdict could never go clear no matter how much of
     # Gas Town was gone. A polecat branch is Gas Town's; spira/* is ours.
+    # batch-job: lists open PRs per repo while draining
     n=$( (cd "$rp" && timeout 120 gh pr list --state open --json headRefName \
             -q '[.[] | select(.headRefName | startswith("polecat/"))] | length' 2>/dev/null) | tail -1 )
     case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    # batch-job: lists open PRs per repo while draining
     mine=$( (cd "$rp" && timeout 120 gh pr list --state open --json headRefName \
             -q '[.[] | select(.headRefName | startswith("spira/"))] | length' 2>/dev/null) | tail -1 )
     case "$mine" in ''|*[!0-9]*) mine=0 ;; esac
@@ -127,6 +132,7 @@ printf '\nSPIRA — what is taking over\n'
 sp_open="$(open_in "$SPIRA")"
 # READY_ARGS (lib.sh), not a copy: a readout of "what Spira can take" that counts beads no
 # aeon can claim is the number that made the queue look healthy while it starved.
+# batch-job: full ready listing while draining
 sp_plan=$(timeout 180 bd -C "$SPIRA" "${READY_ARGS[@]}" --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
             --exclude-label "spira-poison,$SPIRA_ASK_LABEL" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
           | python3 -c 'import sys,json

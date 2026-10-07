@@ -6,7 +6,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 CHAMBER="${1:-$HERE/chamber}"
 DB="${SPIRA_DB:?chamber-core-check: SPIRA_DB is not set}"
 
-mem="$(bd -C "$DB" memories --json 2>/dev/null)" || { echo "chamber-core-check: cannot read memories at $DB" >&2; exit 2; }
+mem="$(timeout 5 bd -C "$DB" memories --json 2>/dev/null)" || { echo "chamber-core-check: cannot read memories at $DB" >&2; exit 2; }
 keys="$(printf '%s' "$mem" | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))')" \
   || { echo "chamber-core-check: memories at $DB are not JSON" >&2; exit 2; }
 [ -n "$keys" ] || { echo "chamber-core-check: $DB holds no memories — refusing to judge" >&2; exit 2; }

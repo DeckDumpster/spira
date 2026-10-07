@@ -191,8 +191,9 @@ if [ -n "$PRED" ]; then
             exit 2
         fi
         _al_mount="$_wd/workspace"
+        # batch-job: clone and tag fetch of the release tree into the acceptance mount
         git clone -q "$TREE" "$_al_mount" 2>/dev/null \
-            && git -C "$_al_mount" fetch -q "$TREE" 'refs/tags/*:refs/tags/*' 2>/dev/null \
+            && timeout 5 git -C "$_al_mount" fetch -q "$TREE" 'refs/tags/*:refs/tags/*' 2>/dev/null \
             && git -C "$_al_mount" checkout -q --detach "$(git -C "$TREE" rev-parse HEAD)" 2>/dev/null \
             && git -C "$_al_mount" tag -f "spira-release-$_al_stem" HEAD >/dev/null 2>&1 || {
             printf 'acceptance-local: could not build the self-contained clone of %s\n' "$TREE" >&2
@@ -205,6 +206,7 @@ if [ -n "$PRED" ]; then
     else
         mkdir -p "$_wd/pred"
         log "acceptance-local: downloading predecessor $PRED on the host"
+        # batch-job: downloads the predecessor release tarball
         ( cd "$TREE" && gh release download "$PRED" --pattern 'spira-*.tar.gz' --dir "$_wd/pred" ) >&2 || {
             printf 'acceptance-local: could not download %s with gh on the host — is gh authenticated\n' "$PRED" >&2
             printf 'acceptance-local:   for this repository? (or pass --predecessor-tarball <path>)\n' >&2
@@ -228,6 +230,7 @@ if ! testenv container exec --name "$CNAME" bash -c 'timeout 3 bash -c "exec 3<>
 fi
 
 _al_ctar="/tmp/$(basename "$_al_tarball")"
+# batch-job: copies the release tarball into the container
 podman cp "$_al_tarball" "$CNAME:$_al_ctar" || {
     printf 'acceptance-local: could not copy the tarball into the container\n' >&2
     exit 2
@@ -235,7 +238,7 @@ podman cp "$_al_tarball" "$CNAME:$_al_ctar" || {
 # THE RUN IS THE CANDIDATE'S OWN `release acceptance` (sp-ak7qm), taken from the tarball just
 # built — the same binary acceptance.yml takes from the release asset.
 tar -xzOf "$_al_tarball" --wildcards '*/bin/release' > "$_wd/release" 2>/dev/null \
-    && chmod +x "$_wd/release" && podman cp "$_wd/release" "$CNAME:/tmp/release" || {
+    && chmod +x "$_wd/release" && podman cp "$_wd/release" "$CNAME:/tmp/release" || { # batch-job: copies the release binary into the container
     printf 'acceptance-local: could not stage bin/release from %s in the container\n' "$(basename "$_al_tarball")" >&2
     exit 2
 }
@@ -271,6 +274,7 @@ if [ -n "$PRED" ]; then
     # deploy.sh needs a spira-release-<stem> tag, and skew reads the one tagged on HEAD above.
     _al_tag="spira-release-$(basename "$_al_tarball" .tar.gz)"
     _al_cpred="/tmp/$(basename "$_al_pred_file")"
+    # batch-job: copies the predecessor tarball into the container
     podman cp "$_al_pred_file" "$CNAME:$_al_cpred" || {
         printf 'acceptance-local: could not copy the predecessor tarball into the container\n' >&2
         exit 2
@@ -356,7 +360,7 @@ if [ "$_al_rc" -eq 1 ]; then
     _al_home="$(testenv container exec --name "$CNAME" --user spirauser \
         bash -c 'printf %s "$HOME"' 2>/dev/null)"
     if [ -n "$_al_home" ] \
-        && podman cp "$CNAME:$_al_home/acceptance-forensics" "$FORENSICS_OUT" 2>/dev/null; then
+        && timeout 5 podman cp "$CNAME:$_al_home/acceptance-forensics" "$FORENSICS_OUT" 2>/dev/null; then
         printf 'forensics copied to: %s\n' "$FORENSICS_OUT"
     else
         printf 'acceptance-local: could not copy forensics out of the container\n' >&2

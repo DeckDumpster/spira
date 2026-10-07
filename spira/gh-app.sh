@@ -7,4 +7,5 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
 _tok="$(broker token)" || {
     printf 'gh-app.sh: broker token failed\n' >&2; exit 1; }
+# batch-job: wrapper: the caller picks the gh command and owns its deadline
 exec env GH_TOKEN="$_tok" gh "$@"

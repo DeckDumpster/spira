@@ -34,11 +34,11 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
     FA_ORIGIN="$FA_TMP/origin.git"; git init -q --bare -b main "$FA_ORIGIN"
-    FA_REPO="$FA_TMP/repo"; git clone -q "$FA_ORIGIN" "$FA_REPO" 2>/dev/null
+    FA_REPO="$FA_TMP/repo"; timeout 5 git clone -q "$FA_ORIGIN" "$FA_REPO" 2>/dev/null
     git -C "$FA_REPO" config user.email t@t; git -C "$FA_REPO" config user.name t
     printf 'seed\n' > "$FA_REPO/f"
     git -C "$FA_REPO" add f; git -C "$FA_REPO" commit -qm seed
-    git -C "$FA_REPO" push -q origin main 2>/dev/null
+    timeout 5 git -C "$FA_REPO" push -q origin main 2>/dev/null
 
     FA_HOME="$FA_TMP/home"; mkdir -p "$FA_HOME/chamber"
     printf '. "%s/lib.sh"\n' "$HERE" > "$FA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; the real one, as aeon.sh did
@@ -114,7 +114,7 @@ fa_run_aeon() {   # fa_run_aeon [fayth] -> prints the aeon binary's rc; output c
 fa_out() { cat "$FA_TMP/out" 2>/dev/null; }
 
 fa_field() {   # fa_field <id> <json-field>
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
@@ -125,7 +125,7 @@ print(d[0].get(sys.argv[1], "") or "")' "$2" 2>/dev/null
 fa_status() { fa_field "$1" status; }
 fa_notes()  { fa_field "$1" notes; }
 
-fa_labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
+fa_labels() { timeout 5 bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
 
 fa_ledger_lines() {   # fa_ledger_lines <id> -> every "done builder <id>" line, in order
     grep " done builder $1 " "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null
