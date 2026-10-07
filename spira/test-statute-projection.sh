@@ -204,15 +204,15 @@ want "and names the way to see what is in force" "rule.sh list" "$(run_rule show
 
 # POSITIVE CONTROL FIRST: the statute is present, retire succeeds, and synth propagates
 # the same way it does for enact.
-out_retire="$(run_rule retire sp-p0xyt-fail-test)"; rc_retire=$?
+out_retire="$(run_rule retire sp-p0xyt-pair-canary)"; rc_retire=$?
 is   "retire on a real statute exits 0"       "0" "$rc_retire"
-want "and says it forgot the key"             "forgot law-sp-p0xyt-fail-test" "$out_retire"
+want "and says it forgot the key"             "forgot law-sp-p0xyt-pair-canary" "$out_retire"
 want "and reminds not to leave a correction banner" "Do not leave a retired statute" "$out_retire"
 
 is "retire removes it from list" "0" \
-   "$(run_rule list | grep -c 'law-sp-p0xyt-fail-test$' || true)"
+   "$(run_rule list | grep -c 'law-sp-p0xyt-pair-canary$' || true)"
 is "and show on the retired slug now fails" "1" \
-   "$(run_rule show sp-p0xyt-fail-test >/dev/null 2>&1; echo $?)"
+   "$(run_rule show sp-p0xyt-pair-canary >/dev/null 2>&1; echo $?)"
 
 # NEGATIVE CONTROL: retiring a slug that was never enacted is refused, and refused BEFORE
 # any bd write — the positive control above proves retire works at all, so a refusal here
@@ -241,6 +241,7 @@ is "and the new statute is not in the book" "1" \
    "$(run_rule show sp-pj5dp-rollback >/dev/null 2>&1; echo $?)"
 
 run_rule enact sp-pj5dp-amend "Original text." >/dev/null 2>&1
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
 bash "$RULE_SH" enact sp-pj5dp-amend "Amended text." >/dev/null 2>&1
 want "a failed amendment restores the prior text" "Original text." "$(run_rule show sp-pj5dp-amend)"
 nowant "and not the amendment" "Amended text." "$(run_rule show sp-pj5dp-amend)"
