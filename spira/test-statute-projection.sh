@@ -204,15 +204,15 @@ want "and names the way to see what is in force" "rule.sh list" "$(run_rule show
 
 # POSITIVE CONTROL FIRST: the statute is present, retire succeeds, and synth propagates
 # the same way it does for enact.
-out_retire="$(run_rule retire sp-p0xyt-fail-test)"; rc_retire=$?
+out_retire="$(run_rule retire sp-p0xyt-pair-canary)"; rc_retire=$?
 is   "retire on a real statute exits 0"       "0" "$rc_retire"
-want "and says it forgot the key"             "forgot law-sp-p0xyt-fail-test" "$out_retire"
+want "and says it forgot the key"             "forgot law-sp-p0xyt-pair-canary" "$out_retire"
 want "and reminds not to leave a correction banner" "Do not leave a retired statute" "$out_retire"
 
 is "retire removes it from list" "0" \
-   "$(run_rule list | grep -c 'law-sp-p0xyt-fail-test$' || true)"
+   "$(run_rule list | grep -c 'law-sp-p0xyt-pair-canary$' || true)"
 is "and show on the retired slug now fails" "1" \
-   "$(run_rule show sp-p0xyt-fail-test >/dev/null 2>&1; echo $?)"
+   "$(run_rule show sp-p0xyt-pair-canary >/dev/null 2>&1; echo $?)"
 
 # NEGATIVE CONTROL: retiring a slug that was never enacted is refused, and refused BEFORE
 # any bd write — the positive control above proves retire works at all, so a refusal here
@@ -221,17 +221,47 @@ is "retire on an unknown slug is refused" "1" \
    "$(run_rule retire no-such-slug-abc >/dev/null 2>&1; echo $?)"
 want "and names the missing statute" "no statute" "$(run_rule retire no-such-slug-abc)"
 
-# retire with a failing synth hook: the book is still changed, the hook failure is reported,
-# and the command exits non-zero about it — the same contract enact holds.
+# retire with a failing synth hook: the write and the page are one operation, so the book
+# is rolled back and nothing is written.
 run_rule enact sp-p0xyt-retire-hookfail "Canary for the retire hook-failure path." >/dev/null 2>&1
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
 out_retire_fail="$(bash "$RULE_SH" retire sp-p0xyt-retire-hookfail 2>&1)"
 rc_retire_fail=$?
 is   "retire with a failing hook exits non-zero" "1" "$rc_retire_fail"
-want "the book write is reported to have succeeded" "removed from the book" "$out_retire_fail"
-want "and the wiki page is reported NOT regenerated" "NOT regenerated" "$out_retire_fail"
-is "and the statute is gone from the book regardless" "1" \
+want "and reports the rollback" "rolled back" "$out_retire_fail"
+is "and the statute is still in the book" "0" \
    "$(run_rule show sp-p0xyt-retire-hookfail >/dev/null 2>&1; echo $?)"
+
+# sp-pj5dp: enact is one operation with its page — from any cwd, and never half done.
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
+out_e_fail="$(bash "$RULE_SH" enact sp-pj5dp-rollback "Rolled back canary." 2>&1)"
+is "enact with a failing hook exits non-zero" "1" "$?"
+want "and reports the rollback" "rolled back" "$out_e_fail"
+is "and the new statute is not in the book" "1" \
+   "$(run_rule show sp-pj5dp-rollback >/dev/null 2>&1; echo $?)"
+
+run_rule enact sp-pj5dp-amend "Original text." >/dev/null 2>&1
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
+bash "$RULE_SH" enact sp-pj5dp-amend "Amended text." >/dev/null 2>&1
+want "a failed amendment restores the prior text" "Original text." "$(run_rule show sp-pj5dp-amend)"
+nowant "and not the amendment" "Amended text." "$(run_rule show sp-pj5dp-amend)"
+
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$MISSING_HOOK"
+out_e_missing="$(bash "$RULE_SH" enact sp-pj5dp-nohook "No hook canary." 2>&1)"
+is "enact with an unavailable hook exits non-zero" "1" "$?"
+want "and says nothing was written" "nothing written" "$out_e_missing"
+is "and the statute is not in the book" "1" \
+   "$(run_rule show sp-pj5dp-nohook >/dev/null 2>&1; echo $?)"
+
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="./good-hook.sh"
+out_rel="$(cd "$TMP" && bash "$RULE_SH" enact sp-pj5dp-relhook "Relative hook canary." 2>&1)"
+is "a cwd-relative hook is refused even where it resolves" "1" "$?"
+want "and the refusal names the path" "not an absolute path" "$out_rel"
+
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK=""
+out_cwd="$(cd "$TMP" && bash "$RULE_SH" enact sp-pj5dp-cwd "Cwd canary." 2>&1)"
+want "default hook resolves from a cwd with no law-synth.sh" "Statute is live" "$out_cwd"
+nowant "and is not refused" "not executable" "$out_cwd"
 
 # ==========================================================================
 echo
