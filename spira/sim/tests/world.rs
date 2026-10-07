@@ -1,6 +1,10 @@
-use spira_sim::world::{db_root, down, prebuilt_release, release_source, up, ReleaseSource, Steps, PRODUCTION_LOCATORS, RELEASE_ENV, TESTENV_ENV};
+use spira_sim::world::{
+    check_socket_path, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
+    ReleaseSource, Steps, PRODUCTION_LOCATORS, RELEASE_ENV, TESTENV_ENV,
+};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 #[derive(Default)]
 struct Fake {
@@ -8,6 +12,9 @@ struct Fake {
     ups: AtomicUsize,
     downs: AtomicUsize,
     lifecycles: AtomicUsize,
+    /// lc_serve / lc_stop / db_down, in order.
+    calls: Mutex<Vec<String>>,
+    serve_fails: bool,
 }
 
 impl Steps for Fake {
@@ -30,12 +37,28 @@ impl Steps for Fake {
     }
     fn db_down(&self, _: &str) -> Result<(), String> {
         self.downs.fetch_add(1, Ordering::SeqCst);
+        self.calls.lock().unwrap().push("db_down".into());
         Ok(())
     }
     fn config_set(&self, _: &Path, file: &Path, key: &str, value: &str) -> Result<(), String> {
         use std::io::Write;
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file).map_err(|e| e.to_string())?;
         writeln!(f, "{key}={value}").map_err(|e| e.to_string())
+    }
+    fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String> {
+        assert!(Path::new(fixture).is_dir());
+        // The config the serve reads is complete by the time it starts.
+        assert!(std::fs::read_to_string(world.join("config/sim.toml")).unwrap().contains(&format!("spira.lc_socket={}", lc_socket(world).display())));
+        std::fs::write(lc_pid_file(world), "424242").unwrap();
+        self.calls.lock().unwrap().push("lc_serve".into());
+        if self.serve_fails {
+            return Err("serve did not answer".into());
+        }
+        Ok(())
+    }
+    fn lc_stop(&self, _: &Path, pid: u32) -> Result<(), String> {
+        self.calls.lock().unwrap().push(format!("lc_stop {pid}"));
+        Ok(())
     }
 }
 
@@ -77,6 +100,103 @@ fn up_then_down_leaves_nothing_behind() {
 }
 
 #[test]
+fn up_starts_the_worlds_serve_and_down_stops_it_by_the_recorded_pid_first() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    let fake = Fake::default();
+    up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let sock = lc_socket(&dir);
+    assert!(sock.starts_with(&dir), "the socket is under the world dir");
+    let cfg = std::fs::read_to_string(dir.join("config/sim.toml")).unwrap();
+    // The complete base: a process refuses a config that does not declare every key.
+    assert!(cfg.contains("stack_max_depth"), "{cfg}");
+    assert!(cfg.contains(&format!("spira.lc_socket={}", sock.display())), "{cfg}");
+    assert!(cfg.contains(&format!("spira.lc_password_file={}", dir.join("config/lc-credential").display())), "{cfg}");
+    assert!(cfg.contains(&format!("spira.run={}", dir.join("run").display())), "{cfg}");
+    let env = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
+    assert!(env.contains(&format!("SPIRA_LC_SOCKET={}\n", sock.display())), "{env}");
+    assert!(env.contains(&format!("SPIRA_RELEASE={}\n", dir.join("release").display())), "{env}");
+    assert_eq!(*fake.calls.lock().unwrap(), vec!["lc_serve"]);
+    down(&dir, &fake).unwrap();
+    assert_eq!(*fake.calls.lock().unwrap(), vec!["lc_serve", "lc_stop 424242", "db_down"]);
+}
+
+#[test]
+fn a_serve_that_never_answers_fails_up_and_is_stopped() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    let fake = Fake { serve_fails: true, ..Fake::default() };
+    let e = up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap_err();
+    assert!(e.contains("did not answer"), "{e}");
+    assert!(!dir.exists());
+    assert_eq!(*fake.calls.lock().unwrap(), vec!["lc_serve", "lc_stop 424242", "db_down"]);
+}
+
+#[test]
+fn a_world_whose_socket_cannot_be_bound_is_refused_before_anything() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join(&"w".repeat(120));
+    let fake = Fake::default();
+    let e = up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap_err();
+    assert!(e.contains("unix socket limit"), "{e}");
+    assert!(!dir.exists());
+    assert_eq!(fake.ups.load(Ordering::SeqCst), 0);
+    assert!(check_socket_path(Path::new("/tmp/w")).is_ok());
+}
+
+#[test]
+fn only_this_worlds_serve_command_line_matches() {
+    let w = Path::new("/tmp/w1");
+    let line = |args: &[&str]| args.iter().flat_map(|a| a.bytes().chain([0])).collect::<Vec<u8>>();
+    assert!(is_world_serve(&line(&["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock"]), w));
+    assert_eq!(serve_argv(w), vec!["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock"]);
+    for other in [
+        line(&["/tmp/w2/release/bin/spira-lc", "serve", "/tmp/w2/lc.sock"]), // another world
+        line(&["/home/u/spira-releases/x/bin/spira-lc", "serve"]),            // production's
+        line(&["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock", "x"]),
+        line(&["sleep", "30"]),
+        Vec::new(), // a zombie's cmdline
+    ] {
+        assert!(!is_world_serve(&other, w), "{other:?}");
+    }
+}
+
+#[test]
+fn lc_stop_signals_this_worlds_serve_and_never_another_process() {
+    let t = testkit::TempDir::new("simstop");
+    let world = t.path().canonicalize().unwrap();
+    // A stand-in serve: `<world>/release/bin/spira-lc serve <sock>` is /bin/sh running the
+    // script `serve` from its cwd, so its cmdline is exactly the world's serve argv.
+    std::fs::create_dir_all(world.join("release/bin")).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", world.join("release/bin/spira-lc")).unwrap();
+    std::fs::write(world.join("serve"), "while :; do sleep 1; done\n").unwrap();
+    let argv = serve_argv(&world);
+    let mut serve = std::process::Command::new(&argv[0]).args(&argv[1..]).current_dir(&world).spawn().unwrap();
+    let mut other = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let alive = |pid: u32| std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| !s.contains(") Z "));
+    let t0 = std::time::Instant::now();
+    while !std::fs::read(format!("/proc/{}/cmdline", serve.id())).is_ok_and(|c| is_world_serve(&c, &world)) {
+        assert!(t0.elapsed().as_secs() < 5, "the stand-in serve never showed the serve cmdline");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    // Recorded PID now names some other process: left alone.
+    ProcessSteps.lc_stop(&world, other.id()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(alive(other.id()), "lc_stop signalled a process that is not the world's serve");
+
+    ProcessSteps.lc_stop(&world, serve.id()).unwrap();
+    assert!(!alive(serve.id()), "the world's serve survived lc_stop");
+    // A PID that is already gone is not an error.
+    ProcessSteps.lc_stop(&world, serve.id()).unwrap();
+
+    let _ = serve.wait();
+    let _ = other.kill();
+    let _ = other.wait();
+}
+
+#[test]
 fn up_refuses_each_production_locator_and_builds_nothing() {
     for key in PRODUCTION_LOCATORS {
         let t = testkit::TempDir::new("simw"); let dir = t.join("world");
@@ -106,6 +226,12 @@ fn a_failed_up_cleans_up_after_itself() {
             Ok(())
         }
         fn config_set(&self, _: &Path, _: &Path, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn lc_serve(&self, _: &Path, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn lc_stop(&self, _: &Path, _: u32) -> Result<(), String> {
             Ok(())
         }
     }

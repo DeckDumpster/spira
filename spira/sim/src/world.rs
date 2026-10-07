@@ -17,6 +17,20 @@ pub const RELEASE_ENV: &str = "SPIRA_SIM_RELEASE";
 pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
 /// The release binaries the world itself calls; a prebuilt release without them is refused.
 const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
+/// The world's lifecycle service socket, under the world dir (sp-hq1v76).
+const LC_SOCKET: &str = "lc.sock";
+/// The PID world up recorded for the world's `spira-lc serve`; world down signals only it.
+const LC_PID: &str = "lc-serve.pid";
+const LC_LOG: &str = "lc-serve.log";
+/// `sockaddr_un.sun_path` is 108 bytes with its NUL; a longer path cannot be bound.
+const SUN_PATH_MAX: usize = 107;
+const LC_READY_DEADLINE: Duration = Duration::from_secs(30); // batch-job: serve bind + first DB round trip
+const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve exit after SIGTERM
+/// Every key declared: a process resolves its config only from a file that declares them all
+/// (spira-config/src/process.rs), so the world's config starts from the complete fixture and
+/// overrides each locator a world must own. Its `lc_socket` is the production default and
+/// is always overwritten below.
+const CONFIG_BASE: &str = include_str!("../../../spira-config/tests/fixtures/complete.toml");
 
 /// Where a world's release comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +93,85 @@ pub trait Steps {
     fn db_down(&self, fixture: &str) -> Result<(), String>;
     fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String>;
     fn config_set(&self, release: &Path, file: &Path, key: &str, value: &str) -> Result<(), String>;
+    /// Start the world's `spira-lc serve` on [`lc_socket`], write its PID to [`lc_pid_file`]
+    /// as soon as it exists, and return once it answers a request.
+    fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String>;
+    /// Stop the serve world up recorded as `pid`, only if `/proc/<pid>/cmdline` is that
+    /// world's serve ([`is_world_serve`]); a PID that is gone or now another process is left alone.
+    fn lc_stop(&self, world: &Path, pid: u32) -> Result<(), String>;
+}
+
+/// The world's lifecycle socket.
+pub fn lc_socket(world: &Path) -> PathBuf {
+    world.join(LC_SOCKET)
+}
+
+/// Where world up records the PID of the world's `spira-lc serve`.
+pub fn lc_pid_file(world: &Path) -> PathBuf {
+    world.join(LC_PID)
+}
+
+/// The argv world up starts the world's serve with: the world's own release link, so the
+/// command line names the world and no other world's serve (or production's) matches it.
+pub fn serve_argv(world: &Path) -> Vec<String> {
+    vec![
+        world.join("release/bin/spira-lc").display().to_string(),
+        "serve".to_string(),
+        lc_socket(world).display().to_string(),
+    ]
+}
+
+/// Whether a `/proc/<pid>/cmdline` (NUL-separated) is exactly this world's serve.
+pub fn is_world_serve(cmdline: &[u8], world: &Path) -> bool {
+    let args: Vec<&[u8]> = cmdline.strip_suffix(&[0]).unwrap_or(cmdline).split(|b| *b == 0).collect();
+    let want = serve_argv(world);
+    args.len() == want.len() && args.iter().zip(&want).all(|(a, w)| *a == w.as_bytes())
+}
+
+/// A world's socket path must fit `sun_path`; refused before anything is built.
+pub fn check_socket_path(world: &Path) -> Result<(), String> {
+    let s = lc_socket(world);
+    let n = s.as_os_str().len();
+    if n > SUN_PATH_MAX {
+        return Err(format!("the world's lifecycle socket {} is {n} bytes, over the {SUN_PATH_MAX}-byte unix socket limit: use a shorter world dir", s.display()));
+    }
+    Ok(())
+}
+
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+    fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+}
+const SIGTERM: i32 = 15;
+const SIGKILL: i32 = 9;
+const WNOHANG: i32 = 1;
+
+/// Alive and not a zombie; reaps it first when it is this process's own child.
+fn alive(pid: u32) -> bool {
+    let mut status = 0;
+    // SAFETY: waitpid with WNOHANG on a pid only reaps our own exited child; otherwise -1.
+    unsafe { waitpid(pid as i32, &mut status, WNOHANG) };
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().next()).is_some_and(|st| st != "Z"),
+        Err(_) => false,
+    }
+}
+
+fn signal(pid: u32, sig: i32) {
+    // SAFETY: kill(2) on one PID that was just checked to be this world's serve.
+    unsafe { kill(pid as i32, sig) };
+}
+
+/// Send one request to the serve and read its reply: `Some(exit_code)` when it answered.
+fn ask(socket: &Path, argv: &[&str]) -> Option<i64> {
+    use std::io::{BufRead, BufReader, Write};
+    let stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_secs(5))).ok()?;
+    writeln!(&stream, "{}", serde_json::to_string(argv).ok()?).ok()?;
+    let mut line = String::new();
+    BufReader::new(&stream).read_line(&mut line).ok()?;
+    serde_json::from_str::<serde_json::Value>(line.trim()).ok()?.get("exit_code")?.as_i64()
 }
 
 #[derive(Default)]
@@ -189,7 +282,8 @@ impl Steps for ProcessSteps {
         let credential = config.join("lc-credential");
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
         self.config_set(release, &toml, "spira.lc_password_file", &credential.display().to_string())?;
-        self.config_set(release, &toml, "spira.lc_socket", "")?;
+        let world = config.parent().ok_or("config dir has no parent")?;
+        self.config_set(release, &toml, "spira.lc_socket", &lc_socket(world).display().to_string())?;
         let lc = |verb: &str, arg: PathBuf| run(lc_command(release, config, &port).arg(verb).arg(arg), CALL_DEADLINE).map(|_| ());
         lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
         lc("admin-migrate", lifecycle.join("migrations"))
@@ -197,6 +291,63 @@ impl Steps for ProcessSteps {
 
     fn db_down(&self, fixture: &str) -> Result<(), String> {
         run(Command::new("testenv").args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
+    }
+
+    fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String> {
+        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).map_err(|e| format!("fixture has no server.port: {e}"))?;
+        let socket = lc_socket(world);
+        let argv = serve_argv(world);
+        let log = std::fs::File::create(world.join(LC_LOG)).map_err(|e| e.to_string())?;
+        let mut child = Command::new(&argv[0])
+            .args(&argv[1..])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("SPIRA_TOML", world.join("config/sim.toml"))
+            .env("SPIRA_RELEASE", world.join("release"))
+            .env("SPIRA_LC_HOST", "127.0.0.1")
+            .env("SPIRA_LC_PORT", port.trim())
+            .env("SPIRA_LC_USER", "root")
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().map_err(|e| e.to_string())?)
+            .stderr(log)
+            .spawn()
+            .map_err(|e| format!("{}: {e}", argv[0]))?;
+        std::fs::write(lc_pid_file(world), child.id().to_string()).map_err(|e| e.to_string())?;
+        let start = Instant::now();
+        loop {
+            // `list` reads the bead table: an answer with exit 0 is a serve whose DB is reachable.
+            if ask(&socket, &["list"]) == Some(0) {
+                return Ok(());
+            }
+            if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
+                let log = std::fs::read_to_string(world.join(LC_LOG)).unwrap_or_default();
+                return Err(format!("spira-lc serve exited before it answered: {st}: {}", log.trim()));
+            }
+            if start.elapsed() > LC_READY_DEADLINE {
+                let log = std::fs::read_to_string(world.join(LC_LOG)).unwrap_or_default();
+                return Err(format!("spira-lc serve on {} did not answer within {}s: {}", socket.display(), LC_READY_DEADLINE.as_secs(), log.trim()));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn lc_stop(&self, world: &Path, pid: u32) -> Result<(), String> {
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        if !alive(pid) || !is_world_serve(&cmdline, world) {
+            eprintln!("sim: lifecycle serve pid {pid} is gone or is no longer this world's serve; nothing signalled");
+            return Ok(());
+        }
+        for (sig, wait) in [(SIGTERM, LC_STOP_DEADLINE), (SIGKILL, LC_STOP_DEADLINE)] {
+            signal(pid, sig);
+            let start = Instant::now();
+            while start.elapsed() < wait {
+                if !alive(pid) {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        Err(format!("the world's spira-lc serve (pid {pid}) survived SIGTERM and SIGKILL"))
     }
 }
 
@@ -221,6 +372,9 @@ pub fn is_world(dir: &Path) -> bool {
 pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<String>, steps: &dyn Steps) -> Result<(), String> {
     refuse_production(env)?;
     let source = release_source(env)?;
+    if let Ok(abs) = std::path::absolute(dir) {
+        check_socket_path(&abs)?;
+    }
     if dir.exists() && std::fs::read_dir(dir).map_err(|e| e.to_string())?.next().is_some() {
         return Err(format!("{} is not empty", dir.display()));
     }
@@ -238,6 +392,7 @@ pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<Stri
 }
 
 fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dyn Steps) -> Result<(), String> {
+    check_socket_path(dir)?;
     let release = match source {
         ReleaseSource::Prebuilt(p) => p.clone(),
         ReleaseSource::Build => {
@@ -288,24 +443,44 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     link(&sim_exe, &gh_bin)?;
     link(&sim_exe, &bin.join("round-vm"))?;
     crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
+    std::fs::write(&file, CONFIG_BASE).map_err(|e| e.to_string())?;
     for (k, v) in config_settings(&work, &gh_bin) {
         steps.config_set(&release, &file, &k, &v)?;
     }
+    for (k, v) in lc_settings(dir) {
+        steps.config_set(&release, &file, &k, &v)?;
+    }
+    let port = std::fs::read_to_string(Path::new(&fixture).join("server.port")).unwrap_or_default();
     std::fs::write(
         config.join("sim.env"),
         format!(
-            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\n",
+            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\n",
             run_dir.display(),
             runner.display(),
             gh_state.display(),
             bin.display(),
             probe_command(&std::env::current_exe().map_err(|e| e.to_string())?, dir),
             crate::roundvm::WORLD_ENV,
-            dir.display()
+            dir.display(),
+            dir.join("release").display(),
+            lc_socket(dir).display(),
+            port.trim()
         ),
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    steps.lc_serve(dir, &fixture)
+}
+
+/// The world's own lifecycle locators (sp-hq1v76), written over the complete base so none of
+/// them is the base's (production-default) value: its socket, the empty credential world up
+/// wrote, and its run dir. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` pin a same-user
+/// fallback connection to the world's own Dolt fixture as well.
+pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
+    vec![
+        ("spira.lc_socket".to_string(), lc_socket(world).display().to_string()),
+        ("spira.lc_password_file".to_string(), world.join("config/lc-credential").display().to_string()),
+        ("spira.run".to_string(), world.join("run").display().to_string()),
+    ]
 }
 
 /// The `SIM_PROBE` line's command: `sim probe <world>`, shell-quoted, since it runs under `sh -c`.
@@ -353,6 +528,11 @@ fn set_exec(p: &Path) -> Result<(), String> {
 pub fn down(dir: &Path, steps: &dyn Steps) -> Result<(), String> {
     if !is_world(dir) {
         return Err(format!("{} is not a sim world", dir.display()));
+    }
+    // The serve goes first: it holds a connection to the fixture db_down removes.
+    if let Ok(pid) = std::fs::read_to_string(lc_pid_file(dir)) {
+        let pid: u32 = pid.trim().parse().map_err(|e| format!("{}: {e}", lc_pid_file(dir).display()))?;
+        steps.lc_stop(dir, pid)?;
     }
     if let Ok(fixture) = std::fs::read_to_string(dir.join("db.fixture")) {
         steps.db_down(fixture.trim())?;
