@@ -130,6 +130,10 @@ pub fn ipv4_on(data: &Value, iface: &str) -> Option<String> {
         .filter(|a| !a.is_empty())
 }
 
+/// A round VM must never be ballooned down or out-weighed by the host's builders: balloon 0
+/// fixes its memory at the template's size, and a high CPU weight wins contention for cores.
+const ROUND_CPUUNITS: u32 = 10000;
+
 /// The MAC a VMID always gets: the VMID is the pool slot, so a re-clone of a slot reuses
 /// its DHCP lease instead of minting a new one. `02` marks it locally administered.
 pub fn slot_mac(vmid: &str) -> Result<String, String> {
@@ -239,9 +243,12 @@ impl<T: Transport> Provider for Pve<T> {
         let mac = slot_mac(vmid)?;
         let cfg_path = format!("{}/config", self.qemu(vmid));
         let cfg = self.t.call(Method::Get, &cfg_path, &[])?;
-        let Some(net0) = cfg.get("net0").and_then(Value::as_str) else { return Ok(()) };
-        let pinned = with_mac(net0, &mac).ok_or_else(|| format!("net0 {net0:?} has no model=MAC field"))?;
-        self.task(Method::Post, &cfg_path, &[("net0", pinned)])
+        let mut reserve = vec![("balloon", "0".to_string()), ("cpuunits", ROUND_CPUUNITS.to_string())];
+        if let Some(net0) = cfg.get("net0").and_then(Value::as_str) {
+            let pinned = with_mac(net0, &mac).ok_or_else(|| format!("net0 {net0:?} has no model=MAC field"))?;
+            reserve.insert(0, ("net0", pinned));
+        }
+        self.task(Method::Post, &cfg_path, &reserve)
     }
 
     fn hold_for_ci(&self) {
@@ -443,7 +450,14 @@ mod tests {
         p.clone_to("124", "round-124").unwrap();
         let (m, path, params) = last(&p, "/qemu/124/config");
         assert_eq!((m, path.as_str()), (Method::Post, "/nodes/pve/qemu/124/config"));
-        assert_eq!(params, vec![("net0".into(), "virtio=02:52:56:00:00:7C,bridge=vmbr0,firewall=1".into())]);
+        assert_eq!(
+            params,
+            vec![
+                ("net0".into(), "virtio=02:52:56:00:00:7C,bridge=vmbr0,firewall=1".into()),
+                ("balloon".into(), "0".into()),
+                ("cpuunits".into(), "10000".into()),
+            ]
+        );
         let first = pve();
         first.clone_to("124", "round-124").unwrap();
         assert_eq!(last(&first, "/qemu/124/config").2, params);
