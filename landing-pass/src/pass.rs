@@ -117,6 +117,13 @@ impl<'a> Pass<'a> {
         (crate::model::handed_on(&st), st)
     }
 
+    /// A red gate that already wrote REWORK leaves the bead claimable; the reopen's resume
+    /// note and requeue bump are then ours to record.
+    pub(crate) fn record_rework(&self, id: &str, cause: &str, note: &str) {
+        self.lib.note(id, note);
+        self.lib.bump_requeue(id, cause);
+    }
+
     /// `bd show` rows joined to their lifecycle states. A store or machine that cannot be
     /// read is said loudly: nothing reads as handed on this pass.
     pub(crate) fn show_rows(&self, _repo: &std::path::Path, ids: &[String]) -> Result<Vec<BeadRow>, String> {
@@ -506,7 +513,7 @@ impl<'a> Pass<'a> {
                 }
                 _ => {
                     let (closed, st) = self.handed_on_now(id);
-                    if !closed {
+                    if !closed && st != "REWORK" {
                         self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not reopening {br}"));
                         return Flow::Next;
                     }
@@ -517,6 +524,10 @@ impl<'a> Pass<'a> {
                         "Reopened by sentinel: branch {br} failed {name}'s certification gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n{scope_part}\n\n{}",
                         tail_lines(&g.out, 20)
                     );
+                    if !closed {
+                        self.record_rework(id, "cert-gate-red", &note);
+                        return Flow::Next;
+                    }
                     self.lib.reopen(id, "cert-gate-red", &note);
                     self.out.progress(&format!("reopened {id} — failed the certification gate"));
                     self.lib.event(

@@ -101,7 +101,7 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                     let st = p.bead_lc_state(id);
                     (crate::model::handed_on(&st), st)
                 };
-                if !st_closed {
+                if !st_closed && st != "REWORK" {
                     p.out.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not reopening {br}"));
                     return Flow::Next;
                 }
@@ -110,6 +110,10 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                     "Reopened by sentinel: branch {br} failed {name}'s landing gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n\n{}",
                     tail_lines(&g.out, 20)
                 );
+                if !st_closed {
+                    p.record_rework(id, "gate-red", &note);
+                    return Flow::Next;
+                }
                 p.lib.reopen(id, "gate-red", &note);
                 p.out.progress(&format!("reopened {id} — failed the gate"));
                 p.lib.event("bead.reopened", id, &format!("reopened {id} — {br} failed {name}'s landing gate"), &tail_lines(&g.out, 3));
