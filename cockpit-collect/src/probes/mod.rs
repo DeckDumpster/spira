@@ -1223,7 +1223,8 @@ pub fn sending_keys() -> Kv {
 /// lifecycle row is not live work and is not counted. A `duplicate-of:` bead is already
 /// accounted for.
 pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &str) -> HashMap<String, Vec<String>> {
-    let mut by_ref: HashMap<String, Vec<String>> = HashMap::new();
+    // (id, created_at, closed_at when terminal)
+    let mut by_ref: HashMap<String, Vec<(String, String, Option<String>)>> = HashMap::new();
     for i in rows {
         let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
         if ref_.is_empty() {
@@ -1235,16 +1236,34 @@ pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &s
         }
         let id = i.get("id").and_then(Value::as_str).unwrap_or("").to_string();
         let Some(row) = lc.get(&id) else { continue };
-        if row.terminal() {
-            let closed_at = i.get("closed_at").and_then(Value::as_str).unwrap_or("");
-            let closed_date = closed_at.get(..10).unwrap_or("");
-            if closed_date < since {
+        let text = |k: &str| i.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let closed = if row.terminal() {
+            let closed_at = text("closed_at");
+            if closed_at.get(..10).unwrap_or("") < since {
                 continue;
             }
-        }
-        by_ref.entry(ref_.to_string()).or_default().push(id);
+            Some(closed_at)
+        } else {
+            None
+        };
+        by_ref.entry(ref_.to_string()).or_default().push((id, text("created_at"), closed));
     }
+    // A terminal bead closed before a sibling was created is a predecessor of a recurrence
+    // (incident.sh files fresh once the predecessor is over), not a dedup failure.
     by_ref
+        .into_iter()
+        .map(|(ref_, beads)| {
+            let ids = beads
+                .iter()
+                .filter(|(id, _, closed)| match closed {
+                    Some(c) if !c.is_empty() => !beads.iter().any(|(o, created, _)| o != id && created.as_str() > c.as_str()),
+                    _ => true,
+                })
+                .map(|(id, _, _)| id.clone())
+                .collect();
+            (ref_, ids)
+        })
+        .collect()
 }
 
 /// SP_POISON: work beads the machine holds for poison, not yet over (the `spira-poison`
