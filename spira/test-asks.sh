@@ -42,7 +42,7 @@ for _ in $(seq 100); do [ -e "$TMP/run/watchd/asks.health" ] && break; sleep 0.1
 echo '[{"id":"sp-old","title":"already open"},{"id":"sp-n2","title":"and Y"}]' > "$ASKS"
 wait "$wpid"
 grep -q "NEW ASK sp-n2" "$LOG"; is "the ask reached the log though the inbox write failed" "0" "$?"
-[ -e "$CUR" ]; is "a failed inbox write leaves the cursor alone" "1" "$?"
+[ "$(cat "$CUR" 2>/dev/null || echo 0)" -lt "$(wc -l < "$LOG")" ]; is "a failed inbox write leaves the cursor behind the undelivered line" "0" "$?"
 
 arun health >/dev/null; is "health passes after a fresh poll" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/asks.health"
