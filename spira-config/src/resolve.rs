@@ -534,11 +534,40 @@ fn resolve_colon(
     toml_map: &BTreeMap<String, String>,
     default: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
-    let _ = default;
     match seed(key, env, toml_map) {
+        Some(v) if !(GENERATING.get() && v.is_empty()) => Ok(v),
+        _ if GENERATING.get() => default(),
         Some(v) => Ok(v),
-        None => Err(undeclared(key)),
+        None => unset_or_undeclared(key, default),
     }
+}
+
+/// An undeclared key is refused — except a TYPED key (a number, a bool, an enum) whose
+/// registered default is the empty string: "unset" (no ceiling, derive at run time) has no
+/// spelling in its type, so leaving it out is the only way to declare it. A string key can
+/// say `""` and must.
+fn unset_or_undeclared(key: &str, default: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
+    let path = format!("spira.{}", key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase());
+    let typed = crate::set_path(&SpiraToml::default(), &path, "").is_err_and(|e| !e.contains("unknown field"));
+    match default() {
+        Ok(d) if typed && d.is_empty() => Ok(d),
+        _ => Err(undeclared(key)),
+    }
+}
+
+thread_local! {
+    /// Set only while [`resolve_with_defaults`] runs: an undeclared key takes its registered
+    /// default instead of refusing. Nothing that READS config ever sets it.
+    static GENERATING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Every key, an undeclared one taking its registered default — for WRITING a fresh box's
+/// config (`init`), never for reading one: a process reads only what the file declares.
+pub fn resolve_with_defaults(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
+    GENERATING.set(true);
+    let r = resolve_unchecked(input);
+    GENERATING.set(false);
+    r
 }
 
 /// The `=` (no-colon) rule: an explicitly empty seed is itself an answer and the default is
@@ -549,10 +578,10 @@ fn resolve_eq(
     toml_map: &BTreeMap<String, String>,
     default: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
-    let _ = default;
     match seed(key, env, toml_map) {
         Some(v) => Ok(v),
-        None => Err(undeclared(key)),
+        None if GENERATING.get() => default(),
+        None => unset_or_undeclared(key, default),
     }
 }
 

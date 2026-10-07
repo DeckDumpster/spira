@@ -326,15 +326,40 @@ fn intake_cmd(env: &config::Env, rest: &[String]) -> Result<(), (u8, String)> {
 }
 
 /// The config this install runs on: the file `SPIRA_TOML` names, else the canonical
-/// location — produced from `answers` (or a prompt on a terminal) when absent. When
-/// `SPIRA_TOML` was unset it names the file for the rest of this process, and the operator is
-/// told to export it for the steps that follow.
-fn ensure_config(env: &config::Env, answers: Option<&Path>) -> Result<(), String> {
+/// location — produced from `answers` (or a prompt on a terminal) when absent, every other
+/// key at the registered default of the release being installed (its own `spira/conf.d`,
+/// read out of `tarball`). When `SPIRA_TOML` was unset it names the file for the rest of this
+/// process, and the operator is told to export it for the steps that follow.
+fn ensure_config(env: &config::Env, tarball: &Path, answers: Option<&Path>) -> Result<(), String> {
     use spira_config::init;
     let out = init::default_out(env)?;
-    match init::ensure_from_cli(Some(out.clone()), answers, &Default::default())? {
-        init::Outcome::Existing(_) => {}
-        init::Outcome::Written(p) => println!("release: wrote {} from the operator's answers", p.display()),
+    if !out.exists() {
+        let scratch = std::env::temp_dir().join(format!("release-conf-d-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
+        let got = (|| {
+            // batch-job: tar reads one directory out of the tarball being installed
+            let st = std::process::Command::new("tar")
+                .args(["-xzf"])
+                .arg(tarball)
+                .arg("-C")
+                .arg(&scratch)
+                .args(["--wildcards", "*/spira/conf.d/*"])
+                .status()
+                .map_err(|e| format!("cannot run tar: {e}"))?;
+            if !st.success() {
+                return Err(format!("{} carries no spira/conf.d ({st})", tarball.display()));
+            }
+            let top = std::fs::read_dir(&scratch).map_err(|e| e.to_string())?.flatten().next().ok_or("empty extraction")?.path();
+            match init::ensure_from_cli(Some(out.clone()), answers, &Default::default(), &top.join("spira/conf.d"))? {
+                init::Outcome::Written(p) => println!("release: wrote {} from the operator's answers", p.display()),
+                init::Outcome::Existing(_) => {}
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&scratch);
+        got?;
+    } else {
+        init::ensure_from_cli(Some(out.clone()), None, &Default::default(), Path::new("/nonexistent"))?;
     }
     if env.get("SPIRA_TOML").is_none_or(|t| t.is_empty()) {
         std::env::set_var("SPIRA_TOML", &out);
@@ -414,7 +439,8 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
     // PRODUCES the config from the operator's answers (per Ryan 2026-10-07) — before anything
     // reads config. An existing file is validated and used, never overwritten.
     if cmd == "install-tarball" && !a.dry_run {
-        ensure_config(&env, a.answers.as_deref()).map_err(fail)?;
+        let tb = rest.first().ok_or_else(|| usage("install-tarball takes 1 argument(s)".into()))?;
+        ensure_config(&env, Path::new(tb), a.answers.as_deref()).map_err(fail)?;
     }
     let cfg = resolve_config(&a, &env, &cmd, rest).map_err(|e| (1, e))?;
     let repo = || release::repo::resolve(a.repo.as_deref().map(Path::new), &env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));

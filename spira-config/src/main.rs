@@ -1327,7 +1327,15 @@ fn cmd_init(args: &[String]) -> ExitCode {
     }
     let out = flags.remove("out").map(std::path::PathBuf::from);
     let answers = flags.remove("answers").map(std::path::PathBuf::from);
-    match spira_config::init::ensure_from_cli(out, answers.as_deref(), &flags) {
+    // Every other key's registered default comes from this release's own registry.
+    let conf_d = match spira_config::resolve::locate_home_for_process() {
+        Ok(h) => spira_config::resolve::default_conf_d(&h),
+        Err(e) => {
+            eprintln!("spira-config init: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match spira_config::init::ensure_from_cli(out, answers.as_deref(), &flags, &conf_d) {
         Ok(spira_config::init::Outcome::Existing(p)) => {
             println!("spira-config init: using existing {}", p.display());
             ExitCode::SUCCESS

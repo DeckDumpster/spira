@@ -591,7 +591,14 @@ fn main() -> ExitCode {
     if opts.dry {
         would("ensure the config SPIRA_TOML names (spira-config init)");
     } else {
-        match spira_config::init::ensure_from_cli(None, None, &Default::default()) {
+        let conf_d = match spira_config::resolve::locate_home_for_process() {
+            Ok(h) => spira_config::resolve::default_conf_d(&h),
+            Err(e) => {
+                eprintln!("install: phase config failed — {e}");
+                return ExitCode::from(2);
+            }
+        };
+        match spira_config::init::ensure_from_cli(None, None, &Default::default(), &conf_d) {
             Ok(spira_config::init::Outcome::Existing(p)) => skip(&format!("config exists at {}", p.display())),
             Ok(spira_config::init::Outcome::Written(p)) => {
                 info(&format!("wrote {}", p.display()));

@@ -87,9 +87,23 @@ pub fn missing(answers: &BTreeMap<String, String>) -> Vec<&'static str> {
     REQUIRED.iter().map(|(k, _)| *k).filter(|k| answers.get(*k).is_none_or(|v| v.trim().is_empty())).collect()
 }
 
-/// The `spira.toml` text for `answers`, with `repo_map` pinned (default: `repo-map` beside
-/// `out`). `Err` names the first answer the schema refuses.
-pub fn render(answers: &BTreeMap<String, String>, out: &Path) -> Result<String, String> {
+/// What a fresh config's other keys are computed from: the release's key registry
+/// (`spira/conf.d`) and the ambient `HOME`/`XDG_*` the registered defaults are written in.
+pub struct Registry<'a> {
+    pub conf_d: &'a Path,
+    pub env: &'a BTreeMap<String, String>,
+}
+
+/// `SPIRA_FOO` / `COCKPIT_FOO` -> `spira.foo` / `spira.cockpit_foo`.
+fn key_path(key: &str) -> String {
+    format!("spira.{}", key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase())
+}
+
+/// The `spira.toml` text for `answers`: the answers themselves, `repo_map` pinned (default:
+/// `repo-map` beside `out`), and every other registered key at its registered default as it
+/// resolves on this box — every key declared, because a process reads nothing else. The
+/// result must resolve under the reading rule (no defaults), or this refuses naming why.
+pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>) -> Result<String, String> {
     let gone = missing(answers);
     if !gone.is_empty() {
         return Err(format!("missing required input(s): {}", gone.join(", ")));
@@ -107,10 +121,50 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path) -> Result<String, 
         }
         doc = crate::set_path(&doc, &format!("spira.{k}"), v).map_err(|e| format!("answer {k} = {v:?}: {e}"))?;
     }
+    // The installed release's own tree is where every release-relative default points: the
+    // stable `current` link, never the directory this file happened to be generated from.
+    let home = PathBuf::from(&a["releases"]).join("current/spira");
+    let repo = home.parent().unwrap_or(Path::new("/")).to_path_buf();
+    macro_rules! input {
+        ($toml:expr) => {
+            crate::resolve::ResolveInput { env: reg.env, home: &home, repo: &repo, toml: $toml, conf_d: reg.conf_d }
+        };
+    }
+    let all = crate::resolve::resolve_with_defaults(input!(Some(&doc))).map_err(|e| format!("cannot compute the registered defaults: {e}"))?;
+    let declared = crate::spira_value_map(&doc, true);
+    let mut unset = Vec::new();
+    for (key, v) in &all.values {
+        let path = key_path(key);
+        let field = path.trim_start_matches("spira.").to_ascii_uppercase();
+        if declared.contains_key(&field) {
+            continue;
+        }
+        // A list key resolves to its words; a key that is not a [spira] field (a fixed gate
+        // constant) is not the operator's to declare.
+        // An empty default of a typed key is "unset": it has no spelling, so it is left out.
+        let as_list = || serde_json::to_string(&v.split_whitespace().collect::<Vec<_>>()).unwrap_or_default();
+        let as_bool = || match v.as_str() {
+            "0" => "false".to_string(),
+            "1" => "true".to_string(),
+            o => o.to_string(),
+        };
+        if v.is_empty() && crate::set_path(&doc, &path, "").is_err() {
+            continue;
+        }
+        match crate::set_path(&doc, &path, v)
+            .or_else(|e| crate::set_path(&doc, &path, &as_list()).or_else(|_| crate::set_path(&doc, &path, &as_bool())).map_err(|_| e)) {
+            Ok(d) => doc = d,
+            Err(e) if e.contains("unknown field") => {} // a fixed constant, not a [spira] key
+            Err(e) => unset.push(format!("{path} = {v:?} ({e})")),
+        }
+    }
     let text = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     let checked = crate::validate(&text)?;
     crate::require_id_prefix(&checked)?;
-    Ok(format!("# spira.toml — produced from the operator's answers at install (spira-config init).\n# Every key not named here keeps its registered default; change one with `spira-config set`.\n{text}"))
+    crate::resolve::resolve(input!(Some(&checked))).map_err(|e| format!("the generated config does not resolve: {e}; defaults the schema refused: {}", unset.join("; ")))?;
+    Ok(format!(
+        "# Produced from the operator's answers at install (spira-config init): the answers, and\n# every other key at its registered default. Change one with `spira-config set`.\n{text}"
+    ))
 }
 
 /// The repo-map row for the home repository, when `home_repo_path` was answered.
@@ -128,6 +182,7 @@ pub fn ensure(
     out: &Path,
     mut answers: BTreeMap<String, String>,
     ask: Option<&mut dyn FnMut(&str, &str, &str) -> Option<String>>,
+    reg: &Registry<'_>,
 ) -> Result<Outcome, String> {
     if out.exists() {
         let text = std::fs::read_to_string(out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -163,7 +218,7 @@ pub fn ensure(
             gone.join(", ")
         ));
     }
-    let text = render(&answers, out)?;
+    let text = render(&answers, out, reg)?;
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -191,8 +246,9 @@ pub fn ensure(
 
 /// [`ensure`] for a CLI: answers from `answers_file` (if any) overlaid by `flags`, a prompt on
 /// the terminal when stdin is one, and `out` defaulting to [`default_out`].
-pub fn ensure_from_cli(out: Option<PathBuf>, answers_file: Option<&Path>, flags: &BTreeMap<String, String>) -> Result<Outcome, String> {
+pub fn ensure_from_cli(out: Option<PathBuf>, answers_file: Option<&Path>, flags: &BTreeMap<String, String>, conf_d: &Path) -> Result<Outcome, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
+    let reg = Registry { conf_d, env: &env };
     let out = match out {
         Some(o) => o,
         None => default_out(&env)?,
@@ -214,7 +270,7 @@ pub fn ensure_from_cli(out: Option<PathBuf>, answers_file: Option<&Path>, flags:
         Some(if v.is_empty() { default.to_string() } else { v.to_string() })
     };
     let ask: Option<&mut dyn FnMut(&str, &str, &str) -> Option<String>> = if std::io::stdin().is_terminal() { Some(&mut prompt) } else { None };
-    ensure(&out, answers, ask)
+    ensure(&out, answers, ask, &reg)
 }
 
 /// `--<key> VALUE` pairs out of `args` (dashes in a key become underscores); every other
@@ -238,6 +294,25 @@ pub fn split_flags(args: &[String], keep: &[&str]) -> Result<(BTreeMap<String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The real registry this tree ships, defaults written against a fake home.
+    fn reg() -> Registry<'static> {
+        let env: &'static BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "/b/home".to_string())].into_iter().collect()));
+        Registry { conf_d: Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")), env }
+    }
+
+    #[test]
+    fn every_registered_key_is_declared_and_the_file_resolves_without_defaults() {
+        let d = testkit::TempDir::new("spira-config-init-complete");
+        let out = d.path().join("spira.toml");
+        ensure(&out, full(), None, &reg()).unwrap();
+        let doc = crate::load(&out).unwrap();
+        let home = PathBuf::from("/b/rel/current/spira");
+        let r = reg();
+        let got = crate::resolve::resolve(crate::resolve::ResolveInput { env: r.env, home: &home, repo: Path::new("/b/rel/current"), toml: Some(&doc), conf_d: r.conf_d });
+        assert!(got.is_ok(), "{:?}", got.err().map(|e| e.to_string()));
+        assert_eq!(crate::get_path(&doc, "spira.instance").as_deref(), Some("acc"));
+    }
 
     fn full() -> BTreeMap<String, String> {
         parse_answers(
@@ -268,7 +343,7 @@ mod tests {
         let out = d.path().join("cfg/spira.toml");
         let mut a = full();
         a.insert("home_repo_path".into(), "/b/scratch".into());
-        assert_eq!(ensure(&out, a, None).unwrap(), Outcome::Written(out.clone()));
+        assert_eq!(ensure(&out, a, None, &reg()).unwrap(), Outcome::Written(out.clone()));
         let doc = crate::load(&out).unwrap();
         assert_eq!(crate::get_path(&doc, "spira.db").as_deref(), Some("/b/db"));
         assert_eq!(crate::get_path(&doc, "spira.repo_map").as_deref(), Some(d.path().join("cfg/repo-map").to_str().unwrap()));
@@ -280,11 +355,11 @@ mod tests {
     fn an_existing_repo_map_row_is_never_duplicated() {
         let d = testkit::TempDir::new("spira-config-init-row");
         let out = d.path().join("spira.toml");
-        std::fs::write(d.path().join("repo-map"), "scratch | /x | queue.local | local/main | |\n").unwrap();
+        std::fs::write(d.path().join("repo-map"), "scratch | /b/x | queue.local | local/main | |\n").unwrap();
         let mut a = full();
         a.insert("home_repo_path".into(), "/b/scratch".into());
-        ensure(&out, a, None).unwrap();
-        assert_eq!(std::fs::read_to_string(d.path().join("repo-map")).unwrap(), "scratch | /x | queue.local | local/main | |\n");
+        ensure(&out, a, None, &reg()).unwrap();
+        assert_eq!(std::fs::read_to_string(d.path().join("repo-map")).unwrap(), "scratch | /b/x | queue.local | local/main | |\n");
     }
 
     #[test]
@@ -292,10 +367,10 @@ mod tests {
         let d = testkit::TempDir::new("spira-config-init-existing");
         let out = d.path().join("spira.toml");
         std::fs::write(&out, "[spira]\nid_prefix = \"zz\"\n").unwrap();
-        assert_eq!(ensure(&out, full(), None).unwrap(), Outcome::Existing(out.clone()));
+        assert_eq!(ensure(&out, full(), None, &reg()).unwrap(), Outcome::Existing(out.clone()));
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "[spira]\nid_prefix = \"zz\"\n");
         std::fs::write(&out, "[spira]\nnot_a_key = 1\n").unwrap();
-        assert!(ensure(&out, full(), None).is_err());
+        assert!(ensure(&out, full(), None, &reg()).is_err());
     }
 
     #[test]
@@ -305,7 +380,7 @@ mod tests {
         let mut a = full();
         a.remove("releases");
         a.remove("instance");
-        let e = ensure(&out, a, None).unwrap_err();
+        let e = ensure(&out, a, None, &reg()).unwrap_err();
         assert!(e.contains("instance, releases"), "{e}");
         assert!(!out.exists());
     }
@@ -317,7 +392,7 @@ mod tests {
         let mut a = full();
         a.remove("run");
         let mut ask = |k: &str, _: &str, _: &str| (k == "run").then(|| "/asked/run".to_string());
-        ensure(&out, a, Some(&mut ask)).unwrap();
+        ensure(&out, a, Some(&mut ask), &reg()).unwrap();
         assert_eq!(crate::get_path(&crate::load(&out).unwrap(), "spira.run").as_deref(), Some("/asked/run"));
     }
 
@@ -325,7 +400,7 @@ mod tests {
     fn an_unknown_answer_is_refused_by_name() {
         let mut a = full();
         a.insert("no_such_key".into(), "1".into());
-        let e = render(&a, Path::new("/x/spira.toml")).unwrap_err();
+        let e = render(&a, Path::new("/x/spira.toml"), &reg()).unwrap_err();
         assert!(e.contains("no_such_key"), "{e}");
     }
 

@@ -245,7 +245,7 @@ impl Fake {
                 // As the real one does: the operator's answers become the one config file.
                 let text = fs::read_to_string(answers).unwrap();
                 let toml = Path::new(c.env_of("SPIRA_TOML").expect("install-tarball names SPIRA_TOML"));
-                spira_config::init::ensure(toml, spira_config::init::parse_answers(&text).unwrap(), None).unwrap();
+                spira_config::init::ensure(toml, spira_config::init::parse_answers(&text).unwrap(), None, &registry()).unwrap();
                 self.activate(Path::new(tb).file_name().unwrap().to_string_lossy().trim_end_matches(".tar.gz"));
                 ok("")
             }
@@ -716,6 +716,12 @@ fn record_without_a_notes_repo_is_a_usage_error() {
     assert_eq!(main(&a), 2);
 }
 
+/// The registry this tree ships, as the real install-tarball reads it out of the tarball.
+fn registry() -> spira_config::init::Registry<'static> {
+    let env: &'static std::collections::BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "/home/test".to_string())].into_iter().collect()));
+    spira_config::init::Registry { conf_d: Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")), env }
+}
+
 /// Phase A's answers are exactly what the installer needs from an operator: every required
 /// input present (so `release install-tarball --answers` never prompts or refuses), and the
 /// config they produce passes the same id_prefix check doctor/pre-activate run.
@@ -728,7 +734,7 @@ fn phase_a_answers_produce_a_valid_spira_toml() {
     let r = Run::new(&f, o);
     let a = spira_config::init::parse_answers(&r.answers_text(&releases)).expect("answers parse");
     assert!(spira_config::init::missing(&a).is_empty(), "missing: {:?}", spira_config::init::missing(&a));
-    let text = spira_config::init::render(&a, &spira_config::toml_path_at(&b.root.join("config/spira"))).expect("answers render");
+    let text = spira_config::init::render(&a, &spira_config::toml_path_at(&b.root.join("config/spira")), &registry()).expect("answers render");
     let doc = spira_config::validate(&text).expect("valid");
     assert!(spira_config::require_id_prefix(&doc).is_ok());
     assert_eq!(spira_config::get_path(&doc, "spira.releases").as_deref(), Some(releases.display().to_string().as_str()));
