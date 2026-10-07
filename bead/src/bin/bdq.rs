@@ -268,6 +268,22 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     }
 
+    // A bead's state is the lifecycle row's (sp-6oimlm): no caller moves bd's status through
+    // bdq. The override is named and logged, never silent.
+    if let Some(door) = bead::bdq::check_state_verb(args) {
+        match env_nonempty("SPIRA_BDQ_STATE_WRITE") {
+            Some(why) => eprintln!("bdq: STATE WRITE OVERRIDE ({}) — bd's status moved outside the lifecycle machine: {why}", args.join(" ")),
+            None => {
+                eprintln!(
+                    "spira: bdq refuses `{}` — a bead's state is its lifecycle row's, and bd's status follows it, never the reverse.\n\
+                     Exit: {door}. To write bd's status anyway, set SPIRA_BDQ_STATE_WRITE=<reason> (logged).",
+                    args.first().map(String::as_str).unwrap_or("")
+                );
+                return 1;
+            }
+        }
+    }
+
     // The czar fence: a live SPIRA_FAYTH=czar session with a class mutating the queue
     // (reopen always; update/close unless it is the trigger bead itself) must pass
     // czar-fence.sh first. czar-fence.sh's own exit code is NOT propagated — bdq always
