@@ -1418,7 +1418,7 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
     assert_eq!(get("RUSTC_WRAPPER"), Some(admit.to_str().unwrap()));
     assert_eq!(get("SPIRA_ADMIT_INNER"), Some(sccache.to_str().unwrap()));
     assert_eq!(get("SPIRA_ADMIT_WHO"), Some("sp-adm"));
-    assert_eq!(get("SPIRA_RUN"), Some(f.run.to_str().unwrap()));
+    assert_eq!(get("SPIRA_RUN"), None);
     assert!(!o.log.contains("not admitted"), "{}", o.log);
     assert_eq!(o.slept, 0, "SPIRA_SUMMON_JITTER=0 disables the jitter");
     assert!(!o.log.contains("summon jitter"));

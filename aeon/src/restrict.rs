@@ -87,8 +87,6 @@ const CONDITIONAL: &[&str] = &[
     "GIT_COMMITTER_EMAIL",
     "SPIRA_AEON",
     "SPIRA_AEON_OVERRIDE",
-    "SPIRA_RUN",
-    "SPIRA_PROD",
     // `work` (the one tool on the model's PATH) resolves its lifecycle socket from the one
     // source of config: it needs the spec and the release that locates its key registry.
     // Both only name files the model's HOME can already reach — no new exposure.
@@ -330,8 +328,6 @@ mod tests {
             ("GIT_COMMITTER_EMAIL", "aeon-ifrit@spira.local"),
             ("SPIRA_AEON", "ifrit"),
             ("SPIRA_AEON_OVERRIDE", "shiva"),
-            ("SPIRA_RUN", "/run/spira"),
-            ("SPIRA_PROD", "/prod/spira"),
             ("BEAD_ID", "sp-x"),
             ("BEADS_ACTOR", "aeon-ifrit"),
             ("SPIRA_MAIL", "/run/spira/mail"),
@@ -346,6 +342,16 @@ mod tests {
         for k in CONDITIONAL {
             assert_eq!(e.get(*k), b.get(*k), "{k} did not carry through unchanged");
         }
+    }
+
+    #[test]
+    fn prod_and_run_roots_never_reach_the_model() {
+        let b = base(&[("HOME", "/h"), ("SPIRA_PROD", "/prod/spira"), ("SPIRA_RUN", "/run/spira")]);
+        let e = restricted_env("sp-x", &b, "/rel/model-bin");
+        for k in ["SPIRA_PROD", "SPIRA_RUN"] {
+            assert!(!e.contains_key(k), "{k} locates the release bin/ and must not reach the model");
+        }
+        assert!(!CONDITIONAL.contains(&"SPIRA_PROD") && !CONDITIONAL.contains(&"SPIRA_RUN"));
     }
 
     #[test]
