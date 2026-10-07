@@ -117,6 +117,7 @@ fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String)
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
         // release's bin/+spira/ on the CHILD's PATH, never only inherited.
         .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(stderr)
         .output();
@@ -141,9 +142,9 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 fn bdq_create(home: &str, args: &[String], incident: Option<&str>) -> i32 {
+    let Some(incident) = incident else { return bdq_status(home, args) };
     let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
     print!("{stdout}");
-    let Some(incident) = incident else { return code };
     if code != 0 {
         return code;
     }
