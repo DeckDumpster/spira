@@ -1264,9 +1264,19 @@ fn cmd_local_pass(args: &[String]) -> ExitCode {
     let (Some(op), Some(kind), Some(sha)) = (args.first(), args.get(1).and_then(|k| Kind::parse(k)), args.get(2)) else {
         return usage();
     };
-    let Some(run) = env::var_os("SPIRA_RUN").map(PathBuf::from) else {
-        eprintln!("local-pass: SPIRA_RUN is not set");
-        return ExitCode::FAILURE;
+    // The run dir is resolved from config like every other reader (publish checks the same
+    // record under its config's run dir), never read raw from the environment
+    // (law-a-binary-resolves-the-config-it-reads).
+    let run = match spira_config::process::cfg("SPIRA_RUN") {
+        Ok(r) if !r.trim().is_empty() => PathBuf::from(r.trim()),
+        Ok(_) => {
+            eprintln!("local-pass: spira.run resolves empty");
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("local-pass: {e}");
+            return ExitCode::FAILURE;
+        }
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
