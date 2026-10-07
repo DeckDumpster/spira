@@ -86,6 +86,7 @@ impl Real {
 
     /// The same query over the attempt-history facts in the lifecycle event log, answered as
     /// bd's `sql` table so the one parser reads both.
+    // batch-job: census report, bounded at 30 s.
     fn run_fact_sql(&self, query: &str) -> (bool, String, String) {
         let out = Command::new("timeout")
             .arg("30")
@@ -124,6 +125,7 @@ impl Real {
 
     /// Beads whose reopen cause (a `reopen` fact, or a merge-conflict requeue) is in the
     /// lifecycle log since `since`: what bd's own `reopened` rows cannot see for themselves.
+    // batch-job: census report, bounded at 30 s.
     fn recorded_cause_ids(&self, since: Option<i64>) -> Result<Vec<String>, String> {
         let mut cmd = Command::new("timeout");
         cmd.arg("30").arg(spira_config::lifecycle_row::lc_bin()).args(["facts", "--kinds", "reopen,requeued"]);

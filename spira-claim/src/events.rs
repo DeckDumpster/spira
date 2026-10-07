@@ -372,6 +372,32 @@ mod tests {
     }
 
     #[test]
+    fn the_counts_are_the_same_whichever_log_a_row_lives_in() {
+        let all = rows(&[
+            ("claimed", ""),
+            ("requeued", "gate-red"),
+            ("claimed", ""),
+            ("closed", ""),
+            ("claimed", ""),
+            ("poison.cleared", "operator"),
+            ("claimed", ""),
+            ("reopen", "batch-eject"),
+        ]);
+        let want = fold(B, &all);
+        // The harness-written kinds moved to the lifecycle log; bd keeps what it writes itself.
+        let (facts, bd): (Vec<_>, Vec<_>) = all
+            .iter()
+            .cloned()
+            .partition(|r| matches!(r.event_type.as_str(), "requeued" | "reopen" | "poison.cleared"));
+        let mut union = bd;
+        union.extend(facts);
+        let got = fold(B, &union);
+        assert_eq!((got.attempts, got.requeues, got.reclaims, got.floor), (want.attempts, want.requeues, want.reclaims, want.floor));
+        assert_eq!(got.attempt_log, want.attempt_log);
+        assert_eq!(got.returns, want.returns);
+    }
+
+    #[test]
     fn null_safe_no_events() {
         let l = fold(B, &[]);
         assert_eq!((l.attempts, l.requeues, l.reclaims), (0, 0, 0));
