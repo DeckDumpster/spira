@@ -98,6 +98,8 @@ wantrc "the beads database seeds cleanly" 0 $?
 lcfix_seed sp-kept WORKING deadbeef || bail "could not seed sp-kept's row"
 KEPT_BEFORE="$(lcfix_sql -q "SELECT state, tip, version, updated_at FROM bead WHERE bead_id='sp-kept'" -r csv 2>/dev/null | sed -n 2p)"
 
+want "the pre-existing row reads back (so 'untouched' below is not empty == empty)" "WORKING" "$KEPT_BEFORE"
+
 install_populate() { spira-install --populate-lifecycle 2>&1; }
 
 # ── PLANTED CONTROL ─────────────────────────────────────────────────────────────────
@@ -130,6 +132,7 @@ is "bd is only read: every call is list or show" "" "$WRITES"
 
 TABLE_AFTER_FIRST="$(dump)"
 EVENTS_AFTER_FIRST="$(rows event)"
+want "the bead table dump reads back (so 'byte-for-byte' below is not empty == empty)" "sp-landed,LANDED" "$TABLE_AFTER_FIRST"
 
 # ── idempotent: a second run changes nothing ────────────────────────────────────────
 OUT="$(install_populate)"; RC=$?
