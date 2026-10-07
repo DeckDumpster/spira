@@ -34,6 +34,21 @@ async fn main() {
             std::process::exit(2);
         }
     };
+    let spec = std::env::var("SCCACHE_DAV_ADDR").unwrap_or_default();
+    if spec.trim().starts_with(spira_config::hostaddr::AUTO) {
+        let bound = cfg.addr.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                let (s, b) = (spec.clone(), bound.clone());
+                if tokio::task::spawn_blocking(move || sccache_dav::spec_drifted(&s, &b)).await.unwrap_or(false) {
+                    eprintln!("sccache-dav: this host's address moved off {bound}; exiting to rebind");
+                    std::process::exit(75);
+                }
+            }
+        });
+    }
     let sweep_root = cfg.root.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(sccache_dav::SWEEP_EVERY);

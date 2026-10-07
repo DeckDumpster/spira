@@ -48,15 +48,17 @@ pub struct Config {
     pub token: Option<String>,
 }
 
-/// Reads [`Config`] from `SCCACHE_DAV_ADDR` (required), `SCCACHE_DAV_ROOT` (required) and
+/// Reads [`Config`] from `SCCACHE_DAV_ADDR` (required; `auto:PORT` binds this host's address as
+/// the route resolves it now — see [`spec_drifted`]), `SCCACHE_DAV_ROOT` (required) and
 /// `SCCACHE_DAV_TOKEN` (optional). Fails closed: a missing required variable, or an address
 /// that starts with `0.0.0.0`, is an `Err` naming what is wrong rather than a silent default.
 pub fn config_from_env() -> Result<Config, String> {
-    let addr = std::env::var("SCCACHE_DAV_ADDR")
-        .map_err(|_| "SCCACHE_DAV_ADDR must be set (e.g. 192.168.1.56:9431)".to_string())?;
-    if addr.trim().is_empty() {
-        return Err("SCCACHE_DAV_ADDR must be set (e.g. 192.168.1.56:9431)".to_string());
+    let spec = std::env::var("SCCACHE_DAV_ADDR")
+        .map_err(|_| "SCCACHE_DAV_ADDR must be set (auto:PORT, or ip:port)".to_string())?;
+    if spec.trim().is_empty() {
+        return Err("SCCACHE_DAV_ADDR must be set (auto:PORT, or ip:port)".to_string());
     }
+    let addr = spira_config::hostaddr::resolve_hostport(&spec)?;
     if addr.starts_with("0.0.0.0") || addr.starts_with('*') {
         return Err(format!(
             "SCCACHE_DAV_ADDR={addr:?} — this store binds to the LAN address only, never a wildcard"
@@ -69,6 +71,12 @@ pub fn config_from_env() -> Result<Config, String> {
     }
     let token = std::env::var("SCCACHE_DAV_TOKEN").ok().filter(|t| !t.is_empty());
     Ok(Config { addr, root: PathBuf::from(root), token })
+}
+
+/// True when `spec` is `auto:…` and the address it resolves to is no longer `bound`: the
+/// lease moved, and the process must exit so its supervisor binds the new one.
+pub fn spec_drifted(spec: &str, bound: &str) -> bool {
+    spira_config::hostaddr::resolve_hostport(spec).map(|now| now != bound).unwrap_or(false)
 }
 
 pub struct AppState {

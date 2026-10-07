@@ -145,7 +145,13 @@ impl Config {
     /// Everything else here is one of round-vm's own knobs, not declared in `spira/conf.d`;
     /// those keep reading the environment with their existing defaults.
     pub fn load() -> Result<Config, String> {
-        let host_addr = Some(must_cfg("SPIRA_ROUND_VM_HOST_ADDR")?).filter(|v| !v.is_empty());
+        let host_addr = match spira_config::hostaddr::resolve(&must_cfg("SPIRA_ROUND_VM_HOST_ADDR")?, spira_config::hostaddr::PROBE) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                eprintln!("round-vm: this host's address does not resolve: {e}");
+                None
+            }
+        };
         let testenv_registry = Some(must_cfg("SPIRA_TESTENV_REGISTRY")?).filter(|v| !v.is_empty());
         Ok(Config::build(Fields {
             run: must_cfg("SPIRA_RUN")?,

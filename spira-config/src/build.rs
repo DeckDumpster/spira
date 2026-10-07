@@ -76,6 +76,13 @@ impl Store {
     /// treat that exactly like any other absence: the local-disk cache, never a refusal.
     pub fn from_values(get: impl Fn(&str) -> Option<String>) -> Option<Store> {
         let addr = get(STORE_ADDR_ENV).filter(|v| !v.trim().is_empty())?;
+        let addr = match crate::hostaddr::resolve_hostport(&addr) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("spira_config::build: {STORE_ADDR_ENV}={addr}: {e} — building without the shared store");
+                return None;
+            }
+        };
         let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };
         Some(Store { endpoint, key_prefix: "/".to_string() })
     }
