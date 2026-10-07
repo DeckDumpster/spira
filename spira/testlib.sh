@@ -867,6 +867,9 @@ threading.Thread(target=watchdog, daemon=True).start()
 sub = os.environ.get("SPIRA_SUBMITTED_LABEL") or "spira-submitted"
 # Holds are the row's (sp-psztcc): a hold/unhold event is recorded here and shown on the row.
 holds = {}
+# State moves the events record (sp-swh8b8): a reopen is a lifecycle transition, which a row
+# derived from bd's status alone could never show.
+moved = {}
 def bd(args):
     env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
     o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args, "--json"],
@@ -880,7 +883,7 @@ def bd(args):
 def row(b):
     st = b.get("status") or "open"
     labels = b.get("labels") or []
-    state = "SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY")
+    state = moved.get(b["id"]) or ("SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY"))
     return {"bead_id": b["id"], "state": state, "holds": json.dumps(sorted(holds.get(b["id"], set()))), "version": "1",
             "holder": (b.get("assignee") or None) if state == "WORKING" else None}
 def answer(args):
@@ -898,6 +901,10 @@ def answer(args):
             holds.get(bid, set()).discard(kind["Unhold"]["kind"].lower())
         elif kind == "AskWithdrawn":
             holds.get(bid, set()).discard("ask")
+        elif isinstance(kind, dict) and ("GateRed" in kind or "Returned" in kind):
+            moved[bid] = "REWORK"
+        elif kind in ("Release", "HolderDead"):
+            moved[bid] = "READY"
         return 0, ""
     return 2, "cannot tell: stand-in lifecycle service"
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
