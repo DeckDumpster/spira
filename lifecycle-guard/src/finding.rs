@@ -18,6 +18,7 @@ pub enum Class {
     BdCloseRust,
     HoldLabel,
     BdReopenRust,
+    BdReadRust,
 }
 
 impl Class {
@@ -37,6 +38,7 @@ impl Class {
             Class::BdCloseRust => "bd-close-rust",
             Class::HoldLabel => "hold-label",
             Class::BdReopenRust => "bd-reopen-rust",
+            Class::BdReadRust => "bd-read-rust",
         }
     }
 }
