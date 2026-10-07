@@ -29,11 +29,6 @@ impl Run<'_> {
         c.push_str(&format!("releases = {}\n", Self::s(releases)));
         c.push_str(&format!("dolt_data = {}\n", Self::s(&data.join("dolt"))));
         c.push_str("operated = 0\n");
-        // The typed keys with no registered default: every operator answers them today (open
-        // question for the registry). Small values — this box is one container.
-        c.push_str("batch_maxpar = 2\nbatch_mem_per_suite_mib = 192\ncertify_par = 2\ncompile_par = 2\n");
-        c.push_str("czar_stage_deadlock = shadow\nlanes_max_live = 2\nmax_live_aeons = 6\n");
-        c.push_str("suites_budget = 1800\nsummon_lock_wait = 30\ntest_par = 2\n");
         c.push_str(&format!("release_repo = {}\n", Self::s(&self.o.release_src())));
         if let Some(a) = &self.o.a.agent {
             c.push_str(&format!("agent = {a}\n"));

@@ -1,10 +1,8 @@
 TYPE=u32
 GROUP=batch
-DOC=SPIRA_BATCH_MAXPAR — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_BATCH_MAXPAR — A small single-box install: at most eight suites at once (0 is still refused).
 SCHEMA=testenv's own suite concurrency cap (testenv/DESIGN.md §4.3, `schedule::maxpar`). Unset derives a quarter of the CPU ceiling, clamped to [2, 16] — never the hardware bound. 0 and anything that doesn't parse are refused outright, not read as "unlimited" (sp-tj8k3: a batch_maxpar of 0 in production put 61 containers and load 90 on one host).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): A small single-box install: at most eight suites at once (0 is still refused).
+    : "${SPIRA_BATCH_MAXPAR:=8}"
 SPIRA_CONF_DEFAULT_EOF

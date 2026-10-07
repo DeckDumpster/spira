@@ -342,8 +342,7 @@ mod tests {
         parse_answers(
             concat!(
                 "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = /b/db\nrun = /b/run\nreleases = \"/b/rel\"\nspira.dolt_data = /b/dolt\noperated = 0\n",
-                "batch_maxpar = 2\nbatch_mem_per_suite_mib = 192\ncertify_par = 2\ncompile_par = 2\nczar_stage_deadlock = shadow\n",
-                "lanes_max_live = 2\nmax_live_aeons = 6\nsuites_budget = 1800\nsummon_lock_wait = 30\ntest_par = 2\nbd = /b/bin/bd\n",
+                "bd = /b/bin/bd\n",
             ),
         )
         .unwrap()
@@ -351,11 +350,24 @@ mod tests {
 
     #[test]
     fn a_typed_key_with_no_registered_default_must_be_answered() {
+        // The shipped registry gives every typed key a default; a registry that does not
+        // (here, summon_lock_wait's default removed) must be answered, never invented.
         let d = testkit::TempDir::new("spira-config-init-nodefault");
-        let mut a = full();
-        a.remove("summon_lock_wait");
-        let e = render(&a, &d.path().join("spira.toml"), &reg()).unwrap_err();
+        let conf_d = d.path().join("conf.d");
+        std::fs::create_dir_all(&conf_d).unwrap();
+        for e in std::fs::read_dir(reg().conf_d).unwrap().flatten() {
+            let mut t = std::fs::read_to_string(e.path()).unwrap();
+            if e.file_name() == "SPIRA_SUMMON_LOCK_WAIT" {
+                t = t.lines().filter(|l| !l.contains(":=")).map(|l| format!("{l}\n")).collect();
+            }
+            std::fs::write(conf_d.join(e.file_name()), t).unwrap();
+        }
+        let r = Registry { conf_d: &conf_d, env: reg().env };
+        let e = render(&full(), &d.path().join("spira.toml"), &r).unwrap_err();
         assert!(e.contains("summon_lock_wait") && !e.contains("certify_par"), "{e}");
+        let mut a = full();
+        a.insert("summon_lock_wait".into(), "30".into());
+        render(&a, &d.path().join("spira.toml"), &r).unwrap();
     }
 
     #[test]
