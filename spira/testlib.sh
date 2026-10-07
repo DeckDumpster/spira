@@ -388,6 +388,11 @@ STUB
 lc_close_stub() {
     local dir="${1:?lc_close_stub needs a directory}" bd="${2:-}" db="${3:-}"
     mkdir -p "$dir"
+    # Every other verb goes to the real spira-lc — the first on PATH that is not this stub —
+    # since the stub is also put first on PATH: some callers (spira-claim's Store) run spira-lc
+    # by name, never through SPIRA_LC_BIN.
+    local real="" c
+    while IFS= read -r c; do [ "$c" -ef "$dir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
     cat > "$dir/spira-lc" <<STUB
 #!/usr/bin/env bash
 bd="$bd"; db="$db"
@@ -400,7 +405,7 @@ if [ "\$1" = reopen ]; then
     [ -n "\$sub" ] && "\$bd" \${db:+-C "\$db"} label remove "\$2" "\$sub" >/dev/null 2>&1
     exit 0
 fi
-[ "\$1" = close ] || exit 7
+if [ "\$1" != close ]; then [ -n "$real" ] && exec "$real" "\$@"; exit 7; fi
 id="\$2"; shift 2; reason=""
 while [ \$# -gt 0 ]; do
     case "\$1" in
@@ -414,6 +419,7 @@ exec "\$bd" \${db:+-C "\$db"} close "\$id" --force --reason "\$reason"
 STUB
     chmod +x "$dir/spira-lc"
     SPIRA_LC_BIN="$dir/spira-lc"; export SPIRA_LC_BIN
+    case ":$PATH:" in *":$dir:"*) ;; *) PATH="$dir:$PATH"; export PATH ;; esac
 }
 # A spira-lc for landing-pass suites, installed by name into <bindir> (already first on the
 # suite's PATH) so the pass's lifecycle probe answers. `list` reads rows like lc_fix_init's;

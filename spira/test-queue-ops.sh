@@ -513,10 +513,9 @@ out="$(real_run eject sp-ej01 --reason 'test-suite-x.sh RED: assertion mismatch 
 is "real bd: the ejected bead is REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej01)"
 
 bead_st="$(field sp-ej01 status)"
-# The store follows the row the reopen door moved (sp-swh8b8): REWORK reads open in bd too.
-[ "$bead_st" = "open" ] && ok "real bd: bd status follows the row to open" || bad "real bd: bd status follows the row" "status=$bead_st"
-assignee="$(field sp-ej01 assignee)"
-[ -z "$assignee" ] && ok "real bd: assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
+[ "$bead_st" = "closed" ] && ok "real bd: bd status is left unmoved by eject" || bad "real bd: bd status unmoved" "status=$bead_st"
+# (No assignee check: a batch eject hands the bead back on its lifecycle row; bd's assignee is
+# content no claim reads, and no reopen path writes it any more — sp-swh8b8.)
 comment_out="$(B comments sp-ej01 2>/dev/null || true)"
 [ -n "$comment_out" ] && ok "real bd: comment posted to bead" || bad "real bd: comment posted" "no output from bd comments"
 
