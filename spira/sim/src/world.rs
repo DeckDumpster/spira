@@ -35,6 +35,16 @@ pub struct ProcessSteps;
 
 pub fn run(cmd: &mut Command, deadline: Duration) -> Result<String, String> {
     let name = format!("{:?}", cmd.get_program());
+    let (status, stdout, stderr) = run_capture(cmd, deadline)?;
+    if status.success() {
+        Ok(stdout)
+    } else {
+        Err(format!("{name}: {status}: {}", stderr.trim()))
+    }
+}
+
+pub fn run_capture(cmd: &mut Command, deadline: Duration) -> Result<(std::process::ExitStatus, String, String), String> {
+    let name = format!("{:?}", cmd.get_program());
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     let mut child = cmd.spawn().map_err(|e| format!("{name}: {e}"))?;
     let mut out = child.stdout.take().ok_or("no stdout")?;
@@ -63,11 +73,7 @@ pub fn run(cmd: &mut Command, deadline: Duration) -> Result<String, String> {
     };
     let stdout = t_out.join().unwrap_or_default();
     let stderr = t_err.join().unwrap_or_default();
-    if status.success() {
-        Ok(stdout)
-    } else {
-        Err(format!("{name}: {status}: {}", stderr.trim()))
-    }
+    Ok((status, stdout, stderr))
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {

@@ -157,6 +157,10 @@ impl Sim {
         self.schedule(at, EventKind::Step(scenario.to_string()));
     }
 
+    pub fn next_time(&self) -> Option<u64> {
+        self.queue.peek().map(|Reverse(q)| q.time)
+    }
+
     /// Runs the next event; false when the queue is empty. Virtual time jumps
     /// straight to the event, so empty time costs nothing.
     pub fn step(&mut self) -> bool {
