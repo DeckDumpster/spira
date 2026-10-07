@@ -119,12 +119,20 @@ pub fn after_close(who: &str, args: &[String]) -> Result<(), String> {
 /// closed it on the event; `superseded_by` names a successor. The reason goes on stdin, so
 /// any length or quoting survives.
 pub fn close_with(bin: &str, id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), String> {
+    close_args(bin, id, reason, actor, superseded_by.filter(|b| !b.is_empty()).map(|b| vec!["--superseded-by", b]).unwrap_or_default())
+}
+
+/// The landing path's close (`spira-lc close --landing`): the delivery records LANDED on the
+/// row itself, so this closes the store only, and spira-lc refuses it for a row not in delivery.
+pub fn close_landed(id: &str, reason: &str, actor: &str) -> Result<(), String> {
+    close_args(&lc_bin(), id, reason, actor, vec!["--landing"])
+}
+
+fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) -> Result<(), String> {
     use std::io::Write;
     let mut cmd = Command::new(bin);
     cmd.args(["close", id, "--reason-file", "-", "--actor", actor]);
-    if let Some(by) = superseded_by.filter(|b| !b.is_empty()) {
-        cmd.args(["--superseded-by", by]);
-    }
+    cmd.args(extra);
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

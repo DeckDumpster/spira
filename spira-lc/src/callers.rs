@@ -711,13 +711,16 @@ pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
     }
 }
 
-/// `close <id> (--reason R | --reason-file F|-) [--superseded-by X] [--actor A]` — the one
+/// `close <id> (--reason R | --reason-file F|-) [--superseded-by X | --landing] [--actor A]` — the one
 /// door for closing a bead (sp-3fue0j). The lifecycle machine records the end FIRST — an open
 /// ask is withdrawn, then SUPERSEDED (a successor named by `--superseded-by` or in the reason)
 /// or DROPPED — and only then is the store closed, so a closed bead can never sit READY on
 /// its row again (237 did on 2026-10-06, closed by raw `bd close` from ten callers). A row
 /// already terminal (a landing recorded LANDED before its close) gets no event; a bead with
-/// no row has no state to diverge, and is closed in the store alone. `reason_file` reads
+/// no row has no state to diverge, and is closed in the store alone. `--landing` is the landing
+/// path's close: the delivery records LANDED itself (it may close first), so the row gets no
+/// event — and a row that is not in delivery or LANDED is refused, so no other caller can use it
+/// to close around the machine. `reason_file` reads
 /// `--reason-file`'s argument (`-` is stdin) — injected so the composition is testable.
 ///
 /// Exit: 0 closed · 2 cannot tell (usage, the machine unreadable, or the store close failed
@@ -729,13 +732,18 @@ pub fn close(
     bd: &mut dyn Bd,
     reason_file: &mut dyn FnMut(&str) -> Result<String, String>,
 ) -> Answer {
-    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id>] [--actor <name>]";
+    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id> | --landing] [--actor <name>]";
     let mut id = None;
-    let (mut reason, mut by, mut actor) = (None, None, "close".to_string());
+    let (mut reason, mut by, mut actor, mut landing) = (None, None, "close".to_string(), false);
     let mut i = 0;
     while i < args.len() {
         let val = args.get(i + 1).cloned();
         match args[i].as_str() {
+            "--landing" => {
+                landing = true;
+                i += 1;
+                continue;
+            }
             "--reason" => reason = val,
             "--reason-file" => match val.map(|f| reason_file(&f)) {
                 Some(Ok(t)) => reason = Some(t),
@@ -756,7 +764,7 @@ pub fn close(
     let (Some(id), Some(reason)) = (id.filter(|s| !s.is_empty()), reason.map(|r| r.trim_end().to_string()).filter(|r| !r.is_empty())) else {
         return usage(USE);
     };
-    if actor.is_empty() {
+    if actor.is_empty() || (landing && by.is_some()) {
         return usage(USE);
     }
     match show(m, &id) {
@@ -768,7 +776,15 @@ pub fn close(
                 return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: unreadable row\n"), ..Default::default() };
             }
             let terminal = matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
-            if !terminal {
+            if landing {
+                if !matches!(state.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "LANDED") {
+                    return Answer {
+                        code: REFUSED,
+                        stderr: format!("spira-lc close --landing: {id} is {state}, not in delivery — nothing closed\n"),
+                        ..Default::default()
+                    };
+                }
+            } else if !terminal {
                 if holds_of(v.get("bead").and_then(|b| b.get("holds"))).iter().any(|h| h == "ask") {
                     let ev = serde_json::to_string(&BeadEventKind::AskWithdrawn).unwrap_or_default();
                     match event(m, "bead", &id, &state, &version, &actor, &ev).0 {

@@ -51,6 +51,9 @@ run_resolve() {
   # COCKPIT_DB/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
   # declare via tl_config, not the env prefix below, which no process reads any more.
   tl_config COCKPIT_DB="$DB" SPIRA_DB="$SPIRA_DB_PATH"
+  # resolve closes through spira-lc (sp-3fue0j); with no lifecycle store here, that closes the
+  # store through the case's stub bd, whose complaint must still reach the caller.
+  lc_close_stub "$TMP/lc" "$stub" "$DB"
   RESULT=$(
     BD_BIN="$stub" \
     resolve "$id" "$reason" 2>&1 >/dev/null

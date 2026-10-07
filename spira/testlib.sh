@@ -377,6 +377,37 @@ STUB
     chmod +x "$LC_FIX/spira-lc"
     SPIRA_LC_BIN="$LC_FIX/spira-lc"
 }
+# A spira-lc whose `close` is the real verb's path for a bead with NO lifecycle row: the store
+# alone is closed (sp-3fue0j — every Rust closer goes through `spira-lc close`, never bd). For
+# suites that stub bd and have no lifecycle store. lc_close_stub <dir> [bd] [db] writes
+# <dir>/spira-lc, which runs `<bd> [-C <db>] close <id> --force --reason <text>` (the reason from
+# --reason or --reason-file), and exports SPIRA_LC_BIN at it. Without <bd>/<db> they are read at
+# each call as the real verb reads them — spira.bd / spira.db from $SPIRA_TOML — so a suite
+# that re-declares SPIRA_BD between runs closes through the bd it declared last. Every other
+# verb exits 7, so a suite that needs rows uses lc_fix_init instead.
+lc_close_stub() {
+    local dir="${1:?lc_close_stub needs a directory}" bd="${2:-}" db="${3:-}"
+    mkdir -p "$dir"
+    cat > "$dir/spira-lc" <<STUB
+#!/usr/bin/env bash
+[ "\$1" = close ] || exit 7
+id="\$2"; shift 2; reason=""
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        --reason) reason="\$2"; shift 2 ;;
+        --reason-file) if [ "\$2" = - ]; then reason="\$(cat)"; else reason="\$(cat "\$2")"; fi; shift 2 ;;
+        --actor|--superseded-by) shift 2 ;;
+        *) shift ;;
+    esac
+done
+bd="$bd"; db="$db"
+[ -n "\$bd" ] || bd="\$(spira-config get spira.bd 2>/dev/null)"; [ -n "\$bd" ] || bd=bd
+[ -n "\$db" ] || db="\$(spira-config get spira.db 2>/dev/null)"
+exec "\$bd" \${db:+-C "\$db"} close "\$id" --force --reason "\$reason"
+STUB
+    chmod +x "$dir/spira-lc"
+    SPIRA_LC_BIN="$dir/spira-lc"; export SPIRA_LC_BIN
+}
 # A spira-lc for landing-pass suites, installed by name into <bindir> (already first on the
 # suite's PATH) so the pass's lifecycle probe answers. `list` reads rows like lc_fix_init's;
 # every verb is logged to <fixdir>/calls.log, and `touch <fixdir>/refuse` makes writes exit 3.
@@ -435,6 +466,19 @@ lc_mirror_bd() {
     mkdir -p "$dir"
     cat > "$dir/spira-lc" <<'STUB'
 #!/usr/bin/env bash
+# `close` (sp-3fue0j): this mirror's rows ARE the store's, so the close is the store's.
+if [ "$1" = close ]; then
+    id="$2"; shift 2; reason=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --reason) reason="$2"; shift 2 ;;
+            --reason-file) if [ "$2" = - ]; then reason="$(cat)"; else reason="$(cat "$2")"; fi; shift 2 ;;
+            --actor|--superseded-by) shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" close "$id" --force --reason "$reason"
+fi
 if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
 else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi
 printf '%s' "$src" | LC_MIRROR_DIR="$(dirname "$0")" python3 -c '

@@ -33,6 +33,8 @@ testdb_require test-mail-dismiss-sweep
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up dismiss-sweep || { echo "test-mail-dismiss-sweep: could not build fixture database"; exit 1; }
+# A close goes through spira-lc (sp-3fue0j); this fixture has no lifecycle store, so it closes the store.
+lc_close_stub "$TMP/lc" "$SPIRA_BD" "$SPIRA_DB"
 
 SPIRA_MAIL="$TMP/mail"
 SPIRA_MAIL_INDEX="$TMP/nonstandard-index-path/log"   # non-default: catches a hardcoded path

@@ -81,9 +81,11 @@ chmod +x "$STUB_BD"
 # Run groomer in a clean environment. SPIRA_CONF points to a nonexistent file so no
 # real config is read; defaults from conf.sh still apply. SPIRA_BD is the stub so no real
 # bd is called. SPIRA_DB is a temp path (bd never runs, so the value does not need to exist).
+# A close goes through spira-lc (sp-3fue0j); with no lifecycle store here, it closes the store.
+lc_close_stub "$T/lc" "$STUB_BD" "$T/fixture.db"
 run_groomer() {
     tl_config SPIRA_BD="$STUB_BD"
-    env -i SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" \
+    env -i SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$NONE" \
         SPIRA_HOME="$STUB_HOME" \
         BD_LOG_PATH="$BD_LOG" \

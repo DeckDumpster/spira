@@ -71,6 +71,9 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # INSTALLED harness directory and this suite would read the operator's real repositories.
 printf 'brain | %s | push | origin/main | |\n' "$TMP/repo" > "$SH/repo-map"
 
+# A close goes through spira-lc (sp-3fue0j); this fixture has no lifecycle store, so it closes the
+# store, through whichever bd and database the case declared last (read at each call).
+lc_close_stub "$TMP/lc"
 auron() {   # auron [--report] — one run against the fixture, with a chosen database
     # SPIRA_DB is registered and auron resolves it via cfg(), not env (confirmed in
     # auron/src/main.rs) — the AURON_DB override must go through tl_config too, or the

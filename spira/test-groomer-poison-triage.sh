@@ -51,11 +51,13 @@ exit 0
 STUB
 chmod +x "$STUB_BD"
 
+# A close goes through spira-lc (sp-3fue0j); with no lifecycle store here, it closes the store.
+lc_close_stub "$T/lc" "$STUB_BD" "$T/fixture.db"
 run_groomer() {
     tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUN"
     # SPIRA_HOME EXPLICITLY: groomer no longer derives it from its own binary location —
     # neither SPIRA_HOME nor SPIRA_RELEASE set means it refuses outright.
-    env -i HOME="$T" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" \
+    env -i HOME="$T" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$NONE" \
         SPIRA_HOME="$HERE" \
         BD_LOG_PATH="$BD_LOG" \

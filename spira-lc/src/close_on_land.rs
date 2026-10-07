@@ -63,7 +63,7 @@ pub fn reason(sha: &str) -> String {
 // Through the machine's own close verb (sp-3fue0j): the row is LANDED by now, so it closes
 // the store alone.
 fn bdq_close(id: &str, reason: &str) -> bool {
-    spira_config::lifecycle_row::close(id, reason, "landing-pass", None).is_ok()
+    spira_config::lifecycle_row::close_landed(id, reason, "landing-pass").is_ok()
 }
 
 fn show_row(id: &str) -> Option<Row> {

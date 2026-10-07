@@ -408,7 +408,7 @@ impl Lib for RealLib {
     }
     // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn bead_close(&self, id: &str, reason: &str) -> bool {
-        spira_config::lifecycle_row::close(id, reason, "queue", None).is_ok()
+        spira_config::lifecycle_row::close_landed(id, reason, "queue").is_ok()
     }
     fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
         let Some(root) = self.repo_registry().root(repo) else { return Ok(false) };

@@ -712,3 +712,23 @@ fn close_reads_its_reason_from_a_file_and_refuses_without_one() {
     assert_eq!(close(&v(&["sp-r", "--reason-file", "/nope"]), &mut f, &mut bd, &mut file).code, CANNOT_TELL);
     assert_eq!(bd.closed.len(), 1);
 }
+
+#[test]
+fn a_landing_close_leaves_the_row_to_the_delivery_and_is_refused_outside_it() {
+    let mut f = Fake::default();
+    let mut bd = FakeBd::default();
+    for (id, st) in [("sp-c", BeadState::Certified), ("sp-s", BeadState::Submitted), ("sp-l", BeadState::Landed)] {
+        f.bead(id, st);
+        let a = close(&v(&[id, "--reason", "landed at abc", "--landing"]), &mut f, &mut bd, &mut no_file);
+        assert_eq!(a.code, APPLIED, "{id}: {}", a.stderr);
+    }
+    assert!(f.events.is_empty(), "the landing records LANDED itself");
+    assert_eq!((f.state("sp-c"), f.state("sp-s")), ("CERTIFIED", "SUBMITTED"));
+    assert_eq!(bd.closed.len(), 3);
+    f.bead("sp-r", BeadState::Ready);
+    let a = close(&v(&["sp-r", "--reason", "x", "--landing"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert_eq!(f.state("sp-r"), "READY");
+    assert_eq!(bd.closed.len(), 3, "nothing closed");
+    assert_eq!(close(&v(&["sp-r", "--reason", "x", "--landing", "--superseded-by", "sp-z"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
+}
