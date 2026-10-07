@@ -6,6 +6,7 @@ pub mod deploy;
 pub mod helpers;
 pub mod land;
 pub mod publish;
+pub mod round;
 pub mod simple;
 pub mod transition;
 pub mod verdict;

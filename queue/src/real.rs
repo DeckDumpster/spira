@@ -331,6 +331,7 @@ impl Lib for RealLib {
         let git_email = spira_config::process::cfg("SPIRA_GIT_EMAIL")?;
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
         let express_label = spira_config::process::cfg("SPIRA_EXPRESS_LABEL")?;
+        let round_wall_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
@@ -362,6 +363,7 @@ impl Lib for RealLib {
             git_email,
             mailbox,
             express_label,
+            round_wall_secs,
         };
         let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
@@ -599,6 +601,23 @@ impl Scripts for RealScripts {
                 err: String::from_utf8_lossy(&o.stderr).to_string(),
             },
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run release: {e}") },
+        }
+    }
+    fn round_vm(&self, tree: &Path, results: &Path, wall_secs: u64) -> RunOut {
+        match Command::new("timeout")
+            .args(["-k", "10", &wall_secs.to_string(), "round-vm", "run"])
+            .arg(tree)
+            .arg("--results-dir")
+            .arg(results)
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(o) => RunOut {
+                rc: o.status.code().unwrap_or(127),
+                out: String::from_utf8_lossy(&o.stdout).to_string(),
+                err: String::from_utf8_lossy(&o.stderr).to_string(),
+            },
+            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
         }
     }
 }

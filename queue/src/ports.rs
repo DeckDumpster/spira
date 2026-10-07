@@ -47,6 +47,9 @@ pub struct Settings {
     pub mailbox: String,
     /// `SPIRA_EXPRESS_LABEL` (declared value): the bd label `sort_rows` ranks first.
     pub express_label: String,
+    /// `SPIRA_ROUND_CERTIFY_WALL_SECS` (declared value): the wall `round certify` allows the
+    /// round VM's corpus.
+    pub round_wall_secs: u64,
 }
 
 /// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for
@@ -209,6 +212,10 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
+    /// `round-vm run <tree> --results-dir <results>` under `timeout <wall_secs>`: the full
+    /// corpus of `tree` on the round VM. Exit 0/1 ran (the results say which suites are red);
+    /// 124/137 hit the wall; anything else is the harness's fault.
+    fn round_vm(&self, tree: &Path, results: &Path, wall_secs: u64) -> RunOut;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.

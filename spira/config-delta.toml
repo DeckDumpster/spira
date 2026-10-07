@@ -3,3 +3,4 @@
 "spira.gate_deadline" = 300
 "spira.scratch_max_age_hours" = 24
 "spira.sccache_dav_max_gb" = 40
+"spira.round_certify_wall_secs" = 900
