@@ -35,7 +35,7 @@ printf '#!/usr/bin/env bash\necho closed\n' > "$BIN/bdq"
 cp "$BIN/bdq" "$BIN/bd"
 chmod +x "$BIN"/*
 
-out="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$T" SPIRA_TOML="$(tl_layer SPIRA_RUN="$T/run")" SPIRA_HOME="$HERE/.." \
+out="$(env -i PATH="$BIN:$PATH" HOME="$T" SPIRA_TOML="$(tl_layer SPIRA_RUN="$T/run")" SPIRA_HOME="$HERE/.." \
     bash "$HERE/disk-remedy.sh" 2>&1)"
 got="$(cat "$DESTROYED")"; [ -n "$got" ] || echo "# remedy output: $out" | head -c 600 >&2
 
