@@ -124,16 +124,6 @@ impl CommitOutcome {
     }
 }
 
-/// The "database write succeeded, the wiki page was NOT regenerated" refusal's first line —
-/// distinct wording for `enact` ("IS in the book") vs `retire` ("IS removed from the
-/// book"), a distinction test-statute-projection.sh's sp-p0xyt case pins.
-pub fn write_succeeded_line(verb: &str) -> &'static str {
-    match verb {
-        "retire" => "Statute IS removed from the book — the database write succeeded.",
-        _ => "Statute IS in the book — the database write succeeded.",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,18 +225,6 @@ mod tests {
         let pos_a = body.find("law-aaa").unwrap();
         let pos_z = body.find("law-zzz").unwrap();
         assert!(pos_a < pos_z);
-    }
-
-    #[test]
-    fn write_succeeded_line_differs_by_verb() {
-        assert_eq!(
-            write_succeeded_line("enact"),
-            "Statute IS in the book — the database write succeeded."
-        );
-        assert_eq!(
-            write_succeeded_line("retire"),
-            "Statute IS removed from the book — the database write succeeded."
-        );
     }
 
     #[test]
