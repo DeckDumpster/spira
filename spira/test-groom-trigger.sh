@@ -190,6 +190,26 @@ want "failure log mentions ERROR" "ERROR" "$out"
 
 # ==========================================================================================
 echo
+echo "REFUSAL: spira-lc cannot answer — nothing is filed and the log names the refusal"
+# ==========================================================================================
+DEAD_LC="$T/dead-lc"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$DEAD_LC"
+chmod +x "$DEAD_LC"
+: > "$BD_LOG"
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$STUB_BD"
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$NONE" \
+        BD_LOG_PATH="$BD_LOG" \
+        SPIRA_LC_BIN="$DEAD_LC" \
+        BD_LIST_OUTPUT="[]" \
+        groom-trigger.sh 2>&1)"; rc=$?
+is     "unreadable machine exits 0"          0          "$rc"
+nowant "unreadable machine: no create"       "create"   "$(cat "$BD_LOG")"
+want   "unreadable machine: refusal logged"  "refusing to file" "$out"
+
+# ==========================================================================================
+echo
 echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_GROOMER_LABEL are used"
 # ==========================================================================================
 # Pin to non-defaults (law-gates-run-in-a-clean-environment). A test asserting the
@@ -255,6 +275,7 @@ out_ng="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/u
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
+    SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="[]" \
     groom-trigger.sh 2>&1)"; rc_ng=$?
 is     "no-groom-map: trigger exits 0"        0 "$rc_ng"
 nowant "no-groom-map: no bd create call"      "create" "$(cat "$BD_LOG")"
@@ -305,7 +326,7 @@ echo "SHORT-CIRCUIT: custom SPIRA_GROOM_THRESHOLD respected"
 TWO_OPEN='[{"bead_id":"y1","state":"READY"},{"bead_id":"y2","state":"WORKING"},{"bead_id":"y3","state":"SUBMITTED"}]'
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_GROOM_THRESHOLD="2" SPIRA_BD="$STUB_BD"
-out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" \
@@ -316,7 +337,7 @@ is   "threshold=2, score=2: exits 0"        0        "$rc_t2"
 want "threshold=2, score=2: create called"  "create" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
 tl_config SPIRA_GROOM_THRESHOLD="3" SPIRA_BD="$STUB_BD"
-out_t3="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+out_t3="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" \
