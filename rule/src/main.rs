@@ -149,7 +149,7 @@ fn resolve_hook(home: &str) -> Result<String, String> {
 }
 
 fn refuse_hook(e: &str) -> i32 {
-    eprintln!("rule: {e} — nothing written; the statute book and the wiki page are unchanged.");
+    eprintln!("rule: {e} — wiki page NOT regenerated; nothing written, the statute book is unchanged.");
     1
 }
 
@@ -229,7 +229,7 @@ fn finish_write(
         }
         0
     } else if rollback(db, key, prior) {
-        eprintln!("rule: hook '{hook}' failed — {verb} of {key} rolled back; nothing written.");
+        eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated; {verb} of {key} rolled back, nothing written.");
         1
     } else {
         eprintln!("rule: hook '{hook}' failed AND the rollback of {key} failed.");
