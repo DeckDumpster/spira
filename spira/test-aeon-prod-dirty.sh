@@ -185,7 +185,7 @@ aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 st0="$(lc_row_state "$b1")"
 nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$st0"
 # When it is not refused, say why: the row's own history and the aeon's last ledger lines.
-[ "$st0" = SUBMITTED ] && { spira-lc history "$b1" 2>&1 | tail -c 1500; tail -5 "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null; } | sed 's/^/# /'
+[ "$st0" = SUBMITTED ] && { bd -C "$SPIRA_DB" show "$b1" --json 2>&1 | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print("bd:", d.get("status"), d.get("labels"), d.get("assignee"))' 2>&1; grep -rhE "reopen|bead_reopen|spira-lc" "$SPIRA_RUN"/*.log 2>/dev/null | tail -8; } | sed 's/^/# /'
 
 note1="$(latest_note "$b1")"
 want "own-dirty: note names the modified path" "f" "$note1"
