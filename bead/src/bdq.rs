@@ -245,7 +245,7 @@ pub fn check_ask_label_write(args: &[String], ask_label: &str) -> Option<String>
     }
     Some(format!(
         "spira: refusing to add {ask_label} to an existing bead — it is the operator's decision queue and an ask is created whole.\n\
-         Exit: post the decision with `work ask` (question, default, class), or label the bead overseer (and the no-loop label to stop dispatch) so the Concierge or Ops works it.\n"
+         Exit: post the decision with `work ask` (question, default, class), or label the bead overseer (and the no-loop label to stop dispatch) so the Concierge or Ops works it.\n" // literal-ok: fixture/fallback
     ))
 }
 
