@@ -41,11 +41,11 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
@@ -84,7 +84,7 @@ aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 T_LABEL="test-chamber-overlay-bead"
 make_bead() {
     local _labels="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},$T_LABEL,repo:fixture"
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "chamber overlay test bead" --type task \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "chamber overlay test bead" --type task \
         -l "$_labels" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }

@@ -31,7 +31,7 @@ testdb_up census-burst || {
 _insert_event_at() {   # <bead_id> <event_type> <cause> <utc_ts>
     local uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')" || return 1
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+    timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
         "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$1', '$2', 'harness', '$3', '$4')" \
         >/dev/null 2>&1
 }

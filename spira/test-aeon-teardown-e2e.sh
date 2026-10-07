@@ -145,7 +145,7 @@ is     "held for the backoff — bd's dated snooze (deferred until a date), whic
        "deferred" "$(field sp-np-1 status)"
 [ -n "$(field sp-np-1 defer_until)" ] && _defer_set=yes || _defer_set=no
 is   "a defer_until is recorded — the hold the next ready query reads" "yes" "$_defer_set"
-np_ready="$(bd -C "$SPIRA_DB" ready --limit 0 --exclude-type epic,event -u --json 2>/dev/null)"
+np_ready="$(timeout 5 bd -C "$SPIRA_DB" ready --limit 0 --exclude-type epic,event -u --json 2>/dev/null)"
 nowant "held — the future defer_until keeps it off bd ready, not plain open for the next summon" \
        '"sp-np-1"' "$np_ready"
 is   "POSITIVE CONTROL — bead not closed, claude rc=1 — aeon exits non-zero" "1" "$rc"
@@ -262,7 +262,7 @@ PSD_REPO="$FA_TMP/psd-repo"
 git init -q -b main "$PSD_REPO"
 git -C "$PSD_REPO" config user.email t@t; git -C "$PSD_REPO" config user.name t
 git -C "$PSD_REPO" remote add origin "$PSD_REMOTE"
-git -C "$PSD_REPO" fetch -q origin 2>/dev/null
+timeout 5 git -C "$PSD_REPO" fetch -q origin 2>/dev/null
 git -C "$PSD_REPO" checkout -q -b main --track origin/main 2>/dev/null \
     || git -C "$PSD_REPO" checkout -q main 2>/dev/null || true
 git -C "$PSD_REPO" remote set-head origin --auto 2>/dev/null || true

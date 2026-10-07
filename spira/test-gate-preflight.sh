@@ -127,7 +127,7 @@ RUNS="$TMP/runs"; : > "$RUNS"
 mkdir -p "$(dirname "$REPO/$GATE_FILE")"
 printf '#!/usr/bin/env bash\nprintf "ran\\n" >> %s\necho "fence: check checked 1 file"\necho ok\n' "$RUNS" > "$REPO/$GATE_FILE"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "add check.sh"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 gate_fixture_branch repo/sp-t2 missing-cmd2.txt change2
 out="$(rungate repo/sp-t2)"; rc=$?
 is     "SEEN GREEN: gate passes when file is present" 0 "$rc"

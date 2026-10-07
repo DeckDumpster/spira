@@ -770,7 +770,7 @@ tl_config SPIRA_RUN="$DET_RUN"
 (
     CONCIERGE_WAKE_POLL_SECS=0 CONCIERGE_WAKE_SETTLE_SECS=0 \
         CONCIERGE_SOCKET="$DET_SOCK" CONCIERGE_SESSION="$DET_SOCK" \
-        timeout 30 bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-det.out" 2>&1
+        timeout 30 bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-det.out" 2>&1 # batch-job: outer bound on a wake fed by a fake state feeder; a short one turns load into a false red
 ) &
 DET_PID=$!
 trap 'kill "$DET_PID" 2>/dev/null; tmux -L "$DET_SOCK" kill-server 2>/dev/null; rm -rf "$TMP"' EXIT
@@ -781,7 +781,7 @@ trap 'kill "$DET_PID" 2>/dev/null; tmux -L "$DET_SOCK" kill-server 2>/dev/null; 
 # assertion's old failure mode: a flip discovered only much later, under load.
 det_fed=1
 feed() {
-    if ! timeout 10 bash -c 'printf "%s\n" "$1" > "$2"' _ "$1" "$DET_CTL"; then
+    if ! timeout 5 bash -c 'printf "%s\n" "$1" > "$2"' _ "$1" "$DET_CTL"; then
         bad "wake asked for the next poll state ('$1')" "timed out — it must have returned already"
         det_fed=0
     fi

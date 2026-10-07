@@ -95,7 +95,7 @@ exit 0
 EOF
 chmod +x "$MOCK_SC"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -300,14 +300,14 @@ echo "7 — GitHub diverged in both directions never reaches refresh's verdict"
 # Build exactly that divergence and confirm the queue.local branch never gets near it: it
 # resolves purely from running vs local/main, and GitHub is never fetched or written to.
 GITHUB="$TMP/github.git"
-git clone -q --bare "$REPO" "$GITHUB"
+timeout 5 git clone -q --bare "$REPO" "$GITHUB"
 GHWORK="$TMP/ghwork"
-git clone -q "$GITHUB" "$GHWORK" >/dev/null 2>&1
+timeout 5 git clone -q "$GITHUB" "$GHWORK" >/dev/null 2>&1
 git -C "$GHWORK" checkout -q local/main
 echo github-only > "$GHWORK/github-only.txt"
 git -C "$GHWORK" add github-only.txt
 git -C "$GHWORK" commit -q -m "a commit GitHub has that production never landed"
-git -C "$GHWORK" push -q origin local/main
+timeout 5 git -C "$GHWORK" push -q origin local/main
 git -C "$REPO" remote add origin "$GITHUB"
 
 # production lands a round of its own that it never publishes — holding a commit GitHub

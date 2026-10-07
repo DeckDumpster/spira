@@ -36,11 +36,11 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
@@ -109,7 +109,7 @@ FAYTH
 
 make_bead() {           # make_bead -> prints bead id
     local _labels="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$T_LABEL,repo:fixture"
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "layers test bead" --type task \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "layers test bead" --type task \
         -l "$_labels" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
@@ -157,7 +157,7 @@ echo "groomer system.md has the five operations; task.md has the finishing contr
 # with a usable fallback, and the real aeon process below resolves this exact same key from
 # this exact same SPIRA_TOML anyway, so reusing it is also the only way the two agree.
 GROOMER_LABEL="${SPIRA_GROOMER_LABEL:-groom}"
-BID_G="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "groomer layers test" --type task \
+BID_G="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "groomer layers test" --type task \
     -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$GROOMER_LABEL,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID_G" ]; then
@@ -188,7 +188,7 @@ make_fayth testlayers-sticking "FAYTH_SYSTEM_PROMPT=append"
 # below targets its literal value, not the variable name.
 sed -i "s/$T_LABEL/$ST_LABEL/" "$SPIRA_HOME/chamber/testlayers-sticking.fayth"
 make_sticking_bead() {
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "sticking-point test bead" --type task \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "sticking-point test bead" --type task \
         -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$ST_LABEL,repo:fixture" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
@@ -200,7 +200,7 @@ BID_S="$(make_sticking_bead)"
 # never been worked, so it is created from there — the same tip a real thrash requeue would
 # have recorded metadata against on this bead's last (simulated) summon.
 tip0="$(git -C "$REPO" rev-parse --short origin/main)"
-bd -C "$SPIRA_DB" update "$BID_S" \
+timeout 5 bd -C "$SPIRA_DB" update "$BID_S" \
     --set-metadata "thrash_tip=$tip0" \
     --set-metadata "thrash_streak=2" \
     --set-metadata "thrash_last=stuck rerunning the full landing gate locally instead of testenv-batch.sh" \

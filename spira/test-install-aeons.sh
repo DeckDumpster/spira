@@ -60,8 +60,8 @@ printf 'seed\n' > "$FAKE_REPO/f"
 git -C "$FAKE_REPO" add f
 git -C "$FAKE_REPO" commit -qm "seed" 2>/dev/null
 git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
-git -C "$FAKE_REPO" push -q origin main 2>/dev/null
-git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
+timeout 5 git -C "$FAKE_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
 git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 # The templates substitute @SPIRA_REPO@ in ExecStart lines; the ExecStart check requires
 # those targets to be executable. Symlink the two scripts that templates use this way.

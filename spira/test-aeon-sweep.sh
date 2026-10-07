@@ -41,11 +41,11 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
 
 # A bare origin and a clone for the aeon's worktree (needed by non-sweep path).
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # Minimal harness layout in $TMP.
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
@@ -104,12 +104,12 @@ chmod +x "$BIN/claude"
 aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 # bd helpers against the fixture database.
-bead_status()   { BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+bead_status()   { BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); d=r[0] if isinstance(r,list) else r; print(d.get("status","?"))'; }
-bead_labels()   { BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+bead_labels()   { BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); d=r[0] if isinstance(r,list) else r; print(",".join(d.get("labels",[]))  )'; }
 any_attempt()   {  # any_attempt -> 1 if any bead carries an sp-attempt label
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" list --json 2>/dev/null \
         | python3 -c '
 import json,sys
 try: rows = json.load(sys.stdin)
@@ -126,7 +126,7 @@ sys.exit(1)' 2>/dev/null
 # assertion it backs — a control placed after the assertion it supports cannot validate
 # it; if it fails last, the preceding 'no attempt label' assertion has already been
 # accepted as meaningful when it is not.
-BID_PC="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "positive control bead" --type task \
+BID_PC="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "positive control bead" --type task \
     -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID_PC" ] || { printf 'test-aeon-sweep: could not create positive control bead\n' >&2; exit 1; }
@@ -156,7 +156,7 @@ labels_pc="$(bead_labels "$BID_PC" 2>/dev/null || true)"
 
 # BID_PC now carries a branch label. Sweep assertions below are scoped to BID
 # (not the whole database) because BID_PC's labels would otherwise confound them.
-BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "sweep test incident" --type task \
+BID="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "sweep test incident" --type task \
     -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID" ] || { printf 'test-aeon-sweep: could not create bead\n' >&2; exit 1; }

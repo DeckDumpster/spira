@@ -209,7 +209,7 @@ printf '\nT3: stage db is usable\n'
 
     # Create a bead; bd exits non-zero on a broken db
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    created_id="$(bd -C "$SPIRA_DB" create "canary test bead" --type task \
+    created_id="$(timeout 5 bd -C "$SPIRA_DB" create "canary test bead" --type task \
         --labels "spira,plan" --silent 2>/dev/null | tr -d '[:space:]')"
     [ -n "$created_id" ] && ok "bd create succeeds in stage db" \
                          || bad "bd create succeeds in stage db" "empty id"
@@ -217,13 +217,13 @@ printf '\nT3: stage db is usable\n'
     # POSITIVE CONTROL: verify the bead IS visible in the stage db
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
     want "created bead visible in stage db" "${created_id:-<no id>}" \
-        "$(bd -C "$SPIRA_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
+        "$(timeout 5 bd -C "$SPIRA_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
 
     # The bead must NOT be visible in the real SPIRA_DB (if one is set)
     if [ -n "${_REAL_DB:-}" ] && [ -d "$_REAL_DB" ]; then
         # hermetic-ok: $_REAL_DB is the pre-stage SPIRA_DB, read-only here to verify isolation
         nowant "stage bead not visible in real db" "${created_id:-<no id>}" \
-            "$(bd -C "$_REAL_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
+            "$(timeout 5 bd -C "$_REAL_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
     else
         ok "real db isolation (no real db to check against)"
     fi
@@ -288,7 +288,7 @@ printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
 
     # Create an unparented plan bead (there is no goal epic, sp-k6m1m)
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    bead="$(bd -C "$SPIRA_DB" create "t6 task" --type task \
+    bead="$(timeout 5 bd -C "$SPIRA_DB" create "t6 task" --type task \
         --labels "spira,plan" --silent 2>/dev/null | tr -d '[:space:]')"
     [ -n "$bead" ] || { printf '  FATAL: could not create bead\n'; exit 1; }
 

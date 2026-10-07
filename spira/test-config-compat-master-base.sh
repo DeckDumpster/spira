@@ -50,8 +50,8 @@ mkdir -p "$B_REPO/spira"
 : > "$B_REPO/spira/test-a.sh"
 git -C "$B_REPO" add -A && git -C "$B_REPO" commit -q -m base
 git -C "$B_REPO" remote add origin "$B_REMOTE"
-git -C "$B_REPO" push -q origin master
-git -C "$B_REPO" fetch -q origin
+timeout 5 git -C "$B_REPO" push -q origin master
+timeout 5 git -C "$B_REPO" fetch -q origin
 mkdir -p "$B_RUN/worktree" "$B_SH" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$B_SH/"
@@ -150,8 +150,8 @@ git init -q --bare -b master "$V_REMOTE"
 git init -q -b master "$V_REPO"
 git -C "$V_REPO" commit -q --allow-empty -m base
 git -C "$V_REPO" remote add origin "$V_REMOTE"
-git -C "$V_REPO" push -q origin master
-git -C "$V_REPO" fetch -q origin
+timeout 5 git -C "$V_REPO" push -q origin master
+timeout 5 git -C "$V_REPO" fetch -q origin
 mkdir -p "$V_RUN/worktree" "$V_SH" "$V_QUEUEDIR/$V_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$V_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$V_SH/"
@@ -228,8 +228,8 @@ git init -q --bare -b master "$L_REMOTE"
 git init -q -b master "$L_REPO"
 git -C "$L_REPO" commit -q --allow-empty -m base
 git -C "$L_REPO" remote add origin "$L_REMOTE"
-git -C "$L_REPO" push -q origin master
-git -C "$L_REPO" fetch -q origin
+timeout 5 git -C "$L_REPO" push -q origin master
+timeout 5 git -C "$L_REPO" fetch -q origin
 mkdir -p "$L_RUN/worktree" "$L_SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$L_SH/"
@@ -260,7 +260,7 @@ out="$(SPIRA_HOME="$L_SH" SPIRA_REPO="$L_REPO" PATH="$L_SH:$PATH" \
         landing-pass land 2>&1)"
 
 want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"
-git -C "$L_REPO" fetch -q origin
+timeout 5 git -C "$L_REPO" fetch -q origin
 if git -C "$L_REPO" merge-base --is-ancestor spira/sp-lbase origin/master 2>/dev/null; then
     ok "landing: the branch's own commit is an ancestor of origin/master"
 else

@@ -69,10 +69,10 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up aeonresume || { echo "test-aeon-resume: could not build a fixture database"; exit 1; }
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
@@ -125,7 +125,7 @@ seed() {
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 
 testdb_reset; seed sp-ar-slain
-git -C "$REPO" fetch -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" fetch -q origin main 2>/dev/null
 git -C "$REPO" checkout -q -B spira/sp-ar-slain origin/main
 printf 'real work\n' >> "$REPO/f"; git -C "$REPO" commit -qam "sp-ar-slain — the real work"
 printf 'dirty state\n' >> "$REPO/f"
@@ -138,7 +138,7 @@ want "wiring: slain reason present"                    "operator halted the sess
 
 # PAIR: a regular prior commit must NOT show SLAIN_BRIEF.
 testdb_reset; seed sp-ar-noslain
-git -C "$REPO" fetch -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" fetch -q origin main 2>/dev/null
 git -C "$REPO" checkout -q -B spira/sp-ar-noslain origin/main
 printf 'normal work\n' >> "$REPO/f"; git -C "$REPO" commit -qam "sp-ar-noslain — normal commit"
 git -C "$REPO" checkout -q main
@@ -157,11 +157,11 @@ echo "T3: stale local base — the branch is cut from fresh origin/main, not sta
 #   If cut from stale local main (A):   merge-base = A  (diverged before origin/main)
 # defect: sp-stale-base
 testdb_reset; seed sp-ar-stalebase
-SECOND="$TMP/second"; git clone -q "$ORIGIN" "$SECOND" 2>/dev/null
+SECOND="$TMP/second"; timeout 5 git clone -q "$ORIGIN" "$SECOND" 2>/dev/null
 git -C "$SECOND" config user.email t@t; git -C "$SECOND" config user.name t
 printf 'sentinel-landed\n' >> "$SECOND/g"; git -C "$SECOND" add g
 git -C "$SECOND" commit -qm "sentinel: landed something — origin/main advances"
-git -C "$SECOND" push -q origin main 2>/dev/null
+timeout 5 git -C "$SECOND" push -q origin main 2>/dev/null
 local_main_sha="$(git -C "$REPO" rev-parse main)"  # stale — does not include the push above
 run_aeon
 fresh_origin="$(git -C "$REPO" rev-parse origin/main)"   # updated by the fetch inside aeon.sh

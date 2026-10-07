@@ -82,7 +82,7 @@ nowant "never a silent PASS"                  "VERDICT=PASS" "$out"
 # citing a bead that is real and OPEN, passes — the fence discriminates rather than
 # refusing every citation it sees.
 # --------------------------------------------------------------------------------------
-OPEN_ID="$(bd -C "$SPIRA_DB" create "commit-cite fixture: open" --json 2>/dev/null \
+OPEN_ID="$(timeout 5 bd -C "$SPIRA_DB" create "commit-cite fixture: open" --json 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 [ -n "$OPEN_ID" ] || { echo "test-commit-cite: could not create the fixture bead"; exit 1; }
 commit_citing spira/sp-cc2 "$OPEN_ID"
@@ -94,7 +94,7 @@ want "and says PASS"                               "VERDICT=PASS" "$out"
 # A citation naming a real bead is valid REGARDLESS OF STATUS — existence is the only
 # claim a citation makes. A CLOSED bead satisfies it exactly as well as an open one.
 # --------------------------------------------------------------------------------------
-CLOSED_ID="$(bd -C "$SPIRA_DB" create "commit-cite fixture: closed" --json 2>/dev/null \
+CLOSED_ID="$(timeout 5 bd -C "$SPIRA_DB" create "commit-cite fixture: closed" --json 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 testdb_restate "$CLOSED_ID" closed     # closed on purpose: fixture data, not a bd close (sp-voip5)
 commit_citing spira/sp-cc3 "$CLOSED_ID"

@@ -111,8 +111,8 @@ git init -q --bare -b main "$OREMOTE"
 git init -q -b main "$OREPO"
 git -C "$OREPO" commit -q --allow-empty -m base
 git -C "$OREPO" remote add origin "$OREMOTE"
-git -C "$OREPO" push -q origin main
-git -C "$OREPO" fetch -q origin
+timeout 5 git -C "$OREPO" push -q origin main
+timeout 5 git -C "$OREPO" fetch -q origin
 is "ref_remote: origin/main still resolves to origin (regression)" "origin" "$(ref_remote "origin/main" "$OREPO")"
 
 # NEGATIVE CONTROL PROVING THE CHECK IS REAL, NOT A HARDCODED "local" DENYLIST: a repo that
@@ -145,8 +145,8 @@ git init -q --bare -b main "$F_REMOTE"
 git init -q -b main "$F_REPO"
 git -C "$F_REPO" commit -q --allow-empty -m base
 git -C "$F_REPO" remote add origin "$F_REMOTE"
-git -C "$F_REPO" push -q origin main
-git -C "$F_REPO" fetch -q origin
+timeout 5 git -C "$F_REPO" push -q origin main
+timeout 5 git -C "$F_REPO" fetch -q origin
 git -C "$F_REPO" checkout -qb spira/sp-efrg main
 git -C "$F_REPO" commit -q --allow-empty -m "sp-efrg: work"
 git -C "$F_REPO" checkout -q main

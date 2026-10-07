@@ -60,20 +60,20 @@ printf 'initial\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -qm "initial"
 git -C "$REPO" remote add origin "$ORIGIN"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 # Cache origin/HEAD so spira_landref finds the base without a network call.
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 # A second commit on origin that the local checkout is missing (used for the BEHIND case).
 CLONE="$TMP/clone"
-git clone -q "$ORIGIN" "$CLONE" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$CLONE" 2>/dev/null
 git -C "$CLONE" config user.email t@t
 git -C "$CLONE" config user.name test
 printf 'extra\n' > "$CLONE/g"
 git -C "$CLONE" add g
 git -C "$CLONE" commit -qm "extra commit"
-git -C "$CLONE" push -q origin main
+timeout 5 git -C "$CLONE" push -q origin main
 
 # ---------------------------------------------------------------------------
 # Minimal harness fixture. units-install resolves the landref check directly against
@@ -202,7 +202,7 @@ echo "POSITIVE CONTROL — behind landref: fence fires."
 # Push one commit directly to origin without pulling into REPO.
 # ===========================================================================
 
-git -C "$REPO" fetch -q origin  # updates origin/main tracking ref
+timeout 5 git -C "$REPO" fetch -q origin  # updates origin/main tracking ref
 behind_count="$(git -C "$REPO" rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)"
 if [ "${behind_count:-0}" -lt 1 ]; then
     bad "behind setup" "REPO should be behind origin/main but behind_count=$behind_count"
@@ -225,7 +225,7 @@ out_behind_force="$(inst "$REPO" SPIRA_INSTALL_FORCE=1)"; rc_behind_force=$?
 nowant "force when behind: no behind-refuse in output" "refusing — checkout is" "$out_behind_force"
 
 # Pull to bring the checkout current.
-git -C "$REPO" pull -q --rebase origin main 2>/dev/null
+timeout 5 git -C "$REPO" pull -q --rebase origin main 2>/dev/null
 
 # ===========================================================================
 echo

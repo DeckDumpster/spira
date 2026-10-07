@@ -59,7 +59,7 @@ echo "1. POSITIVE CONTROL — tripped circuit breaker: bd list fails:"
 
 # Ensure port is closed; 10 rapid parallel calls trip the 5-failure threshold.
 for _i in $(seq 1 10); do
-    BD_NON_INTERACTIVE=1 bd -C "$_TMP1/db" list --json >/dev/null 2>&1 &
+    BD_NON_INTERACTIVE=1 timeout 5 bd -C "$_TMP1/db" list --json >/dev/null 2>&1 &
 done
 wait
 unset _i
@@ -89,7 +89,7 @@ else
     bad "clear passes: breaker file not removed" "file still exists: $_breaker_file"
 fi
 
-_clear_err="$(BD_NON_INTERACTIVE=1 bd -C "$_TMP1/db" list --json 2>&1 || true)"
+_clear_err="$(BD_NON_INTERACTIVE=1 timeout 5 bd -C "$_TMP1/db" list --json 2>&1 || true)"
 nowant "clear passes: bd list no longer hits circuit-breaker fast-fail after removal" \
     "circuit breaker" "$_clear_err"
 

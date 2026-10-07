@@ -38,7 +38,7 @@ run_dep_add() {           # run_dep_add <args...> -> sets DA_OUT and DA_RC from 
 }
 
 blocks_of() {              # blocks_of <id> -> depends_on_id list, one per line
-    "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep list "$1" --type blocks --json 2>/dev/null \
+    timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep list "$1" --type blocks --json 2>/dev/null \
         | python3 -c '
 import json, sys
 try:

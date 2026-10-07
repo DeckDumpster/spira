@@ -163,7 +163,7 @@ else
         ok "the fixture holds the lock (positive control)"
     fi
 
-    out="$(TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
+    out="$(TMPDIR="$LOCKD" timeout 5 bash "$CR" watch 2>&1)"; rc=$?
     if [ "$rc" = 0 ]; then
         bad "a copy that loses the lock exits non-zero" "exited 0 — systemd records Result=success and the loop looks healthy"
     else
@@ -187,7 +187,7 @@ else
         for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$LOCKD/held" ] && break; sleep 0.2; done
     }
     _fake_holder
-    out="$(PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
+    out="$(PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" timeout 5 bash "$CR" watch 2>&1)"; rc=$?
     is "a live holder with a client attached satisfies the unit (exit 0)" "0" "$rc"
     want "and the holder is named" "pid $_holder" "$out"
     is "and the holder is left alone" "0" "$(kill -0 "$_holder" 2>/dev/null; echo $?)"

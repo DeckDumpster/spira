@@ -134,7 +134,7 @@ lc_mirror_bd "$TMP/lc"
 # what the dedupe considers "already filed", independent of which labels this suite chose.
 count_open() {
     local ref_label; ref_label="ref:$(printf '%s' "$1" | sha256sum | cut -c1-8)"
-    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label "$ref_label" --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label "$ref_label" --json 2>/dev/null \
       | python3 -c '
 import json, sys
 try:

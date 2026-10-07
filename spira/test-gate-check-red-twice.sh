@@ -33,7 +33,7 @@ testdb_require test-gate-check-red-twice
 trap 'testdb_drop' EXIT INT TERM
 testdb_up gate_check_red_twice || { echo "test-gate-check-red-twice: could not build fixture"; exit 1; }
 
-B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 TMP="$(mktemp -d)"
 # The open-duplicate check reads the lifecycle state (sp-mve9i); this world's machine

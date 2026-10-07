@@ -51,7 +51,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" commit -q --allow-empty -m base
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
 
 # shellcheck disable=SC1090
@@ -108,8 +108,8 @@ squash_land() {
     local id="$1"; local br="spira/$id"
     git -C "$REPO" merge -q --squash "$br" >/dev/null 2>&1
     git -C "$REPO" commit -q -m "squash-land sp-$id"
-    git -C "$REPO" push -q origin main
-    git -C "$REPO" fetch -q origin
+    timeout 5 git -C "$REPO" push -q origin main
+    timeout 5 git -C "$REPO" fetch -q origin
 }
 
 # ======================================================================================

@@ -38,12 +38,12 @@ T_PRE="$(mktemp -d)"
 cleanup() { rm -rf "$T_FRESH" "$T_PRE"; }
 trap cleanup EXIT INT TERM
 
-fresh() { "$DOLT_BIN" --data-dir "$T_FRESH" sql "$@"; }
-pre()   { "$DOLT_BIN" --data-dir "$T_PRE" sql "$@"; }
+fresh() { timeout 5 "$DOLT_BIN" --data-dir "$T_FRESH" sql "$@"; }
+pre()   { timeout 5 "$DOLT_BIN" --data-dir "$T_PRE" sql "$@"; }
 # 0001-stack.sql's own documented invocation is `--use-db spira_lifecycle sql < ...` (it
 # carries no `USE` statement of its own, unlike schema.sql) — matched here, not just for
 # schema.sql, which also runs fine either way.
-pre_use() { "$DOLT_BIN" --data-dir "$T_PRE" --use-db spira_lifecycle sql "$@"; }
+pre_use() { timeout 5 "$DOLT_BIN" --data-dir "$T_PRE" --use-db spira_lifecycle sql "$@"; }
 # Column name/type/nullability/default, sorted by name rather than read off `show create
 # table` — ALTER TABLE ADD COLUMN always appends at the end, so the migrated table's physical
 # column order differs from a fresh CREATE TABLE's even when the two are equivalent.
@@ -54,8 +54,8 @@ bead_shape() {
               order by column_name;" -r json 2>/dev/null
 }
 
-( cd "$T_FRESH" && "$DOLT_BIN" init -b main >/dev/null 2>&1 )
-( cd "$T_PRE" && "$DOLT_BIN" init -b main >/dev/null 2>&1 )
+( cd "$T_FRESH" && timeout 5 "$DOLT_BIN" init -b main >/dev/null 2>&1 )
+( cd "$T_PRE" && timeout 5 "$DOLT_BIN" init -b main >/dev/null 2>&1 )
 
 echo
 echo "a fresh schema.sql install is the baseline the migration must reproduce"

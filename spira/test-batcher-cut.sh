@@ -87,8 +87,8 @@ mkdir -p "$REPO/spira"
 : > "$REPO/spira/test-old.sh"
 git -C "$REPO" add -A && git -C "$REPO" commit -q -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LCSTUB" "$QUEUEDIR/$REPONAME"
 
 # A REAL COPY OF lib.sh (and its own conf.sh), same as every other batch.sh suite: the IO
@@ -546,8 +546,8 @@ certify sp-cccc3 "$tip_c" "$(( $(date +%s) - 3600 ))"
 
 printf 'main-version\n' > "$REPO/conflict.txt"
 git -C "$REPO" add conflict.txt && git -C "$REPO" commit -q -m "main: advance conflict.txt"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 rm -f "$QUEUEDIR/$REPONAME/base-moved"
 
 out_c="$(STUB_RED_SUITES="" cut_repo)"
@@ -608,7 +608,7 @@ is     "D: no second corpus run for an unchanged pool" "0" "$(grep -c '^argv:' "
 
 # The open PR lands: the remote base moves to its head.
 git -C "$REMOTE" update-ref refs/heads/main "$head_case_a"
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 rm -f "$(open_batch_file)"
 : > "$D_ARGV"
 out_d3="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"

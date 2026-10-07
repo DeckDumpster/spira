@@ -42,8 +42,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 
 # PINNED TO A NON-DEFAULT NAME so the suite cannot pass on an accidentally matching literal.
@@ -69,8 +69,8 @@ run_sweep() {
         groomer sweep "$@" 2>&1
 }
 
-labels_of() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
-notes_of()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
+labels_of() { timeout 5 bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
+notes_of()  { timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
 import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("notes") or "")' 2>/dev/null; }
 

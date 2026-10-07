@@ -66,14 +66,14 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 LC_SERVER_PID=$!
 _lc_stop() { [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; }
 trap '_lc_stop; rm -rf "$TMP"' EXIT INT TERM
 
 lc_up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         lc_up=1
         break
     fi
@@ -97,13 +97,13 @@ SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
 lc_seed_bead() {   # lc_seed_bead <id> <state> <updated_at-epoch>
-    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
+    timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
         --use-db spira_lifecycle sql -q \
         "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,$3)
          ON DUPLICATE KEY UPDATE state='$2', updated_at=$3" >/dev/null 2>&1
 }
 lc_drop_bead() {   # lc_drop_bead <id> -> no row at all (the "not BATCHED" case)
-    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
+    timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
         --use-db spira_lifecycle sql -q \
         "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
 }

@@ -34,10 +34,10 @@ testdb_up aeongcls || { echo "test-aeon-gate-close-silent: could not build fixtu
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 export REPO
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
@@ -60,7 +60,7 @@ echo "3, once the base moves and the branch is rebased onto it — the two condi
 echo "gate-run.sh --status used to collapse into one exit code (sp-7uah8):"
 # ======================================================================================
 BR2="spira/sp-gcs-stalekey"
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" checkout -q -B "$BR2" origin/main >/dev/null 2>&1
 printf 'g\n' > "$REPO/g"; git -C "$REPO" add g
 git -C "$REPO" commit -qm "sp-gcs-stalekey work" >/dev/null
@@ -83,7 +83,7 @@ is "hand-built key matches gate-run.sh's own — recorded PASS answers 0" "0" "$
 git -C "$REPO" checkout -q main
 printf 'h\n' > "$REPO/h"; git -C "$REPO" add h
 git -C "$REPO" commit -qm "unrelated landing" >/dev/null
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" checkout -q "$BR2"
 git -C "$REPO" rebase -q origin/main >/dev/null
 

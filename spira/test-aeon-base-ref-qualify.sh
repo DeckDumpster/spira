@@ -57,8 +57,8 @@ printf 'v1\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -q -m "initial"
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 REMOTE_TRACKING_SHA="$(git -C "$REPO" rev-parse refs/remotes/origin/main)"

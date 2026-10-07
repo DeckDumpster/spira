@@ -71,12 +71,12 @@ behavior:
   event_scheduler: "OFF"
 YAML
 
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         up=1
         break
     fi
@@ -92,7 +92,7 @@ ROOT_PW="adminpw-not-real"
 timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls \
     sql -q "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOT_PW'" >/dev/null 2>&1 \
     || bail "could not set the throwaway server's root password"
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "$ROOT_PW" --no-tls "$@"; }
+root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "$ROOT_PW" --no-tls "$@"; }
 
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 CFG_BIN="$(command -v spira-config 2>/dev/null)"; [ -n "$CFG_BIN" ] || { echo "spira-config is not on PATH (the tree's build provides it)" >&2; exit 1; }
@@ -171,7 +171,7 @@ want "schema.sql created the event table" "event" "$schema_tables"
 echo
 echo "afterwards, a manual write to spira_lifecycle as the operator user is refused:"
 root_sql sql -q "CREATE USER IF NOT EXISTS 'operator'@'%' IDENTIFIED BY 'operatorpw'" >/dev/null 2>&1
-operator_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u operator -p operatorpw --no-tls --use-db spira_lifecycle "$@"; }
+operator_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u operator -p operatorpw --no-tls --use-db spira_lifecycle "$@"; }
 op_out="$(operator_sql sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('sp-manual', 'READY', JSON_OBJECT(), 0, 0)" 2>&1)"
 op_rc=$?
 wantrc "the operator user's INSERT is refused" 1 "$op_rc"
@@ -179,7 +179,7 @@ want "for lack of privilege, not a missing table" "denied" "$op_out"
 
 # POSITIVE CONTROL: the same statement succeeds as spira_lc, proving the refusal above is the
 # grant, not a broken schema or a wrong database name.
-lc_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$ROOT_PW" --no-tls --use-db spira_lifecycle "$@"; }
+lc_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$ROOT_PW" --no-tls --use-db spira_lifecycle "$@"; }
 lc_sql sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('sp-manual', 'READY', JSON_OBJECT(), 0, 0)" >/dev/null 2>&1
 wantrc "positive control: spira_lc's own INSERT succeeds" 0 $?
 

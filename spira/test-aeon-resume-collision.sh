@@ -39,10 +39,10 @@ testdb_up aeonresumecollision || { echo "test-aeon-resume-collision: could not b
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
@@ -99,11 +99,11 @@ echo "TWO RESUMABLE P0 CANDIDATES, the one aeon.sh would try first already claim
 testdb_reset
 seed sp-cc-a open
 seed sp-cc-b open
-bd -C "$SPIRA_DB" set-state sp-cc-a "branch=spira/sp-cc-a" >/dev/null 2>&1 || true
-bd -C "$SPIRA_DB" set-state sp-cc-b "branch=spira/sp-cc-b" >/dev/null 2>&1 || true
+timeout 5 bd -C "$SPIRA_DB" set-state sp-cc-a "branch=spira/sp-cc-a" >/dev/null 2>&1 || true
+timeout 5 bd -C "$SPIRA_DB" set-state sp-cc-b "branch=spira/sp-cc-b" >/dev/null 2>&1 || true
 
 # Prior commits on BOTH branches, so aeon.sh's resume scan finds both resumable.
-git -C "$REPO" fetch -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" fetch -q origin main 2>/dev/null
 git -C "$REPO" checkout -q -B spira/sp-cc-a origin/main
 printf 'a-work\n' >> "$REPO/f"; git -C "$REPO" commit -qam "sp-cc-a - prior attempt"
 git -C "$REPO" checkout -q -B spira/sp-cc-b origin/main

@@ -51,30 +51,30 @@ testdb_up aeonwikidirty || { echo "test-aeon-wiki-dirty: could not build fixture
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 HARNESS_ORIGIN="$TMP/harness.git"; git init -q --bare -b main "$HARNESS_ORIGIN"
-HARNESS="$TMP/harness"; git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
+HARNESS="$TMP/harness"; timeout 5 git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
 git -C "$HARNESS" config user.email t@t; git -C "$HARNESS" config user.name t
 printf 'harness script v1\n' > "$HARNESS/seed.sh"
 git -C "$HARNESS" add seed.sh
 git -C "$HARNESS" commit -qm "seed harness"
-git -C "$HARNESS" push -q origin main 2>/dev/null
+timeout 5 git -C "$HARNESS" push -q origin main 2>/dev/null
 export SPIRA_REPO="$HARNESS"
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 WIKI_ORIGIN="$TMP/wiki.git"; git init -q --bare -b main "$WIKI_ORIGIN"
-WIKI="$TMP/wiki"; git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
+WIKI="$TMP/wiki"; timeout 5 git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
 git -C "$WIKI" config user.email t@t; git -C "$WIKI" config user.name t
 mkdir -p "$WIKI/wiki/notes"
 printf 'wiki seed\n' > "$WIKI/wiki/seed.md"
 printf '# tasks\n' > "$WIKI/wiki/tasks.md"
 git -C "$WIKI" add wiki/seed.md wiki/tasks.md
 git -C "$WIKI" commit -qm "seed wiki"
-git -C "$WIKI" push -q origin main 2>/dev/null
+timeout 5 git -C "$WIKI" push -q origin main 2>/dev/null
 tl_config SPIRA_WIKI="$WIKI"
 
 export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
@@ -125,7 +125,7 @@ chmod +x "$BIN/claude"
 _lbl="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture"
 
 testdb_reset
-b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+b1="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
 rm -rf "$SPIRA_RUN/worktree"
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true

@@ -46,10 +46,10 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
@@ -83,7 +83,7 @@ seed() { # seed <id> [branch-state]
     local id="$1" br="${2:-}"
     printf '{"id":"%s","title":"t %s","status":"open","issue_type":"task","labels":["repo:fixture","spira"]}\n' \
         "$id" "$id" | testdb_seed
-    [ -n "$br" ] && bd -C "$SPIRA_DB" set-state "$id" "branch=$br" >/dev/null 2>&1
+    [ -n "$br" ] && timeout 5 bd -C "$SPIRA_DB" set-state "$id" "branch=$br" >/dev/null 2>&1
 }
 
 testdb_reset
@@ -148,11 +148,11 @@ nowant "case 2: sp-child's inherited branch: label is gone"                     
 want   "case 2: park_branch_collisions reports sp-child UNLABELED, naming sp-root" \
        "UNLABELED sp-child fixture spira/sp-root sp-root" "$park_out2"
 
-notes_root="$(bd -C "$SPIRA_DB" show sp-root --json 2>/dev/null \
+notes_root="$(timeout 5 bd -C "$SPIRA_DB" show sp-root --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
 want "case 2: parked note names the true holder" "sp-hold" "$notes_root"
 
-notes_child="$(bd -C "$SPIRA_DB" show sp-child --json 2>/dev/null \
+notes_child="$(timeout 5 bd -C "$SPIRA_DB" show sp-child --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
 want "case 2: sp-child's note names the parent it inherited from, not needs-ryan prose" "inherited branch:spira/sp-root from sp-root" "$notes_child"
 nowant "case 2: sp-child's note never tells Ryan to free a worktree" "free $SPIRA_RUN" "$notes_child"
@@ -183,7 +183,7 @@ want "case 2b: park_branch_collisions reports sp-child2 UNLABELED" "UNLABELED sp
 labels_child2="$(bdq label list sp-child2 2>/dev/null)"
 nowant "case 2b: sp-child2 is never labeled $SPIRA_ASK_LABEL" "$SPIRA_ASK_LABEL" "$labels_child2"
 
-notes_child2="$(bd -C "$SPIRA_DB" show sp-child2 --json 2>/dev/null \
+notes_child2="$(timeout 5 bd -C "$SPIRA_DB" show sp-child2 --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
 want "case 2b: sp-child2's own commit is named so it is not stranded" "sp-child2: work committed onto the inherited branch" "$notes_child2"
 
@@ -199,12 +199,12 @@ nowant "already-cut bead excluded from a repeat detect pass"    "sp-child" "$out
 # depth: detect already excludes parked/cut beads, but park must not re-note if it is ever
 # handed a line for a bead already resolved since the output was produced).
 park_out_repeat="$(park_branch_collisions "$out")"
-notes_root2="$(bd -C "$SPIRA_DB" show sp-root --json 2>/dev/null \
+notes_root2="$(timeout 5 bd -C "$SPIRA_DB" show sp-root --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
 n_notes="$(grep -c "Parked by detect_branch_collisions" <<< "$notes_root2" || true)"
 is "case 3: exactly one park note on sp-root, not re-appended" "1" "$n_notes"
 
-notes_child2b="$(bd -C "$SPIRA_DB" show sp-child --json 2>/dev/null \
+notes_child2b="$(timeout 5 bd -C "$SPIRA_DB" show sp-child --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
 n_child_notes="$(grep -c "Corrected by detect_branch_collisions" <<< "$notes_child2b" || true)"
 is "case 3: exactly one correction note on sp-child, not re-appended" "1" "$n_child_notes"
