@@ -301,6 +301,9 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
         return cmd_list_delivery(args, conn);
     }
+    if args.iter().any(|a| a == "--batches") {
+        return cmd_list_batches(conn);
+    }
     let mut clauses = Vec::new();
     let mut scope = String::new();
     if let Some(state) = flag(args, "--state") {
@@ -341,6 +344,46 @@ fn entered_at_join(machine: &str) -> String {
     format!(
         "(SELECT lc_key, to_state, MAX(at) AS entered FROM event WHERE machine = '{machine}' AND applied = 1 GROUP BY lc_key, to_state) s"
     )
+}
+
+const BATCHES_SHOWN: usize = 8;
+
+/// The newest batches with their members, ejections and last event time, for the ops pane.
+fn cmd_list_batches(conn: &Conn) -> (i32, String) {
+    let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
+    let run = || -> Result<Vec<Value>, String> {
+        let mut batches = q(format!(
+            "SELECT batch_id, repo, state, reason, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
+        ))?;
+        let ids: Vec<String> = batches
+            .iter()
+            .filter_map(|b| b.get("batch_id").and_then(Value::as_str))
+            .map(|id| format!("'{}'", rows::escape(id)))
+            .collect();
+        if ids.is_empty() {
+            return Ok(batches);
+        }
+        let ids = ids.join(",");
+        let members = q(format!("SELECT batch_id, bead_id, outcome FROM batch_member WHERE batch_id IN ({ids}) ORDER BY bead_id"))?;
+        let ejected = q(format!(
+            "SELECT lc_key AS batch_id, JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.Eject.bead_id')) AS bead_id, JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.Eject.reason')) AS reason \
+             FROM event WHERE machine = 'batch' AND event = 'Eject' AND applied = 1 AND lc_key IN ({ids}) ORDER BY seq"
+        ))?;
+        let last = q(format!("SELECT lc_key AS batch_id, MAX(at) AS last_at FROM event WHERE machine = 'batch' AND applied = 1 AND lc_key IN ({ids}) GROUP BY lc_key"))?;
+        let of = |rows: &[Value], id: &Value| -> Vec<Value> { rows.iter().filter(|r| r.get("batch_id") == Some(id)).cloned().collect() };
+        for b in batches.iter_mut() {
+            let id = b.get("batch_id").cloned().unwrap_or(Value::Null);
+            let obj = b.as_object_mut().expect("a batch row is an object");
+            obj.insert("members".into(), Value::Array(of(&members, &id)));
+            obj.insert("ejected".into(), Value::Array(of(&ejected, &id)));
+            obj.insert("last_at".into(), of(&last, &id).first().and_then(|r| r.get("last_at")).cloned().unwrap_or(Value::Null));
+        }
+        Ok(batches)
+    };
+    match run() {
+        Ok(v) => (0, serde_json::to_string_pretty(&Value::Array(v)).unwrap()),
+        Err(e) => (CANNOT_TELL, e),
+    }
 }
 
 fn cmd_list_delivery(args: &[String], conn: &Conn) -> (i32, String) {
