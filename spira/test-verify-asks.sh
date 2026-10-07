@@ -59,7 +59,7 @@ cat > "$STUB_BD" <<'STUBEOF'
 # A stub standing in for bd against a fixture, not a fixture MODELLING bd: it answers exactly
 # the two calls verify-asks.sh makes (list, close) and nothing else.
 args=("$@")
-[ "${args[0]:-}" = "-C" ] && args=("${args[@]:2}")
+[ "${args[0]:-}" = "content" ] && args=("${args[@]:1}")
 case "${args[0]:-}" in
     list)  cat "$SPIRA_TESTBD_ROWS" ;;
     close) printf '%s\n' "${args[*]}" >> "$SPIRA_TESTBD_CLOSED"; exit 0 ;;
@@ -67,7 +67,7 @@ case "${args[0]:-}" in
 esac
 STUBEOF
 chmod +x "$STUB_BD"
-export BD_BIN="$STUB_BD"
+export SPIRA_LC_BIN="$STUB_BD"
 
 row() {   # row <id> <status> <issue_type> <extra-labels-csv-or-""> <description>
     local id="$1" status="$2" itype="$3" extra="$4" desc="$5" labels="\"$ASK\",\"overseer\""
@@ -211,7 +211,7 @@ is "verify-asks.sh exits 0 even though it read nothing (missing .beads)" "0" "$r
 tl_config COCKPIT_DB="$FAKE_DB"
 DEAD_BD="$TMP/dead-bd"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$DEAD_BD"; chmod +x "$DEAD_BD"
-out="$(BD_BIN="$DEAD_BD" verify --apply 2>&1)"; rc=$?
+out="$(SPIRA_LC_BIN="$DEAD_BD" verify --apply 2>&1)"; rc=$?
 want "an unreachable engine also prints 'checked nothing'" "checked nothing" "$out"
 is "verify-asks.sh exits 0 even though the engine refused (unreachable)" "0" "$rc"
 
@@ -222,7 +222,7 @@ is "verify-asks.sh exits 0 even though the engine refused (unreachable)" "0" "$r
 echo
 echo "one real close: a passing VERIFY closes a bead in a real bd"
 
-unset BD_BIN COCKPIT_DB
+unset SPIRA_LC_BIN COCKPIT_DB
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-verify-asks

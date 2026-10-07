@@ -76,12 +76,13 @@ impl StubBd {
         let dir = testkit::TempDir::new(&format!("panel-stub-bd-{n}"));
         let log = dir.join("argv.log");
         std::fs::write(&log, "").expect("init argv log");
-        let script = dir.join("bd");
+        let script = dir.join("spira-lc");
         // testkit::write_exe, never fs::write + set_mode/set_permissions (sp-os3of).
         testkit::write_exe(
             &script,
             &format!(
                 r#"#!/usr/bin/env bash
+if [ "$1" != content ]; then printf 'LC: %s\n' "$*" >> {log:?}; exit "${{LC_RC:-0}}"; fi
 {{ printf 'ARGV: %s\n' "$*"; printf 'ACTOR: %s\n' "${{BEADS_ACTOR:-<none>}}"; }} >> {log:?}
 case " $* " in
     *" close "*)
@@ -215,8 +216,7 @@ exit "$rc"
         self
     }
 
-    /// Also installs a `spira-lc` stub on the stub dir — the verdict's hold-lifting leg
-    /// (sp-v62vn follow-up). Argv goes to the same log, prefixed `LC:`; exit `LC_RC`.
+    /// The stub's non-`content` verbs (the verdict's hold-lifting leg) log `LC:` and exit `LC_RC`.
     pub fn lc(self) -> Self {
         std::fs::write(self.dir.join("lc.armed"), "").expect("arm the spira-lc stub");
         self

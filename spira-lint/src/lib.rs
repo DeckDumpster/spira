@@ -417,6 +417,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::plan_lint::PlanLint::default()),
         Box::new(rules::testdb_mode_lint::TestdbModeLint::default()),
         Box::new(rules::bd_stdin_lint::BdStdinLint::default()),
+        Box::new(rules::cockpit_no_bd::CockpitNoBd::default()),
         Box::new(rules::incident_cause_lint::IncidentCauseLint::default()),
         Box::new(rules::lockfile_lint::LockfileLint::default()),
         Box::new(rules::tier_budget::Ledger::suites()),

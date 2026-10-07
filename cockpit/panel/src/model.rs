@@ -344,7 +344,7 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
         }
         Err(e) => e,
     };
-    match run_as("bd", &["-C", db, "comments", "add", id, reason], Some(actor), cfg) {
+    match run_as("spira-lc", &["content", "comments", "add", id, reason], Some(actor), cfg) {
         Ok(()) => Err(format!("{e} — still open; your answer is kept as a comment")),
         Err(_) => Err(format!("{e} — AND THE ANSWER WAS NOT SAVED: {reason}")),
     }
@@ -362,7 +362,7 @@ pub fn work_beads(item: &Item) -> Vec<&str> {
 /// <ask-bead-id>`: the ask bead is the record the answer lives on. Exit 1 (no row) and 3
 /// (no ask hold — an answer to a question that held nothing) are not failures; anything
 /// else is written to the ask bead, like a failed mail, rather than swallowed.
-fn lift_work_holds(db: &str, item: &Item, actor: &str, cfg: &Cfg) {
+fn lift_work_holds(_db: &str, item: &Item, actor: &str, cfg: &Cfg) {
     for w in work_beads(item) {
         let mut c = Command::new(crate::store::bin("spira-lc", cfg));
         c.args(["reply", w, &item.id, actor]).env("PATH", crate::store::child_path(cfg));
@@ -371,7 +371,7 @@ fn lift_work_holds(db: &str, item: &Item, actor: &str, cfg: &Cfg) {
             (code, out) => Some(format!("exit {code}: {}", out.trim())),
         };
         if let Some(e) = failed {
-            let _ = run_as("bd", &["-C", db, "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor), cfg);
+            let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor), cfg);
         }
     }
 }
@@ -424,14 +424,13 @@ fn notify_concierge(id: &str, subject: &str, from: &str, body: &str, cfg: &Cfg) 
 /// bead rather than let a lost mail be indistinguishable from a lost answer. The bead is the
 /// source of truth — it is already closed or commented by the time this runs — so a failed
 /// send here is a paging failure, not a data-loss one, and is recorded rather than retried.
-fn notify_or_log(db: &str, item: &Item, verb: &str, text: &str, actor: &str, cfg: &Cfg) {
+fn notify_or_log(_db: &str, item: &Item, verb: &str, text: &str, actor: &str, cfg: &Cfg) {
     let subject = format!("{verb} on {}: {}", item.id, item.title);
     if let Err(e) = notify_concierge(&item.id, &subject, actor, text, cfg) {
         let _ = run_as(
-            "bd",
+            "spira-lc",
             &[
-                "-C",
-                db,
+                "content",
                 "comments",
                 "add",
                 &item.id,
@@ -452,12 +451,12 @@ pub fn act_all(view: View, ids: &[String], dismissed: bool, cfg: &Cfg) -> Result
     match view {
         View::Insights | View::Notifications if !ids.is_empty() => {
             let flag = if dismissed { "--remove-label" } else { "--add-label" };
-            let mut args: Vec<&str> = vec!["-C", &cfg.db, "update"];
+            let mut args: Vec<&str> = vec!["content", "update"];
             for id in ids {
                 args.push(id.as_str());
             }
             args.extend(&[flag, ARCHIVED]);
-            run("bd", &args, cfg)
+            run("spira-lc", &args, cfg)
         }
         View::Insights | View::Notifications => Ok(()),
         _ => Err("bulk clear is only for record views".into()),
@@ -503,10 +502,9 @@ pub fn act(
         // real verdict.
         (View::Decisions, _) => close_decision(db, item, reason, cfg),
         (View::Insights | View::Notifications, _) => run(
-            "bd",
+            "spira-lc",
             &[
-                "-C",
-                db,
+                "content",
                 "update",
                 &item.id,
                 if dismissed { "--remove-label" } else { "--add-label" },
@@ -521,14 +519,14 @@ pub fn act(
         // `silence_label` would return whichever `bd` happened to list first.
         (View::Alerts, Act::Silence) => {
             if let Some(old) = silence_label(item) {
-                run("bd", &["-C", db, "update", &item.id, "--remove-label", old], cfg)?;
+                run("spira-lc", &["content", "update", &item.id, "--remove-label", old], cfg)?;
             }
             let until = format!(
                 "{}{}",
                 alert::SILENT,
                 crate::render::iso(now + alert::SILENCE_SECS)
             );
-            run("bd", &["-C", db, "update", &item.id, "--add-label", &until], cfg)
+            run("spira-lc", &["content", "update", &item.id, "--add-label", &until], cfg)
         }
 
         // `d` IN THE HISTORY LIFTS A SILENCE — and a CLEARED alert has none to lift. Saying so
@@ -536,7 +534,7 @@ pub fn act(
         // side by side, and a key that appears to work on the wrong one teaches the operator that the
         // footer is decoration. Same defect `verb` exists to prevent, one layer along.
         (View::Alerts, Act::Primary) if dismissed => match silence_label(item) {
-            Some(old) => run("bd", &["-C", db, "update", &item.id, "--remove-label", old], cfg),
+            Some(old) => run("spira-lc", &["content", "update", &item.id, "--remove-label", old], cfg),
             None => Err("this one has cleared — a record, with no silence to lift".into()),
         },
 
@@ -549,8 +547,8 @@ pub fn act(
                 return Err("already acknowledged".into());
             }
             run(
-                "bd",
-                &["-C", db, "update", &item.id, "--add-label", alert::ACKED],
+                "spira-lc",
+                &["content", "update", &item.id, "--add-label", alert::ACKED],
                 cfg,
             )
         }
@@ -570,7 +568,7 @@ pub fn act(
 /// `why` is the training signal, not required — an empty string is fine: the `p` prompt
 /// says so, so pressing ⏎ immediately records `premise-rejected` with no trailing text.
 pub fn reject_premise(item: &Item, why: &str, cfg: &Cfg) -> Result<(), String> {
-    run("bd", &["-C", &cfg.db, "update", &item.id, "--add-label", PREMISE_REJECTED], cfg)?;
+    run("spira-lc", &["content", "update", &item.id, "--add-label", PREMISE_REJECTED], cfg)?;
     let reason = if why.trim().is_empty() {
         PREMISE_REJECTED.to_string()
     } else {
@@ -721,10 +719,9 @@ pub fn enact(item: &Item, slug: &str, text: &str, cfg: &Cfg) -> Result<(), Strin
     run_verbose(&rule, &["enact", slug, text], cfg)?;
     let key = format!("{ENACTED}law-{}", slug.trim_start_matches("law-"));
     run(
-        "bd",
+        "spira-lc",
         &[
-            "-C",
-            &cfg.db,
+            "content",
             "update",
             &item.id,
             "--add-label",
@@ -890,8 +887,8 @@ pub fn comment(view: View, item: &Item, text: &str, cfg: &Cfg) -> Result<(), Str
         _ => {
             let actor = &cfg.operator_actor;
             run_as(
-                "bd",
-                &["-C", &cfg.db, "comments", "add", &item.id, text],
+                "spira-lc",
+                &["content", "comments", "add", &item.id, text],
                 Some(actor),
                 cfg,
             )?;

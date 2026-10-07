@@ -246,7 +246,7 @@ fn rows(text: &str, key: &str) -> Result<Vec<Value>, String> {
 /// there is no other database whose rows could stand in for these, so silently returning an
 /// empty list would render "nothing is waiting" over an unread queue.
 fn fetch_beads(cfg: &Cfg) -> Result<Vec<Value>, String> {
-    let out = run("bd", &["-C", &cfg.db, "list", "--all", "--limit", "0", "--json"], cfg)?;
+    let out = run("spira-lc", &["content", "list", "--all", "--limit", "0", "--json"], cfg)?;
     rows(&out, "issues")
 }
 
@@ -303,7 +303,7 @@ fn fetch_threads(beads: &[Value], cfg: &Cfg) -> std::collections::HashMap<String
         .map(|id| {
             let cfg = cfg.clone();
             thread::spawn(move || {
-                let out = run("bd", &["-C", &cfg.db, "comments", &id, "--json"], &cfg).ok()?;
+                let out = run("spira-lc", &["content", "comments", &id, "--json"], &cfg).ok()?;
                 Some((id, rows(&out, "comments").ok()?))
             })
         })

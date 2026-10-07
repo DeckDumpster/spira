@@ -1,9 +1,7 @@
-//! The impure boundary: every place this crate shells out to `bd`, `git`, `systemctl`,
+//! The impure boundary: every place this crate shells out to `spira-lc`, `git`, `systemctl`,
 //! `/proc`, or a `lib.sh` function it does not re-implement (DESIGN.md "Non-goals" — `lib.sh`
-//! itself is frozen, wave 4's job, never this bead's). Mirrors the exact argv and env
-//! contract `spira/lib.sh`'s `bdq`/`bdjson` and `spira/cockpit.sh`'s helpers used, so a
-//! fixture or a fake binary already on `PATH` for the bash suites works unmodified against
-//! this binary (parity evidence in the delivery report).
+//! itself is frozen, wave 4's job, never this bead's). The fixture and fake binaries
+//! the bash suites put on `PATH` work unmodified against it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -193,22 +191,12 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
 }
 
-/// `bdq <args>`: the harness's one chokepoint for invoking `bd`, reproduced byte-for-byte
-/// enough to matter:
-///   - `SPIRA_BDJSON_FIXTURE` set -> `bdsim.py <fixture> <args>` (the test seam every
-///     `test-cockpit-*.sh` suite drives; inherited from this process's own environment so a
-///     suite that exports it before calling this binary needs no other change — not a
-///     registered config key, so this stays a raw env read).
-///   - otherwise: refuse with no output when `SPIRA_DB` is empty (never fall through to bd's
-///     own auto-discovery — sp-agdzk/sp-25b7s), then
-///     `timeout ${BD_TIMEOUT:-180} $SPIRA_BD -C $SPIRA_DB <args>` (`SPIRA_DB`/`SPIRA_BD`
-///     through the one door, `spira_config::process::cfg` — no default: an unresolvable
-///     config is the same refusal as an empty `SPIRA_DB`, never a silent `bd` on `PATH`),
-///     retried up to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains
-///     "invalid connection".
-/// Returns `None` on any failure (non-zero exit, refusal, spawn error) — the caller renders
-/// `?`, never 0.
-pub fn bdq(args: &[&str]) -> Option<String> {
+/// `content <args>`: bead content (title, labels, comments) through `spira-lc content`, the
+/// one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set -> `bdsim.py <fixture> <args>`
+/// (the test seam the `test-cockpit-*.sh` suites drive). `timeout ${BD_TIMEOUT:-180}`, retried
+/// up to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains "invalid
+/// connection". `None` on any failure; the caller renders `?`, never 0.
+pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
             let out = Command::new("bdsim.py")
@@ -224,8 +212,7 @@ pub fn bdq(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let db = spira_config::process::cfg("SPIRA_DB").ok().filter(|v| !v.is_empty())?;
-    let bd_bin = spira_config::process::cfg("SPIRA_BD").ok()?;
+    let lc = env_or("SPIRA_LC_BIN", "spira-lc");
     let timeout_s = env_or("BD_TIMEOUT", "180");
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
 
@@ -233,9 +220,8 @@ pub fn bdq(args: &[&str]) -> Option<String> {
     loop {
         let out = Command::new("timeout")
             .arg(&timeout_s)
-            .arg(&bd_bin)
-            .arg("-C")
-            .arg(&db)
+            .arg(&lc)
+            .arg("content")
             .args(args)
             .stdin(Stdio::null())
             .output();
@@ -248,8 +234,6 @@ pub fn bdq(args: &[&str]) -> Option<String> {
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
         let rc = out.status.code().unwrap_or(1);
-        // Collapsed onto bead::bdq::should_retry (sp-pwmlj, wave 4.15) — the same retry
-        // decision bdq's own binary makes, rather than a second copy of it here.
         if !bead::bdq::should_retry(rc, attempt, tries, stderr.contains("invalid connection")) {
             return None;
         }
@@ -257,28 +241,22 @@ pub fn bdq(args: &[&str]) -> Option<String> {
     }
 }
 
-/// `json_only`: `sed -n '/^[[{]/,$p'` — drop any banner/warning lines a wrapper printed to
-/// stdout before the first line that actually starts a JSON value. Collapsed onto
-/// `bead::bdq::json_only` (sp-pwmlj, wave 4.15): this crate's own copy tolerated leading
-/// whitespace before the `[`/`{` (`line.trim_start()` then `starts_with`), which `sed -n
-/// '/^[[{]/,$p'` — and `bdq`'s own fence — do not; an indented JSON-looking line would have
-/// been treated as the payload start here and correctly skipped by the real `bdq`/`bdjson`,
-/// a real divergence this collapse fixes rather than a feature to keep.
+/// Drop any banner lines a wrapper printed before the first line that starts a JSON value.
 pub fn json_only(s: &str) -> &str {
     bead::bdq::json_only(s)
 }
 
-/// `bdjson <args>` == `bdq <args> --json 2>/dev/null | json_only`.
-pub fn bdjson(args: &[&str]) -> Option<String> {
+/// `contentjson <args>` == `content <args> --json | json_only`.
+pub fn contentjson(args: &[&str]) -> Option<String> {
     let mut full: Vec<&str> = args.to_vec();
     full.push("--json");
-    bdq(&full).map(|s| json_only(&s).to_string())
+    content(&full).map(|s| json_only(&s).to_string())
 }
 
-/// Parse a `bdjson`/`bdq --json` response into a `Vec<Value>`, the shape every probe needs:
-/// bd returns either a bare object or an array. Empty/unparseable input (a refusal, per
-/// `bdjson`'s contract) returns `None`, never an empty vec — the two are different claims.
-pub fn bd_rows(raw: Option<String>) -> Option<Vec<serde_json::Value>> {
+/// Parse a `contentjson` response into a `Vec<Value>`, the shape every probe needs:
+/// the answer is either a bare object or an array. Empty/unparseable input (a refusal, per
+/// `contentjson`'s contract) returns `None`, never an empty vec — the two are different claims.
+pub fn json_rows(raw: Option<String>) -> Option<Vec<serde_json::Value>> {
     let raw = raw?;
     if raw.trim().is_empty() {
         return None;
@@ -534,7 +512,7 @@ mod tests {
     }
 
     // Pins the sp-pwmlj collapse: before it, this function's own copy tolerated leading
-    // whitespace before `[`/`{` — `sed -n '/^[[{]/,$p'` (and bdq's real fence) do not.
+    // whitespace before `[`/`{` — `sed -n '/^[[{]/,$p'` do not.
     #[test]
     fn json_only_requires_column_one_same_as_the_real_fence() {
         assert_eq!(json_only("  [1]\n"), "");
@@ -542,12 +520,12 @@ mod tests {
 
     #[test]
     fn bd_rows_distinguishes_refusal_from_empty_array() {
-        assert!(bd_rows(None).is_none());
-        assert!(bd_rows(Some("".to_string())).is_none());
-        assert!(bd_rows(Some("   ".to_string())).is_none());
-        assert_eq!(bd_rows(Some("[]".to_string())), Some(vec![]));
+        assert!(json_rows(None).is_none());
+        assert!(json_rows(Some("".to_string())).is_none());
+        assert!(json_rows(Some("   ".to_string())).is_none());
+        assert_eq!(json_rows(Some("[]".to_string())), Some(vec![]));
         assert_eq!(
-            bd_rows(Some(r#"{"id":"sp-1"}"#.to_string())).map(|v| v.len()),
+            json_rows(Some(r#"{"id":"sp-1"}"#.to_string())).map(|v| v.len()),
             Some(1)
         );
     }

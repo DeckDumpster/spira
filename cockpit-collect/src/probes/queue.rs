@@ -138,7 +138,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
         let refs: Vec<&str> = batch_member_ids.iter().map(String::as_str).collect();
         let mut args = vec!["show"];
         args.extend(refs.iter().copied());
-        let rows = io::bd_rows(io::bdjson(&args)).unwrap_or_default();
+        let rows = io::json_rows(io::contentjson(&args)).unwrap_or_default();
         for (i, id) in batch_member_ids.iter().enumerate() {
             let row = rows.iter().find(|r| r.get("id").and_then(Value::as_str) == Some(id.as_str()));
             let (pri, title) = row.map(row_pri_title).unwrap_or(("?".to_string(), "-".to_string()));
@@ -184,7 +184,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
             let ids: Vec<&str> = filtered.iter().map(|l| l.split_whitespace().next().unwrap_or("")).collect();
             let mut show_args = vec!["show"];
             show_args.extend(ids.iter().copied());
-            let pj_raw = io::bdjson(&show_args).unwrap_or_else(|| "[]".to_string());
+            let pj_raw = io::contentjson(&show_args).unwrap_or_else(|| "[]".to_string());
             let stdin_rows = filtered.join("\n") + "\n";
             let sorted = io::lib_call_with_stdin(
                 &home,
@@ -193,7 +193,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
                 Some(&stdin_rows),
             );
             let Some(sorted) = sorted else { continue };
-            let rows = io::bd_rows(Some(pj_raw)).unwrap_or_default();
+            let rows = io::json_rows(Some(pj_raw)).unwrap_or_default();
             for srow in sorted.lines() {
                 if next_n >= 20 {
                     break;

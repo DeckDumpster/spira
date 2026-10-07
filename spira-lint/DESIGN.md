@@ -661,6 +661,20 @@ followed by `<`, end of line, or a non-`-` character. One finding per line.
 **Refuses** (exit 3): no `spira/` or `chamber/` files in scope. **Positive control:**
 `fence: bd-stdin-lint checked <n> files`.
 
+## Rule `cockpit-no-bd`
+
+**Intent.** The ops pane, its collector and the cockpit panel read bead state from the
+lifecycle machine, never bd, whose status lags it. Bead content and label/comment writes go
+through `spira-lc content`.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/` and `cockpit-collect/`.
+
+**Violation.** A live (non-comment) line that spells a `bd` invocation: `"bd"`, `bd_bin`,
+`bdq(`, `bdjson(` in Rust; `bd <subcommand>` or `$BD` in shell.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: cockpit-no-bd checked
+<n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.

@@ -114,8 +114,8 @@ pub fn reachable_keys(cfg: &Cfg) -> Kv {
         args.push("--label");
         args.push(scope);
     }
-    let raw = io::bdjson(&args);
-    let Some((rows, lc)) = io::bd_rows(raw).zip(super::lc::state_index()) else {
+    let raw = io::contentjson(&args);
+    let Some((rows, lc)) = io::json_rows(raw).zip(super::lc::state_index()) else {
         push(&mut out, "SP_REACHABLE", "?");
         push(&mut out, "SP_STRANDED", "?");
         return out;

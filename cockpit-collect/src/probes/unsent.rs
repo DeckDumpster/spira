@@ -297,7 +297,7 @@ fn status_of_row(row: Option<&super::lc::Row>) -> Option<BeadStatus> {
     Some(if row.past_builder() { BeadStatus::Closed { submitted: !row.terminal() } } else { BeadStatus::Open })
 }
 
-/// `BD_TIMEOUT=2 bdjson show <id>` — deliberately short: this runs once per rowless branch
+/// `BD_TIMEOUT=2 contentjson show <id>` — deliberately short: this runs once per rowless branch
 /// across every repository on the 600s tier, and a hung `bd` must not stall the whole probe.
 fn bead_exists(id: &str) -> BeadStatus {
     match bead_exists_at(id, "2") {
@@ -313,12 +313,12 @@ fn bead_exists(id: &str) -> BeadStatus {
 fn bead_exists_at(id: &str, timeout: &str) -> BeadStatus {
     let prev = std::env::var("BD_TIMEOUT").ok();
     std::env::set_var("BD_TIMEOUT", timeout);
-    let raw = io::bdjson(&["show", id]);
+    let raw = io::contentjson(&["show", id]);
     match prev {
         Some(p) => std::env::set_var("BD_TIMEOUT", p),
         None => std::env::remove_var("BD_TIMEOUT"),
     }
-    match io::bd_rows(raw) {
+    match io::json_rows(raw) {
         None => BeadStatus::ProbeFailed,
         Some(rows) => match rows.first().and_then(|r| r.get("id")).and_then(Value::as_str) {
             Some(_) => BeadStatus::Closed { submitted: false },
@@ -390,14 +390,14 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
     let home_repo = io::repo_registry().home_repo().to_string();
     // Every plan bead's content; which of them the builder finished is the lifecycle row's
     // to say (design §3.4, sp-mve9i), not bd's `closed`.
-    let raw = io::bdq(&["list", "--all", "--limit", "0", "--label", &label, "--json"]);
+    let raw = io::content(&["list", "--all", "--limit", "0", "--label", &label, "--json"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
         }
         return;
     };
-    let Some(rows) = io::bd_rows(Some(raw)) else {
+    let Some(rows) = io::json_rows(Some(raw)) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
         }

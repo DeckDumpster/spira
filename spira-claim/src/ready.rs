@@ -233,6 +233,18 @@ pub(crate) fn now_epoch() -> i64 {
 mod tests {
     use super::*;
 
+    fn lc_row(id: &str, state: BeadState) -> (String, LifecycleRow) {
+        (id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds: Default::default(), stack_depth: 0, tip: None })
+    }
+
+    /// NEXT's ready set takes no bd status: a LANDED bead is out however bd's row reads,
+    /// and a READY bead is in however bd's row reads (the function has no bd input).
+    #[test]
+    fn the_ready_set_is_lifecycle_state_alone() {
+        let lc: HashMap<_, _> = [lc_row("sp-landed", BeadState::Landed), lc_row("sp-ready", BeadState::Ready), lc_row("sp-rework", BeadState::Rework)].into();
+        assert_eq!(lifecycle_ready_ids(&lc), vec!["sp-ready".to_string(), "sp-rework".to_string()]);
+    }
+
     #[test]
     fn ready_args_appends_label_then_exclude_label_in_order() {
         assert_eq!(
