@@ -116,12 +116,10 @@ printf 'demo|%s|queue|main|\n' "$GITREPO" > "$CFGHOME/repo-map"
 CONF="$CFGHOME/spira.conf"
 TOML="$CFGHOME/spira.toml"   # deliberately does not exist yet — this run must create it
 
-# NON-EMPTY, matching root's actual server password (set above) and spira_lc's granted
-# password (filled from this same value into grants.sql's @SPIRA_LC_PASSWORD@): cutover-
-# deploy.sh refuses outright on an empty SPIRA_LC_PASSWORD, and SPIRA_LC_PASSWORD_FILE is a
-# registered key now, resolved from SPIRA_TOML alone, for every connection — admin and
-# spira_lc alike — so one shared, non-empty credential must be correct for both.
-CRED="$TMP/credential"; printf '%s' "$ROOT_PW" > "$CRED"
+# NON-EMPTY and unlike root's: a wrong-credential fallback or a broken substitution fails the run.
+# The / and + are in base64's alphabet and break a sed substitution.
+LC_PW='lc/pw+with/slash+plus=='
+CRED="$TMP/credential"; printf '%s' "$LC_PW" > "$CRED"
 RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
 
 run_deploy() {
@@ -179,7 +177,7 @@ want "for lack of privilege, not a missing table" "denied" "$op_out"
 
 # POSITIVE CONTROL: the same statement succeeds as spira_lc, proving the refusal above is the
 # grant, not a broken schema or a wrong database name.
-lc_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$ROOT_PW" --no-tls --use-db spira_lifecycle "$@"; }
+lc_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$LC_PW" --no-tls --use-db spira_lifecycle "$@"; }
 lc_sql sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('sp-manual', 'READY', JSON_OBJECT(), 0, 0)" >/dev/null 2>&1
 wantrc "positive control: spira_lc's own INSERT succeeds" 0 $?
 
