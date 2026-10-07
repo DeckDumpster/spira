@@ -12,8 +12,9 @@ Environment=SPIRA_RUN=@SPIRA_RUN@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/round-vm refresh @SPIRA_REPO@ --ref local/main
 TimeoutStartSec=3300
-StandardOutput=append:@SPIRA_RUN@/round-template.log
-StandardError=append:@SPIRA_RUN@/round-template.log
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spira-round-template
 
 [X-Spira]
 Plane=observability

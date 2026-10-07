@@ -288,6 +288,29 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         }
         eprintln!("round-vm refresh: the template does not hold localhost/spira-testenv:{tag} — rebuilding it");
     }
+    let me = ProcId::current();
+    if refresh {
+        match pool.begin_refresh(me) {
+            Ok(Ok(())) => {}
+            Ok(Err(why)) => {
+                eprintln!("round-vm refresh: skipped — {why}; the next run retries");
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("round-vm refresh: cannot claim the pool: {e}");
+                return 1;
+            }
+        }
+    }
+    let code = build_template(cfg, a, refresh, pool, &commit);
+    if refresh {
+        pool.end_refresh(me);
+    }
+    code
+}
+
+fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool: &Pool, commit: &str) -> i32 {
+    use crate::template::{repoint, Record};
     let attempt = match real_attempt() {
         Ok(at) => at,
         Err(e) => {
@@ -308,7 +331,7 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         &spec,
         cfg.ssh_tries,
         &a.tree_dir,
-        &commit,
+        commit,
         None, // the hypervisor assigns the id (/cluster/nextid)
         cfg.host_addr.as_deref().unwrap_or(""),
         a.toolchain.as_deref().unwrap_or(""),
