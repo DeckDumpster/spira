@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-const QUERY_DEADLINE: Duration = Duration::from_secs(60); // interactive: loading and querying a trace of a few thousand rows
+const QUERY_DEADLINE: Duration = Duration::from_secs(60); // batch-job: loading and querying a trace of a few thousand rows
 const INVARIANTS: &str = include_str!("../invariants.sql");
 const BEAD_STATE_FIELDS: &[&str] = &["bead", "bd_status", "lc_state", "lc_version", "holds", "landstate", "lc_tip", "branch_tip", "on_local_main", "on_origin_main"];
 
