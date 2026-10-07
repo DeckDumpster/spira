@@ -168,6 +168,7 @@ if [ -n "$toolchain" ] && [ ! -x "$CARGO_HOME/bin/rustc" ]; then
     rm -rf "$tmp"
 fi
 export PATH="$CARGO_HOME/bin:$PATH"
+export SPIRA_HOME="$work/spira"
 if [ ! -x "$CARGO_HOME/bin/sccache" ]; then
     echo "round-vm template: installing sccache (webdav backend) into $CARGO_HOME/bin" >&2
     cargo install sccache --locked --no-default-features --features webdav --quiet
@@ -520,6 +521,12 @@ mod tests {
         p.fail(Step::Destroy);
         let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
         assert!(e.contains("by hand") && e.contains("9120"), "{e}");
+    }
+
+    #[test]
+    fn the_script_names_the_harness_home_before_testenv_runs() {
+        let home = TEMPLATE_SCRIPT.find("export SPIRA_HOME=\"$work/spira\"").expect("testenv refuses without SPIRA_HOME");
+        assert!(home < TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap());
     }
 
     #[test]

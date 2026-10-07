@@ -56,6 +56,8 @@ pub struct PoolState {
     pub doomed: Vec<String>,
     #[serde(default)]
     pub outage: Option<Outage>,
+    #[serde(default)]
+    pub refreshing: Option<ProcId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

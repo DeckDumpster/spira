@@ -180,6 +180,9 @@ impl Pool {
             let p = attempt.provider.as_ref();
             let next = self.with_state(|s| {
                 Self::reap(s, p, attempt.timing);
+                if s.refreshing.map(|r| !r.alive()).unwrap_or(false) {
+                    s.refreshing = None;
+                }
                 if let Some(vm) = s.ready.take() {
                     if p.alive(&vm.handle).unwrap_or(false) {
                         Self::hand_out(s, &vm, owner, deps.spawner);
@@ -188,7 +191,7 @@ impl Pool {
                     s.doomed.push(vm.handle);
                     Self::reap(s, p, attempt.timing);
                 }
-                if s.provisioning.is_some() {
+                if s.provisioning.is_some() || s.refreshing.map(|r| r.alive()).unwrap_or(false) {
                     return Next::Wait;
                 }
                 s.provisioning = Some(Provisioning { owner: me, vmid: None, since: now() });
@@ -327,6 +330,34 @@ impl Pool {
             }
         }
         Ok(released)
+    }
+
+    /// Claims the pool for a template refresh: refused (with the reason) while a round holds
+    /// a lease, a provision is in flight, or another refresh runs. While claimed, `acquire`
+    /// waits, so no round starts on a VM the refresh is about to recycle.
+    pub fn begin_refresh(&self, me: ProcId) -> Result<Result<(), String>, String> {
+        self.with_state(|s| {
+            if let Some(r) = s.refreshing.filter(|r| r.alive()) {
+                return Err(format!("another refresh (pid {}) holds the pool", r.pid));
+            }
+            s.leases.retain(|l| l.owner.map(|o| o.alive()).unwrap_or(true));
+            if let Some(l) = s.leases.first() {
+                return Err(format!("a round holds VM {} (leased since {})", l.vm.handle, l.since));
+            }
+            if s.provisioning.as_ref().map(|p| p.owner.alive()).unwrap_or(false) {
+                return Err("a VM is being provisioned for a round".into());
+            }
+            s.refreshing = Some(me);
+            Ok(())
+        })
+    }
+
+    pub fn end_refresh(&self, me: ProcId) {
+        let _ = self.with_state(|s| {
+            if s.refreshing == Some(me) {
+                s.refreshing = None;
+            }
+        });
     }
 
     /// The VMs `owner` holds leases on, without releasing them.
@@ -714,6 +745,27 @@ mod tests {
         assert!(fp.name(&leased.handle).is_some(), "a run in progress keeps its VM");
         let s = read_state(&pl.state_file()).unwrap();
         assert!(s.ready.is_none() && s.provisioning.is_none() && s.doomed.is_empty());
+    }
+
+    #[test]
+    fn a_refresh_is_refused_while_a_round_holds_a_vm_and_blocks_acquire_while_it_runs() {
+        let d = TempDir::new();
+        let pl = pool(&d, 3);
+        let me = ProcId::current();
+        let fp = FakeProvider::new();
+        let f = || Ok(attempt(&fp));
+        let sp = FakeSpawner::default();
+        let al = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &al, spawner: &sp };
+        pl.acquire(&deps, Some(me)).unwrap();
+        let why = pl.begin_refresh(me).unwrap().unwrap_err();
+        assert!(why.contains("a round holds VM"), "{why}");
+        pl.with_state(|s| s.leases.clear()).unwrap();
+        pl.with_state(|s| s.provisioning = None).unwrap();
+        pl.begin_refresh(me).unwrap().unwrap();
+        assert!(pl.begin_refresh(me).unwrap().unwrap_err().contains("another refresh"));
+        pl.end_refresh(me);
+        assert!(pl.with_state(|s| s.refreshing).unwrap().is_none());
     }
 
     #[test]
