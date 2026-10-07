@@ -104,18 +104,18 @@ export PATH="$BIN:$PATH"
 # The shim commits, records a batch-ejected REWORK row at the real (post-commit) tip, then
 # closes — reproducing the original race: the eviction is recorded, then the in-flight aeon
 # closes the bead anyway.
-cat > "$BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
+{ printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
 tip="$(git rev-parse HEAD)"
-mkdir -p "$SPIRA_RUN/lc-row"; printf 'REWORK batch-ejected %s\n' "$tip" > "$SPIRA_RUN/lc-row/$id"
+mkdir -p "$RUN_DIR/lc-row"; printf 'REWORK batch-ejected %s\n' "$tip" > "$RUN_DIR/lc-row/$id"
 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
+} > "$BIN/claude"
 chmod +x "$BIN/claude"
 
 seed() {

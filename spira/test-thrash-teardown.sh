@@ -112,31 +112,31 @@ chmod +x "$BIN/claude-no-thrash"
 
 # Shim B: plants the .thrash marker exactly as the heartbeat would, then exits — simulating
 # a session the heartbeat has already killed for the deliverable not moving.
-cat > "$BIN/claude-thrash" <<'SHIM'
-#!/usr/bin/env bash
+{ printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
-    printf 'stalled: no last action\n' > "$SPIRA_RUN/$BEAD_ID.thrash"
+if [ -n "${BEAD_ID:-}" ]; then
+    printf 'stalled: no last action\n' > "$RUN_DIR/$BEAD_ID.thrash"
 fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
 SHIM
+} > "$BIN/claude-thrash"
 chmod +x "$BIN/claude-thrash"
 
 # Shim C: plants the marker, then hangs — standing in for a session the real heartbeat
 # hasn't killed YET, so a real `kill -TERM` sent to the process group from outside (below)
 # reaches aeon.sh itself as a signal, not as cleanup() running off the natural EXIT path.
-cat > "$BIN/claude-thrash-hang" <<'SHIM'
-#!/usr/bin/env bash
+{ printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
-    printf 'stalled: no last action\n' > "$SPIRA_RUN/$BEAD_ID.thrash"
-    : > "$SPIRA_RUN/$BEAD_ID.hung"
+if [ -n "${BEAD_ID:-}" ]; then
+    printf 'stalled: no last action\n' > "$RUN_DIR/$BEAD_ID.thrash"
+    : > "$RUN_DIR/$BEAD_ID.hung"
 fi
 sleep 300
 SHIM
+} > "$BIN/claude-thrash-hang"
 chmod +x "$BIN/claude-thrash-hang"
 
 seed() {
