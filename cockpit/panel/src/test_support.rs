@@ -26,31 +26,6 @@ use std::sync::{Mutex, MutexGuard};
 pub static LOCK: Mutex<()> = Mutex::new(());
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// The stub `spira-lc`. `close` is the decision close (sp-3fue0j: it goes through the
-/// lifecycle machine, never bd): logged as the closing bd used to log it — `ARGV: close <id>
-/// --reason <stdin> --force` and `ACTOR: <--actor>` — and answering `BD_CLOSE_RC`/`BD_CLOSE_ERR`.
-/// Every other verb logs `LC: <argv>` once [`StubBd::lc`] armed it, and exits `LC_RC`.
-fn write_lc(dir: &std::path::Path, log: &std::path::Path) {
-    let armed = dir.join("lc.armed");
-    testkit::write_exe(
-        &dir.join("spira-lc"),
-        &format!(
-            r#"#!/usr/bin/env bash
-if [ "$1" = close ]; then
-    id="$2"; actor=""; shift 2
-    while [ $# -gt 0 ]; do case "$1" in --actor) actor="$2"; shift 2 ;; *) shift ;; esac; done
-    reason="$(cat)"
-    {{ printf 'ARGV: close %s --reason %s --force\n' "$id" "$reason"; printf 'ACTOR: %s\n' "$actor"; }} >> {log:?}
-    [ -n "${{BD_CLOSE_ERR:-}}" ] && printf '%s\n' "$BD_CLOSE_ERR" >&2
-    exit "${{BD_CLOSE_RC:-0}}"
-fi
-[ -f {armed:?} ] && printf 'LC: %s\n' "$*" >> {log:?}
-exit "${{LC_RC:-0}}"
-"#
-        ),
-    );
-}
-
 pub struct StubBd {
     dir: testkit::TempDir,
     log: std::path::PathBuf,
@@ -82,7 +57,18 @@ impl StubBd {
             &script,
             &format!(
                 r#"#!/usr/bin/env bash
-if [ "$1" != content ]; then printf 'LC: %s\n' "$*" >> {log:?}; exit "${{LC_RC:-0}}"; fi
+if [ "$1" = close ]; then
+    id="$2"; actor=""; shift 2
+    while [ $# -gt 0 ]; do case "$1" in --actor) actor="$2"; shift 2 ;; *) shift ;; esac; done
+    reason="$(cat)"
+    {{ printf 'ARGV: close %s --reason %s --force\n' "$id" "$reason"; printf 'ACTOR: %s\n' "$actor"; }} >> {log:?}
+    [ -n "${{BD_CLOSE_ERR:-}}" ] && printf '%s\n' "$BD_CLOSE_ERR" >&2
+    exit "${{BD_CLOSE_RC:-0}}"
+fi
+if [ "$1" != content ]; then
+    [ -f {armed:?} ] && printf 'LC: %s\n' "$*" >> {log:?}
+    exit "${{LC_RC:-0}}"
+fi
 {{ printf 'ARGV: %s\n' "$*"; printf 'ACTOR: %s\n' "${{BEADS_ACTOR:-<none>}}"; }} >> {log:?}
 case " $* " in
     *" close "*)
@@ -109,11 +95,11 @@ esac
 [ -n "$out" ] && printf '%s' "$out"
 [ -n "$err" ] && printf '%s\n' "$err" >&2
 exit "$rc"
-"#
+"#,
+                armed = dir.join("lc.armed"),
             ),
         );
 
-        write_lc(&dir, &log);
         Self {
             dir,
             log,
