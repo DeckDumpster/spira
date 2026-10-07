@@ -196,7 +196,7 @@ printf '%s' "$NEW_PW" > "$CRED"
 out3="$(run_deploy 2>&1)"; rc3=$?
 [ "$rc3" = 0 ] || printf '%s\n' "$out3" >&2
 wantrc "cutover-deploy.sh exits 0 on the rotated credential" 0 "$rc3"
-"$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$NEW_PW" --no-tls --use-db spira_lifecycle sql -q "SELECT 1" >/dev/null 2>&1
+timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$NEW_PW" --no-tls --use-db spira_lifecycle sql -q "SELECT 1" >/dev/null 2>&1
 wantrc "the rotated credential authenticates as spira_lc" 0 $?
 lc_sql sql -q "SELECT 1" >/dev/null 2>&1
 wantrc "the superseded password no longer authenticates" 1 $?
