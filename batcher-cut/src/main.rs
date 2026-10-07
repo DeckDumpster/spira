@@ -305,6 +305,7 @@ struct LiveOps<'a> {
     changed: BTreeMap<String, Vec<String>>,
     first_red: Option<u64>,
     key: String,
+    batch: Option<&'a str>,
 }
 
 impl drive::RoundOps for LiveOps<'_> {
@@ -317,7 +318,14 @@ impl drive::RoundOps for LiveOps<'_> {
             .iter()
             .filter_map(|s| io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l)))
             .collect();
-        io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails, owner);
+        match self.batch {
+            Some(batch) => {
+                if let Err(e) = io::round_eject(self.env, batch, &member.id, suites, &fails, owner) {
+                    println!("batcher {}: could not eject {} from round {batch}: {e}", self.repo.name, member.id);
+                }
+            }
+            None => io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails, owner),
+        }
         println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
     }
 
@@ -449,7 +457,7 @@ fn merge_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, mut members:
 /// reds do not block (a base red is filed for Ops); an unattributed red or a workspace that
 /// does not build does. Returns `Ok(None)` for a blocked or emptied round — the caller opens
 /// no PR and changes no open-batch record, as if the round had never been cut.
-fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting: Vec<Member>) -> Result<Option<StableRound>, String> {
+fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting: Vec<Member>, batch: Option<&str>) -> Result<Option<StableRound>, String> {
     let members = merge_round(env_, repo, wt, start_sha, starting)?;
     if members.is_empty() {
         println!("{}", skipped_event("round emptied rebuilding the tree").text);
@@ -490,6 +498,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         changed,
         first_red: None,
         key: batcher::core::round_key(&members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>()),
+        batch,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();
@@ -559,21 +568,17 @@ fn install_fault_outcome(repo: &Repo, ops: &mut LiveOps, members: &[Member], fau
     }
 }
 
-/// queue.local's terminal step (sp-828tp): `terminal_ready` (core) gates both land modes on
-/// the same every-member-named/bins-present contract before this box changes anything —
-/// green-at-head is stabilize_round's own control flow, already confirmed before this is ever
-/// called (sp-j21fv). Only the action taken once it passes differs — here, `queue
-/// land-local` (fast-forward, LANDED, bead close, then publish and activate the release) in place of a push and a
-/// PR. Never rebuilds binaries (law-deploy-the-tested-artifacts): the corpus's own --with-bins
-/// run already built the tree `bins_present` looks for.
-fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound) -> Result<(), String> {
+/// queue.local's terminal step: `terminal_ready` gates the round on the every-member-named,
+/// bins-present contract before anything changes, then the round's own `queue round certify`
+/// and `queue round land` do the rest. Never rebuilds binaries (law-deploy-the-tested-artifacts).
+fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound, batch: &str) -> Result<(), String> {
     let head = io::head_of(wt)?;
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
     let bins_ok = io::bins_present(repo, wt, &head);
 
-    if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
-        let msg = format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name);
+    let refuse = |msg: String| {
         println!("{msg}");
+        io::round_abandon(env_, repo, batch, &msg);
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         io::tsd_append_round(
             env_,
@@ -584,39 +589,38 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
                 ("base", base_sha.to_string()),
             ],
         );
-        return Ok(());
+        Ok(())
+    };
+
+    if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
+        return refuse(format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name));
     }
 
-    // The round's own certification (queue/DESIGN.md §8 D12): its full corpus ran green on
-    // stable.head, so that tree — and only that one — carries a round GREEN. land-local
-    // refuses any other head, so a worktree that moved since the corpus run cannot land.
-    match io::certify_round(env_, repo, &stable.head, &stable.green_branch) {
-        Ok(p) => println!("batcher {}: certified the round's tree (round GREEN at {}) — {}", repo.name, stable.head, p.display()),
-        Err(e) => {
-            let msg = format!("batcher {}: refused to land locally at {head} — cannot record the round's certificate: {e}", repo.name);
-            println!("{msg}");
-            io::write_local_verdict(env_, &repo.name, "red", &msg);
-            io::tsd_append_round(
-                env_,
-                &[
-                    ("repo", repo.name.clone()),
-                    ("verdict", "refused".to_string()),
-                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
-                    ("base", base_sha.to_string()),
-                ],
-            );
-            return Ok(());
-        }
+    let on_record = io::round_members(env_, repo)?;
+    let kept: Vec<&str> = stable.members.iter().map(|m| m.id.as_str()).collect();
+    if on_record.iter().map(String::as_str).collect::<Vec<_>>() != kept {
+        return refuse(format!(
+            "batcher {}: refused to land locally at {head} — the round {batch} holds [{}] but the tree was built from [{}]",
+            repo.name,
+            on_record.join(" "),
+            kept.join(" ")
+        ));
     }
 
-    let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let run = io::land_local(env_, repo, wt, &head, &member_pairs)?;
+    // The batcher's own full-corpus run on `stable.head` is the round's certification
+    // (queue/DESIGN.md §8 D12); the verb refuses any head but the round worktree's own.
+    match io::round_certify(env_, batch, &stable.head) {
+        Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
+        Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
+    }
+
+    let run = io::round_land(env_, repo, batch)?;
     let mut landed = run.outcome;
     let alarm = match landed {
         io::LandOutcome::Refused => Some(format!("refused: {}", run.refusal)),
         _ if !io::head_on_base(repo, &head) => {
             landed = io::LandOutcome::Refused;
-            Some(format!("land-local exited as landed but {head} is not an ancestor of {}", repo.base))
+            Some(format!("queue round land exited as landed but {head} is not an ancestor of {}", repo.base))
         }
         _ => None,
     };
@@ -633,7 +637,8 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
         }
     }
     if landed == io::LandOutcome::Refused {
-        io::write_local_verdict(env_, &repo.name, "red", "queue land-local refused — see its own stderr above");
+        io::round_abandon(env_, repo, batch, "queue round land refused — the round did not land");
+        io::write_local_verdict(env_, &repo.name, "red", "queue round land refused — see its own stderr above");
         io::tsd_append_round(
             env_,
             &[
@@ -723,9 +728,21 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
     }
     println!("{}", cut_event(reason, &combined).text);
 
-    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone())? {
-        Some(s) => s,
-        None => {
+    let batch = if repo.land == Land::Local { Some(io::round_open(env_, repo, &wt, &combined.merged)?) } else { None };
+    let abandon = |why: &str| {
+        if let Some(b) = batch.as_deref() {
+            io::round_abandon(env_, repo, b, why);
+        }
+    };
+
+    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref()) {
+        Err(e) => {
+            abandon(&e);
+            return Err(e);
+        }
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            abandon("the round was blocked before it could land");
             io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
             io::tsd_append_round(
                 env_,
@@ -748,6 +765,7 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
             moved.join(", ")
         );
         println!("{msg}");
+        abandon(&msg);
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         io::tsd_append_round(
             env_,
@@ -761,12 +779,8 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
         return Ok(());
     }
 
-    // queue.local's terminal step is not a batch PR (sp-828tp, epic sp-hq9x8): no push, no
-    // open-batch record, and stack_round is never reached for a Local repo — read_open_batch
-    // always finds nothing since this branch never writes that file, so `cut()`'s own
-    // Some(ob)/None match always takes the None arm here.
-    if repo.land == Land::Local {
-        return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable);
+    if let Some(b) = batch.as_deref() {
+        return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable, b);
     }
     let batch_head = io::head_of(&wt)?;
     open_round_pr(env_, repo, &stable.members, &batch_head, round_start, stable.attribution_seconds, stable.regreen_seconds)
@@ -877,7 +891,7 @@ fn prepare_round(env_: &Env, repo: &Repo, pool: &[Member], ob: &io::OpenBatch) -
         return Ok(());
     }
 
-    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone())?;
+    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone(), None)?;
     let green = stable.is_some();
     let (members, head) = match &stable {
         Some(s) => (s.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), io::head_of(&wt)?),

@@ -50,7 +50,7 @@ pub struct Env {
     pub forge: PathBuf,
     pub tsd_bin: Option<PathBuf>,
     pub round_vm: PathBuf,
-    /// The `queue` program (by name on the launcher's PATH; a unit test hands in a stub): land-local.
+    /// The `queue` program (by name on the launcher's PATH; a unit test hands in a stub): the `round` verbs.
     pub queue_bin: PathBuf,
     /// The `rebase-stale` program (by name on the launcher's PATH).
     pub rebase_stale_bin: PathBuf,
@@ -78,7 +78,7 @@ pub struct Env {
     /// `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}` — where the round's tree certificate goes
     /// (gate::cert, queue/DESIGN.md §8 D12), resolved exactly as the gate resolves it.
     pub verdicts: PathBuf,
-    /// How many times `land_local` tries while another queue operation holds the repo's lock.
+    /// How many times `round_land` tries while another queue operation holds the repo's lock.
     pub land_lock_attempts: u32,
     pub land_lock_wait: Duration,
 }
@@ -1352,45 +1352,131 @@ fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &s
 // ---------------------------------------------------------------------------------------
 // queue.local's own terminal step (sp-828tp): fast-forward the local landing ref, package and
 // activate the round's own --with-bins corpus, mark every member LANDED and close its bead —
-// all of it queue land-local's own contract, never re-derived here.
+// all of it the `queue round` verbs' own contract, never re-derived here.
 // ---------------------------------------------------------------------------------------
 
-/// Certify the round: the full corpus just ran green on `head`, so record `verdict=GREEN
-/// source=round` for `head`'s tree (gate::cert; queue/DESIGN.md §8 D12). `queue land-local`
-/// lands only a tree a gate PASS or a round GREEN certified, and a round head is a merge of
-/// many members that no per-branch gate ever judged. Err when the tree cannot be resolved or
-/// the certificate cannot be written; the caller refuses the round rather than land on a
-/// certificate that is not there.
-pub fn certify_round(env: &Env, repo: &Repo, head: &str, round_branch: &str) -> Result<PathBuf, String> {
-    let tree = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q"]).arg(format!("{head}^{{tree}}")),
-        "git rev-parse <head>^{tree}",
-    )?
-    .trim()
-    .to_string();
-    let when = run(Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]), "date").map(|s| s.trim().to_string()).unwrap_or_else(|_| "-".into());
-    let c = gate::cert::Cert {
-        source: gate::cert::Source::Round,
-        tree,
-        repo: repo.name.clone(),
-        rev: head.to_string(),
-        branch: round_branch.to_string(),
-        by: "batcher".into(),
-        when,
-        at: now(),
-        harness: "-".into(),
-        suites: "full-corpus".into(),
-    };
-    gate::cert::write(&env.verdicts, &c).map_err(|e| format!("round certificate for {head}: {e}"))
+/// One `queue round <verb>` run. The batcher holds the repo's queue lock for the whole cut, so
+/// every verb is told the caller holds it.
+pub struct VerbRun {
+    pub code: Option<i32>,
+    pub out: String,
+    pub err: String,
 }
 
-/// Land `head` locally via `queue land-local`, under the round lock this crate's own
-/// `try_lock` already holds — SPIRA_QUEUE_LOCK_HELD=1 tells land-local to skip its own flock
-/// rather than block forever on a lock this same process already owns.
-/// Exit 1 is land-local's own refusal (non-fast-forward, no --with-bins corpus, a concurrent
-/// mover) — reported, not an error, since "refused, nothing changed" is exactly the same benign
-/// outcome `try_lock`'s own None already models for this crate's other refusals. Exit 3 is a
-/// deploy fault: the members landed, only the release was not activated.
+fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> {
+    use std::io::Write;
+    // batch-job: this runs whatever its caller names, as long as that takes
+    let mut cmd = Command::new(&env.queue_bin);
+    cmd.arg("round").args(args);
+    cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let what = format!("queue round {}", args.first().copied().unwrap_or(""));
+    let mut child = cmd.spawn().map_err(|e| format!("{what}: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        si.write_all(stdin.as_bytes()).map_err(|e| format!("{what}: stdin: {e}"))?;
+    }
+    let o = child.wait_with_output().map_err(|e| format!("{what}: {e}"))?;
+    let run = VerbRun { code: o.status.code(), out: String::from_utf8_lossy(&o.stdout).to_string(), err: String::from_utf8_lossy(&o.stderr).to_string() };
+    if !run.out.is_empty() {
+        print!("{}", run.out);
+    }
+    if !run.err.is_empty() {
+        eprint!("{}", run.err);
+    }
+    Ok(run)
+}
+
+fn verb_value(out: &str, key: &str) -> Option<String> {
+    out.lines().find_map(|l| l.strip_prefix(key).and_then(|v| v.strip_prefix('=')).map(|v| v.trim().to_string()))
+}
+
+fn verb_failed(what: &str, run: &VerbRun) -> String {
+    format!("{what} exited {}: {}", run.code.map_or("by signal".to_string(), |c| c.to_string()), refusal_line(&run.err))
+}
+
+/// `queue round open` for `members` in `wt`: the batch id, once the verb admitted and merged
+/// exactly the members asked for. Any other outcome is an Err and, when a round was opened, it
+/// is abandoned first — the batcher never works a round it did not name.
+pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<String, String> {
+    let text = members.iter().fold(String::new(), |mut acc, m| {
+        acc.push_str(&format!("{}:{}\n", m.id, m.tip));
+        acc
+    });
+    let wt_arg = wt.display().to_string();
+    let run = round_verb(env, &["open", &repo.name, "--members-file", "-", "--worktree", &wt_arg], &text)?;
+    if run.code != Some(0) {
+        return Err(verb_failed("queue round open", &run));
+    }
+    let batch = verb_value(&run.out, "batch").ok_or("queue round open named no batch")?;
+    let opened: Vec<String> = verb_value(&run.out, "members")
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(|m| m.split(':').next().unwrap_or("").to_string())
+        .collect();
+    let wanted: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+    if opened != wanted {
+        round_abandon(env, repo, &batch, "the round opened with members other than the ones the batcher named");
+        return Err(format!("queue round open admitted [{}], the batcher named [{}] — round {batch} abandoned", opened.join(" "), wanted.join(" ")));
+    }
+    Ok(batch)
+}
+
+/// `queue round eject`: `owner` is a member whose own tip reddened `suites`; a collateral
+/// member leaves uncharged. The batcher rebuilds the round tree itself, so the verb does not.
+pub fn round_eject(env: &Env, batch: &str, id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool) -> Result<(), String> {
+    let reason = format!(
+        "Ejected by the merge queue's local attribution (pre-PR): spira/{id} {} red on: {}.{}",
+        if owner { "turned" } else { "is stacked on a member that turned" },
+        suites.join(", "),
+        first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
+    );
+    let csv = if owner { suites.join(",") } else { String::new() };
+    let mut args = vec!["eject", batch, id, "--reason-file", "-", "--no-rebuild"];
+    if owner {
+        args.extend(["--suites", &csv]);
+    }
+    let run = round_verb(env, &args, &reason)?;
+    if run.code == Some(0) {
+        Ok(())
+    } else {
+        Err(verb_failed("queue round eject", &run))
+    }
+}
+
+/// `queue round certify --attest <head>`: the batcher's own corpus ran green on `head`, the
+/// round worktree's head, so the verb records the round's GREEN for that tree and no other.
+pub fn round_certify(env: &Env, batch: &str, head: &str) -> Result<(), String> {
+    let run = round_verb(env, &["certify", batch, "--attest", head], "")?;
+    if run.code == Some(0) {
+        Ok(())
+    } else {
+        Err(verb_failed("queue round certify", &run))
+    }
+}
+
+/// The member ids the round record holds now, as `queue round status` reports them.
+pub fn round_members(env: &Env, repo: &Repo) -> Result<Vec<String>, String> {
+    let run = round_verb(env, &["status", &repo.name], "")?;
+    if run.code != Some(0) {
+        return Err(verb_failed("queue round status", &run));
+    }
+    Ok(verb_value(&run.out, "members")
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(|m| m.split(':').next().unwrap_or("").to_string())
+        .collect())
+}
+
+pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str) {
+    match round_verb(env, &["abandon", batch, &repo.name, "--reason-file", "-"], why) {
+        Ok(r) if r.code == Some(0) => {}
+        Ok(r) => println!("batcher {}: could not abandon round {batch}: {}", repo.name, verb_failed("queue round abandon", &r)),
+        Err(e) => println!("batcher {}: could not abandon round {batch}: {e}", repo.name),
+    }
+}
+
+/// Exit 1 is the verb's own refusal — reported, not an error; exit 3 is a deploy fault: the
+/// members landed, only the release was not activated.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LandOutcome {
     Landed,
@@ -1409,7 +1495,7 @@ pub fn classify_land_exit(code: Option<i32>) -> LandOutcome {
     }
 }
 
-/// What one `land_local` call came to: the outcome, and the line that explains a refusal.
+/// What one `round_land` call came to: the outcome, and the line that explains a refusal.
 #[derive(Debug, PartialEq, Eq)]
 pub struct LandRun {
     pub outcome: LandOutcome,
@@ -1429,50 +1515,20 @@ fn refusal_line(err: &str) -> String {
 
 /// A refusal because another queue operation holds the lock is retried (bounded); every other
 /// outcome is final.
-pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<LandRun, String> {
+pub fn round_land(env: &Env, repo: &Repo, batch: &str) -> Result<LandRun, String> {
     let attempts = env.land_lock_attempts.max(1);
     let mut last = LandRun { outcome: LandOutcome::Refused, refusal: String::new() };
     for n in 1..=attempts {
-        last = land_local_once(env, repo, wt, head, members)?;
+        let run = round_verb(env, &["land", batch, &repo.name], "")?;
+        last = LandRun { outcome: classify_land_exit(run.code), refusal: refusal_line(&run.err) };
         let busy = last.outcome == LandOutcome::Refused && last.refusal.contains(LOCK_BUSY);
         if !busy || n == attempts {
             break;
         }
-        println!("batcher {}: queue land-local refused ({}) — retry {n}/{attempts}", repo.name, last.refusal);
+        println!("batcher {}: queue round land refused ({}) — retry {n}/{attempts}", repo.name, last.refusal);
         std::thread::sleep(env.land_lock_wait);
     }
     Ok(last)
-}
-
-fn land_local_once(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<LandRun, String> {
-    use std::io::Write;
-    let members_text = members.iter().fold(String::new(), |mut acc, (id, tip)| {
-        use std::fmt::Write as _;
-        let _ = writeln!(acc, "{id}:{tip}");
-        acc
-    });
-    // batch-job: this runs whatever its caller names, as long as that takes
-    let mut cmd = Command::new(&env.queue_bin);
-    cmd.arg("land-local").arg(&repo.name);
-    cmd.arg("--head").arg(head);
-    cmd.arg("--members-file").arg("-");
-    cmd.arg("--worktree").arg(wt);
-    cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
-    cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("queue land-local: {e}"))?;
-    if let Some(mut si) = child.stdin.take() {
-        si.write_all(members_text.as_bytes()).map_err(|e| format!("queue land-local: members on stdin: {e}"))?;
-    }
-    let o = child.wait_with_output().map_err(|e| format!("queue land-local: {e}"))?;
-    let out = String::from_utf8_lossy(&o.stdout);
-    let err = String::from_utf8_lossy(&o.stderr);
-    if !out.is_empty() {
-        print!("{out}");
-    }
-    if !err.is_empty() {
-        eprint!("{err}");
-    }
-    Ok(LandRun { outcome: classify_land_exit(o.status.code()), refusal: refusal_line(&err) })
 }
 
 /// True only when `head` is an ancestor of the repo's landing ref: the one fact that says the
@@ -2202,32 +2258,6 @@ mod certify_tests {
     }
 
     #[test]
-    fn a_green_round_certifies_exactly_its_heads_tree() {
-        let d = testkit::TempDir::new("batcher-cut-cert");
-        git(&d, &["init", "-q"]);
-        for (f, body) in [("a", "1"), ("b", "2")] {
-            fs::write(d.join(f), body).unwrap();
-            git(&d, &["add", f]);
-            git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", f]);
-        }
-        let head = git(&d, &["rev-parse", "HEAD"]);
-        let tree = git(&d, &["rev-parse", "HEAD^{tree}"]);
-        let older = git(&d, &["rev-parse", "HEAD~1^{tree}"]);
-        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
-        let mut e = super::lifecycle_tests_env(&d);
-        e.verdicts = d.join("verdicts");
-        let p = certify_round(&e, &repo, &head, "spira/batcher-attr/x").unwrap();
-        let text = fs::read_to_string(&p).unwrap();
-        let c = gate::cert::certifies(&text, "spira", &tree).expect("certifies the head's tree");
-        assert_eq!(c.source, gate::cert::Source::Round);
-        assert_eq!(c.rev, head);
-        assert!(gate::cert::certifies(&text, "spira", &older).is_none());
-        assert!(gate::cert::path(&e.verdicts, "spira", &older).map(|p| !p.exists()).unwrap_or(true));
-        assert!(certify_round(&e, &repo, "no-such-rev", "x").is_err(), "an unresolvable head certifies nothing");
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
     fn reaping_an_aborted_round_leaves_no_attr_branch_and_the_stamp_is_utc() {
         let d = testkit::TempDir::new("batcher-cut-reap");
         git(&d, &["init", "-q"]);
@@ -2399,7 +2429,7 @@ mod land_exit_tests {
         testkit::write_exe(
             &d.join("queue"),
             &format!(
-                "#!/bin/sh\ncat >/dev/null\nc=$(cat '{n}' 2>/dev/null || echo 0)\nc=$((c+1)); echo $c > '{n}'\nif [ $c -le {busy_first} ]; then echo 'queue.sh land-local: another queue operation holds the lock for spira' >&2; exit 1; fi\n[ -n '{then_msg}' ] && echo '{then_msg}' >&2\nexit {then_exit}\n",
+                "#!/bin/sh\ncat >/dev/null\nc=$(cat '{n}' 2>/dev/null || echo 0)\nc=$((c+1)); echo $c > '{n}'\nif [ $c -le {busy_first} ]; then echo 'queue.sh round land: another queue operation holds the lock for spira' >&2; exit 1; fi\n[ -n '{then_msg}' ] && echo '{then_msg}' >&2\nexit {then_exit}\n",
                 n = n.display()
             ),
         );
@@ -2415,7 +2445,7 @@ mod land_exit_tests {
     fn a_held_lock_retries_then_lands() {
         let d = testkit::TempDir::new("batcher-cut-land-retry");
         let e = stub_queue(&d, 2, 0, "");
-        let r = land_local(&e, &repo_at(&d), &d, "abc", &[]).unwrap();
+        let r = round_land(&e, &repo_at(&d), "b1").unwrap();
         assert_eq!(r.outcome, LandOutcome::Landed);
         assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "3");
     }
@@ -2424,7 +2454,7 @@ mod land_exit_tests {
     fn a_lock_held_past_the_bound_is_a_refusal_naming_the_line() {
         let d = testkit::TempDir::new("batcher-cut-land-held");
         let e = stub_queue(&d, 99, 0, "");
-        let r = land_local(&e, &repo_at(&d), &d, "abc", &[]).unwrap();
+        let r = round_land(&e, &repo_at(&d), "b1").unwrap();
         assert_eq!(r.outcome, LandOutcome::Refused);
         assert!(r.refusal.contains("holds the lock"), "{}", r.refusal);
         assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "3", "bounded by land_lock_attempts");
@@ -2433,11 +2463,49 @@ mod land_exit_tests {
     #[test]
     fn a_refusal_without_the_lock_is_final_and_alarms_with_its_line() {
         let d = testkit::TempDir::new("batcher-cut-land-refused");
-        let e = stub_queue(&d, 0, 1, "queue.sh land-local: not a fast-forward");
-        let r = land_local(&e, &repo_at(&d), &d, "abc", &[]).unwrap();
+        let e = stub_queue(&d, 0, 1, "queue.sh round land: not a fast-forward");
+        let r = round_land(&e, &repo_at(&d), "b1").unwrap();
         assert_eq!(r.outcome, LandOutcome::Refused);
-        assert_eq!(r.refusal, "queue.sh land-local: not a fast-forward");
+        assert_eq!(r.refusal, "queue.sh round land: not a fast-forward");
         assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "1", "no retry");
+    }
+
+    fn argv_stub(d: &Path, out: &str) -> Env {
+        let mut e = lifecycle_tests_env(d);
+        testkit::write_exe(
+            &d.join("queue"),
+            &format!("#!/bin/sh\necho \"$@\" >> '{log}'\ncat >> '{log}.in'\nprintf '%s\\n' '{out}'\n", log = d.join("argv").display()),
+        );
+        e.queue_bin = d.join("queue");
+        e
+    }
+
+    fn member(id: &str) -> Member {
+        Member { id: id.into(), tip: "t".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default() }
+    }
+
+    #[test]
+    fn an_opened_round_that_names_other_members_is_abandoned() {
+        let d = testkit::TempDir::new("batcher-cut-round-open");
+        let e = argv_stub(&d, "batch=b1\nmembers=sp-a:t");
+        let err = round_open(&e, &repo_at(&d), &d, &[member("sp-a"), member("sp-b")]).unwrap_err();
+        assert!(err.contains("abandoned"), "{err}");
+        let argv = fs::read_to_string(d.join("argv")).unwrap();
+        assert!(argv.lines().any(|l| l.starts_with("round open")), "{argv}");
+        assert!(argv.lines().any(|l| l.starts_with("round abandon b1")), "{argv}");
+        assert_eq!(round_open(&argv_stub(&d, "batch=b2\nmembers=sp-a:t sp-b:t"), &repo_at(&d), &d, &[member("sp-a"), member("sp-b")]).unwrap(), "b2");
+    }
+
+    #[test]
+    fn a_collateral_eject_names_no_suites_and_never_rebuilds() {
+        let d = testkit::TempDir::new("batcher-cut-round-eject");
+        let e = argv_stub(&d, "");
+        round_eject(&e, "b1", "sp-a", &["test-a.sh".into()], &[], false).unwrap();
+        round_eject(&e, "b1", "sp-b", &["test-a.sh".into()], &[], true).unwrap();
+        let argv = fs::read_to_string(d.join("argv")).unwrap();
+        let lines: Vec<&str> = argv.lines().collect();
+        assert!(lines[0].contains("--no-rebuild") && !lines[0].contains("--suites"), "{argv}");
+        assert!(lines[1].contains("--no-rebuild") && lines[1].contains("--suites test-a.sh"), "{argv}");
     }
 
     #[test]
