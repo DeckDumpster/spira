@@ -128,7 +128,7 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
 /// Whether `id` carries the incident label. A bd parent cannot be blocked on its own child,
 /// so a remedy filed under an incident is wired as a plain blocks edge instead of a child.
 fn is_incident(home: &str, id: &str) -> bool {
-    let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
+    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
     let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
     parse_show_row(&out).map(|r| r.labels.contains(&incident_label)).unwrap_or(false)
 }
