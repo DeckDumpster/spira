@@ -35,6 +35,7 @@ tl_config SPIRA_RELEASES="$TMP/releases" SPIRA_PROD="$R/spira" SPIRA_RUN="$TMP/r
     SPIRA_WATCHERS_OVERLAY="$TMP/no-overlay" SPIRA_CLIENT_SETTINGS="$TMP/settings.json" \
     SPIRA_COCKPIT="$TMP/cockpit"
 
+note() { printf '# %s\n' "$*" >> "$TMP/notes"; }
 client_env() { env -i HOME="$1" PATH=/usr/bin:/bin bash -c "$2"; }
 
 # --- UC-operator-channel-46: aerc's outgoing line -------------------------------------------
@@ -64,14 +65,14 @@ cp "$(command -v mail)" "$R/bin/mail"
 
 out="$(printf '%s\n' "$reply" | client_env "$AH" "$OUTGOING -f concierge@spira operator@spira" 2>&1)"; rc=$?
 wantrc "the outgoing line sends the reply from aerc's environment" 0 "$rc"
-[ "$rc" = 0 ] || echo "# outgoing said: $out"
+[ "$rc" = 0 ] || note "outgoing said: $out"
 is "the original is marked answered" 1 "$(ls "$TMP/mail/concierge/cur" | grep -c ':2,.*R')"
 is "the reply was delivered" 1 "$(grep -l '^Done\.$' "$TMP/mail"/*/new/* "$TMP/mail"/*/cur/* 2>/dev/null | wc -l | tr -d ' ')"
 
 # --- UC-operator-channel-47/48: the commands session-hook registers -------------------------
 out="$(env -i HOME="$TMP/home" PATH="$R/bin:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="$R" release session-hook install 2>&1)"; rc=$?
 wantrc "release session-hook install registers" 0 "$rc"
-[ "$rc" = 0 ] || echo "# install said: $out"
+[ "$rc" = 0 ] || note "install said: $out"
 registered() { python3 -I -c '
 import json,sys
 d=json.load(open(sys.argv[1]))
@@ -85,7 +86,7 @@ mkdir -p "$TMP/home"
 meter_in='{"context_window": {"current_usage": {}, "total_input_tokens": 12345}}'
 out="$(printf '%s' "$meter_in" | client_env "$TMP/home" "$METER" 2>&1)"; rc=$?
 wantrc "the statusLine command exits 0 as the client runs it" 0 "$rc"
-[ "$rc" = 0 ] || echo "# statusLine said: $out; command: $METER"
+[ "$rc" = 0 ] || note "statusLine said: $out; command: $METER"
 [ -n "$out" ] && ok "and prints the meter" || bad "and prints the meter" "no output"
 case "$out" in *SPIRA_TOML*) bad "and names no missing config" "$out" ;; *) ok "and names no missing config" ;; esac
 
@@ -96,7 +97,7 @@ out="$(printf '%s' "$meter_in" | client_env "$TMP/home" "$(unconfigured "$METER"
 hook_in='{"hook_event_name":"SessionStart","source":"startup"}'
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$HOOK" 2>&1)"; rc=$?
 wantrc "the SessionStart command exits 0 as the client runs it" 0 "$rc"
-[ "$rc" = 0 ] || echo "# SessionStart said: $out; command: $HOOK"
+[ "$rc" = 0 ] || note "SessionStart said: $out; command: $HOOK"
 want "and prints the watcher summary" "probe" "$out"
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$(unconfigured "$HOOK")" 2>&1)"
 nowant "SEEN RED: the same command without SPIRA_TOML prints no summary" "probe" "$out"
@@ -108,7 +109,7 @@ mkdir -p "$TMP/cockpit"
 SNAP="$TMP/snapshot.env"
 env -i PATH="$R/bin:/usr/bin:/bin" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="$R" SPIRA_COCKPIT_FORCE=1 \
     cockpit-collect once >/dev/null 2>&1
-echo "# snapshot: $(wc -l < "$TMP/run/cockpit.env" 2>&1) lines: $(head -c 600 "$TMP/run/cockpit.env" 2>&1 | tr '\n' ' ')"
+note "snapshot: $(wc -l < "$TMP/run/cockpit.env" 2>&1) lines: $(head -c 600 "$TMP/run/cockpit.env" 2>&1 | tr '\n' ' ')"
 [ -s "$TMP/run/cockpit.env" ] && ok "the collector wrote a snapshot for the pane to read" || bad "the collector wrote a snapshot for the pane to read" "no $TMP/run/cockpit.env"
 
 pane() {  # pane <name> <toml-for-the-server-or-empty> — `layout up` in a fresh server, print the health pane
@@ -139,4 +140,5 @@ OUT="$(pane bad "")"
 want "SEEN RED: a pane started with no config says so instead of rendering a default" "config unresolved" "$OUT"
 
 echo
+[ -s "$TMP/notes" ] && cat "$TMP/notes"
 tl_summary
