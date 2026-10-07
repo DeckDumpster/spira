@@ -10,6 +10,12 @@
 //! freshly-migrated bead to compare-and-swap against — so it writes the classified row
 //! directly via [`crate::db::Conn::insert_if_absent_and_log`], never through
 //! `lifecycle::bead::apply`.
+//!
+//! `--every-bead` is install's one-time population (sp-k62xz8): Spira installed on top of an
+//! existing beads database gives every bead in it a row, whatever its labels — the roster is
+//! the whole database, each bead judged by its own `repo:` label's repository (or by bd and
+//! the ledger alone when it has none). `--home` may then be omitted: the repository table is
+//! the one `$SPIRA_TOML` names.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -24,8 +30,11 @@ use crate::{bd_facts, git_evidence, legacy_files, repo_config, rows};
 
 const CANNOT_TELL: i32 = 2;
 
+#[derive(Debug)]
 struct Args {
-    home: PathBuf,
+    /// Where the repository configuration lives (spira-lc's repo_config::detect reads it).
+    /// `None`: the document `$SPIRA_TOML` names, the process's own config.
+    home: Option<PathBuf>,
     bd_bin: String,
     bd_db: String,
     landstate_dir: PathBuf,
@@ -34,6 +43,11 @@ struct Args {
     base_override: Option<String>,
     dry_run: bool,
     reclassify: bool,
+    /// `--every-bead` (install's one-time population, sp-k62xz8): the roster is every bead in
+    /// the database, not one repository's `repo:` label. A bead's own `repo:` label picks the
+    /// repository whose git evidence it is judged by; a bead with none is judged on bd and the
+    /// ledger alone; a label naming no configured repository is an error naming the bead.
+    every_bead: bool,
     /// The configured ask-hold label (`schema.sh name ask`) — read by the caller, which can
     /// reach the accessor, and handed in rather than hardcoded here (law-schema-over-code).
     /// `None` means no hold ever fires, rather than assuming either of schema.sh's two
@@ -50,23 +64,66 @@ fn flag_all(args: &[String], name: &str) -> Vec<String> {
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
-    let home = flag(args, "--home").ok_or("classify: --home is required")?;
+    let every_bead = args.iter().any(|a| a == "--every-bead");
+    let home = flag(args, "--home");
+    if home.is_none() && !every_bead {
+        return Err("classify: --home is required".into());
+    }
     let bd_bin = flag(args, "--bd-bin").unwrap_or_else(|| "bd".to_string());
     let bd_db = flag(args, "--bd-db").ok_or("classify: --bd-db is required")?;
     let landstate_dir = flag(args, "--landstate-dir").ok_or("classify: --landstate-dir is required")?;
     let queue_dir = flag(args, "--queue-dir").ok_or("classify: --queue-dir is required")?;
+    let repos = flag_all(args, "--repo");
+    if every_bead && !repos.is_empty() {
+        return Err("classify: --every-bead and --repo are exclusive — every bead is every repository's".into());
+    }
     Ok(Args {
-        home: PathBuf::from(home),
+        home: home.map(PathBuf::from),
         bd_bin,
         bd_db,
         landstate_dir: PathBuf::from(landstate_dir),
         queue_dir: PathBuf::from(queue_dir),
-        repos: flag_all(args, "--repo"),
+        repos,
         base_override: flag(args, "--base"),
         dry_run: args.iter().any(|a| a == "--dry-run"),
         reclassify: args.iter().any(|a| a == "--reclassify"),
+        every_bead,
         ask_label: flag(args, "--ask-label"),
     })
+}
+
+/// One configured repository's evidence, read once per run: its land mode, path and base,
+/// the landing lines on that base, and the members of its open batch (if any).
+struct RepoCtx {
+    name: String,
+    mode: &'static str,
+    path: PathBuf,
+    base: String,
+    landing_lines: std::collections::HashMap<String, String>,
+    batch_members: BTreeSet<String>,
+}
+
+#[derive(Default)]
+struct Tally {
+    beads: usize,
+    classified: usize,
+    skipped: usize,
+    errors: Vec<String>,
+    contradictions: Vec<Value>,
+    batches_written: usize,
+    reclassified: std::collections::BTreeMap<String, usize>,
+    reclassify_refused: usize,
+}
+
+/// The repository a bead's own labels name: `Ok(None)` for a bead with no `repo:` label,
+/// `Err` naming the labels when it carries more than one.
+fn repo_label(labels: &BTreeSet<String>) -> Result<Option<String>, String> {
+    let named: Vec<&str> = labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();
+    match named.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(one.to_string())),
+        many => Err(format!("carries more than one repo: label ({}) — cannot tell whose landing evidence to read", many.join(", "))),
+    }
 }
 
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
@@ -74,150 +131,62 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(a) => a,
         Err(e) => return (CANNOT_TELL, e),
     };
-    let cfg = match repo_config::detect(&parsed.home) {
+    let cfg = match &parsed.home {
+        Some(home) => repo_config::detect(home),
+        None => repo_config::from_process(),
+    };
+    let cfg = match cfg {
         Ok(c) => c,
         Err(e) => return (CANNOT_TELL, format!("classify: reading repository configuration: {e}")),
     };
 
-    if cfg.repos.is_empty() {
+    // A store with no configured repository still has beads to populate (--every-bead judges
+    // an unlabelled bead on bd and the ledger alone); a per-repository run has nothing to do.
+    if cfg.repos.is_empty() && !parsed.every_bead {
         return (
             CANNOT_TELL,
             format!(
                 "classify: no repositories resolved from {} under --home {} (repos asked for: {})",
                 cfg.source,
-                parsed.home.display(),
+                parsed.home.as_deref().map(|h| h.display().to_string()).unwrap_or_default(),
                 if parsed.repos.is_empty() { "all".to_string() } else { parsed.repos.join(", ") }
             ),
         );
     }
 
-    let repo_names: Vec<String> =
-        if parsed.repos.is_empty() { cfg.repos.keys().cloned().collect() } else { parsed.repos.clone() };
+    let mut t = Tally::default();
+    let mut ctxs: std::collections::BTreeMap<String, RepoCtx> = std::collections::BTreeMap::new();
 
-    let mut classified = 0usize;
-    let mut skipped = 0usize;
-    let mut errors: Vec<String> = Vec::new();
-    let mut contradictions: Vec<Value> = Vec::new();
-    let mut batches_written = 0usize;
-    let mut reclassified: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    let mut reclassify_refused = 0usize;
-
-    for repo_name in &repo_names {
-        let Some(section) = cfg.repos.get(repo_name) else {
-            errors.push(format!("{repo_name}: not present in {}", cfg.source));
-            continue;
-        };
-        let mode = repo_config::mode_str(section.mode);
-        let repo_path = Path::new(&section.path);
-        let base = parsed.base_override.clone().or_else(|| section.base.clone()).unwrap_or_else(|| "main".to_string());
-
-        let open_batch = legacy_files::read_open_batch(&parsed.queue_dir, repo_name);
-        let batch_members: BTreeSet<String> = open_batch.as_ref().map(|b| b.members.iter().cloned().collect()).unwrap_or_default();
-
-        if let Some(ob) = &open_batch {
-            match write_open_batch(conn, repo_name, ob, parsed.dry_run) {
-                Ok(true) => batches_written += 1,
-                Ok(false) => {}
-                Err(e) => errors.push(format!("{repo_name}: writing open batch: {e}")),
-            }
+    if parsed.every_bead {
+        for name in cfg.repos.keys() {
+            repo_ctx(conn, &parsed, &cfg, &mut ctxs, &mut t, name);
         }
-
-        let landing_lines = git_evidence::landing_lines(repo_path, &base);
-
-        let ids = match bd_facts::roster(&parsed.bd_bin, &parsed.bd_db, repo_name) {
-            Ok(ids) => ids,
-            Err(e) => {
-                errors.push(format!("{repo_name}: bd roster: {e}"));
+        match bd_facts::roster_all(&parsed.bd_bin, &parsed.bd_db) {
+            Ok(ids) => {
+                for id in &ids {
+                    classify_one(conn, &parsed, &cfg, &mut ctxs, &mut t, id, None);
+                }
+            }
+            Err(e) => t.errors.push(format!("bd roster: {e}")),
+        }
+    } else {
+        let repo_names: Vec<String> =
+            if parsed.repos.is_empty() { cfg.repos.keys().cloned().collect() } else { parsed.repos.clone() };
+        for repo_name in &repo_names {
+            if !cfg.repos.contains_key(repo_name) {
+                t.errors.push(format!("{repo_name}: not present in {}", cfg.source));
                 continue;
             }
-        };
-
-        for id in &ids {
-            let existing = match rows::fetch_bead(conn, id) {
-                Ok(Some(row)) if parsed.reclassify => Some(row),
-                Ok(Some(_)) => {
-                    skipped += 1;
-                    continue;
-                }
-                Ok(None) => None,
+            repo_ctx(conn, &parsed, &cfg, &mut ctxs, &mut t, repo_name);
+            let ids = match bd_facts::roster(&parsed.bd_bin, &parsed.bd_db, repo_name) {
+                Ok(ids) => ids,
                 Err(e) => {
-                    errors.push(format!("{id}: checking for an existing row: {e:?}"));
+                    t.errors.push(format!("{repo_name}: bd roster: {e}"));
                     continue;
                 }
             };
-
-            let bd = match bd_facts::fetch(&parsed.bd_bin, &parsed.bd_db, id) {
-                Ok(b) => b,
-                Err(e) => {
-                    errors.push(format!("{id}: {e}"));
-                    continue;
-                }
-            };
-
-            let (landstate, landstate_tip) = legacy_files::read_landstate(&parsed.landstate_dir, id)
-                .map(|(ls, tip)| (Some(ls), tip))
-                .unwrap_or((None, None));
-
-            let tip_ancestor_of_base =
-                landstate_tip.as_deref().map(|tip| git_evidence::is_ancestor(repo_path, tip, &base)).unwrap_or(false);
-
-            let branch_ref = format!("spira/{id}");
-            let branch_exists = git_output_exists(repo_path, &branch_ref);
-            let branch_content_on_base = branch_exists && git_evidence::content_on_base(repo_path, &branch_ref, &base);
-            let tip_content_on_base =
-                landstate_tip.as_deref().map(|tip| git_evidence::content_on_base(repo_path, tip, &base)).unwrap_or(false);
-            let content_on_base = branch_content_on_base || tip_content_on_base;
-            let branch_ahead = branch_exists && !branch_content_on_base;
-
-            let facts = BeadFacts {
-                bd_status: bd.status,
-                holder_alive: false,
-                has_ask_hold: parsed.ask_label.as_deref().is_some_and(|l| bd.labels.contains(l)),
-                labels: bd.labels.clone(),
-                supersedes: bd.supersedes.clone(),
-                landstate,
-                tip_ancestor_of_base,
-                content_on_base,
-                batch_open_member: batch_members.contains(id),
-                branch_ahead,
-                landing_commit: landing_lines.get(id).cloned(),
-            };
-
-            let outcome = classify::classify(&facts);
-
-            if let Some(row) = existing {
-                if !correctable(&row, &outcome) {
-                    skipped += 1;
-                    continue;
-                }
-                let key = format!("{}->{} ({})", row.state.as_str(), outcome.state.as_str(), outcome.rule);
-                if !parsed.dry_run {
-                    let kind = lifecycle::bead::BeadEventKind::Reclassify { state: outcome.state, rule: outcome.rule.to_string() };
-                    let (code, msg) = crate::apply_bead_event(conn, id, "classifier", kind);
-                    if code != 0 {
-                        reclassify_refused += 1;
-                        errors.push(format!("{id}: reclassify refused: {msg}"));
-                        continue;
-                    }
-                }
-                *reclassified.entry(key).or_default() += 1;
-                continue;
-            }
-
-            if !outcome.contradictions.is_empty() {
-                contradictions.push(json!({
-                    "bead_id": id,
-                    "repo": repo_name,
-                    "mode": mode,
-                    "rule": outcome.rule,
-                    "state": outcome.state.as_str(),
-                    "notes": outcome.contradictions,
-                }));
-            }
-
-            match write_classified_bead(conn, id, &landstate_tip, &outcome, repo_name, mode, cfg.source, parsed.dry_run) {
-                Ok(()) => classified += 1,
-                Err(e) => errors.push(format!("{id}: writing classification: {e}")),
+            for id in &ids {
+                classify_one(conn, &parsed, &cfg, &mut ctxs, &mut t, id, Some(repo_name));
             }
         }
     }
@@ -225,16 +194,182 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let report = json!({
         "source": cfg.source,
         "dry_run": parsed.dry_run,
-        "classified": classified,
-        "skipped_already_classified": skipped,
-        "batches_written": batches_written,
-        "reclassified": reclassified,
-        "reclassify_refused": reclassify_refused,
-        "contradictions": contradictions,
-        "errors": errors,
+        "beads": t.beads,
+        "classified": t.classified,
+        "skipped_already_classified": t.skipped,
+        "batches_written": t.batches_written,
+        "reclassified": t.reclassified,
+        "reclassify_refused": t.reclassify_refused,
+        "contradictions": t.contradictions,
+        "errors": t.errors,
     });
-    let code = if errors.is_empty() { 0 } else { CANNOT_TELL };
+    let code = if t.errors.is_empty() { 0 } else { CANNOT_TELL };
     (code, serde_json::to_string_pretty(&report).unwrap())
+}
+
+/// Reads one configured repository's evidence the first time it is needed, writing its open
+/// batch (if any) as it does — exactly once per run.
+fn repo_ctx(
+    conn: &Conn,
+    parsed: &Args,
+    cfg: &repo_config::RepoConfig,
+    ctxs: &mut std::collections::BTreeMap<String, RepoCtx>,
+    t: &mut Tally,
+    repo_name: &str,
+) {
+    if ctxs.contains_key(repo_name) {
+        return;
+    }
+    let Some(section) = cfg.repos.get(repo_name) else { return };
+    let path = PathBuf::from(&section.path);
+    let base = parsed.base_override.clone().or_else(|| section.base.clone()).unwrap_or_else(|| "main".to_string());
+    let open_batch = legacy_files::read_open_batch(&parsed.queue_dir, repo_name);
+    let batch_members: BTreeSet<String> = open_batch.as_ref().map(|b| b.members.iter().cloned().collect()).unwrap_or_default();
+    if let Some(ob) = &open_batch {
+        match write_open_batch(conn, repo_name, ob, parsed.dry_run) {
+            Ok(true) => t.batches_written += 1,
+            Ok(false) => {}
+            Err(e) => t.errors.push(format!("{repo_name}: writing open batch: {e}")),
+        }
+    }
+    let landing_lines = git_evidence::landing_lines(&path, &base);
+    ctxs.insert(
+        repo_name.to_string(),
+        RepoCtx { name: repo_name.to_string(), mode: repo_config::mode_str(section.mode), path, base, landing_lines, batch_members },
+    );
+}
+
+/// One bead: skip it when it already has a row (unless `--reclassify`), else gather its facts,
+/// classify, and write. `repo` is the repository whose roster named it; `None` (--every-bead)
+/// means the bead's own `repo:` label decides. Every failure is an error naming the bead.
+#[allow(clippy::too_many_arguments)]
+fn classify_one(
+    conn: &Conn,
+    parsed: &Args,
+    cfg: &repo_config::RepoConfig,
+    ctxs: &mut std::collections::BTreeMap<String, RepoCtx>,
+    t: &mut Tally,
+    id: &str,
+    repo: Option<&str>,
+) {
+    t.beads += 1;
+    let existing = match rows::fetch_bead(conn, id) {
+        Ok(Some(row)) if parsed.reclassify => Some(row),
+        Ok(Some(_)) => {
+            t.skipped += 1;
+            return;
+        }
+        Ok(None) => None,
+        Err(e) => {
+            t.errors.push(format!("{id}: checking for an existing row: {e:?}"));
+            return;
+        }
+    };
+
+    let bd = match bd_facts::fetch(&parsed.bd_bin, &parsed.bd_db, id) {
+        Ok(b) => b,
+        Err(e) => {
+            t.errors.push(format!("{id}: {e}"));
+            return;
+        }
+    };
+
+    let repo_name = match repo {
+        Some(r) => Some(r.to_string()),
+        None => match repo_label(&bd.labels) {
+            Ok(r) => r,
+            Err(e) => {
+                t.errors.push(format!("{id}: {e}"));
+                return;
+            }
+        },
+    };
+    if let Some(r) = &repo_name {
+        if !cfg.repos.contains_key(r) {
+            t.errors.push(format!("{id}: labelled repo:{r}, which {} does not configure — cannot read its landing evidence", cfg.source));
+            return;
+        }
+        repo_ctx(conn, parsed, cfg, ctxs, t, r);
+    }
+    let ctx = repo_name.as_deref().and_then(|r| ctxs.get(r));
+
+    let (landstate, landstate_tip) = legacy_files::read_landstate(&parsed.landstate_dir, id)
+        .map(|(ls, tip)| (Some(ls), tip))
+        .unwrap_or((None, None));
+
+    // No repository, no git evidence: every git-derived fact is false.
+    let (tip_ancestor_of_base, content_on_base, branch_ahead, batch_open_member, landing_commit) = match ctx {
+        None => (false, false, false, false, None),
+        Some(c) => {
+            let tip_ancestor_of_base =
+                landstate_tip.as_deref().map(|tip| git_evidence::is_ancestor(&c.path, tip, &c.base)).unwrap_or(false);
+            let branch_ref = format!("spira/{id}");
+            let branch_exists = git_output_exists(&c.path, &branch_ref);
+            let branch_content_on_base = branch_exists && git_evidence::content_on_base(&c.path, &branch_ref, &c.base);
+            let tip_content_on_base =
+                landstate_tip.as_deref().map(|tip| git_evidence::content_on_base(&c.path, tip, &c.base)).unwrap_or(false);
+            (
+                tip_ancestor_of_base,
+                branch_content_on_base || tip_content_on_base,
+                branch_exists && !branch_content_on_base,
+                c.batch_members.contains(id),
+                c.landing_lines.get(id).cloned(),
+            )
+        }
+    };
+
+    let facts = BeadFacts {
+        bd_status: bd.status,
+        holder_alive: false,
+        has_ask_hold: parsed.ask_label.as_deref().is_some_and(|l| bd.labels.contains(l)),
+        labels: bd.labels.clone(),
+        supersedes: bd.supersedes.clone(),
+        landstate,
+        tip_ancestor_of_base,
+        content_on_base,
+        batch_open_member,
+        branch_ahead,
+        landing_commit,
+    };
+
+    let outcome = classify::classify(&facts);
+
+    if let Some(row) = existing {
+        if !correctable(&row, &outcome) {
+            t.skipped += 1;
+            return;
+        }
+        let key = format!("{}->{} ({})", row.state.as_str(), outcome.state.as_str(), outcome.rule);
+        if !parsed.dry_run {
+            let kind = lifecycle::bead::BeadEventKind::Reclassify { state: outcome.state, rule: outcome.rule.to_string() };
+            let (code, msg) = crate::apply_bead_event(conn, id, "classifier", kind);
+            if code != 0 {
+                t.reclassify_refused += 1;
+                t.errors.push(format!("{id}: reclassify refused: {msg}"));
+                return;
+            }
+        }
+        *t.reclassified.entry(key).or_default() += 1;
+        return;
+    }
+
+    let repo_shown = ctx.map(|c| c.name.as_str()).unwrap_or("");
+    let mode = ctx.map(|c| c.mode).unwrap_or("none");
+    if !outcome.contradictions.is_empty() {
+        t.contradictions.push(json!({
+            "bead_id": id,
+            "repo": repo_shown,
+            "mode": mode,
+            "rule": outcome.rule,
+            "state": outcome.state.as_str(),
+            "notes": outcome.contradictions,
+        }));
+    }
+
+    match write_classified_bead(conn, id, &landstate_tip, &outcome, repo_shown, mode, cfg.source, parsed.dry_run) {
+        Ok(()) => t.classified += 1,
+        Err(e) => t.errors.push(format!("{id}: writing classification: {e}")),
+    }
 }
 
 /// A re-run corrects an existing row only by the rules that were missing when it was written,
@@ -413,5 +548,48 @@ fn opt_sql_str(v: &Option<String>) -> String {
     match v {
         Some(s) => format!("'{}'", rows::escape(s)),
         None => "NULL".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(ls: &[&str]) -> BTreeSet<String> {
+        ls.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn argv(s: &str) -> Vec<String> {
+        s.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn a_bead_with_no_repo_label_has_no_repository() {
+        assert_eq!(repo_label(&labels(&["spira-submitted", "scope:x"])), Ok(None));
+    }
+
+    #[test]
+    fn a_bead_with_one_repo_label_names_that_repository() {
+        assert_eq!(repo_label(&labels(&["repo:demo", "needs-operator"])), Ok(Some("demo".to_string())));
+    }
+
+    #[test]
+    fn a_bead_with_two_repo_labels_is_an_error_naming_both() {
+        let e = repo_label(&labels(&["repo:a", "repo:b"])).unwrap_err();
+        assert!(e.contains("repo:") && e.contains('a') && e.contains('b'), "{e}");
+    }
+
+    #[test]
+    fn every_bead_needs_no_home_but_a_per_repo_run_does() {
+        let common = "--bd-db /db --landstate-dir /ls --queue-dir /q";
+        let a = parse_args(&argv(&format!("{common} --every-bead"))).unwrap();
+        assert!(a.every_bead && a.home.is_none());
+        assert!(parse_args(&argv(common)).unwrap_err().contains("--home"));
+    }
+
+    #[test]
+    fn every_bead_refuses_a_repo_filter() {
+        let e = parse_args(&argv("--every-bead --repo demo --bd-db /db --landstate-dir /ls --queue-dir /q")).unwrap_err();
+        assert!(e.contains("exclusive"), "{e}");
     }
 }
