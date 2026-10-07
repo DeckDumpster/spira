@@ -71,6 +71,7 @@ fixture() {
     timeout 5 git -C "$REPO" push -q origin main
     timeout 5 git -C "$REPO" fetch -q origin
     printf '%s | %s | %s | origin/main | | |\n' "$REPONAME" "$REPO" "$mode" > "$SH/land-map"
+    lc_path_stub "$SH" "$TMP/lcfix"
     rm -rf "$RUN/submitted" "$RUN/landstate" "$RUN/tip-at-gate"
     rm -f "$RUN/events.log"; : > "$EMITTED"; : > "$FORGE_LOG"; : > "$FORGE_PRS"
     testdb_reset
@@ -88,6 +89,7 @@ closed_branch() {
     timeout 5 git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":["repo:%s"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$REPONAME" "$id" | testdb_seed
+    lc_bead SUBMITTED "$id" "$(timeout 5 git -C "$RUN/worktree/$id" rev-parse HEAD)" 0
 }
 
 runpass() {  # runpass <land|pr>
