@@ -176,7 +176,7 @@ publish_file()  { cat "$QDIR/$REPONAME/publish" 2>/dev/null; }
 
 # passed — the full-suite local pass a green round records for its head (sp-x334k): publish refuses a
 # local/main head without one, so every publish here stands on the pass production would have.
-passed() { spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round >/dev/null; }
+passed() { local o; o="$(spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round 2>&1)" || echo "# passed() FAILED: $o" >&2; }
 
 # landmode <name> -> "<repo_land> <spira_landref>", read fresh out of the CURRENT repo-map —
 # a subshell sourcing the copied lib.sh under the exact same env the commands above use, so

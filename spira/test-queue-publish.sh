@@ -168,7 +168,7 @@ publish_file() { cat "$QDIR/$REPONAME/publish" 2>/dev/null; }
 
 # passed — the full-suite local pass a green round records for its head (sp-x334k): publish refuses a
 # local/main head without one, so every publish here stands on the pass production would have.
-passed() { spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round >/dev/null; }
+passed() { local o; o="$(spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round 2>&1)" || echo "# passed() FAILED: $o" >&2; }
 callcount()    { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
