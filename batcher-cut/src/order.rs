@@ -3,7 +3,7 @@
 //! everywhere, and a suite with no record never falls back to alphabetical.
 
 use serde_json::Value;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 const BATCH_ROW: &str = "__batch__";
 
@@ -14,8 +14,8 @@ pub struct Ordered {
     pub unmeasured: Vec<String>,
 }
 
-fn mean_wall(history: &str) -> HashMap<String, f64> {
-    let mut acc: HashMap<String, (f64, u64)> = HashMap::new();
+fn mean_wall(history: &str) -> BTreeMap<String, f64> {
+    let mut acc: BTreeMap<String, (f64, u64)> = BTreeMap::new();
     for l in history.lines() {
         let Ok(v) = serde_json::from_str::<Value>(l) else { continue };
         let (Some(suite), Some(wall)) = (v.get("suite").and_then(Value::as_str), v.get("wall_secs").and_then(Value::as_f64)) else { continue };
