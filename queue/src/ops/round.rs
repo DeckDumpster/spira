@@ -21,7 +21,8 @@ pub const FAULT: i32 = 4;
 
 const RECORD: &str = "round";
 const LC_ACTOR: &str = "queue.sh";
-const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
+const PASSING: [&str; 2] = ["ok", "skip"];
+pub(crate) const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
 
 pub fn run(w: &World, r: &Round) -> i32 {
     match r {
@@ -305,6 +306,29 @@ fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32) {
     }
 }
 
+/// Names the suites whose verdict cannot be read: a word that is neither passing nor blocking
+/// (an empty file included), or a corpus suite with no result at all.
+pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<String> {
+    let mut bad: Vec<String> = found
+        .iter()
+        .filter(|(_, s)| !PASSING.contains(&s.as_str()) && !BLOCKING.contains(&s.as_str()))
+        .map(|(n, s)| format!("{n} (verdict {s:?})"))
+        .collect();
+    if let Ok(rd) = fs::read_dir(wt.join("spira")) {
+        for name in rd.flatten().filter_map(|e| e.file_name().into_string().ok()) {
+            if name.starts_with("test-") && name.ends_with(".sh") && !found.iter().any(|(n, _)| *n == name) {
+                bad.push(format!("{name} (no result)"));
+            }
+        }
+    }
+    bad.sort();
+    if bad.is_empty() {
+        None
+    } else {
+        Some(format!("round-vm left no readable verdict for: {}", bad.join(", ")))
+    }
+}
+
 fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -370,7 +394,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
         suite_statuses(&results, &mut found, 0);
         let fault = match out.rc {
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
-            0 | 1 => None,
+            0 | 1 => unjudgeable(&wt, &found),
             4 => {
                 reds.push("workspace-build".into());
                 None
