@@ -27,9 +27,10 @@ cat > "$BIN/sending" <<S
 [ "\$1" = destroy-worktree ] && echo "\$*" >> "$DESTROYED"
 exit 0
 S
-cat > "$BIN/spira-config" <<'S'
+REAL_CONFIG="$(command -v spira-config)"
+cat > "$BIN/spira-config" <<S
 #!/usr/bin/env bash
-case "$*" in "repo root"*) echo /nonexistent/repo ;; *) echo spira ;; esac
+case "\$*" in "repo root"*) echo /nonexistent/repo ;; *) exec "$REAL_CONFIG" "\$@" ;; esac
 S
 printf '#!/usr/bin/env bash\necho closed\n' > "$BIN/bdq"
 cp "$BIN/bdq" "$BIN/bd"
