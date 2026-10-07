@@ -229,6 +229,32 @@ pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
     })
 }
 
+/// A bead's state is its lifecycle row's (sp-6oimlm): bdq refuses every verb that writes bd's
+/// status — `close`, `reopen`, `defer`, `undefer`, and `update` with `--status`/`-s`/`--defer` —
+/// so the store can never move on its own and drift from the row. On 2026-10-07 33 beads sat
+/// deferred in bd while their rows read READY, and every aeon summoned onto one exited in seconds.
+/// The exit is the machine's own door; `SPIRA_BDQ_STATE_WRITE=<reason>` overrides, and the
+/// caller logs it.
+pub fn check_state_verb(args: &[String]) -> Option<&'static str> {
+    let verb = args.first().map(String::as_str)?;
+    let writes = match verb {
+        "close" | "reopen" | "defer" | "undefer" => true,
+        "update" => args.iter().skip(1).any(|a| {
+            matches!(a.as_str(), "--status" | "-s" | "--defer") || a.starts_with("--status=") || a.starts_with("--defer=")
+        }),
+        _ => false,
+    };
+    if !writes {
+        return None;
+    }
+    Some(match verb {
+        "close" => "spira-lc close <id> --reason-file - (or `work close-other` for a session)",
+        "reopen" | "undefer" => "spira-lc reopen <id> <cause> <actor> (or `work reopen <id> --evidence ...`)",
+        "defer" => "spira-lc hold <id> wait <reason> (a timed snooze is a wait hold on the row)",
+        _ => "the lifecycle machine's own verb (spira-lc close / reopen / hold); bd's status is not a bead's state",
+    })
+}
+
 /// `label add <ask>` and `update --add-label <ask>` skip the create-time shape check, so
 /// they are refused outright: an ask is created whole, never labelled on afterwards.
 pub fn check_ask_label_write(args: &[String], ask_label: &str) -> Option<String> {
@@ -417,6 +443,25 @@ mod tests {
     }
 
     // -- check_repo_label -------------------------------------------------------------------
+
+    #[test]
+    fn every_state_verb_is_refused_and_names_the_machines_door() {
+        for argv in [&["close", "sp-a", "--reason", "x"][..], &["reopen", "sp-a"], &["defer", "sp-a"], &["undefer", "sp-a"],
+            &["update", "sp-a", "--status", "open"], &["update", "sp-a", "-s", "closed"], &["update", "sp-a", "--status=open"],
+            &["update", "sp-a", "--defer", "2026-10-08"]] {
+            let exit = check_state_verb(&s(argv)).unwrap_or_else(|| panic!("{argv:?} was not refused"));
+            assert!(exit.contains("spira-lc") || exit.contains("lifecycle"), "{argv:?}: {exit}");
+        }
+        assert!(check_state_verb(&s(&["reopen", "sp-a"])).unwrap().contains("spira-lc reopen"));
+    }
+
+    #[test]
+    fn reads_notes_labels_and_creates_are_not_state_verbs() {
+        for argv in [&["show", "sp-a"][..], &["list", "--status", "open"], &["note", "sp-a", "--stdin"], &["label", "add", "sp-a", "x"],
+            &["update", "sp-a", "--add-label", "x"], &["update", "sp-a", "--assignee", ""], &["create", "t", "--labels", "spira"], &[]] {
+            assert_eq!(check_state_verb(&s(argv)), None, "{argv:?}");
+        }
+    }
 
     #[test]
     fn repo_label_allows_home_repo_and_known_repos() {
