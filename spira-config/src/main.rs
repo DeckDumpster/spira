@@ -1,5 +1,9 @@
 //! `spira-config` — validate, read, export and convert `spira.toml`.
 //!
+//!   spira-config init [--out F] [--answers F] [--<key> V]...
+//!                                       a fresh box's spira.toml from the operator's
+//!                                       answers; an existing one is validated, never
+//!                                       overwritten (spira_config::init)
 //!   spira-config validate [file]        exit 1 and name the TOML path on the first error;
 //!                                       also refuses a [spira] with no id_prefix (sp-k6m1m)
 //!   spira-config get <dotted.path>      one value read out of the document
@@ -507,7 +511,9 @@ fn cmd_deps(args: &[String]) -> ExitCode {
 /// existence-only test.
 fn repo_registry() -> Registry {
     let env_map: BTreeMap<String, String> = env::vars().collect();
-    let home = PathBuf::from(env_map.get("SPIRA_HOME").cloned().unwrap_or_default());
+    // Named, never searched for: SPIRA_HOME, else the release this runs from — what every
+    // launcher sets (resolve::locate_home). Neither is no home, and the config cannot resolve.
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
     Registry::from_env(env_map, &home)
 }
 
@@ -1307,6 +1313,46 @@ fn cmd_local_pass(args: &[String]) -> ExitCode {
     }
 }
 
+/// `spira-config init`: a fresh box's spira.toml from the operator's answers
+/// (`spira_config::init`) — validated and used when one is already there, never overwritten.
+fn cmd_init(args: &[String]) -> ExitCode {
+    let (mut flags, rest) = match spira_config::init::split_flags(args, &[]) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("spira-config init: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if !rest.is_empty() {
+        eprintln!("spira-config init: unexpected argument(s): {}", rest.join(" "));
+        return ExitCode::from(2);
+    }
+    let out = flags.remove("out").map(std::path::PathBuf::from);
+    let answers = flags.remove("answers").map(std::path::PathBuf::from);
+    // Every other key's registered default comes from this release's own registry.
+    let conf_d = match spira_config::resolve::locate_home_for_process() {
+        Ok(h) => spira_config::resolve::default_conf_d(&h),
+        Err(e) => {
+            eprintln!("spira-config init: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match spira_config::init::ensure_from_cli(out, answers.as_deref(), &flags, &conf_d) {
+        Ok(spira_config::init::Outcome::Existing(p)) => {
+            println!("spira-config init: using existing {}", p.display());
+            ExitCode::SUCCESS
+        }
+        Ok(spira_config::init::Outcome::Written(p)) => {
+            println!("spira-config init: wrote {}", p.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("spira-config init: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -1396,6 +1442,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("init") => cmd_init(&args[1..]),
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
         Some("fayth") => cmd_fayth(&args[1..]),
@@ -1416,6 +1463,7 @@ fn main() -> ExitCode {
                  \x20       convert|set|unset|writeback|schema|path-tail|fayth|unit|deps|\n\
                  \x20       convert-legacy|migrate|repo> ...\n\
                  \n\
+                 \x20 init [--out F] [--answers F] [--<key> VALUE]...\n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\

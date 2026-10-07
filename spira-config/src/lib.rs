@@ -27,6 +27,7 @@ pub mod convert;
 pub mod deps;
 pub mod env_bootstrap;
 pub mod eval;
+pub mod init;
 pub mod legacy_map;
 pub mod lc_state;
 pub mod lifecycle_row;

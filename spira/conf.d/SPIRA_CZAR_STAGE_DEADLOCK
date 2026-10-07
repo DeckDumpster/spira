@@ -1,9 +1,7 @@
 TYPE=czar_stage
 GROUP=czar
-DOC=SPIRA_CZAR_STAGE_DEADLOCK — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_CZAR_STAGE_DEADLOCK — Shadow: the czar investigates and notes; it mutates nothing until an operator sets act.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): Shadow: the czar investigates and notes; it mutates nothing until an operator sets act.
+    : "${SPIRA_CZAR_STAGE_DEADLOCK:=shadow}"
 SPIRA_CONF_DEFAULT_EOF

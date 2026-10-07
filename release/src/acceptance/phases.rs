@@ -3,7 +3,6 @@
 
 use super::*;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// One place builds each kind of call, so no call site can be written without its
@@ -13,35 +12,37 @@ impl Run<'_> {
         p.display().to_string()
     }
 
-    /// The acceptance run's own bootstrap `spira.conf` (phase A, fresh install) — just
-    /// enough for `install.sh`/`configure.sh` to proceed non-interactively, written BEFORE
-    /// either runs so this run needs no prompt. `SPIRA_ID_PREFIX` is REQUIRED here for the
-    /// same reason `configure.sh` itself writes it for a real install (sp-k6m1m):
-    /// `spira-config validate` (doctor, pre-activate) refuses a `[spira]` table that sets
-    /// anything but names no id prefix — and this file already sets `SPIRA_OPERATED` and
-    /// `SPIRA_RELEASES`, so it is never the empty table that check lets through. Regression
-    /// sp-oppza: this bootstrap file, not `configure.sh` (which never overwrites a file
-    /// already here), is what a fresh acceptance install's box actually gets — omitting the
-    /// key here broke phase A the moment sp-k6m1m made it required.
-    pub(super) fn bootstrap_conf_text(&self, releases: &Path) -> String {
+    /// The operator's answers for phase A's fresh install — what a human gives the
+    /// installer on a new box (per Ryan 2026-10-07: install PRODUCES the config from
+    /// user-provided inputs). `release install-tarball --answers` turns them into the one
+    /// config file, every path pinned; nothing here writes config itself. `operated = 0` and
+    /// the agent are this run's own: no operator is watching, and the agent is a stub.
+    pub(super) fn answers_text(&self, releases: &Path) -> String {
+        let db = &self.o.bd_db;
+        let data = db.parent().unwrap_or(Path::new("/"));
         let mut c = String::new();
+        c.push_str("instance = prod\nid_prefix = sp\n");
+        c.push_str(&format!("home_repo = {}\n", self.o.scratch_name()));
+        c.push_str(&format!("home_repo_path = {}\n", Self::s(&self.o.a.scratch_repo)));
+        c.push_str(&format!("db = {}\n", Self::s(db)));
+        c.push_str(&format!("run = {}\n", Self::s(&self.o.spira_run)));
+        c.push_str(&format!("releases = {}\n", Self::s(releases)));
+        c.push_str(&format!("dolt_data = {}\n", Self::s(&data.join("dolt"))));
+        c.push_str("operated = 0\n");
+        c.push_str(&format!("release_repo = {}\n", Self::s(&self.o.release_src())));
         if let Some(a) = &self.o.a.agent {
-            c.push_str(&format!("SPIRA_AGENT = {a}\n"));
+            c.push_str(&format!("agent = {a}\n"));
         }
-        c.push_str("SPIRA_OPERATED = 0\n");
-        c.push_str("SPIRA_ID_PREFIX = sp\n");
-        c.push_str(&format!("SPIRA_RELEASES = {}\n", Self::s(releases)));
-        c.push_str(&format!("SPIRA_RELEASE_REPO = {}\n", Self::s(&self.o.release_src())));
         c
     }
 
     /// The release under test's launcher environment — what a launcher gives every Spira
     /// process: `SPIRA_RELEASE` naming `current`, `PATH` with its `bin/` and `spira/` first
-    /// (every tool is called by bare name, sp-gypjk), and `SPIRA_CONF` (DESIGN.md Decision 2).
+    /// (every tool is called by bare name, sp-gypjk), and `SPIRA_TOML`, the one source of config.
     fn launcher_env(&self) -> Vec<(String, String)> {
         let cur = self.o.releases().join("current");
         vec![
-            ("SPIRA_CONF".into(), Self::s(&self.o.conf())),
+            ("SPIRA_TOML".into(), Self::s(&self.o.toml())),
             ("SPIRA_RELEASE".into(), Self::s(&cur)),
             ("PATH".into(), format!("{}:{}:{}", Self::s(&cur.join("bin")), Self::s(&cur.join("spira")), self.o.base_path)),
         ]
@@ -139,11 +140,15 @@ impl Run<'_> {
     /// aged install, over real surviving state where units are already active, and failed
     /// the second restart deterministically enough under host load to make install.sh refuse.
     fn install_tarball(&self, tb: &Path) -> i32 {
+        // A fresh box names no harness home and no release: install-tarball takes both from
+        // the tarball it installs, exactly as it must for an operator's first install.
         let c = Cmd::new(Self::s(&self.o.release_bin))
             .arg("install-tarball")
             .arg("--skip-restart")
             .arg(Self::s(tb))
-            .env("SPIRA_CONF", Self::s(&self.o.conf()))
+            .arg("--answers")
+            .arg(Self::s(&self.o.answers()))
+            .env("SPIRA_TOML", Self::s(&self.o.toml()))
             .env("SPIRA_RELEASES", Self::s(&self.o.releases()))
             .env("SPIRA_RUN", Self::s(&self.o.tmp.join("run")));
         self.h.show(&c)
@@ -530,12 +535,10 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     println!("\nphase A — fresh install from {tag} tarball");
     let releases = r.o.releases();
     let _ = fs::create_dir_all(&releases);
-    let conf = r.o.conf();
-    let _ = fs::create_dir_all(conf.parent().unwrap_or(Path::new("/")));
     let _ = fs::create_dir_all(r.o.release_src());
-    let c = r.bootstrap_conf_text(&releases);
-    if let Err(e) = fs::write(&conf, c) {
-        r.bad("phase A: spira.conf written", &format!("{}: {e}", conf.display()));
+    let answers = r.o.answers();
+    if let Err(e) = fs::write(&answers, r.answers_text(&releases)) {
+        r.bad("phase A: operator answers written", &format!("{}: {e}", answers.display()));
     }
 
     let tarball = match r.o.a.tarball.clone() {
@@ -821,10 +824,11 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     let pre_beads = r.count_beads();
     let pre_mems = r.count_memories();
 
-    let conf = r.o.conf();
+    // The operator's override goes where every operator edit goes: the one config file.
+    let conf = r.o.toml();
+    let path = format!("spira.{}", OVERRIDE_KEY.trim_start_matches("SPIRA_").to_ascii_lowercase());
     let val = (20 + r.o.pid % 70).to_string();
-    let appended = fs::OpenOptions::new().append(true).open(&conf).and_then(|mut f| write!(f, "\n{OVERRIDE_KEY} = {val}\n"));
-    if let Err(e) = appended {
+    if let Err(e) = spira_config::set_paths_in_file(&conf, &[(&path, &val)]) {
         r.bad("phase D: operator override written", &format!("{}: {e}", conf.display()));
     }
 
@@ -848,7 +852,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         }
         let doc = h.show(&r.tool("doctor"));
         r.is0("phase D: doctor no fatal after aged upgrade", doc);
-        let got = fs::read_to_string(&conf).ok().and_then(|t| conf_line_value(&t, OVERRIDE_KEY)).unwrap_or_default();
+        let got = spira_config::load(&conf).ok().and_then(|d| spira_config::get_path(&d, &path)).unwrap_or_default();
         r.is_same("phase D: operator override survived aged upgrade", &val, &got);
 
         h.sleep(120);

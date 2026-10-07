@@ -597,19 +597,32 @@ fn main() -> ExitCode {
 
     // ---- phase 1: config --------------------------------------------------------------
     phase("phase 1: config");
-    let conf_dest = nonempty_env("XDG_CONFIG_HOME").map(|x| format!("{x}/spira/spira.conf")).or_else(|| nonempty_env("HOME").map(|h| format!("{h}/.config/spira/spira.conf"))).unwrap_or_default();
+    // The one config (per Ryan 2026-10-07): the file SPIRA_TOML names — normally
+    // produced by `release install-tarball` from the operator's answers. One already there is
+    // validated and used, never overwritten; a missing one is produced here (asked for on a
+    // terminal; with no terminal the refusal names each missing input).
     let mut changes = 0u32;
-    if Path::new(&conf_dest).is_file() {
-        skip(&format!("config exists at {conf_dest}"));
-    } else if opts.dry {
-        would("run: spira/configure.sh --out ...");
+    if opts.dry {
+        would("ensure the config SPIRA_TOML names (spira-config init)");
     } else {
-        info("running configure.sh");
-        if tool_status("configure.sh", &[]) != 0 {
-            eprintln!("install: phase config failed — configure.sh exited non-zero");
-            return ExitCode::from(2);
+        let conf_d = match spira_config::resolve::locate_home_for_process() {
+            Ok(h) => spira_config::resolve::default_conf_d(&h),
+            Err(e) => {
+                eprintln!("install: phase config failed — {e}");
+                return ExitCode::from(2);
+            }
+        };
+        match spira_config::init::ensure_from_cli(None, None, &Default::default(), &conf_d) {
+            Ok(spira_config::init::Outcome::Existing(p)) => skip(&format!("config exists at {}", p.display())),
+            Ok(spira_config::init::Outcome::Written(p)) => {
+                info(&format!("wrote {}", p.display()));
+                changes += 1;
+            }
+            Err(e) => {
+                eprintln!("install: phase config failed — {e}");
+                return ExitCode::from(2);
+            }
         }
-        changes += 1;
     }
 
     // Resolve the locations the rest of install reads, now that the config exists. They
@@ -794,7 +807,7 @@ fn main() -> ExitCode {
                 let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             } else {
                 // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if spira_config::bounded::bounded("bd").current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
+                if bd_init_bounded().current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
                     eprintln!("install: phase database failed — bd init failed");
                     return ExitCode::from(2);
                 }
@@ -1295,6 +1308,16 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
     }
 }
 
+/// `bd`, bounded for `bd init`: creating a fresh database's schema takes far longer than the
+/// 5 s a call that must merely answer gets — under that bound `bd init` was killed mid-schema
+/// on every fresh install ("failed to initialize schema: context canceled").
+const BD_INIT_SECS: &str = "300";
+fn bd_init_bounded() -> Command {
+    let mut c = Command::new("timeout");
+    c.arg(BD_INIT_SECS).arg("bd");
+    c
+}
+
 /// Runs `bd <args>` with `db` as cwd, not `-C db` — `bd init`'s own remote-less repository
 /// is allowed (db_git_guard, above), and `-C` makes a fresh `bd init` look inside a
 /// directory that does not have a beads project yet, which is exactly what `bd` refuses
@@ -1302,7 +1325,7 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
 /// retirement). Only the init call needs this; every other `bd` call in this binary keeps
 /// `-C` for the already-initialised database it is allowed to name from outside.
 fn bd_output(db: &str, args: &[&str]) -> (i32, String) {
-    let mut c = spira_config::bounded::bounded("bd");
+    let mut c = bd_init_bounded();
     c.current_dir(db).args(args).env("BD_NON_INTERACTIVE", "1");
     match c.output() {
         Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
@@ -1608,6 +1631,10 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
         let admin_cred = nonempty_env("SPIRA_LC_ADMIN_PASSWORD_FILE").unwrap_or_else(|| spira_config::resolve::lc_admin_credential_default(&env_map));
         let (admin, msg) = lifecycle_store::ensure_admin(Path::new(&admin_cred), &std::env::temp_dir(), host, port, run)?;
         lines.push(msg);
+        // Every bd on this box connects as root: hand it the password root now has.
+        let beads_cred = nonempty_env("BEADS_CREDENTIALS_FILE").unwrap_or_else(|| format!("{}/.config/beads/credentials", bootstrap::env_var("HOME")));
+        let bd_host = admin.host.clone().unwrap_or_else(|| "127.0.0.1".into());
+        lines.push(lifecycle_store::ensure_beads_credential(Path::new(&beads_cred), &bd_host, port, &admin.password)?);
         admin
     };
     lines.extend(lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, run)?);

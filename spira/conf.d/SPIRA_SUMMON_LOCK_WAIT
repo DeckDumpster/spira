@@ -1,9 +1,7 @@
 TYPE=u32
 GROUP=summon
-DOC=SPIRA_SUMMON_LOCK_WAIT — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_SUMMON_LOCK_WAIT — Seconds a summon waits for the summon lock before giving up this pass.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): Seconds a summon waits for the summon lock before giving up this pass.
+    : "${SPIRA_SUMMON_LOCK_WAIT:=30}"
 SPIRA_CONF_DEFAULT_EOF

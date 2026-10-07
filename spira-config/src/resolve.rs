@@ -534,11 +534,27 @@ fn resolve_colon(
     toml_map: &BTreeMap<String, String>,
     default: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
-    let _ = default;
     match seed(key, env, toml_map) {
+        Some(v) if !(GENERATING.get() && v.is_empty()) => Ok(v),
+        _ if GENERATING.get() => default(),
         Some(v) => Ok(v),
         None => Err(undeclared(key)),
     }
+}
+
+thread_local! {
+    /// Set only while [`resolve_with_defaults`] runs: an undeclared key takes its registered
+    /// default instead of refusing. Nothing that READS config ever sets it.
+    static GENERATING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Every key, an undeclared one taking its registered default — for WRITING a fresh box's
+/// config (`init`), never for reading one: a process reads only what the file declares.
+pub fn resolve_with_defaults(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
+    GENERATING.set(true);
+    let r = resolve_unchecked(input);
+    GENERATING.set(false);
+    r
 }
 
 /// The `=` (no-colon) rule: an explicitly empty seed is itself an answer and the default is
@@ -549,9 +565,9 @@ fn resolve_eq(
     toml_map: &BTreeMap<String, String>,
     default: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
-    let _ = default;
     match seed(key, env, toml_map) {
         Some(v) => Ok(v),
+        None if GENERATING.get() => default(),
         None => Err(undeclared(key)),
     }
 }
