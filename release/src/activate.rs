@@ -338,6 +338,7 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
 /// long the deploy waits for that, and a unit still running at the bound is named, not fatal.
 fn drain(ctx: &Ctx, units: &[String]) {
     let deadline = std::time::Instant::now() + ctx.drain;
+    let mut next_note = std::time::Instant::now() + Duration::from_secs(30);
     for u in units {
         eprintln!("release: waiting for {u} to finish its pass on the previous release");
         loop {
@@ -345,7 +346,12 @@ fn drain(ctx: &Ctx, units: &[String]) {
                 Ok(st) if is_up(&st.active) => {}
                 _ => break,
             }
-            if std::time::Instant::now() >= deadline {
+            let now = std::time::Instant::now();
+            if now >= next_note {
+                eprintln!("release: still waiting for {u}; {}s of the {}s drain wait left", deadline.saturating_duration_since(now).as_secs(), ctx.drain.as_secs());
+                next_note = now + Duration::from_secs(30);
+            }
+            if now >= deadline {
                 eprintln!("release: {u} still running its previous release after {}s; continuing", ctx.drain.as_secs());
                 break;
             }

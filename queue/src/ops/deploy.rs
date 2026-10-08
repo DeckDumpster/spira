@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 
 use super::World;
 
+/// Bound on `release activate`'s wait for running units to finish their pass. Far below a
+/// round's cap: the merge has already landed, so this is bookkeeping a caller must not have to
+/// guess a timeout for. The bound covers all changed units together.
+pub const LAND_DRAIN_WAIT_SECS: u64 = 120;
+
 /// `<releases>/current` is a symlink: a release is in force, so a landing activates its own.
 /// Absent: nothing runs a release yet (before the cutover), and the release step is skipped
 /// (§8 D13) — the first activation is the cutover's.
@@ -130,7 +135,16 @@ pub fn activate(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
         plan,
         &bin,
         "activate",
-        args(&["activate", sha, "--repo", &plan.repo.display().to_string(), "--landed-ref", &plan.landref]),
+        args(&[
+            "activate",
+            sha,
+            "--repo",
+            &plan.repo.display().to_string(),
+            "--landed-ref",
+            &plan.landref,
+            "--drain-wait",
+            &LAND_DRAIN_WAIT_SECS.to_string(),
+        ]),
     )?;
     let out = out.trim_end_matches('\n');
     if !out.is_empty() {
