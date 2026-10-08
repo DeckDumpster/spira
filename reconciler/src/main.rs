@@ -246,7 +246,7 @@ impl Config {
             // overridable only as a test seam, left as direct env reads.
             incident_sh: env::var("SPIRA_INCIDENT_SH")
                 .unwrap_or_else(|_| "incident.sh".to_string()),
-            main_ref: env::var("SPIRA_RECONCILER_MAIN_REF").unwrap_or_else(|_| "local/main".to_string()),
+            main_ref: "local/main".to_string(),
             lint_bin: env::var("SPIRA_LINT_BIN").unwrap_or_else(|_| "spira-lint".to_string()),
             guard_bin: env::var("SPIRA_GUARD_BIN").unwrap_or_else(|_| "lifecycle-guard".to_string()),
             systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
