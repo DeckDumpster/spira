@@ -16,6 +16,11 @@
 //! the whole database, each bead judged by its own `repo:` label's repository (or by bd and
 //! the ledger alone when it has none). `--home` may then be omitted: the repository table is
 //! the one `$SPIRA_TOML` names.
+//!
+//! Every path flag is an override: `--bd-db`, `--bd-bin` and `--queue-dir`
+//! default to `spira.db`, `spira.bd` and `spira.queue_dir` from the
+//! same document, and `--home` (a directory holding a legacy `spira.conf`) is only needed to
+//! classify against one.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -64,20 +69,42 @@ fn flag_all(args: &[String], name: &str) -> Vec<String> {
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
+    parse_args_with(args, &spira_config::process::cfg)
+}
+
+/// Every input a flag does not give comes from `cfg`, the process's config; all that cannot be had are
+/// named together, so one run reports the whole shortfall.
+fn parse_args_with(args: &[String], cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<Args, String> {
     let every_bead = args.iter().any(|a| a == "--every-bead");
-    let home = flag(args, "--home");
-    if home.is_none() && !every_bead {
-        return Err("classify: --home is required".into());
-    }
-    let bd_bin = flag(args, "--bd-bin").unwrap_or_else(|| "bd".to_string());
-    let bd_db = flag(args, "--bd-db").ok_or("classify: --bd-db is required")?;
-    let queue_dir = flag(args, "--queue-dir").ok_or("classify: --queue-dir is required")?;
     let repos = flag_all(args, "--repo");
+    let mut missing: Vec<String> = Vec::new();
     if every_bead && !repos.is_empty() {
         return Err("classify: --every-bead and --repo are exclusive — every bead is every repository's".into());
     }
+    let mut from_cfg = |flag_name: &str, key: &str, derive: &dyn Fn(String) -> String| -> String {
+        if let Some(v) = flag(args, flag_name) {
+            return v;
+        }
+        match cfg(key) {
+            Ok(v) if !v.trim().is_empty() => derive(v),
+            Ok(_) => {
+                missing.push(format!("{flag_name} (or {key} in the config, which is empty)"));
+                String::new()
+            }
+            Err(e) => {
+                missing.push(format!("{flag_name} (or {key} in the config: {e})"));
+                String::new()
+            }
+        }
+    };
+    let bd_db = from_cfg("--bd-db", "SPIRA_DB", &|v| v);
+    let queue_dir = from_cfg("--queue-dir", "SPIRA_QUEUE_DIR", &|v| v);
+    if !missing.is_empty() {
+        return Err(format!("classify: missing {}", missing.join("; ")));
+    }
+    let bd_bin = flag(args, "--bd-bin").or_else(|| cfg("SPIRA_BD").ok().filter(|b| !b.trim().is_empty())).unwrap_or_else(|| "bd".to_string());
     Ok(Args {
-        home: home.map(PathBuf::from),
+        home: flag(args, "--home").map(PathBuf::from),
         bd_bin,
         bd_db,
         queue_dir: PathBuf::from(queue_dir),
@@ -581,17 +608,45 @@ mod tests {
         assert!(e.contains("repo:") && e.contains('a') && e.contains('b'), "{e}");
     }
 
+    fn cfg_of(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Result<String, String> {
+        move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()).ok_or_else(|| format!("{k} is not declared"))
+    }
+
     #[test]
-    fn every_bead_needs_no_home_but_a_per_repo_run_does() {
-        let common = "--bd-db /db --queue-dir /q";
-        let a = parse_args(&argv(&format!("{common} --every-bead"))).unwrap();
+    fn no_flags_resolve_every_path_from_the_config() {
+        let cfg = cfg_of(&[("SPIRA_DB", "/cfg/db"), ("SPIRA_QUEUE_DIR", "/cfg/q"), ("SPIRA_BD", "/cfg/bd")]);
+        let a = parse_args_with(&argv("--repo demo --dry-run"), &cfg).unwrap();
+        assert_eq!(a.bd_db, "/cfg/db");
+        assert_eq!(a.bd_bin, "/cfg/bd");
+        assert_eq!(a.queue_dir, PathBuf::from("/cfg/q"));
+        assert!(a.home.is_none());
+    }
+
+    #[test]
+    fn a_flag_overrides_the_config() {
+        let cfg = cfg_of(&[("SPIRA_DB", "/cfg/db"), ("SPIRA_QUEUE_DIR", "/cfg/q")]);
+        let a = parse_args_with(&argv("--bd-db /flag/db --queue-dir /flag/q --bd-bin /flag/bd"), &cfg).unwrap();
+        assert_eq!((a.bd_db.as_str(), a.bd_bin.as_str()), ("/flag/db", "/flag/bd"));
+        assert_eq!(a.queue_dir, PathBuf::from("/flag/q"));
+    }
+
+    #[test]
+    fn every_missing_input_is_named_in_one_error() {
+        let e = parse_args_with(&argv("--repo demo"), &cfg_of(&[])).unwrap_err();
+        for want in ["--bd-db", "--queue-dir", "SPIRA_DB", "SPIRA_QUEUE_DIR"] {
+            assert!(e.contains(want), "{want} missing from: {e}");
+        }
+    }
+
+    #[test]
+    fn every_bead_needs_no_home() {
+        let a = parse_args_with(&argv("--every-bead"), &cfg_of(&[("SPIRA_DB", "/d"), ("SPIRA_QUEUE_DIR", "/q")])).unwrap();
         assert!(a.every_bead && a.home.is_none());
-        assert!(parse_args(&argv(common)).unwrap_err().contains("--home"));
     }
 
     #[test]
     fn every_bead_refuses_a_repo_filter() {
-        let e = parse_args(&argv("--every-bead --repo demo --bd-db /db --queue-dir /q")).unwrap_err();
+        let e = parse_args_with(&argv("--every-bead --repo demo --bd-db /db --queue-dir /q"), &cfg_of(&[])).unwrap_err();
         assert!(e.contains("exclusive"), "{e}");
     }
 }
