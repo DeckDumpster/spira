@@ -619,10 +619,11 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     // member of this same round stacked on it, transitively. Attribution names only the
     // red member(s) in `--eject`; this is what makes its dependents follow automatically,
     // regardless of which member attribution blamed.
-    let cascade_ids: Vec<String> = match stacked_dependents_in_batch(conn, batch_id, &eject_ids) {
-        Ok(ids) => ids.into_iter().filter(|id| !eject_ids.contains(id)).collect(),
+    let cascade: Vec<(String, String)> = match stacked_dependents_in_batch(conn, &batch_row, &eject_ids) {
+        Ok(ids) => ids.into_iter().filter(|(id, _)| !eject_ids.contains(id)).collect(),
         Err(e) => return cannot_tell(e),
     };
+    let cascade_ids: Vec<String> = cascade.iter().map(|(id, _)| id.clone()).collect();
     let requeue_ids: Vec<String> =
         requeue_ids.into_iter().filter(|id| !cascade_ids.contains(id) && !eject_ids.contains(id)).collect();
 
@@ -634,6 +635,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     for id in &cascade_ids {
         if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, &actor, at) { return cannot_tell(e); }
     }
+    name_prerequisites(&mut steps, &cascade);
     for id in &requeue_ids {
         let tip = match fetch_members(conn, batch_id) {
             Ok(m) => m.into_iter().find(|(mid, _)| mid == id).map(|(_, t)| t),
@@ -660,6 +662,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
                 "steps": steps.len(),
                 "applied": applied,
                 "base_withdrawn": cascade_ids.len(),
+                "stacked_on": cascade.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
                 "stack_depth": stack_depth,
             });
             if all_ok {
@@ -914,15 +917,17 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
     // member of this round stacked on `bead_id`, transitively, follows it out as collateral
     // rework — `base-withdrawn`, never `batch-ejected`, since this member's own content was
     // never accused of anything.
-    let cascade_ids: Vec<String> = match stacked_dependents_in_batch(conn, batch_id, std::slice::from_ref(&bead_id)) {
+    let cascade: Vec<(String, String)> = match stacked_dependents_in_batch(conn, &batch_row, std::slice::from_ref(&bead_id)) {
         Ok(ids) => ids,
         Err(e) => return cannot_tell(e),
     };
+    let cascade_ids: Vec<String> = cascade.iter().map(|(id, _)| id.clone()).collect();
     for id in &cascade_ids {
         if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, &actor, at) {
             return cannot_tell(e);
         }
     }
+    name_prerequisites(&mut steps, &cascade);
 
     match conn.cascade("", &steps) {
         Ok(applied) => {
@@ -933,6 +938,7 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
                 "steps": steps.len(),
                 "applied": applied,
                 "base_withdrawn": cascade_ids.len(),
+                "stacked_on": cascade.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
             });
             if all_ok {
                 (0, serde_json::to_string(&summary).unwrap())
@@ -958,15 +964,13 @@ fn fetch_members(conn: &Conn, batch_id: &str) -> Result<Vec<(String, String)>, D
 }
 
 /// The transitive closure of this batch's own members stacked on any of `roots` (design
-/// stacked-dependents-2026-09-28 §3: "ejecting a member ejects every member stacked on it,
-/// transitively"). A member `M` is stacked on prerequisite `P` when `M`'s own bead row's
-/// `stack` still names `P` at exactly the tip this batch recorded for `P` — the tip
-/// invariant round assembly already checked at `member_added` time, re-checked here rather
-/// than trusted, since a prerequisite can move between assembly and settle. `roots`
-/// themselves are never returned, even if one names another as a prerequisite: they are the
-/// caller's own ejection, not cascade.
-fn stacked_dependents_in_batch(conn: &Conn, batch_id: &str, roots: &[String]) -> Result<Vec<String>, DbError> {
-    let members = fetch_members(conn, batch_id)?;
+/// stacked-dependents-2026-09-28 §3), as `(dependent, prerequisite it was reached through)`.
+/// A member `M` is stacked on prerequisite `P` when `M`'s own bead row's `stack` still names
+/// `P` at exactly the tip this batch recorded for `P` (re-checked, since a prerequisite can
+/// move between assembly and settle), or when `M`'s branch contains a commit of `P`'s own
+/// range whether or not anyone declared it. `roots` themselves are never returned.
+fn stacked_dependents_in_batch(conn: &Conn, batch_row: &batch::BatchRow, roots: &[String]) -> Result<Vec<(String, String)>, DbError> {
+    let members = fetch_members(conn, &batch_row.batch_id)?;
     let tips: std::collections::BTreeMap<String, String> = members.iter().cloned().collect();
 
     let mut member_stacks = Vec::new();
@@ -976,18 +980,44 @@ fn stacked_dependents_in_batch(conn: &Conn, batch_id: &str, roots: &[String]) ->
         }
     }
 
-    Ok(stacked_dependents_from(&member_stacks, &tips, roots))
+    let contained = branch_containment(batch_row, &members);
+    Ok(stacked_dependents_from(&member_stacks, &tips, &contained, roots))
 }
 
-/// The pure BFS/frontier walk `stacked_dependents_in_batch` runs once it has the batch's
-/// members and their bead rows in hand, split out so the transitive closure itself is
-/// unit-testable without a live `dolt` connection — this file's own I/O is unavoidable, the
-/// graph walk on top of it is not.
+/// `(dependent, prerequisite)` for every pair of members where the dependent's branch holds a
+/// commit in the prerequisite's own range above the batch's base. A repository, base or tip
+/// git cannot resolve yields no edge: the declared `stack` still applies.
+fn branch_containment(batch_row: &batch::BatchRow, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
+    let empty = std::collections::BTreeSet::new();
+    let Some(base) = batch_row.base.as_deref() else { return empty };
+    let Ok(cfg) = crate::repo_config::from_process() else { return empty };
+    let Some(section) = cfg.repos.get(&batch_row.repo) else { return empty };
+    containment_in_repo(std::path::Path::new(&section.path), base, members)
+}
+
+fn containment_in_repo(repo: &std::path::Path, base: &str, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
+    let mut edges = std::collections::BTreeSet::new();
+    let ranges: Vec<(&String, std::collections::BTreeSet<String>)> = members
+        .iter()
+        .filter_map(|(id, tip)| crate::git_evidence::commits_above(repo, base, tip).map(|c| (id, c)))
+        .collect();
+    for (dependent, theirs) in &ranges {
+        for (prereq, ours) in &ranges {
+            if dependent != prereq && !ours.is_empty() && !ours.is_disjoint(theirs) {
+                edges.insert(((*dependent).clone(), (*prereq).clone()));
+            }
+        }
+    }
+    edges
+}
+
+/// The pure frontier walk, split out so the closure is unit-testable without a live `dolt`.
 fn stacked_dependents_from(
     member_stacks: &[(String, bead::BeadRow)],
     tips: &std::collections::BTreeMap<String, String>,
+    contained: &std::collections::BTreeSet<(String, String)>,
     roots: &[String],
-) -> Vec<String> {
+) -> Vec<(String, String)> {
     let mut visited: std::collections::BTreeSet<String> = roots.iter().cloned().collect();
     let mut frontier: Vec<String> = roots.to_vec();
     let mut dependents = Vec::new();
@@ -996,14 +1026,32 @@ fn stacked_dependents_from(
             if visited.contains(id) {
                 continue;
             }
-            if row.stack.get(&prereq).is_some_and(|given_tip| tips.get(&prereq) == Some(given_tip)) {
+            let declared = row.stack.get(&prereq).is_some_and(|given_tip| tips.get(&prereq) == Some(given_tip));
+            if declared || contained.contains(&(id.clone(), prereq.clone())) {
                 visited.insert(id.clone());
-                dependents.push(id.clone());
+                dependents.push((id.clone(), prereq.clone()));
                 frontier.push(id.clone());
             }
         }
     }
     dependents
+}
+
+/// Writes the prerequisite each cascaded member was stacked on into its `Returned` events'
+/// evidence, so the record on the dependent names the member it followed out.
+fn name_prerequisites(steps: &mut [CascadeStep], cascade: &[(String, String)]) {
+    for step in steps.iter_mut() {
+        let Some((_, prereq)) = cascade.iter().find(|(id, _)| id == &step.key) else { continue };
+        if step.event.event != "Returned" {
+            continue;
+        }
+        let mut evidence = match std::mem::take(&mut step.event.evidence) {
+            serde_json::Value::Object(m) => m,
+            other => serde_json::Map::from_iter([("evidence".to_string(), other)]),
+        };
+        evidence.insert("stacked_on".into(), serde_json::Value::String(prereq.clone()));
+        step.event.evidence = serde_json::Value::Object(evidence);
+    }
 }
 
 #[cfg(test)]
@@ -1040,12 +1088,13 @@ mod tests {
             .collect();
         let member_stacks = vec![unstacked("a"), stacked("b", "a", "tipA"), stacked("c", "b", "tipB"), unstacked("x")];
 
-        let dependents = stacked_dependents_from(&member_stacks, &tips, &["a".to_string()]);
+        let dependents = stacked_dependents_from(&member_stacks, &tips, &Default::default(), &["a".to_string()]);
 
-        assert_eq!(dependents.len(), 2, "expected exactly B and C: {dependents:?}");
-        assert!(dependents.contains(&"b".to_string()));
-        assert!(dependents.contains(&"c".to_string()));
-        assert!(!dependents.contains(&"x".to_string()), "an unrelated member must not cascade");
+        let ids: Vec<&str> = dependents.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "expected exactly B and C: {dependents:?}");
+        assert!(ids.contains(&"b") && ids.contains(&"c"));
+        assert!(!ids.contains(&"x"), "an unrelated member must not cascade");
+        assert!(dependents.contains(&("c".to_string(), "b".to_string())));
     }
 
     /// A root is never returned even if some other member happens to name it as a
@@ -1055,9 +1104,9 @@ mod tests {
         let tips: BTreeMap<String, String> = [("a".to_string(), "tipA".to_string())].into_iter().collect();
         let member_stacks = vec![unstacked("a"), stacked("b", "a", "tipA")];
 
-        let dependents = stacked_dependents_from(&member_stacks, &tips, &["a".to_string()]);
+        let dependents = stacked_dependents_from(&member_stacks, &tips, &Default::default(), &["a".to_string()]);
 
-        assert_eq!(dependents, vec!["b".to_string()]);
+        assert_eq!(dependents, vec![("b".to_string(), "a".to_string())]);
     }
 
     /// The tip invariant re-check: a member whose recorded stack names a prerequisite tip
@@ -1068,9 +1117,55 @@ mod tests {
         let tips: BTreeMap<String, String> = [("a".to_string(), "tipA".to_string())].into_iter().collect();
         let member_stacks = vec![unstacked("a"), stacked("b", "a", "some-other-tip")];
 
-        let dependents = stacked_dependents_from(&member_stacks, &tips, &["a".to_string()]);
+        let dependents = stacked_dependents_from(&member_stacks, &tips, &Default::default(), &["a".to_string()]);
 
         assert!(dependents.is_empty());
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// B's branch is built on A's commit with no `stack` declared anywhere: ejecting A must
+    /// still take B, and name A; an unrelated X stays.
+    #[test]
+    fn a_branch_containing_the_ejected_members_commit_cascades_without_a_declared_stack() {
+        let dir = testkit::TempDir::new("spira-lc-containment");
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["config", "user.email", "t@example.invalid"]);
+        git(&dir, &["config", "user.name", "t"]);
+        let commit = |f: &str| {
+            std::fs::write(dir.join(f), f).unwrap();
+            git(&dir, &["add", f]);
+            git(&dir, &["commit", "-q", "-m", f]);
+            git(&dir, &["rev-parse", "HEAD"])
+        };
+        let base = commit("base");
+        git(&dir, &["checkout", "-q", "-b", "a"]);
+        let tip_a = commit("a");
+        git(&dir, &["checkout", "-q", "-b", "b"]);
+        let tip_b = commit("b");
+        git(&dir, &["checkout", "-q", "-b", "x", &base]);
+        let tip_x = commit("x");
+
+        let members = vec![("a".to_string(), tip_a.clone()), ("b".to_string(), tip_b.clone()), ("x".to_string(), tip_x.clone())];
+        let tips: BTreeMap<String, String> = members.iter().cloned().collect();
+        let contained = containment_in_repo(&dir, &base, &members);
+        let member_stacks = vec![unstacked("a"), unstacked("b"), unstacked("x")];
+
+        let dependents = stacked_dependents_from(&member_stacks, &tips, &contained, &["a".to_string()]);
+        assert_eq!(dependents, vec![("b".to_string(), "a".to_string())]);
+        assert!(stacked_dependents_from(&member_stacks, &tips, &contained, &["x".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn the_prerequisite_is_named_in_the_returned_evidence() {
+        let mut steps = vec![cascade_step("bead", "bead_id", "b", 1, String::new(), "REWORK", "bead", "Returned", "IN_DELIVERY", &serde_json::json!({"Returned": {"reason": "base-withdrawn"}}), "t", 0)];
+        name_prerequisites(&mut steps, &[("b".to_string(), "a".to_string())]);
+        assert_eq!(steps[0].event.evidence["stacked_on"], "a");
+        assert!(steps[0].event.evidence.get("Returned").is_some());
     }
 }
 
@@ -1193,4 +1288,5 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
         lifecycle::Refusal::NotHolder { .. } => "NotHolder".to_string(),
     }
+
 }
