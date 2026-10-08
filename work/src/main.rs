@@ -19,7 +19,9 @@ use std::time::Duration;
 
 const CANNOT_TELL: i32 = work::CANNOT_TELL;
 const REFUSED: i32 = work::REFUSED;
-const TIMEOUT: Duration = Duration::from_secs(30);
+const TIMEOUT: Duration = Duration::from_secs(5);
+// batch-job: a reply under batch load can lag seconds; the read retries in slices up to this total.
+const REPLY_WAIT: Duration = Duration::from_secs(30);
 const READ_SLICE: Duration = Duration::from_secs(2);
 // batch-job: a lane verb's broker-run tool is bounded at 300 s by the broker; wait just past it.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
@@ -68,7 +70,7 @@ fn main() {
 
     // A harness tool (a groomer sweep, a queue step) reads the whole graph; the broker bounds
     // it at 300 s, so this client waits that long for those and no longer.
-    let wait = if work::LANE_VERBS.contains(&verb.as_str()) { TOOL_TIMEOUT } else { TIMEOUT };
+    let wait = if work::LANE_VERBS.contains(&verb.as_str()) { TOOL_TIMEOUT } else { REPLY_WAIT };
     match send(&req, wait) {
         Ok((code, out)) => {
             if !out.is_empty() {
