@@ -298,8 +298,6 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     (0, serde_json::to_string_pretty(&out).unwrap())
 }
 
-const SINCE_BY_KEY_MAX: usize = 1000;
-
 pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
         return cmd_list_delivery(args, conn);
@@ -307,18 +305,23 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--batches") {
         return cmd_list_batches(conn);
     }
-    let mut clauses = Vec::new();
-    if let Some(state) = flag(args, "--state") {
-        clauses.push(format!("state = '{}'", rows::escape(&state)));
-    }
+    let state = flag(args, "--state");
+    let hold = flag(args, "--hold");
     // --hold <kind>: beads currently carrying that hold (design §3.1: "Holds are a
     // dimension, not states"), e.g. every poison-held bead regardless of its underlying
     // state — the bulk query CHECK 4's stale-clear sweep needs instead of a per-bead
     // lc_holds call against every dispatchable bead.
-    if let Some(kind) = flag(args, "--hold") {
-        clauses.push(format!("JSON_CONTAINS(holds, '\"{}\"')", rows::escape(&kind)));
-    }
-    let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
+    let filters = |col: &str| -> String {
+        let mut c = Vec::new();
+        if let Some(st) = &state {
+            c.push(format!("{col}state = '{}'", rows::escape(st)));
+        }
+        if let Some(kind) = &hold {
+            c.push(format!("JSON_CONTAINS({col}holds, '\"{}\"')", rows::escape(kind)));
+        }
+        c.iter().map(|x| format!(" AND {x}")).collect()
+    };
+    let where_clause = filters("").replacen(" AND ", " WHERE ", 1);
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
@@ -328,38 +331,23 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
-    // Few rows: `since` by key, so the cost follows the rows returned. Many rows: one pass
-    // over the covering index beats dozens of large IN lists (measured 0.5 s vs 4.4 s at 12k
-    // beads / 100k events) (sp-jk7xgp).
-    let ids: Vec<String> = beads
-        .iter()
-        .filter_map(|b| b.get("bead_id").and_then(Value::as_str))
-        .map(|id| format!("'{}'", rows::escape(id)))
-        .collect();
-    let queries: Vec<String> = if ids.len() > SINCE_BY_KEY_MAX {
-        vec!["SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 GROUP BY lc_key, to_state".to_string()]
-    } else {
-        ids.chunks(500)
-            .map(|chunk| {
-                format!(
-                    "SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 AND lc_key IN ({}) GROUP BY lc_key, to_state",
-                    chunk.join(",")
-                )
-            })
-            .collect()
-    };
+    // One join, not an IN list per 500 beads or a per-row subquery: the covering index
+    // serves it in one pass whatever the result size (0.5 s vs 4.4 s at 12k beads / 100k
+    // events). The join keeps only each bead's current-state row.
+    let q = format!(
+        "SELECT e.lc_key, e.to_state, MAX(e.at) AS since FROM event e JOIN bead b ON b.bead_id = e.lc_key AND b.state = e.to_state WHERE e.machine = 'bead' AND e.applied = 1{} GROUP BY e.lc_key, e.to_state",
+        filters("b.")
+    );
     let mut since: std::collections::HashMap<(String, String), Value> = std::collections::HashMap::new();
-    for q in queries {
-        match conn.query(&q) {
-            Ok(r) => {
-                for row in r {
-                    let k = row.get("lc_key").and_then(Value::as_str).unwrap_or_default().to_string();
-                    let st = row.get("to_state").and_then(Value::as_str).unwrap_or_default().to_string();
-                    since.insert((k, st), row.get("since").cloned().unwrap_or(Value::Null));
-                }
+    match conn.query(&q) {
+        Ok(r) => {
+            for row in r {
+                let k = row.get("lc_key").and_then(Value::as_str).unwrap_or_default().to_string();
+                let st = row.get("to_state").and_then(Value::as_str).unwrap_or_default().to_string();
+                since.insert((k, st), row.get("since").cloned().unwrap_or(Value::Null));
             }
-            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
         }
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
     for b in beads.iter_mut() {
         let key = (

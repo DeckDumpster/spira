@@ -121,4 +121,7 @@ done
 since_ok="$(spira-lc list --state READY | python3 -c 'import json,sys; print(sum(1 for b in json.load(sys.stdin) if b.get("since") is not None) > 0)')"
 is "since is filled from the event log" True "$since_ok"
 
+spira-lc list --state READY --hold poison >/dev/null 2>&1
+wantrc "list with both filters is valid SQL" 0 $?
+
 tl_summary
