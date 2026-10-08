@@ -82,6 +82,9 @@ impl Git for RealGit {
     fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool {
         ok(git(repo).args(["merge-base", "--is-ancestor", a, b]).stderr(Stdio::null()))
     }
+    fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String> {
+        stdout_of(git(repo).args(["merge-base", a, b]).stderr(Stdio::null())).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
     fn update_ref(&self, repo: &Path, refname: &str, new: &str, old: Option<&str>) -> bool {
         let mut c = git(repo);
         c.args(["update-ref", refname, new]);

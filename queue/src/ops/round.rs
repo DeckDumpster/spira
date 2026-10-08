@@ -527,10 +527,16 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         w.err(format!("queue.sh {label}: {id} is not a member of round {batch} (members: {})", ids.join(" ")));
         return FAIL;
     }
-    let survivors: Vec<Member> = members.iter().filter(|m| m.id != id).cloned().collect();
     let wt = worktree_of(&kv);
     let old_head = kv.get("head").unwrap_or("").to_string();
     let base_sha = kv.get("base").unwrap_or("").to_string();
+    let ejected_tip = members.iter().find(|m| m.id == id).map(|m| m.tip.clone()).unwrap_or_default();
+    let stacked: Vec<Member> = members
+        .iter()
+        .filter(|m| m.id != id && w.git.merge_base(&path, &ejected_tip, &m.tip).is_some_and(|mb| !w.git.is_ancestor(&path, &mb, &base_sha)))
+        .cloned()
+        .collect();
+    let survivors: Vec<Member> = members.iter().filter(|m| m.id != id && !stacked.iter().any(|s| s.id == m.id)).cloned().collect();
 
     let mut new_head = old_head.clone();
     if rebuild && !survivors.is_empty() {
@@ -544,21 +550,25 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
     }
 
     let cause = EjectCause::decide(red, harness_fault, suites);
-    w.lib.bead_reopen(id, cause.as_str(), suites);
-    lc_return(w, id);
-    w.lib.release_claim(id);
-    let why = bounded_text(&reason);
-    match lc_cas(w, batch, |s, v| w.lc.eject_member(batch, id, s, v, LC_ACTOR, &why)) {
-        Ok(()) => {}
-        Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc eject-member refused for {id} (rc={rc}): {out}")),
+    for (bead, why_text, own_cause) in std::iter::once((id, reason.clone(), cause)).chain(stacked.iter().map(|m| (m.id.as_str(), format!("stacked on {id}"), cause))) {
+        w.lib.bead_reopen(bead, own_cause.as_str(), suites);
+        lc_return(w, bead);
+        w.lib.release_claim(bead);
+        let why = bounded_text(&why_text);
+        if let Err((rc, out)) = lc_cas(w, batch, |s, v| w.lc.eject_member(batch, bead, s, v, LC_ACTOR, &why)) {
+            w.err(format!("queue.sh {label}: spira-lc eject-member refused for {bead} (rc={rc}): {out}"));
+        }
+        let mut comment = format!("Ejected from round {batch} in {}.\n\n{why_text}", c.r.name);
+        comment.push_str("\n\nFix the failing issue and re-certify before rejoining the queue.");
+        if !suites.is_empty() {
+            comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
+        }
+        w.lib.comment(bead, &comment);
+        landing_log(&c.s.run, &format!("QUEUE ROUND-EJECT {} repo={} batch={batch} id={bead} cause={} reason={}", w.clock.now(), c.r.name, own_cause.as_str(), one_line(&why_text)));
+        if bead != id {
+            w.out(format!("queue.sh {label}: ejected {bead} from round {batch} (stacked on {id})"));
+        }
     }
-    let mut comment = format!("Ejected from round {batch} in {}.\n\n{reason}", c.r.name);
-    comment.push_str("\n\nFix the failing issue and re-certify before rejoining the queue.");
-    if !suites.is_empty() {
-        comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
-    }
-    w.lib.comment(id, &comment);
-    landing_log(&c.s.run, &format!("QUEUE ROUND-EJECT {} repo={} batch={batch} id={id} cause={} reason={}", w.clock.now(), c.r.name, cause.as_str(), one_line(&reason)));
 
     if survivors.is_empty() {
         let emptied = bounded_text(&format!("round emptied: {id} ejected — {reason}"));
@@ -575,7 +585,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
     set(&mut kv, "members", &render_members(&survivors));
     set(&mut kv, "head", &new_head);
     kv.remove("red");
-    let ejected = format!("{}{id} ", kv.get("ejected").unwrap_or(""));
+    let ejected = stacked.iter().fold(format!("{}{id} ", kv.get("ejected").unwrap_or("")), |acc, m| format!("{acc}{} ", m.id));
     set(&mut kv, "ejected", &ejected);
     set_phase(w, &mut kv, "opened");
     if save(w, label, &c, &kv).is_err() {
