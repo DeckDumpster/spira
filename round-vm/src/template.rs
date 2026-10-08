@@ -169,7 +169,14 @@ if [ -n "$toolchain" ] && [ ! -x "$CARGO_HOME/bin/rustc" ]; then
 fi
 export PATH="$CARGO_HOME/bin:$PATH"
 export SPIRA_HOME="$work/spira"
-export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml"
+mkdir -p "$work/.runtime/spira"
+cat > "$work/template-config.toml" <<TEMPLATECFG
+[spira]
+run = "$work/.runtime/spira"
+releases = "$work/.runtime/releases"
+home_repo = "$work"
+TEMPLATECFG
+export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml:$work/template-config.toml"
 if [ ! -x "$CARGO_HOME/bin/sccache" ]; then
     echo "round-vm template: installing sccache (webdav backend) into $CARGO_HOME/bin" >&2
     cargo install sccache --locked --no-default-features --features webdav --quiet
@@ -532,8 +539,9 @@ mod tests {
 
     #[test]
     fn the_script_names_the_one_config_source_before_testenv_runs() {
-        let toml = TEMPLATE_SCRIPT.find("export SPIRA_TOML=\"$work/spira-config/tests/fixtures/complete.toml\"").expect("testenv refuses without SPIRA_TOML");
+        let toml = TEMPLATE_SCRIPT.find("export SPIRA_TOML=\"$work/spira-config/tests/fixtures/complete.toml:$work/template-config.toml\"").expect("testenv refuses without SPIRA_TOML");
         assert!(toml < TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap());
+        assert!(TEMPLATE_SCRIPT.find("cat > \"$work/template-config.toml\"").unwrap() < toml);
     }
 
     #[test]
