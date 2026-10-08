@@ -109,7 +109,12 @@ fn ranked_part(select_head: &str, partition: &str, cond: &str, group_by: &str, h
 /// Same folds, exclusions, actor filter and since-bound as [`events_sql`], unaggregated: one
 /// `(event_type, new_value, issue_id, unix-timestamp)` row per event. Clustering needs the
 /// timestamps an aggregated `COUNT(*)` throws away.
-pub fn event_rows_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
+pub fn event_rows_sql(since_formatted: Option<&str>, causes: &[String], recorded: &[String]) -> String {
+    let recorded_clause = if recorded.is_empty() {
+        String::new()
+    } else {
+        format!(" AND issue_id NOT IN ({})", deliberate_causes_sql_list(recorded))
+    };
     let conflict_fold = "(event_type = 'requeued' AND new_value = 'merge-conflict')";
     let rebase_aeon_fold = "(event_type = 'requeued' AND new_value = 'rebase-conflict')";
     let eviction_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race')";
@@ -126,7 +131,7 @@ pub fn event_rows_sql(since_formatted: Option<&str>, causes: &[String]) -> Strin
     let sc = since_clause(since_formatted);
 
     format!(
-        "SELECT event_type, COALESCE(new_value, ''), issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT {conflict_fold} AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT {rebase_aeon_fold} AND NOT {eviction_fold} AND NOT {prod_dirty_fold} AND NOT {unfinished_fold} AND NOT {reopen_timing_exclude} AND NOT {deliberate_fold} AND NOT {unjudged_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'rebase-conflict', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR {conflict_fold} OR {rebase_aeon_fold}) AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'eviction-race', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {eviction_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'prod-dirty', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {prod_dirty_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'unfinished-reason', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {unfinished_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'desc-changed-since-claim', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {desc_hash_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopened', 'unrecorded', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc}) ORDER BY 1, 2, 4"
+        "SELECT event_type, COALESCE(new_value, ''), issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT {conflict_fold} AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT {rebase_aeon_fold} AND NOT {eviction_fold} AND NOT {prod_dirty_fold} AND NOT {unfinished_fold} AND NOT {reopen_timing_exclude} AND NOT {deliberate_fold} AND NOT {unjudged_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'rebase-conflict', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR {conflict_fold} OR {rebase_aeon_fold}) AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'eviction-race', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {eviction_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'prod-dirty', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {prod_dirty_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'unfinished-reason', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {unfinished_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'desc-changed-since-claim', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE {desc_hash_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopened', 'unrecorded', issue_id, UNIX_TIMESTAMP(created_at) FROM events WHERE event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc}){recorded_clause} ORDER BY 1, 2, 4"
     )
 }
 
@@ -245,7 +250,7 @@ mod tests {
 
     #[test]
     fn event_rows_sql_is_unaggregated_and_keeps_the_exclusions_of_events_sql() {
-        let rows = event_rows_sql(Some("2023-11-14 22:13:20"), &causes());
+        let rows = event_rows_sql(Some("2023-11-14 22:13:20"), &causes(), &[]);
         assert!(!rows.contains("COUNT("));
         assert!(rows.contains("UNIX_TIMESTAMP(created_at)"));
         let agg = events_sql(Some("2023-11-14 22:13:20"), &causes());

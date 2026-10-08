@@ -221,11 +221,14 @@ impl World for Real {
     }
     fn census_event_rows_run_sql(&self, since: Option<i64>) -> Result<String, String> {
         let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
-        let query = crate::sql::event_rows_sql(since_formatted.as_deref(), &self.deliberate_cause_names());
+        let causes = self.deliberate_cause_names();
+        let fact_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &[]);
+        let recorded = self.recorded_cause_ids(since.filter(|&s| s > 0))?;
+        let bd_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &recorded);
         let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
         let mut last_stderr = String::new();
         for attempt in 1..=3 {
-            let (ok, out, err) = self.run_bd_sql(&query);
+            let (ok, out, err) = self.run_both_sql(&bd_query, &fact_query);
             if ok {
                 return Ok(out);
             }

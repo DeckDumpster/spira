@@ -107,7 +107,7 @@ fn cmd_sql(w: &dyn census::ports::World, args: &[String]) -> i32 {
             0
         }
         Some("event-rows") => {
-            println!("{}", census::sql::event_rows_sql(since_formatted(1).as_deref(), &w.deliberate_cause_names()));
+            println!("{}", census::sql::event_rows_sql(since_formatted(1).as_deref(), &w.deliberate_cause_names(), &[]));
             0
         }
         Some("handwritten") => {
