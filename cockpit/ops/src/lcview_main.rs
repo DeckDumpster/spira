@@ -2,8 +2,9 @@
 //! tools only: `spira-lc list` (state), `work list --json` (titles, priority), the landing ref's
 //! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
-use cockpit_ops::lcview::{own_ids, render, view, Meta, Row, Snapshot};
+use cockpit_ops::lcview::{own_ids, render, tail_lines, view, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,17 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
 
 fn num(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+}
+
+fn read_tail(path: &std::path::Path) -> Option<Tail> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let meta = f.metadata().ok()?;
+    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+    let start = meta.len().saturating_sub(TAIL_BYTES);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    f.take(TAIL_BYTES).read_to_end(&mut buf).ok()?;
+    Some(Tail { lines: tail_lines(&buf, start > 0, 2), mtime })
 }
 
 fn gather() -> Snapshot {
@@ -87,6 +99,13 @@ fn gather() -> Snapshot {
         s.errors.push(e);
         "?".into()
     });
+    if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
+        for r in s.rows.iter().filter(|r| r.state == "WORKING" && r.holder.is_some()) {
+            if let Some(t) = read_tail(&std::path::Path::new(run.trim()).join(format!("{}.log", r.id))) {
+                s.tails.insert(r.id.clone(), t);
+            }
+        }
+    }
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s
 }

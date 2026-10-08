@@ -34,6 +34,60 @@ pub struct Meta {
     pub priority: Option<i64>,
 }
 
+/// The tail of one aeon's session log: its last meaningful lines and the log's mtime.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Tail {
+    pub lines: Vec<String>,
+    pub mtime: i64,
+}
+
+pub const TAIL_BYTES: u64 = 64 * 1024;
+pub const STALE_WARN_S: i64 = 300;
+pub const STALE_BAD_S: i64 = 900;
+
+/// The last `n` assistant text / tool-call lines of stream-json `bytes`, oldest first. `partial`
+/// says the bytes start mid-file, so the first line may be cut and is dropped.
+pub fn tail_lines(bytes: &[u8], partial: bool, n: usize) -> Vec<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut lines = text.lines();
+    if partial {
+        lines.next();
+    }
+    let mut found: Vec<String> = Vec::new();
+    for l in lines.collect::<Vec<_>>().into_iter().rev() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(l) else { continue };
+        if v["type"] != "assistant" {
+            continue;
+        }
+        let Some(blocks) = v["message"]["content"].as_array() else { continue };
+        for b in blocks.iter().rev() {
+            let line = match b["type"].as_str() {
+                Some("text") => b["text"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "),
+                Some("tool_use") => {
+                    let input = &b["input"];
+                    let arg = ["command", "file_path", "pattern", "path", "description", "prompt"]
+                        .iter()
+                        .find_map(|k| input[*k].as_str())
+                        .unwrap_or("");
+                    format!("▸ {} {}", b["name"].as_str().unwrap_or("?"), arg.split_whitespace().collect::<Vec<_>>().join(" "))
+                        .trim_end()
+                        .to_string()
+                }
+                _ => continue,
+            };
+            if !line.is_empty() {
+                found.push(line);
+                if found.len() == n {
+                    found.reverse();
+                    return found;
+                }
+            }
+        }
+    }
+    found.reverse();
+    found
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
@@ -45,6 +99,8 @@ pub struct Snapshot {
     /// Bead ids whose own commit (`<id>:` subject, or a round's `merge <id> (`) is on the base.
     pub on_base: HashMap<String, String>,
     pub ceiling: usize,
+    /// Log tails of WORKING beads, by bead id; a bead with no log is absent.
+    pub tails: HashMap<String, Tail>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
 }
@@ -91,6 +147,10 @@ pub struct Item {
     pub age: String,
     pub note: String,
     pub state: String,
+    /// The aeon's last output lines, how old, and ok|warn|bad|none.
+    pub out: Vec<String>,
+    pub out_age: String,
+    pub out_level: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -178,6 +238,7 @@ pub fn view(s: &Snapshot) -> View {
         age: age(s.now - age_of),
         note,
         state: r.state.clone(),
+        ..Default::default()
     };
 
     let ready: Vec<&Row> = s.rows.iter().filter(|r| r.state == "READY").collect();
@@ -237,7 +298,22 @@ pub fn view(s: &Snapshot) -> View {
         .iter()
         .map(|r| {
             let lease = r.lease_until.map(|l| if l > s.now { format!("lease {}", age(l - s.now)) } else { "lease EXPIRED".into() }).unwrap_or_default();
-            item(r, r.since, lease)
+            let mut it = item(r, r.since, lease);
+            if r.holder.is_some() {
+                match s.tails.get(&r.id) {
+                    Some(t) if !t.lines.is_empty() => {
+                        let a = s.now - t.mtime;
+                        it.out = t.lines.clone();
+                        it.out_age = age(a);
+                        it.out_level = if a >= STALE_BAD_S { "bad" } else if a >= STALE_WARN_S { "warn" } else { "ok" }.into();
+                    }
+                    _ => {
+                        it.out = vec!["no output yet".into()];
+                        it.out_level = "none".into();
+                    }
+                }
+            }
+            it
         })
         .collect();
 
@@ -334,6 +410,16 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     let tw = w.saturating_sub(48).min(70);
     for i in &v.now_items {
         out.push(format!("  {CYN}{:<9}{R} {:<12} {} {:<tw$} {D}{} · {}{R}", cut(&i.who, 9), i.id, i.prio, cut(&i.title, tw), i.age, i.note));
+        let c = match i.out_level.as_str() {
+            "bad" => RED,
+            "warn" => YEL,
+            _ => D,
+        };
+        let age = if i.out_age.is_empty() { String::new() } else { format!(" {} ago", i.out_age) };
+        for (k, l) in i.out.iter().enumerate() {
+            let tail = if k + 1 == i.out.len() { age.as_str() } else { "" };
+            out.push(format!("      {c}{}{tail}{R}", cut(l, w.saturating_sub(8 + tail.chars().count()))));
+        }
     }
     out.push(format!("{B}PIPE{R}   {D}SUBMITTED waits on a gate · CERTIFIED on a round · IN_DELIVERY in one{R}"));
     for p in &v.pipe {
@@ -448,11 +534,12 @@ pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
     };
     h.push_str(&table("Now", "working — holder · bead · lease", &v.now_items, &|i| {
         format!(
-            "<tr><td class=who>{}</td><td><b>{}</b> <span class=dim>{}</span><br>{}</td><td class=dim>{}<br>{}</td></tr>",
+            "<tr><td class=who>{}</td><td><b>{}</b> <span class=dim>{}</span><br>{}{}</td><td class=dim>{}<br>{}</td></tr>",
             esc(&i.who),
             esc(&i.id),
             esc(&i.prio),
             esc(&i.title),
+            out_html(i),
             esc(&i.age),
             esc(&i.note)
         )
@@ -487,12 +574,22 @@ pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
     h
 }
 
+fn out_html(i: &Item) -> String {
+    if i.out.is_empty() {
+        return String::new();
+    }
+    let age = if i.out_age.is_empty() { String::new() } else { format!(" · {} ago", esc(&i.out_age)) };
+    let lines = i.out.iter().map(|l| esc(&cut(l, 140))).collect::<Vec<_>>().join("<br>");
+    format!("<div class='out {}'>{lines}<small>{age}</small></div>", esc(&i.out_level))
+}
+
 const CSS: &str = ":root{--bg:#fff;--fg:#111;--dim:#6b7280;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--line:#e5e7eb}\
 @media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e5e7eb;--dim:#9ca3af;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--line:#1f2937}}\
 body{background:var(--bg);color:var(--fg);font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:12px 16px;max-width:900px}\
 header{font-size:15px;margin-bottom:8px}h2{font-size:14px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.05em}\
 section{border-top:1px solid var(--line);padding-top:4px}table{width:100%;border-collapse:collapse}td{padding:4px 6px 4px 0;vertical-align:top;border-bottom:1px solid var(--line)}\
 .num{text-align:right;font-weight:bold;width:3em}.who{color:#0891b2;width:6em}.dim{color:var(--dim)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}\
+.out{margin-top:2px;font-size:12px;word-break:break-word}.out.none,.out.ok{color:var(--dim)}.out.warn{color:var(--warn)}.out.bad{color:var(--bad)}\
 .banner{padding:6px 8px;border:1px solid var(--bad);border-radius:4px}.flow{display:flex;flex-wrap:wrap;gap:6px}\
 .stage{border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:5.5em;display:flex;flex-direction:column}.stage span{font-size:11px;color:var(--dim)}.stage b{font-size:20px}\
 footer{margin-top:14px;font-size:12px}";
@@ -585,6 +682,79 @@ mod tests {
         }
         assert!(pane.contains("DRIFT 1") && page.contains("1 bead(s) READY/REWORK"));
         assert!(page.contains(&format!("Next ({})", v.next_count)));
+    }
+
+    fn log_line(kind: &str, body: &str) -> String {
+        match kind {
+            "text" => format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"{body}"}}]}}}}"#),
+            _ => format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Bash","input":{{"command":"{body}"}}}}]}}}}"#),
+        }
+    }
+
+    fn working(tail: Option<Tail>) -> Snapshot {
+        let mut r = row("sp-w", "WORKING", 1);
+        r.holder = Some("aeon-guardian".into());
+        let mut s = snap(vec![r]);
+        if let Some(t) = tail {
+            s.tails.insert("sp-w".into(), t);
+        }
+        s
+    }
+
+    #[test]
+    fn tail_lines_takes_the_last_two_meaningful_lines_and_skips_noise() {
+        let log = [
+            r#"{"type":"system","subtype":"init"}"#.to_string(),
+            log_line("text", "first"),
+            log_line("text", "reading   the   file"),
+            r#"{"type":"user","message":{"content":[]}}"#.to_string(),
+            log_line("tool", "cargo test"),
+            "not json".to_string(),
+        ]
+        .join("\n");
+        assert_eq!(tail_lines(log.as_bytes(), false, 2), vec!["reading the file", "▸ Bash cargo test"]);
+    }
+
+    #[test]
+    fn tail_lines_drops_the_cut_first_line_of_a_partial_read() {
+        let log = format!("{}\n{}", &log_line("text", "cut")[10..], log_line("text", "whole"));
+        assert_eq!(tail_lines(log.as_bytes(), true, 2), vec!["whole"]);
+    }
+
+    #[test]
+    fn a_fresh_tail_shows_its_lines_and_age_in_pane_and_page() {
+        let s = working(Some(Tail { lines: vec!["one".into(), "two".into()], mtime: 100_000 - 120 }));
+        let v = view(&s);
+        let pane = plain(&render(&v, 120));
+        assert!(pane.contains("one\n      two 2m ago"), "{pane}");
+        assert_eq!(v.now_items[0].out_level, "ok");
+        let page = render_html(&v, None, 10);
+        assert!(page.contains("class='out ok'>one<br>two<small> · 2m ago"), "{page}");
+    }
+
+    #[test]
+    fn a_silent_aeon_goes_amber_at_five_minutes_and_red_at_fifteen() {
+        for (age_s, level, color) in [(299, "ok", D), (300, "warn", YEL), (899, "warn", YEL), (900, "bad", RED), (20 * 60, "bad", RED)] {
+            let v = view(&working(Some(Tail { lines: vec!["x".into()], mtime: 100_000 - age_s })));
+            assert_eq!(v.now_items[0].out_level, level, "{age_s}s");
+            assert!(render(&v, 120).iter().any(|l| l.starts_with(&format!("      {color}x"))), "{age_s}s");
+            assert!(render_html(&v, None, 10).contains(&format!("class='out {level}'")));
+        }
+    }
+
+    #[test]
+    fn a_missing_log_says_no_output_yet_not_an_error() {
+        let v = view(&working(None));
+        assert!(v.errors.is_empty());
+        assert!(plain(&render(&v, 120)).contains("no output yet"));
+        assert!(render_html(&v, None, 10).contains("no output yet"));
+    }
+
+    #[test]
+    fn a_working_row_without_a_holder_shows_no_output_line() {
+        let mut s = snap(vec![row("sp-w", "WORKING", 1)]);
+        s.tails.insert("sp-w".into(), Tail { lines: vec!["x".into()], mtime: 1 });
+        assert!(view(&s).now_items[0].out.is_empty());
     }
 
     #[test]
