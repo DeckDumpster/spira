@@ -9,6 +9,7 @@ pub mod ports;
 pub mod reap;
 pub mod real;
 pub mod seam;
+pub mod stale;
 pub mod sweep;
 pub mod terminal;
 
