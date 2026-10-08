@@ -333,6 +333,23 @@ impl World for Real {
         std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0)
     }
 
+    fn dolt_root_passwordless(&self, host: &str, port: u16) -> Option<bool> {
+        if !self.tcp_connect(host, port) {
+            return None;
+        }
+        let out = spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+            .args(["--host", host, "--port", &port.to_string(), "--user", "root", "--no-tls", "sql", "-q", "SELECT 1"])
+            .env("DOLT_CLI_PASSWORD", "")
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        if out.status.success() {
+            return Some(true);
+        }
+        let text = String::from_utf8_lossy(&out.stderr).to_lowercase() + &String::from_utf8_lossy(&out.stdout).to_lowercase();
+        text.contains("access denied").then_some(false)
+    }
+
     fn bd_first_id(&self, db: &Path) -> Option<String> {
         let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("-C")

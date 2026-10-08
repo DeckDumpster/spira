@@ -70,6 +70,9 @@ pub trait World {
     fn dolt_metrics_disabled(&self) -> bool;
     /// Files in `~/.dolt/eventsData` — every dolt CLI start scans them.
     fn dolt_events_count(&self) -> usize;
+    /// Whether `root` logs in to the server at `host:port` with an empty password; `None` when
+    /// the probe could not run (no dolt client, server unreachable).
+    fn dolt_root_passwordless(&self, host: &str, port: u16) -> Option<bool>;
 
     // ---- events probe ----
     /// The first bead id `bd -C <db> list --limit 1 --json` returns, or None.

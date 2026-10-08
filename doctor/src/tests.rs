@@ -34,6 +34,7 @@ pub struct Fake {
     pub store_meta: RefCell<BTreeMap<PathBuf, StoreMeta>>,
     pub active_units: RefCell<Vec<String>>,
     pub tcp_open: RefCell<bool>,
+    pub root_passwordless: RefCell<Option<bool>>,
     pub bd_first_id: RefCell<Option<String>>,
     pub bump_ok: RefCell<bool>,
     pub counter: RefCell<String>,
@@ -79,6 +80,7 @@ impl Default for Fake {
             store_meta: RefCell::new(BTreeMap::new()),
             active_units: RefCell::new(Vec::new()),
             tcp_open: RefCell::new(false),
+            root_passwordless: RefCell::new(None),
             bd_first_id: RefCell::new(None),
             bump_ok: RefCell::new(false),
             counter: RefCell::new("0".into()),
@@ -170,6 +172,9 @@ impl World for Fake {
     }
     fn dolt_metrics_disabled(&self) -> bool {
         *self.dolt_metrics_off.borrow()
+    }
+    fn dolt_root_passwordless(&self, _host: &str, _port: u16) -> Option<bool> {
+        *self.root_passwordless.borrow()
     }
     fn dolt_events_count(&self) -> usize {
         *self.dolt_events.borrow()
@@ -1150,4 +1155,25 @@ fn dolt_telemetry_check_is_silent_on_a_host_that_runs_no_dolt_server() {
     *f.dolt_metrics_off.borrow_mut() = false;
     *f.dolt_events.borrow_mut() = 500;
     assert!(check_dolt_telemetry(&f).is_empty());
+}
+
+fn root_fixture(state: Option<bool>) -> Fake {
+    let f = Fake::default();
+    f.env.borrow_mut().insert("SPIRA_DB".into(), "/db".into());
+    f.files.borrow_mut().push(PathBuf::from("/db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("/db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3307), ..Default::default() });
+    *f.root_passwordless.borrow_mut() = state;
+    f
+}
+
+#[test]
+fn doctor_flags_a_passwordless_dolt_root() {
+    let out = check_root_closed(&root_fixture(Some(true)));
+    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("passwordless")), "{out:?}");
+}
+
+#[test]
+fn doctor_accepts_a_closed_dolt_root_and_is_silent_when_it_cannot_probe() {
+    assert!(check_root_closed(&root_fixture(Some(false))).iter().all(|l| l.level == Level::Ok));
+    assert!(check_root_closed(&root_fixture(None)).is_empty());
 }
