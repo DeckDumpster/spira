@@ -13,6 +13,8 @@ pub type Stack = BTreeMap<String, String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub enum BeadState {
+    /// A container (an epic): never claimable, never READY; bd's open/closed is its lifecycle.
+    Open,
     Ready,
     Working,
     Submitted,
@@ -34,6 +36,7 @@ impl BeadState {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            BeadState::Open => "OPEN",
             BeadState::Ready => "READY",
             BeadState::Working => "WORKING",
             BeadState::Submitted => "SUBMITTED",
@@ -50,6 +53,7 @@ impl BeadState {
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
+            "OPEN" => BeadState::Open,
             "READY" => BeadState::Ready,
             "WORKING" => BeadState::Working,
             "SUBMITTED" => BeadState::Submitted,
@@ -473,6 +477,8 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
         },
+
+        BeadState::Open => illegal(row, kind),
 
         BeadState::Working => match kind {
             Release | HolderDead => {

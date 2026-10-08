@@ -12,6 +12,7 @@ pub struct BdRecord {
     pub status: BdStatus,
     pub labels: BTreeSet<String>,
     pub supersedes: Option<String>,
+    pub is_epic: bool,
 }
 
 /// Runs `bd -C <db> show <id> --json` and extracts exactly the fields the classifier reads.
@@ -52,7 +53,8 @@ fn parse(text: &str, id: &str) -> Result<BdRecord, String> {
         .and_then(|d| d.get("id"))
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    Ok(BdRecord { status, labels, supersedes })
+    let is_epic = item.get("issue_type").and_then(|v| v.as_str()) == Some("epic");
+    Ok(BdRecord { status, labels, supersedes, is_epic })
 }
 
 /// Lists every bead id labelled `repo:<name>` via `bd list --json --all`, scoped exactly the

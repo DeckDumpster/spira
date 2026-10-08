@@ -167,6 +167,24 @@ nowant "never LANDED by another repository's landing line" "terminal-landing-lin
 is "rows from the first run are untouched" "$TABLE_AFTER_FIRST" "$(dump | grep -vE '^(sp-stray|sp-gone-landed),')"
 TABLE_AFTER_UNKNOWN="$(dump)"
 
+# ── an epic is a container: OPEN, never READY; its child is READY ───────────────────
+testdb_seed <<JSONL
+{"id":"sp-epic","title":"a container","issue_type":"epic","status":"open","labels":["repo:demo"]}
+{"id":"sp-epic-kid","title":"its child","type":"task","status":"open","labels":["repo:demo"]}
+JSONL
+wantrc "the epic and its child seed" 0 $?
+lcfix_seed sp-epic READY "" || bail "could not seed sp-epic's stale READY row"
+OUT="$(install_populate)"; RC=$?
+wantrc "population with an epic exits 0" 0 "$RC"
+is "the child is READY" "READY" "$(lcfix_state sp-epic-kid)"
+is "a pre-existing READY epic row stays until a reclassify" "READY" "$(lcfix_state sp-epic)"
+spira-lc classify --every-bead --reclassify --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
+    --landstate-dir "$TMP/run/landstate" --queue-dir "$TMP/run/queue" >/dev/null 2>&1
+is "classify migrates the epic's row to OPEN" "OPEN" "$(lcfix_state sp-epic)"
+is "the epic is decided by the container rule" "epic-container" "$(reason sp-epic)"
+is "the child stays READY" "READY" "$(lcfix_state sp-epic-kid)"
+TABLE_AFTER_UNKNOWN="$(dump)"
+
 # ── loud: an unclassifiable bead fails the phase, named ─────────────────────────────
 testdb_seed <<JSONL
 {"id":"sp-twin","title":"two repo labels","type":"task","status":"open","labels":["repo:demo","repo:other"]}
