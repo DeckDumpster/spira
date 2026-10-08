@@ -80,9 +80,9 @@ impl Run<'_> {
     }
 
     /// `deploy.sh` of the predecessor (a rollback), with its local tarball when handed one.
-    fn deploy_prev(&self, prev: &str) -> Cmd {
+    fn deploy_prev(&self, prev: &str, tarball: Option<&Path>) -> Cmd {
         let mut c = self.deploy_sh();
-        if let Some(t) = &self.o.a.prev_tarball {
+        if let Some(t) = tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
         c.arg(prev)
@@ -784,7 +784,7 @@ fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
 
     r.phase("phase-C");
     println!("\nphase C — rollback: deploy {pt}, verify unit set restored");
-    let rc = h.show(&r.deploy_prev(pt));
+    let rc = h.show(&r.deploy_prev(pt, r.o.a.prev_tarball.as_deref()));
     r.is0(&format!("phase C: deploy.sh {pt} (rollback) exits 0"), rc);
     r.check_oneshots("phase C");
     let post = r.unit_set();
@@ -801,18 +801,32 @@ fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
 #[allow(clippy::too_many_arguments)]
 fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir: &Path, labels: &Labels, land_ref: &str) {
     let h = r.h;
-    // Reuse phase B's predecessor tarball.
-    let aged = match r.o.a.prev_tarball.clone().or(prev_tb).or_else(|| tarball_in(prev_dir)) {
-        Some(t) => {
-            r.ok(&format!("phase D: prev tarball already present: {}", t.file_name().unwrap_or_default().to_string_lossy()));
-            Some(t)
+    // The aged base is --aged-tag when given (a release many cuts behind), else phase B's predecessor.
+    let (pt, aged): (String, Option<PathBuf>) = match r.o.a.aged_tag.clone() {
+        Some(at) => {
+            let t = r.acquire(&at, r.o.a.aged_tarball.clone().as_deref(), &prev_dir.join("aged"));
+            r.is0(&format!("phase D: aged base tarball present ({at})"), if t.is_some() { 0 } else { 1 });
+            if let Some(tb) = &t {
+                r.stage_release_source(tb, &at);
+            }
+            (at, t)
         }
         None => {
-            let t = r.download(pt, prev_dir);
-            r.is0(&format!("phase D: gh release download {pt} (aged base)"), if t.is_some() { 0 } else { 1 });
-            t
+            let t = match r.o.a.prev_tarball.clone().or(prev_tb).or_else(|| tarball_in(prev_dir)) {
+                Some(t) => {
+                    r.ok(&format!("phase D: prev tarball already present: {}", t.file_name().unwrap_or_default().to_string_lossy()));
+                    Some(t)
+                }
+                None => {
+                    let t = r.download(pt, prev_dir);
+                    r.is0(&format!("phase D: gh release download {pt} (aged base)"), if t.is_some() { 0 } else { 1 });
+                    t
+                }
+            };
+            (pt.to_string(), t)
         }
     };
+    let pt = pt.as_str();
     if let Some(tb) = &aged {
         r.install_tarball(tb);
     }
@@ -832,8 +846,9 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     r.without_round_vm_host();
 
     // Seed: an open bead, a closed bead, two statutes.
-    h.run(&r.bd(&["create", "--title", "aged-install: open seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
+    let s1 = h.run(&r.bd(&["create", "--title", "aged-install: open seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
     let s2 = h.run(&r.bd(&["create", "--title", "aged-install: closed seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
+    let seeds: Vec<String> = [&s1, &s2].iter().filter_map(|o| extract_bead_id(&o.text)).collect();
     if let Some(id) = extract_bead_id(&s2.text) {
         h.run(&r.bd(&["close", &id, "--reason", "acceptance: closed for aged-install migration test"]));
     }
@@ -868,6 +883,12 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
             (Some(a), Some(b)) if b >= a => r.ok(&format!("phase D: memory count preserved through migration ({a} → {b})")),
             (Some(a), Some(b)) => r.bad("phase D: memory count preserved through migration", &format!("before={a} after={b} — rows lost")),
             (a, b) => r.bad("phase D: memory count preserved through migration", &format!("could not count memories: before={a:?} after={b:?}")),
+        }
+        for id in &seeds {
+            let hist = h.run(&r.tool("spira-lc").args(["history", id]));
+            r.check(&format!("phase D: pre-upgrade bead {id} has lifecycle rows after the aged upgrade"), hist.rc == 0 && !lifecycle_states(&hist.out).is_empty(), || {
+                format!("spira-lc history {id} rc={} — {}", hist.rc, tail(&hist.text, 3))
+            });
         }
         let doc = h.show(&r.tool("doctor"));
         r.is0("phase D: doctor no fatal after aged upgrade", doc);
@@ -919,7 +940,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     // A migration that prevents downgrade must make deploy REFUSE and name it
     // (law-pin-by-migration-count).
     println!("\nphase D — aged rollback: deploy {pt} (refuse-or-succeed)");
-    let rb = h.run(&r.deploy_prev(pt));
+    let rb = h.run(&r.deploy_prev(pt, aged.as_deref()));
     if rb.rc != 0 {
         if rb.text.to_lowercase().contains("migrat") {
             r.ok("phase D: rollback refused — names migration (law-pin-by-migration-count)");

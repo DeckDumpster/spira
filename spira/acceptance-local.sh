@@ -10,6 +10,7 @@
 # script in minutes rather than the 25-40 it costs to learn on a real VM.
 #
 # Usage: acceptance-local.sh <tree> [--predecessor <tag> [--predecessor-tarball <path>]]
+#                            [--aged-base <tag> [--aged-tarball <path>]]
 #        acceptance-local.sh start <round> <tree> [...same args...]
 #        acceptance-local.sh stop <round>
 #
@@ -52,6 +53,8 @@
 #     the container, so mounting <tree> itself would leave skew with no tags.
 #   Refused when <tree> has uncommitted changes: the tarball and the mounted
 #   scripts must be the same commit.
+# --aged-base <tag> (needs --predecessor) makes phase D install <tag> instead of the
+# predecessor, so the upgrade it proves spans every migration since that release.
 # 4. Report the same PASS/FAIL lines and exit code `release acceptance` always
 #    prints; on a phase A FAIL, copy its forensics snapshot out to the host.
 #
@@ -93,13 +96,17 @@ if [ "${1:-}" = start ]; then
     exit 0
 fi
 
-TREE=""; PRED=""; PRED_TARBALL=""
+TREE=""; PRED=""; PRED_TARBALL=""; AGED=""; AGED_TARBALL=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --predecessor)          PRED="${2:-}"; shift 2 || shift ;;
         --predecessor=*)        PRED="${1#--predecessor=}"; shift ;;
         --predecessor-tarball)  PRED_TARBALL="${2:-}"; shift 2 || shift ;;
         --predecessor-tarball=*) PRED_TARBALL="${1#--predecessor-tarball=}"; shift ;;
+        --aged-base)            AGED="${2:-}"; shift 2 || shift ;;
+        --aged-base=*)          AGED="${1#--aged-base=}"; shift ;;
+        --aged-tarball)         AGED_TARBALL="${2:-}"; shift 2 || shift ;;
+        --aged-tarball=*)       AGED_TARBALL="${1#--aged-tarball=}"; shift ;;
         -*) printf 'acceptance-local: unknown option: %s\n' "$1" >&2; exit 2 ;;
         *)  [ -z "$TREE" ] && TREE="$1" || { printf 'acceptance-local: too many arguments\n' >&2; exit 2; }
             shift ;;
@@ -108,6 +115,12 @@ done
 if [ -z "$TREE" ] || [ ! -d "$TREE" ]; then
     printf 'usage: acceptance-local.sh <tree> [--predecessor <tag> [--predecessor-tarball <path>]]\n' >&2
     exit 2
+fi
+if [ -n "$AGED" ] && [ -z "$PRED" ]; then
+    printf 'acceptance-local: --aged-base needs --predecessor <tag>\n' >&2; exit 2
+fi
+if [ -n "$AGED_TARBALL" ] && { [ -z "$AGED" ] || [ ! -f "$AGED_TARBALL" ]; }; then
+    printf 'acceptance-local: --aged-tarball needs --aged-base and an existing file\n' >&2; exit 2
 fi
 if [ -n "$PRED_TARBALL" ] && [ -z "$PRED" ]; then
     printf 'acceptance-local: --predecessor-tarball needs --predecessor <tag>\n' >&2; exit 2
@@ -281,6 +294,25 @@ if [ -n "$PRED" ]; then
         exit 2
     }
     _al_prev_args="--prev-tag '$PRED' --prev-tarball '$_al_cpred'"
+    if [ -n "$AGED" ]; then
+        if [ -z "$AGED_TARBALL" ]; then
+            mkdir -p "$_wd/aged"
+            # batch-job: downloads the aged-base release tarball
+            ( cd "$TREE" && gh release download "$AGED" --pattern 'spira-*.tar.gz' --dir "$_wd/aged" ) >&2 || {
+                printf 'acceptance-local: could not download %s with gh on the host\n' "$AGED" >&2
+                exit 2
+            }
+            AGED_TARBALL="$(ls "$_wd/aged"/spira-*.tar.gz 2>/dev/null | head -1)"
+            [ -n "$AGED_TARBALL" ] || { printf 'acceptance-local: %s has no spira-*.tar.gz asset\n' "$AGED" >&2; exit 2; }
+        fi
+        _al_caged="/tmp/aged-$(basename "$AGED_TARBALL")"
+        # batch-job: copies the aged-base tarball into the container
+        podman cp "$AGED_TARBALL" "$CNAME:$_al_caged" || {
+            printf 'acceptance-local: could not copy the aged-base tarball into the container\n' >&2
+            exit 2
+        }
+        _al_prev_args="$_al_prev_args --aged-tag '$AGED' --aged-tarball '$_al_caged'"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

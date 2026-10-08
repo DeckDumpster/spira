@@ -20,7 +20,8 @@ use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "usage: release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
                           [--notes-repo <path>] [--file-defects] [--bd-db <path>] [--agent <path>]
-                          [--waive-upgrade] [--tarball <path>] [--prev-tarball <path>]";
+                          [--waive-upgrade] [--tarball <path>] [--prev-tarball <path>]
+                          [--aged-tag <tag> [--aged-tarball <path>]]";
 
 /// The binaries every release must ship executable in `bin/` (phase A, and its positive control).
 pub const RELEASE_BINS: &[&str] = &["loom", "panel", "broker", "spira-supervise", "landing-pass"];
@@ -45,6 +46,8 @@ pub struct Args {
     pub agent: Option<String>,
     pub tarball: Option<PathBuf>,
     pub prev_tarball: Option<PathBuf>,
+    pub aged_tag: Option<String>,
+    pub aged_tarball: Option<PathBuf>,
     pub notes_repo: Option<PathBuf>,
 }
 
@@ -72,6 +75,8 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--scratch-repo" => scratch = Some(val()?.into()),
             "--tarball" => a.tarball = Some(val()?.into()),
             "--prev-tarball" => a.prev_tarball = Some(val()?.into()),
+            "--aged-tarball" => a.aged_tarball = Some(val()?.into()),
+            "--aged-tag" => a.aged_tag = Some(val()?).filter(|s| !s.is_empty()),
             "--prev-tag" => a.prev_tag = Some(val()?).filter(|s| !s.is_empty()),
             "--bd-db" => a.bd_db = Some(val()?.into()),
             "--agent" => a.agent = Some(val()?).filter(|s| !s.is_empty()),
@@ -96,6 +101,14 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     // take when no predecessor exists.
     if a.waive_upgrade {
         a.prev_tag = None;
+        a.aged_tag = None;
+        a.aged_tarball = None;
+    }
+    if a.aged_tag.is_some() && a.prev_tag.is_none() {
+        return Err("--aged-tag needs --prev-tag: it only replaces phase D's base".into());
+    }
+    if a.aged_tarball.is_some() && a.aged_tag.is_none() {
+        return Err("--aged-tarball needs --aged-tag".into());
     }
     Ok(a)
 }
