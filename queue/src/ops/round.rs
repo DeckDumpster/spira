@@ -140,6 +140,17 @@ fn assemble(w: &World, c: &Ctx, path: &Path, wt: &Path, base_sha: &str, members:
     w.git.rev_parse(wt, "HEAD").ok_or_else(|| "the round worktree has no HEAD".to_string())
 }
 
+/// A member that no longer merges onto the base goes back to REWORK on its own tip, so a
+/// builder claims it to rebase; left as it was, every later round would skip it again.
+fn return_to_rework(w: &World, m: &Member) -> String {
+    let Some((state, version)) = w.lc.bead_state(&m.id) else { return " (no lifecycle row — not returned to rework)".into() };
+    let kind = format!("{{\"GateRed\":{{\"tip\":\"{}\",\"reason\":\"no-rebase\"}}}}", m.tip);
+    match w.lc.bead_event(&m.id, &state, version.trim(), LC_ACTOR, &kind) {
+        Ok(()) => " — returned to rework".into(),
+        Err((rc, e)) => format!(" (return to rework refused rc={rc}: {})", one_line(&e)),
+    }
+}
+
 fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, worktree: Option<&Path>) -> i32 {
     let label = "round open";
     let text = match read_text(w, members_arg) {
@@ -228,8 +239,11 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
             merged.push(m);
         } else {
             w.git.merge_abort(&wt);
-            let why = if w.lib.base_conflict(&path, &base_sha, &m.tip) { "conflicts with base" } else { "conflicts with the round" };
-            skips.push(format!("{}: {why}", m.id));
+            if w.lib.base_conflict(&path, &base_sha, &m.tip) {
+                skips.push(format!("{}: conflicts with base{}", m.id, return_to_rework(w, &m)));
+            } else {
+                skips.push(format!("{}: conflicts with the round", m.id));
+            }
         }
     }
     for s in &skips {

@@ -174,6 +174,19 @@ fn open_skips_what_is_not_certified_or_does_not_merge() {
 }
 
 #[test]
+fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
+    let t = round_world();
+    t.git.merge_fail.borrow_mut().insert("tb".into());
+    t.lib.conflict_with_base.borrow_mut().insert("tb".into());
+    t.git.merge_fail.borrow_mut().insert("tc".into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("sp-b: conflicts with base — returned to rework") && o.contains("sp-c: conflicts with the round\n"), "{o}");
+    assert!(t.lc.has("event bead sp-b CERTIFIED 3 {\"GateRed\":{\"tip\":\"tb\",\"reason\":\"no-rebase\"}}"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.lc.has("event bead sp-c"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn open_admits_a_submitted_member_its_full_suite_certifies() {
     // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
     let t = round_world();

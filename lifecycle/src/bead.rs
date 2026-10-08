@@ -642,6 +642,17 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            GateRed { tip, reason } => {
+                if row.tip.as_deref() != Some(tip.as_str()) {
+                    return tip_mismatch(row, tip);
+                }
+                let mut new = row.clone();
+                new.state = BeadState::Rework;
+                new.gate_key = None;
+                new.reason = Some(reason.as_str().to_string());
+                new.version += 1;
+                Outcome::applied(new)
+            }
             BaseWithdrawn { prereq, tip } => {
                 if !base_withdrawn_applies(row, prereq, tip) {
                     return not_in_stack(row, prereq, tip);
@@ -659,7 +670,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 Outcome::applied(new)
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
-            | GateRed { .. } | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
+            | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => {
                 illegal(row, kind)
             }
@@ -1379,6 +1390,20 @@ mod tests {
             assert_eq!(out.row.state, BeadState::Rework);
             assert_eq!(out.row.reason.as_deref(), Some(reason.as_str()));
         }
+    }
+
+    #[test]
+    fn a_certified_bead_that_no_longer_merges_returns_to_rework_on_its_own_tip() {
+        let mut r = row(BeadState::Certified);
+        r.tip = Some("t1".into());
+        r.gate_key = Some("k".into());
+        let red = BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::NoRebase };
+        let out = apply(&r, &ev(BeadState::Certified, r.version, red));
+        assert!(out.applied);
+        assert_eq!((out.row.state, out.row.reason.as_deref(), out.row.gate_key.as_deref()), (BeadState::Rework, Some("no-rebase"), None));
+        let stale = BeadEventKind::GateRed { tip: "t0".into(), reason: GateRedReason::NoRebase };
+        let out = apply(&r, &ev(BeadState::Certified, r.version, stale));
+        assert!(matches!(out.refusal, Some(Refusal::TipMismatch { .. })));
     }
 
     #[test]
