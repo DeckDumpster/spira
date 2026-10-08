@@ -114,7 +114,10 @@ struct Tally {
     /// Beads classified without git evidence because their `repo:` label names a repository
     /// the config does not have (--every-bead only).
     unknown_repo: Vec<String>,
+    started: Option<std::time::Instant>,
 }
+
+const PROGRESS_EVERY: usize = 100;
 
 /// The repository a bead's own labels name: `Ok(None)` for a bead with no `repo:` label,
 /// `Err` naming the labels when it carries more than one.
@@ -155,7 +158,7 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         );
     }
 
-    let mut t = Tally::default();
+    let mut t = Tally { started: Some(std::time::Instant::now()), ..Tally::default() };
     let mut ctxs: std::collections::BTreeMap<String, RepoCtx> = std::collections::BTreeMap::new();
 
     if parsed.every_bead {
@@ -255,6 +258,13 @@ fn classify_one(
     repo: Option<&str>,
 ) {
     t.beads += 1;
+    if t.beads % PROGRESS_EVERY == 0 {
+        let secs = t.started.map_or(0.001, |s| s.elapsed().as_secs_f64()).max(0.001);
+        eprintln!(
+            "classify: {} beads seen, {} classified, {} skipped, {:.1} beads/s",
+            t.beads, t.classified, t.skipped, t.beads as f64 / secs
+        );
+    }
     let existing = match rows::fetch_bead(conn, id) {
         Ok(Some(row)) if parsed.reclassify => Some(row),
         Ok(Some(_)) => {
