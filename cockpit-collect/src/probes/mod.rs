@@ -630,8 +630,14 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
     // A work bead's state is the lifecycle row's (design §3.4); `None` renders `?`.
     let lc_rows = lc::state_index();
     match &lc_rows {
-        None => push(&mut out, "SP_POISON", "?"),
-        Some(lc) => push(&mut out, "SP_POISON", poison_count(lc).to_string()),
+        None => {
+            push(&mut out, "SP_POISON", "?");
+            push(&mut out, "SP_HOLD_ASK", "?");
+        }
+        Some(lc) => {
+            push(&mut out, "SP_POISON", poison_count(lc).to_string());
+            push(&mut out, "SP_HOLD_ASK", ask_hold_count(lc).to_string());
+        }
     }
 
     let scope = &cfg.scope_label;
@@ -1278,6 +1284,12 @@ pub fn poison_count(lc: &HashMap<String, lc::Row>) -> usize {
     lc.values().filter(|r| r.held("poison") && !r.terminal()).count()
 }
 
+/// SP_HOLD_ASK: work beads held on an ask the operator has yet to answer, not yet over.
+/// Its own figure: wait, operator and poison holds are not decisions awaiting the operator.
+pub fn ask_hold_count(lc: &HashMap<String, lc::Row>) -> usize {
+    lc.values().filter(|r| r.held("ask") && !r.terminal()).count()
+}
+
 /// SP_OPEN / SP_INPROG / SP_NEEDSOP over the plan's work items: a work bead's state is its
 /// lifecycle row's — open is "not over" (not terminal), in progress is WORKING. An epic has
 /// no lifecycle row: it is a coordination bead, whose bd status is its only state
@@ -1382,6 +1394,19 @@ mod tests {
     #[test]
     fn poison_counts_live_poison_holds() {
         let lc = lcmap(&[("a", "REWORK", &["poison"]), ("b", "LANDED", &["poison"]), ("c", "READY", &["wait"])]);
+        assert_eq!(poison_count(&lc), 1);
+    }
+
+    #[test]
+    fn ask_holds_are_counted_apart_from_other_hold_kinds() {
+        let lc = lcmap(&[
+            ("a", "REWORK", &["ask"]),
+            ("b", "LANDED", &["ask"]),
+            ("c", "READY", &["wait"]),
+            ("d", "READY", &["poison"]),
+            ("e", "READY", &["operator"]),
+        ]);
+        assert_eq!(ask_hold_count(&lc), 1);
         assert_eq!(poison_count(&lc), 1);
     }
 
