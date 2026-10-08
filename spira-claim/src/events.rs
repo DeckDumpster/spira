@@ -98,11 +98,20 @@ pub fn is_no_verdict(cause: &str) -> bool {
     c == NO_VERDICT_CAUSE || c.starts_with("gate-no-verdict:")
 }
 
+/// The cause recorded when the gate exits base-red (rc 76): the base itself fails, so the
+/// gate judged nothing about the bead and the attempt is never charged.
+pub const BASE_RED_CAUSE: &str = "gate-base-red";
+
+pub fn is_base_red(cause: &str) -> bool {
+    let c = cause.trim();
+    c == BASE_RED_CAUSE || c.starts_with("gate-base-red:")
+}
+
 /// Classify a cause string. Order matters: explicit table first, then patterns, then the
 /// default (Judged — an unknown cause is more likely a new failure than a new exemption).
 pub fn classify(cause: &str) -> ReturnClass {
     let c = cause.trim();
-    if is_no_verdict(c) {
+    if is_no_verdict(c) || is_base_red(c) {
         return ReturnClass::HarnessReturn;
     }
     match c {
@@ -268,7 +277,7 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
             {
                 if let Some(at) = open.take() {
                     attempt_log.push(Attempt { claimed_at: at, outcome: AttemptOutcome::Exempt(c.clone()) });
-                    spent_by_no_verdict = is_no_verdict(c);
+                    spent_by_no_verdict = is_no_verdict(c) || is_base_red(c);
                 }
             }
             _ => {}
@@ -575,6 +584,32 @@ mod tests {
         assert_eq!(l.requeues, 0);
         let one_session = rows(&[("claimed", ""), ("requeued", nv), ("requeued", nv), ("requeued", nv)]);
         assert_eq!(fold(B, &one_session).attempts, 0);
+    }
+
+    #[test]
+    fn three_base_red_gate_exits_charge_nothing() {
+        let br = BASE_RED_CAUSE;
+        for cause in [br.to_string(), format!("{br}:base-red")] {
+            let r = rows(&[
+                ("claimed", ""),
+                ("reopen", &cause),
+                ("claimed", ""),
+                ("requeued", &cause),
+                ("claimed", ""),
+                ("reopen", &cause),
+            ]);
+            let l = fold(B, &r);
+            assert_eq!(l.attempts, 0, "{l:#?}");
+            assert_eq!(l.requeues, 0, "{l:#?}");
+        }
+        assert_eq!(classify("gate-base-red"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("gate-red"), ReturnClass::Judged);
+    }
+
+    #[test]
+    fn a_base_red_run_then_its_close_forgives_nothing_earlier() {
+        let r = rows(&[("claimed", ""), ("claimed", ""), ("requeued", BASE_RED_CAUSE), ("closed", "")]);
+        assert_eq!(fold(B, &r).attempts, 1);
     }
 
     #[test]
