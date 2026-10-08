@@ -123,6 +123,7 @@ is "list-all returns every row" "$((ROWS + 1))" "$(wc -l < "$TMP/all.out" | tr -
 want "the planted WORKING row with no holder is in the read" "sp-planted	WORKING	" "$(cat "$TMP/all.out")"
 plan="$(root_sql --use-db spira_lifecycle sql -q "EXPLAIN SELECT bead_id, state, holder FROM bead" -r csv)"
 is "the read plans as one scan row over bead" "1,SIMPLE,bead" "$(printf '%s\n' "$plan" | sed -n 2p | cut -d, -f1-3)"
+for q in "EXPLAIN SELECT bead_id, state, holder FROM bead" "EXPLAIN FORMAT=TREE SELECT bead_id FROM bead" "DESCRIBE PLAN SELECT bead_id FROM bead"; do echo "# DBG [$q]"; root_sql --use-db spira_lifecycle sql -q "$q" | sed "s/^/# DBG /"; done
 case "$plan" in
     *[Jj]oin*|*Subquery*) bad "the consistency read plans a join or subquery: $plan" ;;
     *) ok "the consistency read is a single-table scan, no join or subquery" ;;
