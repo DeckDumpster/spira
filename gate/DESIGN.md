@@ -238,6 +238,18 @@ The meter is armed as soon as the repository resolves, so the early refusals (co
 them) now write a gate.log row. The bash armed it later and those refusals were invisible in
 the log (law-absence-needs-a-positive-control).
 
+### The verdict is the set of results (sp-9yumzh)
+
+A gate string that is a plain `&&` chain of `bash`, `"$VAR"` and `{ }` steps is run by
+`real.rs` through `compose::run_all`: every step runs, each prints `gate-step <ok|RED> rc=<n> :: <unit>`,
+and the exit is the first non-zero status (a step's 75 wins). A red fence no longer stops the
+suites step. Every fence and every suite is a unit (`parse::red_units`); attribution judges
+each against the base on that unit. A branch whose every red is red on the base too is
+**PASS**, the shared units listed as `inherited, not judged` with the base's output; a branch
+with any unit the base is green on is `FAIL branch-red` naming its own units and the inherited
+ones. `BASE_FAIL base-red` remains only where a red names no unit. Unit mode runs its build and
+test phases after a red fence for the same reason.
+
 ### Attribution (`parse::attribute`; per suite since sp-hh5h0)
 
 **Each red is judged against the base on that suite.** A base trial that exited 0 is not

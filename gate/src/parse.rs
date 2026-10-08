@@ -173,6 +173,41 @@ pub fn suites_step_ran(out: &str) -> bool {
         || !ran_suites(out).is_empty()
 }
 
+/// The `gate-step <ok|RED> rc=<n> :: <unit>` lines [`compose::run_all`](crate::compose::run_all)
+/// prints: each step's unit and whether it was red, in order.
+pub fn step_units(out: &str) -> Vec<(String, bool)> {
+    out.lines()
+        .filter_map(|l| {
+            let rest = l.trim().strip_prefix("gate-step ")?;
+            let (head, unit) = rest.split_once(" :: ")?;
+            let unit = unit.trim();
+            (!unit.is_empty()).then(|| (unit.to_string(), head.starts_with("RED")))
+        })
+        .collect()
+}
+
+/// Every independent unit that is red in `out`: red suites, red fence steps (the suites step
+/// only when it named no suite), and unit phases that failed.
+pub fn red_units(out: &str) -> Vec<String> {
+    let mut units = red_suites(out);
+    let named = !units.is_empty();
+    for (u, red) in step_units(out) {
+        if red && !(named && u == "suites") && !units.contains(&u) {
+            units.push(u);
+        }
+    }
+    for l in out.lines() {
+        let Some(name) = l.trim().strip_prefix("gate: phase '").and_then(|r| r.split('\'').next()) else {
+            continue;
+        };
+        let u = format!("phase:{name}");
+        if !units.contains(&u) {
+            units.push(u);
+        }
+    }
+    units
+}
+
 /// Whose fault a failed branch trial is (`gate_attribute`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attribution {
@@ -185,11 +220,12 @@ pub enum Attribution {
 /// `base_rc` is only read when `base_ran`. `absent_on_base`: branch reds whose suite file
 /// the base does not have — the branch's own by construction.
 ///
-/// EACH RED IS JUDGED AGAINST THE BASE ON THAT SUITE (sp-hh5h0). A branch red is the
-/// branch's when the base ran that suite and it was not red there, or the base lacks it. A
-/// branch red the base never ran is not evidence either way: base-untestable, never
-/// branch-red on a base that merely did not look. Only when every branch red is red on the
-/// base too does the base's own rule apply (all timeouts → base-timeout, else base-red).
+/// EACH RED IS JUDGED AGAINST THE BASE ON ITS OWN UNIT (sp-hh5h0; every fence and suite is a
+/// unit). A branch red is the branch's when the base ran that unit and it was not red there,
+/// or the base lacks it. A branch red the base never ran is not evidence either way:
+/// base-untestable, never branch-red on a base that merely did not look. Only when every
+/// branch red is red on the base too does the base's own rule apply (all timeouts →
+/// base-timeout, else base-red: the caller subtracts those units rather than holding the branch).
 pub fn attribute(
     branch_out: &str,
     base_ran: bool,
@@ -200,21 +236,38 @@ pub fn attribute(
     if !base_ran {
         return Attribution::BaseUntestable;
     }
-    let branch_reds = red_suites(branch_out);
-    let base_reds = red_suites(base_out);
+    let branch_reds = red_units(branch_out);
+    let base_reds = red_units(base_out);
     if branch_reds.is_empty() {
-        // A red that names no suite (a fence, a unit phase): judged on the command whole.
+        // A red that names no unit (a legacy string, an unnamed phase): judged on the command whole.
         if base_rc == 0 {
             return Attribution::BranchRed("-".into());
         }
     } else {
         let base_ran_set = ran_suites(base_out);
-        if let Some(s) = branch_reds.iter().find(|s| {
-            absent_on_base.contains(s) || (base_ran_set.contains(s) && !base_reds.contains(s))
-        }) {
+        let base_steps = step_units(base_out);
+        let own = |u: &String| {
+            if absent_on_base.contains(u) {
+                return Some(true);
+            }
+            if base_reds.contains(u) {
+                return Some(false);
+            }
+            if u.ends_with(".sh") {
+                return base_ran_set.contains(u).then_some(true);
+            }
+            if u.starts_with("phase:") {
+                return (base_rc == 0).then_some(true);
+            }
+            if base_steps.is_empty() {
+                return (base_rc == 0).then_some(true);
+            }
+            Some(true)
+        };
+        if let Some(s) = branch_reds.iter().find(|u| own(u) == Some(true)) {
             return Attribution::BranchRed(s.clone());
         }
-        if branch_reds.iter().any(|s| !base_reds.contains(s)) {
+        if branch_reds.iter().any(|u| own(u).is_none()) {
             return Attribution::BaseUntestable;
         }
     }
@@ -239,6 +292,24 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    const NONE: &[String] = &[];
+    const STEPS_BASE: &str = "gate-step RED rc=1 :: spira-lint\ngate-step ok rc=0 :: build-fence\n  test-s1.sh RED rc=1";
+
+    #[test]
+    fn a_unit_red_on_both_is_inherited_and_the_branchs_own_is_named() {
+        let branch = "gate-step RED rc=1 :: spira-lint\ngate-step RED rc=1 :: lifecycle-guard\n  test-s1.sh RED rc=1\n  test-s2.sh RED rc=1";
+        assert_eq!(attribute(branch, true, 1, STEPS_BASE, NONE), Attribution::BranchRed("lifecycle-guard".into()));
+        assert_eq!(red_units(branch), vec!["test-s1.sh", "test-s2.sh", "spira-lint", "lifecycle-guard"]);
+        let inherited = "gate-step RED rc=1 :: spira-lint\n  test-s1.sh RED rc=1";
+        assert_eq!(attribute(inherited, true, 1, STEPS_BASE, NONE), Attribution::BaseRed("test-s1.sh".into()));
+    }
+
+    #[test]
+    fn a_fence_red_does_not_hide_the_suites_that_ran() {
+        let out = "gate-step RED rc=1 :: lifecycle-guard\n  test-s2.sh RED rc=1\ngate-step RED rc=1 :: suites";
+        assert_eq!(red_units(out), vec!["test-s2.sh", "lifecycle-guard"]);
+    }
+
     use super::*;
 
     #[test]
@@ -333,7 +404,7 @@ mod tests {
         assert_eq!(harness_fault_detail("nothing"), None);
     }
 
-    const NONE: &[String] = &[];
+
 
     #[test]
     fn attribution_base_untestable_when_the_base_did_not_run() {

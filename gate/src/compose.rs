@@ -392,6 +392,78 @@ pub fn gate_string(comp: &Composition, gate: &str) -> (String, bool) {
     (out, dropped)
 }
 
+/// Top-level `&&` elements of a gate string, or `None` when any element is not a `gate.steps`
+/// step (a `bash` script, a quoted tool variable, a `{ }` group) or the string chains with
+/// anything but `&&`: such a string keeps its own short-circuit semantics.
+fn chain_steps(cmd: &str) -> Option<Vec<String>> {
+    let (mut steps, mut cur, mut depth) = (Vec::new(), String::new(), 0i32);
+    let c: Vec<char> = cmd.chars().collect();
+    let mut i = 0;
+    while i < c.len() {
+        match c[i] {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '&' if depth == 0 && c.get(i + 1) == Some(&'&') => {
+                steps.push(std::mem::take(&mut cur));
+                i += 2;
+                continue;
+            }
+            '|' | ';' | '\n' if depth == 0 => return None,
+            _ => {}
+        }
+        cur.push(c[i]);
+        i += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    steps.push(cur);
+    let steps: Vec<String> = steps.into_iter().map(|s| s.trim().to_string()).collect();
+    let ok = |s: &String| s.starts_with("bash ") || s.starts_with("\"$") || s.starts_with("{ ");
+    (steps.len() > 1 && steps.iter().all(ok)).then_some(steps)
+}
+
+/// The unit a step reports under: the fence it runs, or `suites` for the selector's group.
+fn step_label(step: &str) -> String {
+    if step.contains("SPIRA_TESTENV_BIN") || step.contains("SPIRA_SELECT_BIN") {
+        return "suites".into();
+    }
+    if step.contains("SPIRA_LINT_BIN") {
+        return crate::fence::LINT.into();
+    }
+    if step.contains("SPIRA_GUARD_BIN") {
+        return crate::fence::GUARD.into();
+    }
+    let stem = |w: &str| w.rsplit('/').next().unwrap_or(w).trim_end_matches(".sh").to_string();
+    match crate::parse::bash_paths(step).first() {
+        Some(p) => stem(p),
+        None => step
+            .split_whitespace()
+            .next()
+            .map(|w| w.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect())
+            .filter(|s: &String| !s.is_empty())
+            .unwrap_or_else(|| "step".into()),
+    }
+}
+
+/// THE VERDICT IS THE SET OF RESULTS, NOT THE FIRST FAILURE. A gate string that is a plain
+/// `&&` chain of steps runs every step and prints one `gate-step <ok|RED> rc=<n> :: <unit>`
+/// line for each; the exit is the first non-zero status, except that a step's 75 (it could
+/// not judge) wins, because a red elsewhere must never let an unjudged step read as passed.
+/// Any other string is returned unchanged.
+pub fn run_all(cmd: &str) -> String {
+    let Some(steps) = chain_steps(cmd) else { return cmd.to_string() };
+    let mut s = String::from("_g_rc=0; _g_hard=0\n");
+    for st in &steps {
+        let l = step_label(st);
+        s.push_str(&format!(
+            "( {st}\n); _g_r=$?; if [ \"$_g_r\" -eq 0 ]; then echo \"gate-step ok rc=0 :: {l}\"; else echo \"gate-step RED rc=$_g_r :: {l}\"; [ \"$_g_rc\" -eq 0 ] && _g_rc=$_g_r; [ \"$_g_r\" -eq 75 ] && _g_hard=75; fi\n"
+        ));
+    }
+    s.push_str("[ \"$_g_hard\" -ne 0 ] && exit \"$_g_hard\"; exit \"$_g_rc\"");
+    s
+}
+
 /// The unit phases' commands, in order: build (the `aeon` profile), then the tests.
 ///
 /// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
@@ -546,6 +618,43 @@ pub fn reentry_command(suites: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn run_all_runs_every_step_of_the_checked_in_chain_and_labels_each() {
+        let d = crate::def::parse(&std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()).unwrap();
+        let steps = chain_steps(&d.command()).expect("the checked-in chain is a plain && chain");
+        assert_eq!(steps.len(), d.steps.len());
+        let s = run_all(&d.command());
+        for l in ["spira-lint", "lifecycle-guard", "build-fence", "boundary", "suites"] {
+            assert!(s.contains(&format!(":: {l}\"")), "{l}: {s}");
+        }
+    }
+
+    #[test]
+    fn run_all_reports_every_unit_after_a_red_one() {
+        let s = run_all("bash a/f.sh && bash a/g.sh && bash a/h.sh");
+        let t = testkit::TempDir::new("gate-runall");
+        let dir = t.path().to_path_buf();
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::write(dir.join("a/f.sh"), "exit 0").unwrap();
+        std::fs::write(dir.join("a/g.sh"), "exit 3").unwrap();
+        std::fs::write(dir.join("a/h.sh"), "exit 0").unwrap();
+        let o = std::process::Command::new("bash").arg("-c").arg(&s).current_dir(&dir).output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        assert_eq!(o.status.code(), Some(3), "{out}");
+        assert_eq!(
+            crate::parse::step_units(&out),
+            vec![("f".into(), false), ("g".into(), true), ("h".into(), false)]
+        );
+    }
+
+    #[test]
+    fn run_all_leaves_a_string_it_cannot_split_alone() {
+        for c in ["true", "bash a/b.sh || bash a/c.sh", "bash a/b.sh; bash a/c.sh", "echo x && echo y"] {
+            assert_eq!(run_all(c), c);
+        }
+    }
+
     #[test]
     fn a_changed_suite_is_named_and_a_helper_is_not() {
         let c = |p: &str| Changed { path: p.into(), exec: false };

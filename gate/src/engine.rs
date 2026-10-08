@@ -814,7 +814,7 @@ impl<'w, W: World> Trial<'w, W> {
         } else {
             out
         };
-        self.s.suite = parse::red_suites(&out)
+        self.s.suite = parse::red_units(&out)
             .into_iter()
             .next()
             .unwrap_or_else(|| "-".into());
@@ -1163,11 +1163,11 @@ impl<'w, W: World> Trial<'w, W> {
             Attribution::BranchRed(s) => {
                 self.s.suite = s;
                 if base_ran && base_rc != 0 {
-                    let base_reds = parse::red_suites(&base_out);
-                    let only: Vec<String> = parse::red_suites(&out).into_iter().filter(|x| !base_reds.contains(x)).collect();
+                    let base_reds = parse::red_units(&base_out);
+                    let (own, inherited): (Vec<String>, Vec<String>) = parse::red_units(&out).into_iter().partition(|x| !base_reds.contains(x));
                     return v(FAIL, "branch-red", format!(
-                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: {base} is red too, on: {}",
-                        spaced(&only), spaced(&base_reds)));
+                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}",
+                        spaced(&own), spaced(&inherited), spaced(&base_reds)));
                 }
                 v(FAIL, "branch-red", format!(
                     "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: the same command passes against {base}, so this is the branch's own."))
@@ -1177,6 +1177,16 @@ impl<'w, W: World> Trial<'w, W> {
                 let t: String = parse::timed_out_suites(&base_out).iter().fold(String::new(), |acc, x| acc + x + " ");
                 v(NOVERDICT, "base-timeout", format!(
                     "gate: {name}'s base trial timed out on {t}— no verdict for {br}.\ngate: a killed suite cannot prove the base is broken; retry when the box is quieter."))
+            }
+            Attribution::BaseRed(_) if !parse::red_units(&out).is_empty() => {
+                let reds = parse::red_units(&out);
+                let green: Vec<String> = parse::ran_suites(&out).into_iter().filter(|x| !reds.contains(x)).collect();
+                self.s.pass_suites = if green.is_empty() { "-".into() } else { green.join(",") };
+                let checked = fence::summary(&fences, &out);
+                v(PASS, "pass", format!(
+                    "{}gate: gate PASS covered suites: {}\ngate: inherited, not judged (red on {base} too, so not this branch's): {}\ngate: {base} is red on: {}\n--- {base}'s own output ---\n{}",
+                    if checked.is_empty() { String::new() } else { format!("gate: fences checked: {checked}\n") },
+                    self.s.pass_suites, spaced(&reds), spaced(&parse::red_units(&base_out)), parse::tail_bytes(&base_out, 8000)))
             }
             Attribution::BaseRed(s) => {
                 let s = if s == "-" && matches!(comp, Composition::Unit { .. }) {
@@ -1194,7 +1204,7 @@ impl<'w, W: World> Trial<'w, W> {
                         parse::tail_bytes(&base_out, 8000)));
                 }
                 self.s.suite = s;
-                let reds = parse::red_suites(&base_out).join("\n");
+                let reds = parse::red_units(&base_out).join("\n");
                 let reds = if reds.is_empty() { "(no suite named; read the output)".to_string() } else { reds };
                 v(BASEFAIL, "base-red", format!(
                     "gate: {name}'s own gate fails against {base} — this branch did not cause it.\ngate: command: {cmd}\ngate: red on {base}: {reds}\n--- {base}'s own output ---\n{}\n--- this branch's output ---\n{}\ngate: fix the repository, or clear that command from {map}.",
@@ -2148,6 +2158,7 @@ pub fn run_composed<W: World>(
     let first = if comp.suites_off() { "fences" } else { "gate" };
     // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
     let (cmd, _) = compose::gate_string(comp, cmd);
+    let mut fences_rc = 0;
     let proved = fences
         .filter(|_| comp.suites_off())
         .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
@@ -2160,10 +2171,11 @@ pub fn run_composed<W: World>(
             let t = w.now();
             let (rc, out) = w.run_gate(tree, env, &left(first), &cmd);
             phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
-            if rc != 0 || w.signalled() {
+            if w.signalled() || rc == 124 || rc == NOVERDICT || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
                 return (rc, out, phases);
             }
-            if let Some(k) = fences.filter(|k| comp.suites_off() && !k.harness.is_empty()) {
+            fences_rc = rc;
+            if let Some(k) = fences.filter(|k| fences_rc == 0 && comp.suites_off() && !k.harness.is_empty()) {
                 if fence::silent(&fence::expected(&cmd), &out).is_empty() {
                     if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
                         w.mkdir_p(dir);
@@ -2226,7 +2238,7 @@ pub fn run_composed<W: World>(
             return (r, out, phases);
         }
     }
-    (0, out, phases)
+    (fences_rc, out, phases)
 }
 
 /// `gate --definition [repo-name]` (sp-quu2w): the gate command the landing ref's tree

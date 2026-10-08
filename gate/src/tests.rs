@@ -851,15 +851,15 @@ fn a_red_the_base_shares_is_the_bases() {
         .borrow_mut()
         .insert(BASE.into(), (1, "test-b.sh RED\ntest-c.sh RED".into()));
     f.reruns.borrow_mut().insert((BASE.into(), "test-b.sh,test-c.sh".into()), (1, "test-b.sh RED\ntest-c.sh RED".into()));
-    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(f.run(), PASS);
     assert_eq!(
         f.verdict_line(),
-        "gate: VERDICT=BASE_FAIL reason=base-red branch=spira/sp-a repo=spira suite=test-b.sh"
+        "gate: VERDICT=PASS reason=pass branch=spira/sp-a repo=spira suite=test-b.sh"
     );
     let e = f.stderr();
     assert!(
-        e.contains("gate: red on local/main: test-b.sh\ntest-c.sh")
-            && e.contains("--- local/main's own output ---"),
+        e.contains("gate: inherited, not judged (red on local/main too, so not this branch's): test-b.sh")
+            && e.contains("gate: local/main is red on: test-b.sh test-c.sh"),
         "{e}"
     );
 }
@@ -875,7 +875,7 @@ fn a_red_only_on_the_branch_is_the_branchs_even_on_a_red_base() {
         .insert(BASE.into(), (1, "test-b.sh RED".into()));
     assert_eq!(f.run(), FAIL);
     let e = f.stderr();
-    assert!(e.contains("red on this branch and not on local/main: test-d.sh\ngate: local/main is red too, on: test-b.sh"), "{e}");
+    assert!(e.contains("red on this branch and not on local/main: test-d.sh\ngate: inherited, not judged (red on local/main too): test-b.sh"), "{e}");
     assert!(f.verdict_line().ends_with("suite=test-d.sh"));
 }
 
@@ -911,11 +911,11 @@ fn the_base_trial_judges_the_base_the_merge_was_cut_from() {
         (0, format!("  test-a.sh ok\n  {SUITE} ok")),
     );
     f.reruns.borrow_mut().insert(("old-base".into(), SUITE.into()), (1, red(SUITE)));
-    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(f.run(), PASS);
     assert_eq!(
         f.verdict_line(),
         format!(
-            "gate: VERDICT=BASE_FAIL reason=base-red branch=spira/sp-a repo=spira suite={SUITE}"
+            "gate: VERDICT=PASS reason=pass branch=spira/sp-a repo=spira suite={SUITE}"
         )
     );
     assert_eq!(
@@ -940,12 +940,8 @@ fn the_same_suite_red_on_the_branch_and_the_base_is_base_red() {
         .borrow_mut()
         .insert(BASE.into(), (1, format!("  test-a.sh ok\n{}", red(SUITE))));
     f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
-    assert_eq!(f.run(), BASEFAIL);
-    assert!(
-        f.verdict_line().contains("reason=base-red"),
-        "{}",
-        f.verdict_line()
-    );
+    assert_eq!(f.run(), PASS);
+    assert!(f.stderr().contains("gate: inherited, not judged"), "{}", f.stderr());
     assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
     assert_eq!(f.ran.borrow().len(), 3, "the base ran it: only the confirming retry follows");
 }
@@ -965,12 +961,8 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
     f.reruns
         .borrow_mut()
         .insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
-    assert_eq!(f.run(), BASEFAIL);
-    assert!(
-        f.verdict_line().contains("reason=base-red"),
-        "{}",
-        f.verdict_line()
-    );
+    assert_eq!(f.run(), PASS);
+    assert!(f.stderr().contains("inherited, not judged"), "{}", f.stderr());
     let cmds = f.cmds.borrow();
     assert_eq!(
         cmds.len(),
@@ -1011,13 +1003,13 @@ fn a_base_red_that_does_not_reproduce_is_a_flake_not_a_hold() {
 
 /// The same red, reproduced by the retry, is BASE_FAIL.
 #[test]
-fn a_base_red_that_reproduces_is_base_fail() {
+fn a_base_red_that_reproduces_is_inherited_not_judged() {
     let f = Fake::new();
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
     f.runs.borrow_mut().insert(BASE.into(), (1, red(SUITE)));
     f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
-    assert_eq!(f.run(), BASEFAIL);
-    assert!(f.verdict_line().contains("reason=base-red"), "{}", f.verdict_line());
+    assert_eq!(f.run(), PASS);
+    assert!(f.stderr().contains("inherited, not judged"), "{}", f.stderr());
 }
 
 /// The re-run finds the suite green on the base: now, and only now, it is the branch's.
@@ -1095,12 +1087,11 @@ fn a_cached_base_red_still_names_the_suite() {
         crate::basecache::render(false, "harness", "tag1", "2026-09-30T00:00:00Z", 100),
     );
     f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
-    assert_eq!(f.run(), BASEFAIL);
-    assert!(f.verdict_line().contains("reason=base-red"), "{}", f.verdict_line());
+    assert_eq!(f.run(), PASS);
     assert!(
-        f.verdict_line().ends_with(&format!("suite={SUITE}")),
+        f.stderr().contains(&format!("inherited, not judged (red on local/main too, so not this branch's): {SUITE}")),
         "a cached red still names the suite: {}",
-        f.verdict_line()
+        f.stderr()
     );
     assert_eq!(
         f.cmds.borrow().iter().filter(|c| c.contains("--suites")).count(),
@@ -1171,7 +1162,7 @@ fn a_fresh_rerun_warms_the_cache_for_the_next_gate() {
     f.reruns
         .borrow_mut()
         .insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
-    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(f.run(), PASS);
     let path = base_cache_path(SUITE);
     let written = f.written.borrow();
     assert!(
@@ -1297,7 +1288,7 @@ fn a_red_the_base_deferred_by_deadline_is_re_run() {
     f.reruns
         .borrow_mut()
         .insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
-    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(f.run(), PASS);
 }
 
 /// A re-run that could not judge (a testenv fault — including a testenv missing from PATH,
@@ -2021,7 +2012,7 @@ fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
         .insert(MERGE_SHA.into(), (1, "tsd: test x ... FAILED".into()));
     let _ = f.run();
     let cmds = f.cmds.borrow().clone();
-    assert_eq!(cmds.len(), 2, "branch fences, then the base's fences only: {cmds:?}");
+    assert_eq!(cmds.len(), 4, "branch fences, build and test, then the base's fences only: {cmds:?}");
     assert!(cmds.iter().all(|c| !c.contains("build-fence")), "{cmds:?}");
 
     for paths in [&["gate/src/x.rs", "spira/lib.sh"][..], &["docs/a.md"]] {
@@ -2195,8 +2186,8 @@ fn a_named_suite_red_on_the_base_too_is_the_bases() {
             .insert(at.into(), (1, "  test-b.sh   RED     rc=1 after 4s".into()));
     }
     f.reruns.borrow_mut().insert((BASE.into(), "test-b.sh".into()), (1, "  test-b.sh   RED     rc=1 after 4s".into()));
-    assert_eq!(f.run(), BASEFAIL);
-    assert!(f.verdict_line().contains("reason=base-red"));
+    assert_eq!(f.run(), PASS);
+    assert!(f.stderr().contains("inherited, not judged"));
 }
 
 #[test]
@@ -2456,7 +2447,8 @@ fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     );
     assert_eq!(f.run(), FAIL);
     let cmds = f.cmds.borrow().clone();
-    assert_eq!(cmds, ["bash spira/fence.sh && run-suites"], "only the branch's own trial ran: {cmds:?}");
+    assert_eq!(cmds[0], "bash spira/fence.sh && run-suites", "{cmds:?}");
+    assert_eq!(cmds.len(), 3, "the red fence is followed by build and test, and no base trial: {cmds:?}");
     assert!(!meter(&f).contains("base-fences"), "{}", meter(&f));
 }
 
@@ -2484,16 +2476,18 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
 }
 
 #[test]
-fn a_red_fence_in_unit_mode_runs_no_unit_phase() {
+fn a_red_fence_in_unit_mode_still_runs_the_unit_phases() {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.runs
         .borrow_mut()
         .insert(MERGE_SHA.into(), (1, "literal-lint: RED".into()));
     assert_eq!(f.run(), FAIL);
-    // branch fences only, then base fences + build + test (base passes its fences)
+    // a red fence does not stop the unit phases: they report too, then the base's fences
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/fence.sh && run-suites");
-    assert!(cmds[1].starts_with("bash spira/fence.sh"), "{cmds:?}");
+    assert!(cmds[1].starts_with("cargo build"), "{cmds:?}");
+    assert!(cmds[2].starts_with("cargo test"), "{cmds:?}");
+    assert!(cmds[3].starts_with("bash spira/fence.sh"), "{cmds:?}");
 }
 
 #[test]
@@ -3801,4 +3795,33 @@ fn warm_tools_refuses_what_it_cannot_key_or_lock() {
     assert_eq!(warm(&f), 1);
     assert!(f.stderr().contains("cannot be keyed"), "{}", f.stderr());
     assert!(!built(&f) && f.published.borrow().is_empty());
+}
+
+const BASE_F_S1: &str = "gate-step RED rc=1 :: fence-f\n  test-s1.sh RED rc=1 after 3s";
+
+#[test]
+fn a_branch_green_but_for_the_bases_reds_passes_with_them_inherited() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "gate-step RED rc=1 :: fence-f\n  test-s1.sh RED rc=1 after 3s\n  test-s9.sh ok".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, BASE_F_S1.into()));
+    f.reruns.borrow_mut().insert((BASE.into(), "test-s1.sh".into()), (1, "  test-s1.sh RED rc=1".into()));
+    assert_eq!(f.run(), PASS);
+    let e = f.stderr();
+    assert!(e.contains("inherited, not judged (red on local/main too, so not this branch's): test-s1.sh fence-f"), "{e}");
+}
+
+#[test]
+fn a_branch_that_adds_a_suite_red_and_a_fence_red_is_held_for_those_only() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (1, "gate-step RED rc=1 :: fence-f\ngate-step RED rc=1 :: fence-g\n  test-s1.sh RED rc=1\n  test-s2.sh RED rc=1".into()),
+    );
+    f.runs.borrow_mut().insert(BASE.into(), (1, BASE_F_S1.into()));
+    f.reruns.borrow_mut().insert((BASE.into(), "test-s1.sh,test-s2.sh".into()), (1, "  test-s1.sh RED rc=1\n  test-s2.sh ok".into()));
+    f.reruns.borrow_mut().insert((BASE.into(), "test-s2.sh".into()), (0, "  test-s2.sh ok".into()));
+    assert_eq!(f.run(), FAIL);
+    let e = f.stderr();
+    assert!(e.contains("red on this branch and not on local/main: test-s2.sh fence-g"), "{e}");
+    assert!(e.contains("inherited, not judged (red on local/main too): test-s1.sh fence-f"), "{e}");
 }
