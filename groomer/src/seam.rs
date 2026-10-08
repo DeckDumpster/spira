@@ -27,6 +27,8 @@ pub trait Seam {
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String>;
     /// `poison_asked_clear <id>`.
     fn poison_asked_clear(&self, id: &str) -> Result<(), String>;
+    /// A resolved `SPIRA_*` config key, read after sourcing conf.sh/lib.sh. Empty if unset.
+    fn conf(&self, key: &str) -> Result<String, String>;
     /// `all_partition_members` — every open/in_progress bead id across every partition
     /// this roster covers, deduplicated, one per line.
     fn all_partition_members(&self) -> Result<String, String>;
@@ -123,6 +125,23 @@ impl Seam for LibSeam {
         self.run(&["poison_asked_clear", id]).map(|_| ())
     }
 
+    fn conf(&self, key: &str) -> Result<String, String> {
+        let script = format!(r#". "$0" >/dev/null 2>&1 || exit 97; printf '%s' "${{{key}:-}}""#);
+        // batch-job: runs a gate, build or forge script that takes as long as its work
+        let o = Command::new("bash")
+            .arg("-c")
+            .arg(script)
+            .arg(&self.lib_sh)
+            .envs(spira_config::release_env::child_path_env_for_process())
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("lib.sh conf {key}: {e}"))?;
+        if !o.status.success() {
+            return Err(format!("lib.sh conf {key} exited {}", o.status.code().unwrap_or(-1)));
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+    }
+
     fn all_partition_members(&self) -> Result<String, String> {
         Ok(strand::detectors::all_partition_members(self.strand_cfg()))
     }
@@ -187,6 +206,7 @@ pub mod fake {
     #[derive(Default)]
     pub struct FakeSeam {
         pub calls: RefCell<Vec<String>>,
+        pub confs: RefCell<std::collections::BTreeMap<String, String>>,
         pub partition_members: RefCell<String>,
         pub repos: RefCell<std::collections::BTreeMap<String, String>>,
         pub roots: RefCell<std::collections::BTreeMap<String, String>>,
@@ -218,6 +238,10 @@ pub mod fake {
         fn poison_asked_clear(&self, id: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("poison_asked_clear {id}"));
             Ok(())
+        }
+
+        fn conf(&self, key: &str) -> Result<String, String> {
+            Ok(self.confs.borrow().get(key).cloned().unwrap_or_default())
         }
 
         fn all_partition_members(&self) -> Result<String, String> {
