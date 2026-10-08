@@ -31,6 +31,10 @@ impl Stop {
         let _ = self.sig.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
         self.kill_session();
     }
+    /// Records the signal without touching the session: the launcher decides when it dies.
+    pub fn record(&self, sig: i32) {
+        let _ = self.sig.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
+    }
     pub fn kill_session(&self) {
         let g = self.pgid.load(Ordering::SeqCst);
         if g > 0 {
@@ -59,6 +63,8 @@ pub struct SessionSpec {
     pub env: BTreeMap<String, String>,
     /// FAYTH_TIMEOUT_SECONDS: killed after this, rc 124 (`timeout`'s code).
     pub timeout: Option<u64>,
+    /// The world-halted stamp: while it exists, a signal waits for a turn boundary first.
+    pub halted: Option<PathBuf>,
 }
 
 pub trait Launcher: Send + Sync {
@@ -93,6 +99,7 @@ impl Launcher for RealLauncher {
         let start = Instant::now();
         let mut timed_out = false;
         let mut forwarded = false;
+        let mut signalled_at: Option<Instant> = None;
         let code = loop {
             match child.try_wait() {
                 Ok(Some(s)) => break util::exit_code(s),
@@ -104,8 +111,13 @@ impl Launcher for RealLauncher {
                 stop.kill_session();
             }
             if !forwarded && stop.signalled().is_some() {
-                forwarded = true;
-                stop.kill_session();
+                let at = *signalled_at.get_or_insert_with(Instant::now);
+                let halted = spec.halted.as_ref().is_some_and(|h| h.exists());
+                let waiting = halted && at.elapsed() < Duration::from_secs(crate::checkpoint::BOUNDARY_WAIT_SECS) && !crate::checkpoint::at_boundary(&crate::checkpoint::trace_tail(&spec.log));
+                if !waiting {
+                    forwarded = true;
+                    stop.kill_session();
+                }
             }
             std::thread::sleep(Duration::from_millis(100));
         };
@@ -126,10 +138,10 @@ pub fn watch_signals(stop: Arc<Stop>) {
     let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&int));
     std::thread::spawn(move || loop {
         if term.swap(false, Ordering::SeqCst) {
-            stop.trip(libc::SIGTERM);
+            stop.record(libc::SIGTERM);
         }
         if int.swap(false, Ordering::SeqCst) {
-            stop.trip(libc::SIGINT);
+            stop.record(libc::SIGINT);
         }
         std::thread::sleep(Duration::from_millis(50));
     });
@@ -357,7 +369,7 @@ mod tests {
         std::fs::write(&task, "hi").unwrap();
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), "cat; sleep 30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None };
+        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), "cat; sleep 30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None, halted: None };
         let t0 = Instant::now();
         let rc = RealLauncher.run(&spec, &stop);
         assert!(t0.elapsed() < Duration::from_secs(10), "a stop already recorded kills the session at once");
@@ -375,7 +387,7 @@ mod tests {
         std::fs::write(&task, "").unwrap();
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let spec = SessionSpec { prog: "sleep".into(), args: vec!["30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: Some(0) };
+        let spec = SessionSpec { prog: "sleep".into(), args: vec!["30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: Some(0), halted: None };
         assert_eq!(RealLauncher.run(&spec, &Stop::default()), 124);
     }
 }

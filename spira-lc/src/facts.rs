@@ -11,7 +11,7 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
 pub const CAUSE_MAX: usize = 200;

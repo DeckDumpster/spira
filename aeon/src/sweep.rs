@@ -85,6 +85,7 @@ impl Run<'_> {
             cwd: std::env::current_dir().unwrap_or_else(|_| run.clone()),
             env: self.d.env.child(),
             timeout: self.fayth.timeout_seconds,
+            halted: None,
         };
         let rc = self.d.launcher.run(&spec, &self.stop);
         let _ = std::fs::remove_file(&pidfile);

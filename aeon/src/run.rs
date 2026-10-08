@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::bd::{self, BeadRow};
+use crate::checkpoint;
 use crate::brief::{self, FixtureInfo, Tokens};
 use crate::claim::{self, Selection, Selector};
 use crate::conf::{self, Conf, Fayth, SystemPrompt};
@@ -73,6 +74,8 @@ pub struct State {
     pub fixture: Option<FixtureInfo>,
     pub fixture_lib: Option<PathBuf>,
     pub session_started: bool,
+    /// The claude session id this run launched or resumed (empty before launch).
+    pub session_id: String,
     pub session_rc: i32,
     /// The verdict's `committed`; false until the verdict block ran.
     pub committed: bool,
@@ -1105,7 +1108,8 @@ impl<'a> Run<'a> {
         }
         let sys_file = self.run_dir().join(format!("{bead}.system.md"));
         let task_file = self.run_dir().join(format!("{bead}.task.md"));
-        let argv = self.claude_argv(&sys_file);
+        let mut argv = self.claude_argv(&sys_file);
+        argv.extend(self.checkpoint_args(work, &task_file));
         self.s.session_started = true;
         let agent = self.agent_bin();
         let child = env.child();
@@ -1123,13 +1127,78 @@ impl<'a> Run<'a> {
             };
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         };
-        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds };
+        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds, halted: Some(self.run_dir().join("world.halted")) };
         let rc = self.d.launcher.run(&spec, &self.stop);
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;
         self.s.session_rc = rc;
         self.log(&format!("{}: {bead} session exited rc={rc}", self.f()));
         Ok(())
+    }
+
+    /// The session-id arguments for this launch. A checkpoint left by a world stop is
+    /// resumed (the task file becomes the message that the world was down); one that cannot
+    /// be resumed falls back to a cold claim of the kept branch, and the bead note says why.
+    fn checkpoint_args(&mut self, work: &Path, task_file: &Path) -> Vec<String> {
+        let bead = self.s.bead.clone();
+        let who = self.s.aeon.clone();
+        let facts = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &bead, "--kinds", &format!("{},{}", checkpoint::SESSION, checkpoint::CHECKPOINTED)]), None, None);
+        let facts = if facts.success() { checkpoint::parse_facts(&facts.stdout) } else { Vec::new() };
+        let persona = checkpoint::persona_hash(&std::fs::read(self.home().join("chamber").join(format!("{}.md", self.f()))).unwrap_or_default());
+        let cfg = checkpoint::config_dir(&self.d.env.child());
+        let plan = checkpoint::plan(&facts, self.f(), &persona, work.is_dir(), |id| checkpoint::transcript_exists(&cfg, id));
+        let (id, args) = match plan {
+            checkpoint::Plan::Resume { session, stopped_at } => {
+                let msg = checkpoint::resume_message(stopped_at, self.now(), &self.s.branch);
+                let _ = std::fs::write(task_file, msg);
+                self.log(&format!("{}: {bead} resumes session {} after a world stop", self.f(), session.id));
+                let args = s(&["--resume", &session.id]);
+                (session.id, args)
+            }
+            plan => {
+                if let checkpoint::Plan::Cold { reason } = plan {
+                    self.log(&format!("{}: {bead} checkpoint not resumable — claiming cold: {reason}", self.f()));
+                    self.note(&format!("Checkpoint not resumed: {reason}. This aeon claimed the kept branch cold, from the bead and its notes, with no attempt charged for the stop."));
+                }
+                let id = checkpoint::new_session_id();
+                let args = s(&["--session-id", &id]);
+                (id, args)
+            }
+        };
+        let fact = checkpoint::SessionFact { id: id.clone(), fayth: self.f().to_string(), persona, worktree: work.display().to_string() };
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", &bead, "--kind", checkpoint::SESSION, "--actor", &who, "--cause", &fact.cause()]), None, None);
+        if !wrote.success() {
+            self.log(&format!("{}: {bead} could not record session {id} (rc={}): a stop will not be checkpointed", self.f(), wrote.code));
+            self.s.session_id.clear();
+        } else {
+            self.s.session_id = id;
+        }
+        args
+    }
+
+    /// A slain session whose world is halted is held, not abandoned: the bead leaves WORKING
+    /// but stays unclaimable until `world start` lifts the checkpoint hold. False when the
+    /// session was never recorded or the hold was refused (the plain release then stands).
+    pub(crate) fn checkpoint_across_stop(&self) -> bool {
+        let id = &self.s.bead;
+        if self.s.session_id.is_empty() || !self.run_dir().join("world.halted").is_file() {
+            return false;
+        }
+        let now = self.now();
+        let reason = spira_config::lc_state::checkpoint_reason(now + checkpoint::HOLD_SECS);
+        let held = self.d.exec.exec("spira-lc", &s(&["hold", id, "wait", &reason, "aeon"]), None, None);
+        if !held.success() {
+            self.log(&format!("{}: {id} checkpoint hold refused (rc={}): {}", self.f(), held.code, held.stdout.trim()));
+            return false;
+        }
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", id, "--kind", checkpoint::CHECKPOINTED, "--actor", &self.s.aeon, "--cause", &now.to_string()]), None, None);
+        if !wrote.success() {
+            let _ = self.d.exec.exec("spira-lc", &s(&["unhold", id, "wait", "aeon"]), None, None);
+            self.log(&format!("{}: {id} checkpoint fact refused (rc={}): hold withdrawn", self.f(), wrote.code));
+            return false;
+        }
+        self.note(&format!("Checkpointed across a world stop: session {} is kept with branch {} and its worktree; `world start` lifts the hold and the next claim resumes it. No attempt charged.", self.s.session_id, self.s.branch));
+        true
     }
 
     fn start_heartbeat<'s>(&self, sc: &'s std::thread::Scope<'s, '_>)

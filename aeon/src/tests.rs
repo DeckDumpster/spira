@@ -49,6 +49,8 @@ struct World {
     /// session: a builder's close is the row past the builder (SUBMITTED), a claim WORKING,
     /// anything else READY (sp-mve9i: the aeon reads the row, never bd's status).
     lc: BTreeMap<String, String>,
+    /// `spira-lc facts`' JSON answer.
+    facts: String,
 }
 
 fn lc_state_of(w: &World, id: &str) -> String {
@@ -216,6 +218,9 @@ impl Exec for FakeExec {
                 "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
                 _ => Out::ok("{}"),
             };
+        }
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("facts") {
+            return Out::ok(self.0.lock().unwrap().facts.clone());
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("holds") {
             return Out::ok(self.0.lock().unwrap().holds.get(&args[1]).cloned().unwrap_or_default());
@@ -428,6 +433,7 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
     let mut base = BTreeMap::new();
     base.insert("PATH".to_string(), format!("{}:{}", f.bin.display(), std::env::var("PATH").unwrap_or_default()));
     base.insert("GH_TOKEN".to_string(), "secret".to_string());
+    base.insert("CLAUDE_CONFIG_DIR".to_string(), f.run.join("claude-config").display().to_string());
     for (k, v) in [("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")] {
         base.insert(k.into(), v.into());
     }
@@ -1580,4 +1586,133 @@ fn snoozed(w: &World) -> bool {
             && a.get(2).map(String::as_str) == Some("wait")
             && a.get(3).is_some_and(|r| spira_config::lc_state::snooze_until(r).is_some())
     })
+}
+
+// ---- checkpoint across a world stop ----------------------------------------------------
+
+const CK_SESSION: &str = "0b9d6f3a-1c2e-4f5a-8b7c-9d0e1f2a3b4c";
+
+fn persona_of(f: &Fx) -> String {
+    crate::checkpoint::persona_hash(&std::fs::read(f.home.join("chamber/builder.md")).unwrap())
+}
+
+fn checkpoint_facts(fayth: &str, persona: &str) -> String {
+    serde_json::json!([
+        {"issue_id": "sp-ck", "event_type": "session", "new_value": format!("{CK_SESSION} {fayth} {persona} /w/sp-ck")},
+        {"issue_id": "sp-ck", "event_type": "checkpointed", "new_value": "1000"},
+    ])
+    .to_string()
+}
+
+fn keep_transcript(f: &Fx) {
+    let d = f.run.join("claude-config/projects/-some-cwd");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join(format!("{CK_SESSION}.jsonl")), "{}\n").unwrap();
+}
+
+fn arg_after(spec: &SessionSpec, flag: &str) -> Option<String> {
+    spec.args.iter().position(|a| a == flag).and_then(|i| spec.args.get(i + 1)).cloned()
+}
+
+fn ends_clean() -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
+    Box::new(|_, _, _| 0)
+}
+
+fn session_facts(w: &World) -> Vec<String> {
+    w.exec_calls.iter().filter(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("fact")).map(|c| c.1.join(" ")).collect()
+}
+
+#[test]
+fn a_fresh_claim_launches_under_a_recorded_session_id() {
+    let f = fx("ck-fresh");
+    seed(&f, "sp-ck");
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), ends_clean());
+    let id = arg_after(&o.seen[0], "--session-id").expect(&o.log);
+    assert!(crate::checkpoint::is_uuid(&id) && !o.seen[0].args.contains(&"--resume".to_string()));
+    let w = o.w.lock().unwrap();
+    let facts = session_facts(&w);
+    assert!(facts.len() == 1 && facts[0].contains("--kind session") && facts[0].contains(&id) && facts[0].contains("builder"), "{facts:?}");
+}
+
+#[test]
+fn a_checkpointed_aeon_resumes_its_session_and_is_told_the_world_was_stopped() {
+    let f = fx("ck-resume");
+    seed(&f, "sp-ck");
+    keep_transcript(&f);
+    f.w.lock().unwrap().facts = checkpoint_facts("builder", &persona_of(&f));
+    let task = Arc::new(Mutex::new(String::new()));
+    let t = Arc::clone(&task);
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, _, _| {
+        *t.lock().unwrap() = std::fs::read_to_string(&spec.stdin_file).unwrap();
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert_eq!(arg_after(&o.seen[0], "--resume").as_deref(), Some(CK_SESSION), "{}", o.log);
+    assert!(!o.seen[0].args.contains(&"--session-id".to_string()));
+    let task = task.lock().unwrap();
+    assert!(task.contains("The world was stopped") && task.contains("spira/sp-ck"), "{task}");
+    let w = o.w.lock().unwrap();
+    assert!(!w.notes.iter().any(|(_, n)| n.contains("not resumed")), "{:?}", w.notes);
+    assert!(session_facts(&w)[0].contains(CK_SESSION), "the resumed session is recorded again, which consumes the checkpoint");
+}
+
+#[test]
+fn an_unresumable_session_falls_back_to_a_cold_claim_and_the_note_says_why() {
+    for (case, fayth, persona, transcript, why) in [
+        ("expired", "builder", None, false, "transcript"),
+        ("persona", "builder", Some("000000000000"), true, "persona changed"),
+        ("other-fayth", "ops", None, true, "ran as ops"),
+    ] {
+        let f = fx(&format!("ck-cold-{case}"));
+        seed(&f, "sp-ck");
+        if transcript {
+            keep_transcript(&f);
+        }
+        let persona = persona.map(String::from).unwrap_or_else(|| persona_of(&f));
+        f.w.lock().unwrap().facts = checkpoint_facts(fayth, &persona);
+        let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), ends_clean());
+        let spec = &o.seen[0];
+        assert!(!spec.args.contains(&"--resume".to_string()), "{case}: {:?}", spec.args);
+        let id = arg_after(spec, "--session-id").unwrap_or_else(|| panic!("{case}: {}", o.log));
+        assert_ne!(id, CK_SESSION, "{case}: a cold claim is a new session");
+        let w = o.w.lock().unwrap();
+        assert!(w.notes.iter().any(|(_, n)| n.starts_with("Checkpoint not resumed") && n.contains(why)), "{case}: {:?}", w.notes);
+    }
+}
+
+#[test]
+fn a_session_slain_by_a_world_stop_is_checkpointed_without_charging_an_attempt() {
+    let f = fx("ck-stop");
+    seed(&f, "sp-ck");
+    let run = f.run.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, _| {
+        std::fs::write(run.join("world.halted"), "stopped\n").unwrap();
+        std::fs::write(run.join("sp-ck.slain"), "now\tthe world was stopped\n").unwrap();
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    let hold = w.exec_calls.iter().find(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")).unwrap_or_else(|| panic!("{}", o.log));
+    assert_eq!(&hold.1[..3], ["hold", "sp-ck", "wait"]);
+    assert!(spira_config::lc_state::is_checkpoint(&hold.1[3]) && spira_config::lc_state::snooze_until(&hold.1[3]).is_some(), "{:?}", hold.1);
+    let facts = session_facts(&w);
+    assert!(facts.iter().any(|x| x.contains("--kind checkpointed")), "{facts:?}");
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-ck", "unjudged-slain"]), "exempt from the attempt count: {:?}", w.seam_calls);
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}", w.seam_calls);
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Checkpointed across a world stop")), "{:?}", w.notes);
+}
+
+#[test]
+fn a_slay_with_the_world_running_is_a_plain_release_not_a_checkpoint() {
+    let f = fx("ck-slay-only");
+    seed(&f, "sp-ck");
+    let run = f.run.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, _| {
+        std::fs::write(run.join("sp-ck.slain"), "now\tby hand\n").unwrap();
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(!w.exec_calls.iter().any(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")), "{:?}", w.exec_calls);
+    assert!(!session_facts(&w).iter().any(|x| x.contains("checkpointed")));
 }

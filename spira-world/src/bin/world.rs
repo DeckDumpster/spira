@@ -613,6 +613,15 @@ fn cmd_start(args: &[String]) -> i32 {
         }
     }
 
+    if planes.contains(&Plane::Work) {
+        let (lifted, failed) = spira_world::checkpoint::lift_all();
+        for b in &lifted {
+            println!("  resumable {b} (checkpoint lifted)");
+        }
+        for b in &failed {
+            eprintln!("  WARNING: checkpoint hold on {b} not lifted — `spira-lc unhold {b} wait` (it expires on its own)");
+        }
+    }
     for plane in &planes {
         let _ = std::fs::remove_file(plane_stamp(*plane));
     }
