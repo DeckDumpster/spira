@@ -74,6 +74,21 @@ fn open_certify_land_is_one_round_the_whole_way() {
 }
 
 #[test]
+fn land_with_the_batch_record_refused_prints_the_reason_and_exits_nonzero() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    t.lc.land_refused.set(Some("stale version 4"));
+    assert_eq!(t.run(&["round", "land", &batch]), 1, "{}", t.err());
+    let e = t.err();
+    assert!(e.contains(&batch) && e.contains("stale version 4") && e.contains("ALARM"), "{e}");
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"), "the release is live regardless");
+}
+
+#[test]
 fn eject_then_land_rebuilds_the_head_without_the_member() {
     let t = round_world();
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "red 1 2 fp p e 1".into())];

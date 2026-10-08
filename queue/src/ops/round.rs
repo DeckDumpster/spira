@@ -597,15 +597,23 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         return rc;
     }
 
-    match lc_cas(w, batch, |_, v| w.lc.land_batch(batch, v, LC_ACTOR, &head)) {
-        Ok(()) => {}
-        Err((rc, out)) => w.err(format!("queue.sh {label}: {head} landed but spira-lc refused the batch landing for {batch} (rc={rc}): {out}")),
-    }
+    let recorded = match lc_cas(w, batch, |_, v| w.lc.land_batch(batch, v, LC_ACTOR, &head)) {
+        Ok(()) => true,
+        Err((rc, out)) => {
+            let why = if out.trim().is_empty() { "spira-lc gave no reason on stderr or stdout" } else { out.trim() };
+            w.err(format!("queue.sh {label}: ALARM: {head} is landed and live but spira-lc refused the batch landing record for {batch} (rc={rc}): {why}"));
+            false
+        }
+    };
     let _ = fs::remove_file(c.queue_file(RECORD));
     w.git.worktree_remove(&path, &wt);
     finish(&c, batch, &format!("landed {head} members={}", csv(&members)));
     landing_log(&c.s.run, &format!("QUEUE ROUND-LAND {} repo={} batch={batch} head={head} members={}", w.clock.now(), c.r.name, csv(&members)));
     w.out(format!("queue.sh {label}: round {batch} landed at {head} — {} member(s)", members.len()));
+    if !recorded {
+        w.err(format!("queue.sh {label}: round {batch} has NO batch landing record; the release is live — exiting non-zero"));
+        return if rc == OK { FAIL } else { rc };
+    }
     rc
 }
 
