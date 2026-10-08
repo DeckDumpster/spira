@@ -30,6 +30,8 @@ ExecStart=@SPIRA_PROD_ROOT@/bin/spira-supervise @SPIRA_PROD_ROOT@/bin/cockpit-co
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_SNAP_STALE_S=@SPIRA_SNAP_STALE_S@
 Restart=always
+Nice=10
+CPUQuota=200%
 RestartSec=15
 # Watchdog fires when spira-supervise stops pinging — which it does when the snapshot
 # stops being written on schedule (SPIRA_SNAP_STALE_S, default 60s). WatchdogSec=60
