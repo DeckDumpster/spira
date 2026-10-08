@@ -1834,6 +1834,22 @@ fn a_failing_unit_ensure_is_a_loud_activation_error_and_the_release_stays_active
 }
 
 #[test]
+fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_absent() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
+    let tree = w.cfg.releases.join("head-tree");
+    file(&tree.join(config_delta::DELTA_PATH), "[added]\n\"spira.new_key\" = 7\n");
+    let (dir, staged) = config_delta::staged_for_tree(&spec, &tree).unwrap().expect("the tree has a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("new_key = 7") && !text.contains("other_key"), "{text}");
+    let _ = fs::remove_dir_all(dir);
+    let bare = w.cfg.releases.join("bare-tree");
+    fs::create_dir_all(&bare).unwrap();
+    assert!(config_delta::staged_for_tree(&spec, &bare).unwrap().is_none(), "no delta, nothing staged");
+}
+
+#[test]
 fn config_for_resolution_has_the_delta_applied_without_touching_the_files_in_force() {
     let w = World::with_git(delta_git(DELTA_BOTH));
     let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";

@@ -183,6 +183,8 @@ home_repo = "$HOME/round-work"
 batch_maxpar = $maxpar
 ROUNDCFG
 export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
+SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
+export SPIRA_TOML
 rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
@@ -1082,6 +1084,14 @@ mod tests {
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < warm && warm < build && build < batch, "conf-gen.sh must be warmed after the clone but before either the workspace build or the suite batch");
         assert!(REMOTE_SCRIPT.contains("bash spira/conf-gen.sh >&2 || true"), "non-fatal: conf.sh's own per-suite self-heal is still the fallback if this one warm attempt fails");
+    }
+
+    #[test]
+    fn the_heads_config_delta_is_staged_before_the_release_build_reads_config() {
+        let export = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira-config/tests/fixtures/complete.toml:").unwrap();
+        let stage = REMOTE_SCRIPT.find("release config-stage \"$HOME/round-work\"").expect("the delta must be applied");
+        let build = REMOTE_SCRIPT.find("release build").unwrap();
+        assert!(export < stage && stage < build);
     }
 
     #[test]

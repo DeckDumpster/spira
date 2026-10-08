@@ -18,6 +18,7 @@ use std::time::Duration;
 const USAGE: &str = "usage:
   release build <commit> [--repo R] [--target-dir T | --bin-dir D]
   release verify <sha> [--no-pre-activate]
+  release config-stage <tree>   (prints SPIRA_TOML with <tree>'s config delta applied; the layers stay in a scratch dir)
   release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS] [--drain-wait SECS]
   release rollback [--repo R] [--settle SECS] [--drain-wait SECS]
   release prune [--keep N]
@@ -448,6 +449,13 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         // directory — resolving the full Config would refuse every one of them on a box
         // whose releases directory cannot be found, which is exactly the state an uninstall
         // may be reached from.
+        "config-stage" => {
+            want(1)?;
+            let spec = env.get("SPIRA_TOML").filter(|s| !s.is_empty()).ok_or_else(|| fail("config-stage needs SPIRA_TOML naming the layers to apply the delta to".into()))?;
+            let staged = release::config_delta::staged_for_tree(spec, Path::new(&rest[0])).map_err(fail)?;
+            println!("{}", staged.map_or_else(|| spec.clone(), |(_, s)| s));
+            return Ok(());
+        }
         "session-hook" => return session_hook_cmd(&env, &a, rest),
         "intake" => return intake_cmd(&env, rest),
         _ => {}
