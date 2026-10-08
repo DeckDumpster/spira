@@ -1,0 +1,9 @@
+[package]
+name = "inbox-rules"
+version = "1.0.0"
+edition = "2021"
+publish = false
+description = "inbox-rules — the one drop/dedup rule set for the Concierge inbox, shared by the inbox-triage Monitor and `watchd next` so the two cannot diverge."
+
+[dependencies]
+regex = "1"

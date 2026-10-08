@@ -586,10 +586,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "inbox-triage"
+name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
  "regex",
+]
+
+[[package]]
+name = "inbox-triage"
+version = "1.0.0"
+dependencies = [
+ "inbox-rules",
  "serde_json",
  "spira-config",
  "testkit",
@@ -1826,6 +1833,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 name = "watchd"
 version = "1.0.0"
 dependencies = [
+ "inbox-rules",
  "libc",
  "regex",
  "serde_json",

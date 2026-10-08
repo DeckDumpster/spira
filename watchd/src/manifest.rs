@@ -20,6 +20,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_WIKI",
     "SPIRA_VIEW",
     "SPIRA_VIEW_SESSION",
+    "SPIRA_CONCIERGE_INBOX",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -446,8 +447,8 @@ mod tests {
     }
 
     #[test]
-    fn keys_list_matches_the_ten_placeholders() {
-        assert_eq!(KEYS.len(), 10);
+    fn keys_list_matches_the_eleven_placeholders() {
+        assert_eq!(KEYS.len(), 11);
         assert!(KEYS.contains(&"SPIRA_VIEW_SESSION"));
     }
 }

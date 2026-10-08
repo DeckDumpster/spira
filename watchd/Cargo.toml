@@ -5,6 +5,7 @@ edition = "2021"
 description = "watchd — the watcher manifest, and the face over the logs and cursors systemd fills. Replaces spira/watchd.sh (sp-48f6g)."
 
 [dependencies]
+inbox-rules = { path = "../inbox-rules" }
 libc = "0.2"
 regex = "1"
 spira-config = { path = "../spira-config" }

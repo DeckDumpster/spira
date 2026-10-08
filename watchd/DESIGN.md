@@ -51,6 +51,7 @@ canonical reader is now this binary.
 watchd manifest                every valid row, expanded: name|kind|target|health
 watchd units                   the unit name of every `daemon` row, one per line
 watchd keys                    the placeholders a row may name, one per line
+watchd next <name> [--timeout SECS]  block until the row has an unread line that survives the inbox drop/dedup rules (`inbox-rules`), print it, advance the cursor, exit 0; exit 124 on timeout, 3 if another reader holds the row
 watchd exec <name>              become that watcher; this is what ExecStart calls
 watchd status                  a table, one line per watcher, then a DEGRADED/NOT INSTALLED block
 watchd drain [name] [--all]    print what nobody has read, and mark it read
@@ -88,7 +89,7 @@ Kinds: `daemon` (we run it, via `exec`), `log` (something else writes it, the ta
 path itself), `extern` (an existing unit we only monitor), `off` (optional, not configured).
 
 Placeholders (`WATCHD_KEYS`, unchanged): `SPIRA_HOME SPIRA_REPO SPIRA_RUN SPIRA_COCKPIT
-SPIRA_DB SPIRA_WORKSPACES SPIRA_TOWN SPIRA_WIKI SPIRA_VIEW SPIRA_VIEW_SESSION`.
+SPIRA_DB SPIRA_WORKSPACES SPIRA_TOWN SPIRA_WIKI SPIRA_VIEW SPIRA_VIEW_SESSION SPIRA_CONCIERGE_INBOX`.
 
 ### Environment (read once, through the conf.sh seam)
 

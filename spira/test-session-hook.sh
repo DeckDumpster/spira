@@ -412,7 +412,8 @@ hasnt "a non-concierge session gets no arm instruction" "$nout" "MANDATORY FIRST
 
 cout="$(hook SessionStart startup SPIRA_CONCIERGE=1)"
 has "the concierge session gets the arm instruction"    "$cout" "MANDATORY FIRST ACTION"
-has "naming inbox-triage as the Monitor to arm"          "$cout" "inbox-triage"
+has "naming watchd next as the background job to run"    "$cout" "next concierge-inbox"
+hasnt "and not a Monitor to arm"                         "$cout" "Monitor command="
 has "naming the durable inbox path"                      "$cout" "$RUN/watchd/concierge-inbox.log"
 has "it still gets the ordinary watcher table too"       "$cout" "## Spira watchers"
 

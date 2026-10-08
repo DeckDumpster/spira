@@ -151,3 +151,8 @@ round-duty|daemon|@SPIRA_HOME@/round-duty.sh watch --interval 15|@SPIRA_HOME@/ro
 asks|daemon|@SPIRA_HOME@/asks.sh watch --interval 60|@SPIRA_HOME@/asks.sh health
 
 supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_HOME@/supersede-duty.sh health
+
+# CONCIERGE-INBOX is the durable inbox the Concierge reads. `watchd next concierge-inbox` is how
+# it waits: it blocks until a line survives the drop and dedup rules, prints it and exits, with
+# the unread count and cursor kept here like any other row.
+concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
