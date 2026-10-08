@@ -270,4 +270,13 @@ printf 'ExecStart=/bin/bash -c %s\n' "'exec x'" > "$TMP/planted-exec.service"
 _bare="$(cd "$ROOT/systemd" && grep -lE '^ExecStart=-?/' *.service 2>/dev/null | tr '\n' ' ')"
 is "every template's ExecStart begins with a placeholder (no literal path)" "" "${_bare% }"
 
+# EVERY SERVICE TEMPLATE SETS SPIRA_TOML: a binary that reads config refuses to run without it,
+# and a unit that omits it fails every scheduled run. Positive control first.
+no_toml() { grep -L '^Environment=SPIRA_TOML=@SPIRA_TOML@$' "$@" 2>/dev/null; }
+printf '[Service]\nExecStart=@SPIRA_PROD_ROOT@/bin/x\n' > "$TMP/planted-notoml.service"
+[ -n "$(no_toml "$TMP/planted-notoml.service")" ] && ok "no-SPIRA_TOML matcher flags a planted unit" \
+    || bad "no-SPIRA_TOML matcher flags a planted unit" "matcher silent on planted offender"
+_notoml="$(cd "$ROOT/systemd" && no_toml *.service | tr '\n' ' ')"
+is "every service template sets Environment=SPIRA_TOML" "" "${_notoml% }"
+
 tl_summary
