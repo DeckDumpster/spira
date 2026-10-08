@@ -76,7 +76,7 @@ JSONL
 BEADS_ACTOR="aeon-test" bump_requeue "sp-af1" same-cause >/dev/null 2>&1
 BEADS_ACTOR="overseer"  bump_requeue "sp-af2" same-cause >/dev/null 2>&1
 
-out="$(census_out)"
+echo "DBG rows:"; census_event_rows_run_sql 2>&1 | head -20; echo "DBG census:"; census --with-suppressed 2>&1 | head; out="$(census_out)"
 _ranked="$(printf '%s\n' "$out" | grep -v '^hand-written' || true)"
 _handwritten="$(printf '%s\n' "$out" | grep '^hand-written' || true)"
 
