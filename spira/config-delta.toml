@@ -27,3 +27,4 @@ removed = ["spira.express_label"]
 "spira.admit_stagger_secs" = 30
 "spira.overlap_defer_label" = "file-overlap-defer"
 "spira.testenv_pids_limit" = "32768"
+"spira.groom_gate_label" = "placeholder-gate"
