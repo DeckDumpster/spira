@@ -167,7 +167,7 @@ fn aerc_install_can_be_skipped(current: Option<&str>) -> bool {
 }
 
 /// Phase -1: put ~/.local/bin on PATH (for the doctor this process runs next), set dolt's
-/// metrics.disabled, and fetch every dependency doctor would otherwise FAIL on
+/// metrics.disabled and bd's metrics off, and fetch every dependency doctor would otherwise FAIL on
 /// (law-install-installs-every-dependency, operator ruling 2026-10-03: install provides every
 /// dependency, there is no optional tier) — duckdb, sccache (with its webdav backend),
 /// inotifywait, and aerc (copied from this release's own vendored binary — sp-41so3; see
@@ -195,12 +195,46 @@ fn dependencies(dry: bool) -> Result<(), String> {
         info("set dolt metrics.disabled true (dolt config --global)");
     }
 
+    bd_metrics_off(dry)?;
+
     fetch_duckdb(dry, &bin)?;
     fetch_sccache(dry, &bin)?;
     fetch_inotifywait(dry, &bin)?;
     install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
     install_sendmail(dry, &home, &bin)?;
     Ok(())
+}
+
+fn bd_metrics_state() -> Option<bool> {
+    let o = Command::new("timeout").args(["5", "bd", "metrics", "status"]).output().ok()?;
+    let text = String::from_utf8_lossy(&o.stdout);
+    let line = text.lines().find(|l| l.starts_with("Anonymous usage metrics:"))?;
+    Some(line.trim_end().ends_with("ON"))
+}
+
+fn bd_metrics_off(dry: bool) -> Result<(), String> {
+    match bd_metrics_state() {
+        None => {
+            eprintln!("install: cannot read bd metrics status — run: bd metrics off");
+            Ok(())
+        }
+        Some(false) => {
+            skip("bd metrics already OFF");
+            Ok(())
+        }
+        Some(true) if dry => {
+            would("run: bd metrics off");
+            Ok(())
+        }
+        Some(true) => {
+            run_ok("timeout", &["5", "bd", "metrics", "off"]).map_err(|e| format!("cannot turn bd metrics off: {e}"))?;
+            if bd_metrics_state() != Some(false) {
+                return Err("bd metrics status still shows ON after `bd metrics off`".into());
+            }
+            info("set bd metrics OFF (bd metrics off)");
+            Ok(())
+        }
+    }
 }
 
 fn render_sendmail_wrapper(releases: &str, toml: &str) -> String {
