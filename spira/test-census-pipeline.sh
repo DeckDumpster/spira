@@ -624,13 +624,11 @@ want  "all-fail: driver error in final message" "i/o timeout" "$_fail_err"
 echo
 echo "census_event_rows_run_sql — shares the retry path with census_events_run_sql (sp-jcd0e)"
 # ==============================================================================
-# The two runners share _census_sql_retry (lib.sh); this proves the raw-rows query built
-# for clustering gets the same retry behaviour as the aggregated one, not a second
-# hand-written copy that could drift.
+# The raw-rows runner must retry exactly as the aggregated one does.
 printf '0' > "$_calls_file"
 _retry_rc=0
 tl_config SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir"
-CENSUS_RETRY_DELAY_S=0 \
+SPIRA_LC_BIN="$_fake_dir/spira-lc" CENSUS_RETRY_DELAY_S=0 \
     census_event_rows_run_sql >/dev/null 2>/dev/null || _retry_rc=$?
 is "raw-rows retry: succeeds after 2 failures" "0" "$_retry_rc"
 is "raw-rows retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
@@ -638,7 +636,7 @@ is "raw-rows retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
 _fail_err=""
 _fail_rc=0
 tl_config SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir"
-_fail_err="$(CENSUS_RETRY_DELAY_S=0 \
+_fail_err="$(SPIRA_LC_BIN="$_fake_dir/spira-lc" CENSUS_RETRY_DELAY_S=0 \
     census_event_rows_run_sql 2>&1 >/dev/null)" || _fail_rc=$?
 is    "raw-rows all-fail: returns non-zero" "1" "$_fail_rc"
 want  "raw-rows all-fail: driver error in final message" "i/o timeout" "$_fail_err"
