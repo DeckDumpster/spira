@@ -22,3 +22,4 @@
 "spira.reconciler_shadow_kinds" = ""
 "spira.reconciler_effect_passes" = "2"
 "spira.census_cluster_gap_s" = "300"
+"spira.czar_stage_reconciler_stale" = "shadow"
