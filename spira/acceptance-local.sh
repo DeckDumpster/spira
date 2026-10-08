@@ -79,6 +79,7 @@ if [ "${1:-}" = start ]; then
         --property=StandardOutput="append:$LOG" --property=StandardError="append:$LOG" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
         --setenv=SPIRA_HOME="$SPIRA_HOME" --setenv=SPIRA_RUN="$SPIRA_RUN" \
+        --setenv=SPIRA_TOML="${SPIRA_TOML:-}" --setenv=SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         --setenv=SPIRA_CONF="${SPIRA_CONF:-}" --setenv=SPIRA_DB="${SPIRA_DB:-}" \
         --setenv=SPIRA_REPO="${SPIRA_REPO:-}" --setenv=SPIRA_HOME_REPO="$(spira_home_repo 2>/dev/null)" \
         --setenv=SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \

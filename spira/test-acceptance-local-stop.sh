@@ -101,6 +101,14 @@ _summon_argv="$(cat "$FAKE_SUMMON_LOG")"
 want "the unit name follows spira-acc-<round>-<ts>" "--unit=spira-acc-myround-" "$_summon_argv"
 want "the wrapped command is this script itself, with argv forwarded" \
     "-- $(command -v acceptance-local.sh) $TMP/some-tree --predecessor spira-release-spira-x" "$_summon_argv"
+want "the unit is handed SPIRA_TOML" "--setenv=SPIRA_TOML=" "$_summon_argv"
+want "the unit is handed SPIRA_RELEASE" "--setenv=SPIRA_RELEASE=" "$_summon_argv"
+: > "$FAKE_SUMMON_LOG"
+FAKE_SUMMON_LOG="$FAKE_SUMMON_LOG" SPIRA_SUMMON="$FAKE_SUMMON" \
+    SPIRA_TOML="$TMP/pinned.toml" SPIRA_RELEASE="$TMP/pinned-release" \
+    bash "$SCRIPT" start pinround "$TMP/some-tree" >/dev/null 2>&1
+want "the unit carries the caller's SPIRA_TOML value" "--setenv=SPIRA_TOML=$TMP/pinned.toml" "$(cat "$FAKE_SUMMON_LOG")"
+want "the unit carries the caller's SPIRA_RELEASE value" "--setenv=SPIRA_RELEASE=$TMP/pinned-release" "$(cat "$FAKE_SUMMON_LOG")"
 want "start reports the unit it launched" "started spira-acc-myround-" "$_start_out"
 want "start tells the operator how to stop it" "stop myround" "$_start_out"
 
