@@ -460,9 +460,11 @@ const USER_VIEW_REL: &str = ".local/bin/cockpit-remote";
 
 pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
     let home = std::env::var("HOME").unwrap_or_default();
-    let mut view = std::env::var("SPIRA_VIEW")
-        .ok()
-        .filter(|s| !s.is_empty())
+    let mut view = Some(spira_config::process::cfg("SPIRA_VIEW").unwrap_or_else(|e| {
+        eprintln!("rebuild: {e}");
+        std::process::exit(2)
+    }))
+    .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(&home).join(USER_VIEW_REL));
     if !view.is_file() {
