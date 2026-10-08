@@ -34,6 +34,7 @@ _FAKE_RELEASE="$(mktemp -d)"
 mkdir -p "$_FAKE_RELEASE/bin"
 cp "$(command -v "$LAYOUT")" "$_FAKE_RELEASE/bin/layout"
 cp "$(command -v health)" "$_FAKE_RELEASE/bin/health"
+cp "$(command -v lc-view)" "$_FAKE_RELEASE/bin/lc-view"
 # cockpit-ops's self_source() (cockpit/ops/src/conf.rs) resolves its registry at
 # $SPIRA_RELEASE/spira/conf.d, never from a SPIRA_HOME env var — a fake release with no
 # spira/ at all made every `layout ensure` below fall back to built-in defaults rather
@@ -82,7 +83,7 @@ well_formed() {
     local sess="$sname:0"
     local health mail
     health=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
-        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH lc-view loop 10")
     mail=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess:0" -v -P -F '#{pane_id}' \
         "exec -a fakemail sleep 300")
     local sess_id
@@ -108,9 +109,9 @@ with_duplicate() {
     local sess="$sname:0"
     local h1 h2 sess_id
     h1=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
-        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH lc-view loop 10")
     h2=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
-        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH lc-view loop 10")
     sess_id=$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t "$sess" -F '#{pane_id}' | head -1)
 
     TMUX_TMPDIR="$TMUXDIR" tmux set-option -p -t "$h1" @cockpit health

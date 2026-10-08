@@ -30,7 +30,8 @@ cp "$HERE/../cockpit/tmux-env.sh" "$ROOT/cockpit/"
 cp "$(command -v layout)" "$ROOT/bin/layout"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/bin/health"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/bin/fakemail"
-chmod +x "$ROOT/bin/health" "$TMP/bin/fakemail"
+cp "$ROOT/bin/health" "$ROOT/bin/lc-view"
+chmod +x "$ROOT/bin/health" "$ROOT/bin/lc-view" "$TMP/bin/fakemail"
 
 RUN_D="$TMP/run"; mkdir -p "$RUN_D"
 layout() {   # layout <COCKPIT_MAIL> <action> [args]
