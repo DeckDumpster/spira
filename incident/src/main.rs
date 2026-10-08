@@ -147,7 +147,7 @@ impl Env {
             dedup_lookback_days: env("SPIRA_INCIDENT_DEDUP_LOOKBACK").and_then(|v| v.parse().ok()).unwrap_or(7),
             watcher_interval_s: env("SPIRA_WATCHER_INTERVAL_S").and_then(|v| v.parse().ok()).unwrap_or(1800),
             cause: decide::sanitize_cause(&env_or("SPIRA_INCIDENT_CAUSE", "unrecorded")),
-            labels: env("SPIRA_INCIDENT_LABELS").unwrap_or_else(|| format!("spira,{incident_label}")),
+            labels: decide::incident_labels(env("SPIRA_INCIDENT_LABELS").as_deref(), env("SPIRA_SCOPE_LABEL").as_deref(), &incident_label),
             repo: env("SPIRA_INCIDENT_REPO"),
             kind: env_or("SPIRA_INCIDENT_TYPE", "bug"),
             // conf.sh:1717 `: "${SPIRA_INCIDENT_PRIORITY:=3}"` — the bash never carried its
