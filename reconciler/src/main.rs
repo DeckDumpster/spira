@@ -2000,6 +2000,56 @@ mod tests {
     }
 
     #[test]
+    fn replay_a_disabled_reconciler_timer_is_enabled_and_the_effect_is_read() {
+        let (dir, cfg) = suspension_fixture("replay-disabled-timer", "sp-never", None);
+        fs::remove_file(&cfg.ctrl_path).unwrap();
+        let state_file = dir.join("timer-on");
+        let systemctl = dir.join("systemctl");
+        testkit::write_exe(
+            &systemctl,
+            &format!(
+                "#!/bin/sh\necho \"$*\" >> {c}\ncase \"$2\" in enable) touch {s};; is-enabled) [ -f {s} ] && {{ echo enabled; exit 0; }}; echo disabled; exit 1;; is-active) [ -f {s} ] && {{ echo active; exit 0; }}; echo inactive; exit 3;; esac\n",
+                c = dir.join("systemctl-calls").display(),
+                s = state_file.display()
+            ),
+        );
+        let units_install = dir.join("units-install");
+        testkit::write_exe(&units_install, "#!/bin/sh\necho spira-reconciler-prod.timer\n");
+        let cfg = Config {
+            remedy_log: dir.join("remedy.jsonl"),
+            effect_passes: 2,
+            release: "r-fixture".into(),
+            seams: Seams {
+                systemctl: systemctl.to_string_lossy().to_string(),
+                units_install: units_install.to_string_lossy().to_string(),
+                ..cfg.seams.clone()
+            },
+            ..cfg
+        };
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+        let mut alerted = AlertedSinceMap::new();
+
+        for c in observe_units(&cfg) {
+            assert!(matches!(c.raw, RawStatus::Gap { .. }), "the disabled timer must read as a gap: {:?}", c.raw);
+            evaluate(&cfg, &mut state, &mut pending, &mut alerted, c);
+        }
+        let calls = fs::read_to_string(dir.join("systemctl-calls")).unwrap();
+        assert!(calls.contains("enable --now spira-reconciler-prod.timer"), "{calls}");
+        let log = fs::read_to_string(&cfg.remedy_log).unwrap();
+        assert!(log.contains("\"event\":\"remedy\"") && log.contains("\"before\":1.0"), "{log}");
+
+        let cfg2 = Config { now_secs: cfg.now_secs + 60, ..cfg.clone() };
+        for c in observe_units(&cfg2) {
+            assert_eq!(c.raw, RawStatus::Satisfied);
+            evaluate(&cfg2, &mut state, &mut pending, &mut alerted, c);
+        }
+        let log = fs::read_to_string(&cfg.remedy_log).unwrap();
+        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0.0"), "{log}");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
     fn a_reminder_is_sent_once_when_the_owner_bead_lands_and_the_suspension_stays() {
         let (dir, cfg) = suspension_fixture("reminder-owner", "sp-xn3nou", None);
         let ctrl = load_ctrl(&cfg);

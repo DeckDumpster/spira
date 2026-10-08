@@ -102,15 +102,8 @@ impl Finding {
     }
 }
 
-/// Runs `bash <incident_sh> file <title> -`, body on stdin, discarding stdout — the exact
-/// shape of `bash "$INC" file "..." - >/dev/null || true` at every bash call site: a failed
-/// filing is logged by the caller, never fatal to the check that found the thing.
-pub fn file(incident_sh: &str, f: &Finding) -> bool {
-    run_verb(incident_sh, "file", f)
-}
-
 /// Hands a detector's condition to the Concierge inbox as one deduplicated note
-/// (`incident.sh alarm`), never a bead. Same shape and environment as [`file`].
+/// (`incident.sh alarm`), never a bead. 
 pub fn alarm(incident_sh: &str, f: &Finding) -> bool {
     run_verb(incident_sh, "alarm", f)
 }
@@ -210,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn file_writes_the_env_and_stdin_a_fake_incident_sh_expects() {
+    fn alarm_writes_the_env_and_stdin_a_fake_incident_sh_expects() {
         let d = testkit::TempDir::new("wt-inc-file");
         let inc = d.join("inc.sh");
         let capture = d.join("capture.txt");
@@ -225,8 +218,8 @@ mod tests {
         let f = Finding::new("db", "spira", "TITLE HERE", "the body\nsecond line\n")
             .priority(1)
             .reference("incident:x-1");
-        assert!(file(inc.to_str().unwrap(), &f));
+        assert!(alarm(inc.to_str().unwrap(), &f));
         let got = std::fs::read_to_string(&capture).unwrap();
-        assert!(got.contains("file\nTITLE HERE\nREF=incident:x-1\nPRI=1\nthe body\nsecond line"));
+        assert!(got.contains("alarm\nTITLE HERE\nREF=incident:x-1\nPRI=1\nthe body\nsecond line"));
     }
 }

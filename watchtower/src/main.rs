@@ -9,7 +9,6 @@ mod czar_outcome;
 mod deadline;
 mod deploy_fault;
 mod disk_mem;
-mod disabled_timer;
 mod drift;
 mod env;
 mod ctrl_gate;
@@ -120,12 +119,7 @@ fn spira_run() -> PathBuf {
     PathBuf::from(reg("SPIRA_RUN"))
 }
 
-/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH. Used only for
-/// `--disabled-timer-check`'s `world.sh`/`ctrl.sh` seam, which the bash reached the same
-/// way (`. "${SPIRA_HOME}/world.sh"` — a literal `$SPIRA_HOME`, never `$0`-relative): a
-/// test that overrides `SPIRA_HOME` means that seam too, and production always sets it
-/// anyway. The fallback only matters for a suite run in a clean `env -i` that puts
-/// `spira/` on PATH without setting `SPIRA_HOME` at all.
+/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH.
 fn spira_home() -> String {
     if let Some(h) = getenv("SPIRA_HOME") {
         return h;
@@ -321,23 +315,6 @@ fn main() {
                 },
             );
         }
-        Some("--disabled-timer-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: disabled-timer-check skipped — world is halted");
-                return;
-            }
-            let cfg = disabled_timer::Cfg {
-                systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
-                instance_suffix: format!("-{}", reg("SPIRA_INSTANCE")),
-            };
-            disabled_timer::run(
-                &spira_home(),
-                &reg("SPIRA_DB"),
-                &reg("SPIRA_HOME_REPO"),
-                &resolved_incident_sh(),
-                &cfg,
-            );
-        }
         Some("--release-skew-check") => {
             if world_halted(&run) {
                 log::log("watchtower: release-skew-check skipped — world is halted");
@@ -529,7 +506,7 @@ mod tests {
         std::fs::write(run.join("world.halted"), "").unwrap();
         assert!(world_halted(&run), "marker present: halted");
         let src = include_str!("main.rs");
-        for sub in ["throttle-check", "czar-outcome-check", "pr-stall-check", "disabled-timer-check"] {
+        for sub in ["throttle-check", "czar-outcome-check", "pr-stall-check", "release-skew-check"] {
             let msg = format!("watchtower: {sub} skipped \u{2014} world is halted");
             assert!(src.contains(&format!("\"{}\"", msg)), "{sub} must carry the halted-world skip");
         }

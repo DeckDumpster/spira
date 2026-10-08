@@ -1,5 +1,4 @@
-//! Fixed `bash -c` seams into libraries this bead does not own (DESIGN.md §3):
-//! `world.sh`'s `TIMER_PRIORITY` plus `ctrl.sh`'s suspension map. Every script text here is
+//! Fixed `bash -c` seams into libraries this bead does not own (DESIGN.md §3). Every script text here is
 //! a constant — nothing is ever interpolated into it; the only data that crosses the
 //! boundary travels as argv to the fixed script or as NUL/tab-delimited stdout, the same
 //! discipline `sentinel/src/seams.rs` documents for its own lib.sh seams. `repo_root`
@@ -17,55 +16,6 @@ use std::process::Command;
 /// holding lib.sh), matching every other caller here.
 pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
     spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(spira_home))
-}
-
-pub struct Timers {
-    /// Essential timer base names, in `world.sh`'s `TIMER_PRIORITY` order.
-    pub priority: Vec<String>,
-    /// Base names `ctrl.sh` has a recorded suspension for.
-    pub suspended: std::collections::BTreeSet<String>,
-}
-
-// world.sh and ctrl.sh are the `world` and `aeons`/`ctrl` binaries now (sp-6onps) — a
-// compiled binary cannot be sourced, so WORLD_LIB=1/CTRL_LIB=1 stopped being possible.
-// `world.sh timer-priority` and `ctrl.sh suspended` are the machine-readable seams each
-// binary grew for exactly this: callers that used to source them for a list/map now read
-// one subcommand's stdout once instead. Both are invoked by bare name on the launcher's
-// PATH (sp-gypjk) — `spira_home` is no longer part of the path, so it is accepted but
-// unused, kept only so this function's signature does not ripple into its caller.
-const TIMERS_SCRIPT: &str = r#"
-set -uo pipefail
-world.sh timer-priority || exit 97
-printf '\0'
-ctrl.sh suspended || exit 98
-"#;
-
-/// Reads `TIMER_PRIORITY` and the suspended-base set through one `bash -c`. `None` means
-/// the seam itself failed (`world.sh timer-priority` or `ctrl.sh suspended` could not run)
-/// — the caller treats that as "cannot check", not as "nothing is disabled"
-/// (law-absence-needs-a-positive-control).
-pub fn timer_priority_and_suspended(_spira_home: &str) -> Option<Timers> {
-    let out = spira_config::bounded::bounded("bash").arg("-c").arg(TIMERS_SCRIPT).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let split = out.stdout.iter().position(|&b| b == 0)?;
-    let (pri_bytes, rest) = out.stdout.split_at(split);
-    let priority: Vec<String> = String::from_utf8_lossy(pri_bytes)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-    let suspended: std::collections::BTreeSet<String> = String::from_utf8_lossy(&rest[1..])
-        .lines()
-        .filter_map(|l| l.split('\t').next())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-    Some(Timers {
-        priority,
-        suspended,
-    })
 }
 
 pub struct PipelineProbe {
@@ -157,39 +107,6 @@ mod tests {
             ("XDG_CONFIG_HOME", xdg.to_str()),
         ]);
         assert_eq!(registry("/does/not/exist").root("spira"), None);
-    }
-
-    /// world.sh/ctrl.sh are the `world`/`ctrl` binaries now (sp-6onps): the seam calls
-    /// them by bare name on PATH, so the fixture is a fake PATH entry, not a sourceable
-    /// bash library — `world.sh timer-priority` and `ctrl.sh suspended` are the only
-    /// contract this function depends on.
-    #[test]
-    fn timer_priority_and_suspended_reads_the_fixture_shape() {
-        let d = testkit::TempDir::new("wt-seams-timers");
-        testkit::write_exe(
-            d.join("world.sh"),
-            "#!/usr/bin/env bash\nprintf 'spira-sentinel\\nspira-watchtower\\n'\n",
-        );
-        testkit::write_exe(
-            d.join("ctrl.sh"),
-            "#!/usr/bin/env bash\nprintf 'spira-watchtower\\tbecause\\n'\n",
-        );
-        let path = format!("{}:/usr/bin:/bin", d.display());
-        let _g = testkit::env(&[("PATH", Some(&path))]);
-        let t = timer_priority_and_suspended("unused").unwrap();
-        assert_eq!(t.priority, vec!["spira-sentinel", "spira-watchtower"]);
-        assert!(t.suspended.contains("spira-watchtower"));
-        assert!(!t.suspended.contains("spira-sentinel"));
-    }
-
-    #[test]
-    fn timer_priority_and_suspended_is_none_when_world_sh_is_missing() {
-        let d = testkit::TempDir::new("wt-seams-timers-missing");
-        // A confined PATH (never the inherited one) — this box's own release may well
-        // have a real world.sh/ctrl.sh on it, which would defeat "missing" entirely.
-        let path = format!("{}:/usr/bin:/bin", d.display());
-        let _g = testkit::env(&[("PATH", Some(&path))]);
-        assert!(timer_priority_and_suspended("unused").is_none());
     }
 
     #[test]

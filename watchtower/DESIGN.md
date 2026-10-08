@@ -40,7 +40,6 @@ watchtower                    gather, and file the sweep Ops claims (or SWEEP:NO
 watchtower --show             gather and print; touch nothing
 watchtower --throttle-check       admission gate for the task pool (sentinel CHECK 6)
 watchtower --czar-outcome-check   czar-trigger unclaimed / outcome-not-cleared (CHECK 6)
-watchtower --disabled-timer-check an essential timer disabled with no ctrl suspension (CHECK 6)
 watchtower --pr-stall-check       PR-mode stall detector: red / auto-merge-off / conflict / arm (CHECK 6)
 watchtower --lock-holders-check  on a queue stall (certified waiting, no landing for SPIRA_QUEUE_THROTTLE_STALL_MINS), names every pid holding a landing/gate lock file by /proc/*/fd and flags non-gate holders as leaked-lock suspects
 ```
