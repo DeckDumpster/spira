@@ -71,9 +71,12 @@ seed sp-land READY;   seed sp-landed-succ LANDED
 seed sp-ready READY;  seed sp-ready-succ READY
 seed sp-norow READY
 seed sp-manual READY
+seed sp-done READY
 request sp-land sp-landed-succ
 request sp-ready sp-ready-succ
 request sp-norow sp-absent
+request sp-done sp-landed-succ
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='SUPERSEDED' WHERE bead_id='sp-done'" >/dev/null 2>&1
 spira-lc hold sp-manual operator "operator parked it" tester >/dev/null 2>&1
 
 run() {
@@ -105,8 +108,13 @@ nowant "a manual hold is never adjudicated" "sp-manual" "$out"
 want "each request is surfaced in the log" "SUPERSEDE REQUEST sp-ready: successor sp-ready-succ" "$out"
 want "each request is surfaced to the Concierge" "[watch:supersede-duty] SUPERSEDE REQUEST sp-land" "$(cat "$TMP/inbox.log")"
 
+is "an already-SUPERSEDED target stays SUPERSEDED" SUPERSEDED "$(state_of sp-done)"
+nowant "a terminal target is never written to bd" "sp-done" "$(cat "$TMP/calls.log")"
+nowant "a terminal target is never retried" "will retry" "$out"
+
 : > "$TMP/calls.log"
-run pass >/dev/null
+out2="$(run pass)"
+nowant "a settled terminal target is not reported again" "sp-done" "$out2"
 is "a second pass finds nothing left to decide" "" "$(cat "$TMP/calls.log")"
 
 run watch --interval 7 --ticks 1 >/dev/null
