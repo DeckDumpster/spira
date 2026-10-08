@@ -43,6 +43,7 @@ pub mod repos;
 pub mod resolve;
 pub mod room;
 pub mod scratch;
+pub mod session;
 pub mod unit;
 pub mod vtime;
 pub mod writeback;

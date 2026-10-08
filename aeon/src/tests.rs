@@ -607,7 +607,8 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     assert_eq!(o.code, 0);
     let w = o.w.lock().unwrap();
     let cas = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").expect("lifecycle CAS claim");
-    assert_eq!(cas.1[1], "aeon-ifrit");
+    let me = spira_config::session::parse(&cas.1[1]).expect("the holder is a session identity, not a bare name");
+    assert_eq!((me.name.as_str(), me.pid), ("aeon-ifrit", std::process::id()));
     assert_eq!(o.seen[0].env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-r"), "the model runs bound to this bead");
     assert!(!o.seen[0].env.contains_key("SPIRA_DB"), "the restricted env never carries SPIRA_DB");
     assert!(!o.seen[0].env.contains_key("GH_TOKEN"), "the restricted env never carries GH_TOKEN");
@@ -916,7 +917,7 @@ fn happy_path_submits_through_the_machine() {
     assert_eq!(spec.stdin_file, f.run.join("sp-h.task.md"));
     assert_eq!(spec.log, f.run.join("sp-h.log"));
     assert_eq!(spec.cwd, f.run.join("worktree/sp-h"));
-    assert_eq!(spec.env.get("BEADS_ACTOR").map(|s| s.as_str()), Some("aeon-ifrit"));
+    assert!(spec.env.get("BEADS_ACTOR").is_some_and(|a| spira_config::session::parse(a).is_some_and(|s| s.name == "aeon-ifrit")), "{:?}", spec.env.get("BEADS_ACTOR"));
     assert_eq!(spec.env.get("BEAD_ID").map(|s| s.as_str()), Some("sp-h"));
     assert_eq!(spec.env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-h"), "the model runs bound to this bead");
     assert!(spec.env.get("GH_TOKEN").is_none(), "no credential-shaped var leaked to the model");

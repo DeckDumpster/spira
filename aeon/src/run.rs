@@ -57,6 +57,8 @@ pub struct Deps<'a> {
 #[derive(Debug, Default)]
 pub struct State {
     pub aeon: String,
+    /// The claim holder: `aeon-<name>@<pid>.<starttime>`, one per process (spira_config::session).
+    pub holder: String,
     pub bead: String,
     pub claimed: Option<BeadRow>,
     pub repo_name: String,
@@ -260,14 +262,16 @@ impl<'a> Run<'a> {
         // call, so there is no cross-crate reason left to round-trip through lib.sh.
         let name = crate::naming::aeon_name_take(self.run_dir(), self.f());
         let actor = format!("aeon-{name}");
+        let holder = spira_config::session::own_holder(&actor);
         let env = self.d.env;
         env.set("SPIRA_AEON", &name);
-        env.set("BEADS_ACTOR", &actor);
+        env.set("BEADS_ACTOR", &holder);
         env.set("GIT_AUTHOR_NAME", &actor);
         env.set("GIT_AUTHOR_EMAIL", &format!("{actor}@spira.local"));
         env.set("GIT_COMMITTER_NAME", &actor);
         env.set("GIT_COMMITTER_EMAIL", &format!("{actor}@spira.local"));
         self.s.aeon = name;
+        self.s.holder = holder;
     }
 
     // ==== the whole run ================================================================
@@ -397,10 +401,29 @@ impl<'a> Run<'a> {
         0
     }
 
+    /// A WORKING bead this name holds under another session that is still running: claiming
+    /// a second would silently double-hold. A dead session's row is the reaper's, not a refusal.
+    fn double_hold(&self, mine: &str) -> Option<String> {
+        let o = self.d.exec.exec("spira-lc", &s(&["list-all"]), None, None);
+        if o.code != 0 {
+            return None;
+        }
+        o.stdout.lines().find_map(|l| {
+            let mut f = l.split('\t');
+            let (id, state, holder) = (f.next()?, f.next()?, f.next()?);
+            let live = !spira_config::session::session_gone(holder, &spira_config::admission::RealProcs);
+            (state == "WORKING" && live && spira_config::session::same_name_other_session(holder, mine)).then(|| id.to_string())
+        })
+    }
+
     /// The lifecycle claim: a Claim event per ranked candidate, carrying its stack proposal,
     /// until one applies. bd is read afterwards for the bead's content only. Ok(None): idle.
     fn lc_claim(&mut self, ids: &[String], resumable: &[String], tier: Option<&str>, who: &str) -> Result<Option<claim::Claimed>, i32> {
-        let holder = format!("aeon-{}", self.s.aeon);
+        let holder = self.s.holder.clone();
+        if let Some(held) = self.double_hold(&holder) {
+            self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.aeon));
+            return Err(1);
+        }
         let until = (self.now() + self.fayth.lease_seconds()).to_string();
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
@@ -1224,7 +1247,7 @@ impl<'a> Run<'a> {
             git: self.d.git,
             bd: self.d.bd,
             exec: self.d.exec,
-            holder: format!("aeon-{}", self.s.aeon),
+            holder: self.s.holder.clone(),
             renew_rc: std::sync::Mutex::new(0),
             sink: self.d.sink,
             clock: self.d.clock,
