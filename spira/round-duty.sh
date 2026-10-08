@@ -72,7 +72,7 @@ _rd_tick() {
     _rd_round_state
     if [ "$_rd_state" = unknown ]; then
         if [ $((now - _rd_last_unknown)) -ge "$SPIRA_ROUND_DUE_REMIND" ]; then
-            _rd_say "ROUND STATE UNKNOWN: 'queue round status' gave no usable answer — cannot tell whether a round is running, so ROUND DUE is withheld"
+            _rd_say "ROUND STATE UNKNOWN: 'queue round status' gave no usable answer — cannot tell whether a round is running, so no round is called due"
             _rd_last_unknown=$now
         fi
         return 0
