@@ -821,8 +821,8 @@ pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
 
 /// `eject-member <batch-id> --bead-id ID --expect S --version V --actor A --reason R`
 ///
-/// One transaction: `Eject{bead_id,reason}` on the batch (OPEN or CI_RUNNING only; the batch
-/// itself does not move — survivors stay in the batch), and `Requeued{tip}` for the ejected
+/// One transaction: `Eject{bead_id,reason}` on the batch (OPEN, CI_RUNNING or GREEN; only a
+/// GREEN batch moves, back to OPEN — survivors stay in the batch), and `Requeued{tip}` for the ejected
 /// member's delivery and bead row (tip unchanged, so it resurrects CERTIFIED per the tip
 /// invariant, same as `abandon-batch`). This is the manual, pre-CI-outcome eject
 /// (queue.sh's `cmd_eject`, an operator/czar action) — distinct from `settle`'s own

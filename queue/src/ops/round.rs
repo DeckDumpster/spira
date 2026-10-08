@@ -551,14 +551,25 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         }
     }
 
+    let why = bounded_text(&reason);
+    if let Err((rc, out)) = lc_cas(w, batch, |s, v| w.lc.eject_member(batch, id, s, v, LC_ACTOR, &why)) {
+        if new_head != old_head {
+            w.git.worktree_remove(&path, &wt);
+            let _ = w.git.worktree_add_detached(&path, &wt, &old_head);
+        }
+        w.err(format!("queue.sh {label}: spira-lc eject-member refused for {id} (rc={rc}): {out} — nothing changed"));
+        return FAIL;
+    }
     let cause = EjectCause::decide(red, harness_fault, suites);
     for (bead, why_text, own_cause) in std::iter::once((id, reason.clone(), cause)).chain(stacked.iter().map(|m| (m.id.as_str(), format!("stacked on {id}"), cause))) {
         w.lib.bead_reopen(bead, own_cause.as_str(), suites);
         lc_return(w, bead);
         w.lib.release_claim(bead);
-        let why = bounded_text(&why_text);
-        if let Err((rc, out)) = lc_cas(w, batch, |s, v| w.lc.eject_member(batch, bead, s, v, LC_ACTOR, &why)) {
-            w.err(format!("queue.sh {label}: spira-lc eject-member refused for {bead} (rc={rc}): {out}"));
+        if bead != id {
+            let why = bounded_text(&why_text);
+            if let Err((rc, out)) = lc_cas(w, batch, |s, v| w.lc.eject_member(batch, bead, s, v, LC_ACTOR, &why)) {
+                w.err(format!("queue.sh {label}: spira-lc eject-member refused for {bead} (rc={rc}): {out}"));
+            }
         }
         let mut comment = format!("Ejected from round {batch} in {}.\n\n{why_text}", c.r.name);
         comment.push_str("\n\nFix the failing issue and re-certify before rejoining the queue.");
