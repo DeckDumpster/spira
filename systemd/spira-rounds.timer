@@ -1,0 +1,14 @@
+[Unit]
+Description=Spira rounds — the next pass starts 30 seconds after the last one ends
+
+[Timer]
+OnBootSec=120s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=spira-rounds.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work

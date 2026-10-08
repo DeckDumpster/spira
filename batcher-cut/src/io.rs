@@ -1435,11 +1435,20 @@ pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[Stri
     if owner {
         args.extend(["--suites", &csv]);
     }
-    let run = round_verb(env, &args, &reason)?;
-    if run.code == Some(0) {
+    let attempts = env.land_lock_attempts.max(1);
+    let mut last = round_verb(env, &args, &reason)?;
+    for n in 1..attempts {
+        if last.code == Some(0) || !last.err.contains(LOCK_BUSY) {
+            break;
+        }
+        println!("batcher {}: queue round eject refused ({}) — retry {n}/{attempts}", repo.name, refusal_line(&last.err));
+        std::thread::sleep(env.land_lock_wait);
+        last = round_verb(env, &args, &reason)?;
+    }
+    if last.code == Some(0) {
         Ok(())
     } else {
-        Err(verb_failed("queue round eject", &run))
+        Err(verb_failed("queue round eject", &last))
     }
 }
 
@@ -2458,6 +2467,19 @@ mod land_exit_tests {
         assert_eq!(r.outcome, LandOutcome::Refused);
         assert!(r.refusal.contains("holds the lock"), "{}", r.refusal);
         assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "3", "bounded by land_lock_attempts");
+    }
+
+    #[test]
+    fn an_eject_on_a_held_lock_retries_and_a_real_refusal_does_not() {
+        let d = testkit::TempDir::new("batcher-cut-eject-retry");
+        let e = stub_queue(&d, 2, 0, "");
+        round_eject(&e, &repo_at(&d), "b1", "sp-a", &[], &[], false).unwrap();
+        assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "3");
+        let d = testkit::TempDir::new("batcher-cut-eject-refused");
+        let e = stub_queue(&d, 0, 1, "queue.sh round eject: sp-a is not a member");
+        let err = round_eject(&e, &repo_at(&d), "b1", "sp-a", &[], &[], false).unwrap_err();
+        assert!(err.contains("not a member"), "{err}");
+        assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "1", "no retry");
     }
 
     #[test]

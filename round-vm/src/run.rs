@@ -260,6 +260,24 @@ if [ -n "$lint" ]; then
     fi
     echo "round-vm: LINT: ${lint_secs}s of the 900s cap (rc=$lint_rc)" >&2
 fi
+# THE BASE FENCES the gate runs on every branch beyond the lint (gate.steps), on the merged
+# tree: a round that passes the suites but breaks one is red. build-fence is the workspace
+# build above and the unit tests below.
+fence_fail=""
+fence_run() {
+    local name="$1"; shift
+    ( cd "$HOME/round-work" && "$@" ) > ~/round-fence-"$name".out 2>&1
+    local frc=$?
+    if [ "$frc" -ne 0 ]; then
+        echo "round-vm: FENCE $name: RED (rc=$frc)" >&2
+        head -40 ~/round-fence-"$name".out >&2
+        fence_fail="$fence_fail $name"
+    fi
+}
+if [ -n "$lint" ]; then
+    fence_run lifecycle-guard "$HOME/round-work/target/release/lifecycle-guard" --gate .
+    fence_run boundary bash spira/boundary.sh check
+fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
 # They run beside the suites, on the build above; a red here makes the round red.
 # A SCRUBBED ENVIRONMENT: the launcher's SPIRA_RELEASE/SPIRA_REPO/PATH exported above leak
@@ -286,6 +304,17 @@ if [ "$lint_rc" -ne 0 ]; then
     mkdir -p "$leaf"
     cp ~/round-lint.report "$leaf/spira-lint.out"
     echo "red 1 $lint_secs - - - $lint_rc" > "$leaf/spira-lint.result"
+    [ "$rc" -eq 0 ] && rc=1
+fi
+if [ -n "$fence_fail" ]; then
+    rdir="$HOME/round-work/.runtime/spira/batch-results"
+    leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
+    leaf="${leaf:-$rdir}"
+    mkdir -p "$leaf"
+    for name in $fence_fail; do
+        cp ~/round-fence-"$name".out "$leaf/fence-$name.out"
+        echo "red 1 0 - - - 1" > "$leaf/fence-$name.result"
+    done
     [ "$rc" -eq 0 ] && rc=1
 fi
 if [ "$unit_rc" -eq 0 ]; then
@@ -1156,6 +1185,12 @@ mod tests {
             .output().unwrap()
     }
 
+    fn fence_post_segment() -> String {
+        let c = REMOTE_SCRIPT.find("if [ -n \"$fence_fail\" ]; then\n    rdir=").unwrap();
+        let d = c + REMOTE_SCRIPT[c..].find("\nfi\n").unwrap() + 4;
+        REMOTE_SCRIPT[c..d].to_string()
+    }
+
     fn lint_segments() -> (String, String) {
         let a = REMOTE_SCRIPT.find("lint_rc=0\nlint_secs=0").unwrap();
         let b = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN UNIT TESTS").unwrap();
@@ -1166,6 +1201,11 @@ mod tests {
 
     /// A round of two members on a base; the stub lint reports `hit` (exit 1) or nothing (exit 0).
     fn lint_fixture(d: &TempDir, hit: Option<&str>) -> std::process::Output {
+        fence_fixture(d, hit, 0, 0)
+    }
+
+    /// As [`lint_fixture`], with the lifecycle-guard and boundary fences exiting `guard_rc` and `boundary_rc`.
+    fn fence_fixture(d: &TempDir, hit: Option<&str>, guard_rc: i32, boundary_rc: i32) -> std::process::Output {
         let home = d.path();
         let w = home.join("round-work");
         fs::create_dir_all(w.join("target/release")).unwrap();
@@ -1174,13 +1214,17 @@ mod tests {
             None => "#!/bin/sh\nexit 0\n".to_string(),
         };
         testkit::write_exe(w.join("target/release/spira-lint"), &stub);
+        testkit::write_exe(w.join("target/release/lifecycle-guard"), &format!("#!/bin/sh\n[ \"$1\" = --gate ] || exit 9\necho 'guard finding'\nexit {guard_rc}\n"));
+        fs::create_dir_all(w.join("spira")).unwrap();
+        fs::write(w.join("spira/boundary.sh"), format!("[ \"$1\" = check ] || exit 9\necho 'README is stale'\nexit {boundary_rc}\n")).unwrap();
         let (lint, post) = lint_segments();
+        let fences = fence_post_segment();
         let script = format!(
             "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
              git update-ref refs/remotes/origin/base HEAD; \
              echo 1 > ok.rs; git add ok.rs; git commit -qm 'spira: round r-1: merge sp-clean (aaa)'; \
              echo 2 > bad.rs; git add bad.rs; git commit -qm 'spira: round r-1: merge sp-dirty (bbb)'; \
-             set +e; rc=0; lint=1; {lint}\n{post}\necho rc=$rc"
+             set +e; rc=0; lint=1; {lint}\n{post}\n{fences}\necho rc=$rc"
         );
         sh(home, &script)
     }
@@ -1199,6 +1243,28 @@ mod tests {
         let res = fs::read_to_string(d.path().join("round-work/.runtime/spira/batch-results/spira-lint.result")).unwrap();
         assert!(res.starts_with("red "), "{res}");
         assert!(err.contains("of the 900s cap"), "the lint's wall time is reported: {err}");
+    }
+
+    #[test]
+    fn a_round_that_breaks_only_a_base_fence_goes_red_naming_the_fence() {
+        let d = TempDir::new();
+        let o = fence_fixture(&d, None, 0, 1);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(String::from_utf8_lossy(&o.stdout).contains("rc=1"), "{err}");
+        assert!(err.contains("FENCE boundary: RED"), "{err}");
+        assert!(!err.contains("FENCE lifecycle-guard"), "{err}");
+        let r = d.path().join("round-work/.runtime/spira/batch-results");
+        assert!(fs::read_to_string(r.join("fence-boundary.result")).unwrap().starts_with("red "));
+        assert!(fs::read_to_string(r.join("fence-boundary.out")).unwrap().contains("README is stale"));
+        assert!(!r.join("spira-lint.result").exists(), "the lint was clean");
+    }
+
+    #[test]
+    fn a_lifecycle_guard_finding_alone_makes_the_round_red() {
+        let d = TempDir::new();
+        let o = fence_fixture(&d, None, 1, 0);
+        assert!(String::from_utf8_lossy(&o.stderr).contains("FENCE lifecycle-guard: RED"));
+        assert!(d.path().join("round-work/.runtime/spira/batch-results/fence-lifecycle-guard.result").exists());
     }
 
     #[test]

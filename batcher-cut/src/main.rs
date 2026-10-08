@@ -55,6 +55,7 @@ struct Opts {
 
 fn usage() -> ExitCode {
     eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher rounds [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
@@ -939,6 +940,36 @@ fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, Strin
 /// `id=<bead-id>` on success so the caller can record it without scraping human-facing text
 /// (law-never-derive-an-id-from-output); prints nothing to stdout on failure, the error goes
 /// to stderr, and the exit code alone tells queue verdict whether to log it as unfiled.
+/// One cut for every registered repo that lands through the queue: what the supervised
+/// `spira-rounds` timer runs. A repo whose cut fails does not stop the others, and the run
+/// still exits non-zero so the unit shows failed.
+fn rounds(o: &Opts) -> Result<(), String> {
+    if cfg("SPIRA_BATCHER_ENABLE")?.trim() == "0" {
+        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds; nothing to do");
+        return Ok(());
+    }
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let env_ = env_for(o, home, run)?;
+    let reg = io::registry(&env_);
+    let mut failed = Vec::new();
+    for name in reg.all() {
+        if !matches!(reg.land(&name).as_str(), "queue" | "queue.local") {
+            continue;
+        }
+        let one = Opts { cmd: "cut".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
+        if let Err(e) = cut(&one) {
+            eprintln!("batcher rounds: {name}: {e}");
+            failed.push(name);
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("cut failed for: {}", failed.join(", ")))
+    }
+}
+
 fn judgement_ci(o: &Opts) -> Result<(), String> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
@@ -970,6 +1001,7 @@ fn main() -> ExitCode {
     };
     let r = match o.cmd.as_str() {
         "cut" => cut(&o),
+        "rounds" => rounds(&o),
         "judgement-ci" => judgement_ci(&o),
         _ => return usage(),
     };
