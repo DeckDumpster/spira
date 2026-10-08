@@ -298,6 +298,8 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     (0, serde_json::to_string_pretty(&out).unwrap())
 }
 
+const SINCE_BY_KEY_MAX: usize = 1000;
+
 pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
         return cmd_list_delivery(args, conn);
@@ -326,20 +328,28 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
-    // `since` is read for the returned rows only, by key, so the cost follows the rows
-    // returned and not the whole event log. A grouped pass or correlated subquery over the
-    // log scaled with every event ever written (sp-c3azm, sp-utv2df).
+    // Few rows: `since` by key, so the cost follows the rows returned. Many rows: one pass
+    // over the covering index beats dozens of large IN lists (measured 0.5 s vs 4.4 s at 12k
+    // beads / 100k events) (sp-jk7xgp).
     let ids: Vec<String> = beads
         .iter()
         .filter_map(|b| b.get("bead_id").and_then(Value::as_str))
         .map(|id| format!("'{}'", rows::escape(id)))
         .collect();
+    let queries: Vec<String> = if ids.len() > SINCE_BY_KEY_MAX {
+        vec!["SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 GROUP BY lc_key, to_state".to_string()]
+    } else {
+        ids.chunks(500)
+            .map(|chunk| {
+                format!(
+                    "SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 AND lc_key IN ({}) GROUP BY lc_key, to_state",
+                    chunk.join(",")
+                )
+            })
+            .collect()
+    };
     let mut since: std::collections::HashMap<(String, String), Value> = std::collections::HashMap::new();
-    for chunk in ids.chunks(500) {
-        let q = format!(
-            "SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 AND lc_key IN ({}) GROUP BY lc_key, to_state",
-            chunk.join(",")
-        );
+    for q in queries {
         match conn.query(&q) {
             Ok(r) => {
                 for row in r {
