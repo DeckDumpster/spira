@@ -187,7 +187,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
         lc_bin: Some(PathBuf::from("spira-lc")),
-        lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(15),
+        lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
         land_lock_wait: std::time::Duration::from_secs(env::var("SPIRA_BATCHER_LAND_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(30)),
