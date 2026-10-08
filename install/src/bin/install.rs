@@ -1197,13 +1197,19 @@ fn main() -> ExitCode {
     // ---- phase 6: cockpit -------------------------------------------------------------------
     phase("phase 6: cockpit");
     let home = nonempty_env("SPIRA_HOME").unwrap_or_default();
-    let cockpit_dir = Path::new(&home).parent().map(|p| p.join("cockpit")).unwrap_or_default();
+    let release_dir = Path::new(&home).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let cockpit_dir = release_dir.join("cockpit/remote");
+    let link_root = match nonempty_env("SPIRA_RELEASES").map(|r| PathBuf::from(r).join("current")) {
+        Some(cur) if cur.exists() => cur.join("cockpit/remote"),
+        _ => cockpit_dir.clone(),
+    };
     let bin_dir = nonempty_env("HOME").map(|h| PathBuf::from(h).join(".local/bin")).unwrap_or_default();
     for prog in ["cockpit", "cockpit-remote"] {
-        let src = cockpit_dir.join(prog);
+        let found = cockpit_dir.join(prog);
+        let src = link_root.join(prog);
         let link = bin_dir.join(prog);
-        if !src.is_file() {
-            skip(&format!("{prog} not found at {} — skipping", src.display()));
+        if !found.is_file() {
+            eprintln!("  WARN: {prog} not found at {} — {} NOT linked", found.display(), link.display());
             continue;
         }
         if std::fs::read_link(&link).map(|t| t == src).unwrap_or(false) {
