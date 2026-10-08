@@ -43,8 +43,8 @@ again="$(spira-lc admin-migrate "$LC_DIR/migrations" 2>&1)"
 wantrc "a second migrate run is a no-op" 0 $?
 want "the second run finds nothing pending" "already applied" "$again"
 
-views_of() { python3 -I -c 'import re,sys; t=re.sub(r"--[^\n]*","",open(sys.argv[1]).read()); print(re.sub(r"\s+"," ",t[t.index("CREATE "+sys.argv[2]+"VIEW "+sys.argv[3]):]).replace("CREATE OR REPLACE VIEW","CREATE VIEW"))' "$1" "$2" "$3"; }
-is "schema.sql and migrations 0007 and 0009 define the same views" "$(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_live) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_edges)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
+views_of() { python3 -I -c 'import re,sys; t=re.sub(r"--[^\n]*","",open(sys.argv[1]).read()); print(re.sub(r"\s+"," ",t[t.index("CREATE "+sys.argv[2]+"VIEW "+sys.argv[3]):]).replace("CREATE OR REPLACE VIEW","CREATE VIEW").strip())' "$1" "$2" "$3"; }
+is "schema.sql and migrations 0007 and 0008 define the same views" "$(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_live) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_edges)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
 
 NOW="$(date +%s)"
 python3 - "$NOW" > "$TMP/seed.sql" <<'PY'
@@ -208,7 +208,7 @@ now = int(sys.argv[1])
 rows = json.load(sys.stdin)
 stuck = sorted((r["bead_id"], r["state"]) for r in rows if r["p95_s"] is not None and int(r["entered_at"]) < now - int(r["p95_s"]))
 print(len(rows), " ".join("%s:%s" % s for s in stuck))' "$(date +%s)"; }
-p95_of() { spira-lc ops-view ops_dwell_p95 | python3 -I -c 'import json,sys; print({r["state"]: int(r["p95_s"]) for r in json.load(sys.stdin)}.get(sys.argv[1]))' "$1"; }
+p95_of() { spira-lc ops-view ops_dwell | python3 -I -c 'import json,sys; print({r["state"]: int(r["p95_s"]) for r in json.load(sys.stdin) if r["p95_s"] is not None}.get(sys.argv[1]))' "$1"; }
 
 is "the measured p95 of CERTIFIED is the 19th of 20 observed dwells" 618 "$(p95_of CERTIFIED)"
 is "the measured p95 of IN_DELIVERY is the 19th of 20 observed dwells" 318 "$(p95_of IN_DELIVERY)"
