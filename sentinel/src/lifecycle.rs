@@ -111,13 +111,14 @@ pub fn wait_decisions(
 
 /// CHECK 2 (reaper half): WORKING rows, not wait-held, whose lease expired more than `grace`
 /// ago, or has expired at all with no live holder → (id, seconds since expiry).
-pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64, alive: impl Fn(&str) -> bool) -> Vec<(String, i64)> {
+/// A holder whose session is provably gone (`gone`) is reaped at once, lease or no lease.
+pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64, alive: impl Fn(&str) -> bool, gone: impl Fn(&str) -> bool) -> Vec<(String, i64)> {
     rows.iter()
         .filter(|r| r.state == "WORKING" && !r.holds.iter().any(|h| h == "wait"))
         .filter_map(|r| {
-            let lu = r.lease_until?;
-            let past = now - lu;
-            (past > grace || (past > 0 && !alive(&r.bead_id))).then(|| (r.bead_id.clone(), past))
+            let past = now - r.lease_until.unwrap_or(now);
+            let session_gone = r.holder.as_deref().is_some_and(&gone);
+            (session_gone || (r.lease_until.is_some() && (past > grace || (past > 0 && !alive(&r.bead_id))))).then(|| (r.bead_id.clone(), past))
         })
         .collect()
 }
@@ -350,12 +351,16 @@ impl<'a> Sentinel<'a> {
             .collect();
         let now = self.h.now();
         let mut n = 0;
-        for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace, |id| self.holder_alive(id)) {
+        for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace, |id| self.holder_alive(id), |h| spira_config::session::session_gone(h, &spira_config::admission::RealProcs)) {
             if !self.lc_apply(&id, HOLDER_DEAD) {
                 continue;
             }
             self.write_event_row(&id, "reclaimed", "stale-lease");
-            let note = format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60);
+            let note = if ago > 0 {
+                format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60)
+            } else {
+                "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string()
+            };
             self.bd()
                 .quiet(self.h, &["note", &id, "--stdin"], Some(&note));
             n += 1;
@@ -543,7 +548,21 @@ mod tests {
                 ..Default::default()
             },
         ];
-        assert_eq!(stale_leases(&rows, 1000, 500, |_| true), vec![("a".to_string(), 900)]);
+        assert_eq!(stale_leases(&rows, 1000, 500, |_| true, |_| false), vec![("a".to_string(), 900)]);
+    }
+
+    #[test]
+    fn a_holder_whose_session_is_gone_is_reaped_before_its_lease_expires() {
+        let row = |id: &str, holder: &str| LcRow {
+            bead_id: id.into(),
+            state: "WORKING".into(),
+            holder: Some(holder.into()),
+            lease_until: Some(9_000),
+            ..Default::default()
+        };
+        let rows = vec![row("orphan", "aeon-mindy@7.99"), row("running", "aeon-mindy@8.120")];
+        let gone = |h: &str| h == "aeon-mindy@7.99";
+        assert_eq!(stale_leases(&rows, 1000, 500, |_| true, gone), vec![("orphan".to_string(), -8000)]);
     }
 
     #[test]
@@ -556,9 +575,9 @@ mod tests {
         };
         let rows = vec![row("dead", 900), row("live", 900), row("unexpired", 2000)];
         let alive = |id: &str| id == "live";
-        assert_eq!(stale_leases(&rows, 1000, 500, alive), vec![("dead".to_string(), 100)]);
+        assert_eq!(stale_leases(&rows, 1000, 500, alive, |_| false), vec![("dead".to_string(), 100)]);
         assert_eq!(
-            stale_leases(&rows, 1500, 500, alive),
+            stale_leases(&rows, 1500, 500, alive, |_| false),
             vec![("dead".to_string(), 600), ("live".to_string(), 600)]
         );
     }
