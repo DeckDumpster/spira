@@ -145,6 +145,9 @@ pub fn file_one(
         // pile notes under a row that stays LANDED. The recurrence is a new incident: a fresh
         // bead (and, through `Bd::create`, a fresh row) citing the closed one, linked to it;
         // the closed bead and its row are left exactly as they are.
+        Some(DedupHit::Terminal { id: pred, .. }) if bd.live_successor(cfg.db, &pred).is_some() => {
+            bump_and_note(bd, mailer, clock, cfg, &pred, reference, title, payload, false, now, log)
+        }
         Some(DedupHit::Terminal { id: pred, closed_at }) => {
             let predecessor = Predecessor { id: &pred, closed_at: closed_at.as_deref() };
             file_new(bd, cfg, reference, title, payload, labels, Some(predecessor), log)
@@ -415,6 +418,7 @@ mod tests {
         bodies: RefCell<HashMap<String, String>>,
         reopened: RefCell<Vec<String>>,
         related: RefCell<Vec<(String, String)>>,
+        successors: RefCell<HashMap<String, String>>,
         duplicated: RefCell<Vec<(String, String)>>,
         labels: RefCell<HashMap<String, Vec<String>>>,
         notes: RefCell<HashMap<String, Vec<String>>>,
@@ -493,6 +497,9 @@ mod tests {
         fn duplicate(&self, _db: &str, id: &str, survivor: &str) -> bool {
             self.duplicated.borrow_mut().push((id.to_string(), survivor.to_string()));
             true
+        }
+        fn live_successor(&self, _db: &str, id: &str) -> Option<String> {
+            self.successors.borrow().get(id).cloned()
         }
         fn show_closed_at(&self, _db: &str, id: &str) -> Option<String> {
             self.rows.borrow().iter().find(|r| r.id == id).and_then(|r| r.closed_at.clone())
@@ -696,6 +703,36 @@ mod tests {
         let again = file_one(&bd, &mailer, &clock, &c, "incident:landed", "landed failed again", b"fresh payload", "spira,incident", &mut log);
         assert!(matches!(again, FileOutcome::Filed(ref id) if *id == new_id));
         assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    /// A terminal incident superseded by a live bead has its fix in flight: the recurrence
+    /// bumps it and files nothing (law-a-bug-with-a-fix-in-flight-depends-on-it).
+    #[test]
+    fn a_recurrence_across_a_supersede_to_a_live_bead_files_nothing() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_790_812_800);
+        let known = vec!["spira".to_string()];
+        let c = cfg(&known);
+        bd.rows.borrow_mut().push(BeadRow {
+            id: "sp-dup".into(),
+            status: BeadStatus::Terminal,
+            external_ref: Some("basefail:r:test-a.sh".into()),
+            labels: vec![],
+            closed_at: Some("2026-09-30T00:00:00Z".into()),
+        });
+        bd.successors.borrow_mut().insert("sp-dup".into(), "sp-fix".into());
+        let mut log = vec![];
+        for _ in 0..2 {
+            let out = file_one(&bd, &mailer, &clock, &c, "basefail:r:test-a.sh", "t", b"p", "spira", &mut log);
+            assert!(matches!(out, FileOutcome::Filed(ref id) if id == "sp-dup"));
+        }
+        assert_eq!(bd.created.borrow().len(), 0, "no bead filed while the fix is in flight");
+        assert_eq!(bd.notes.borrow().get("sp-dup").map(Vec::len), Some(2), "each recurrence is recorded on the incident");
+
+        bd.successors.borrow_mut().clear();
+        file_one(&bd, &mailer, &clock, &c, "basefail:r:test-a.sh", "t", b"p", "spira", &mut log);
+        assert_eq!(bd.created.borrow().len(), 1, "with no live successor the recurrence files fresh");
     }
 
     /// A handed-on but non-terminal incident (SUBMITTED) still absorbs the recurrence: its

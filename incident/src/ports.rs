@@ -45,6 +45,9 @@ pub trait Bd {
     fn relate(&self, db: &str, a: &str, b: &str) -> bool;
     /// `bd -C db duplicate <id> --of <survivor>`.
     fn duplicate(&self, db: &str, id: &str, survivor: &str) -> bool;
+    /// The non-terminal bead a terminal `id` was superseded by (its `supersedes` dependency),
+    /// None when it names none or the successor's row is terminal or absent.
+    fn live_successor(&self, db: &str, id: &str) -> Option<String>;
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String>;
     fn show_created_at(&self, db: &str, id: &str) -> Option<String>;
     /// A cheap reachability probe (`bd list --limit 1`) — used to distinguish "no open

@@ -145,7 +145,7 @@ echo "gate: VERDICT=BASE_FAIL reason=base-red branch=$1 repo=${2:-?} suite='"$BA
 exit 76'
 
 incidents() {
-    B list --status open,in_progress --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:$REPONAME" --json 2>/dev/null \
+    B list --status open,in_progress --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}repo:$REPONAME" --json 2>/dev/null \
       | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin)
@@ -180,7 +180,7 @@ if [ -n "$inc_id" ]; then
     want "and says no bead was reopened or charged"    "no attempt charged" "$shown"
     want "and carries the gate's own output"           "this branch did not cause it" "$shown"
     labels="$(B label list "$inc_id" 2>&1)"
-    want "it lands in the builders partition"          "plan" "$labels"
+    nowant "it is not offered as builder work (no plan label)" "plan" "$labels"
     want "labelled with the repository"                "repo:$REPONAME" "$labels"
 fi
 
