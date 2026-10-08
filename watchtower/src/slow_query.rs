@@ -1,7 +1,7 @@
-//! `--slow-query-check` — one incident per query shape found in the slow-query log that
+//! `--slow-query-check` — one incident per pass for every slow shape found in the slow-query log that
 //! `spira-lc` appends to (`<epoch>\t<verb>\t<millis>\t<shape>`). Only lines past the saved
-//! offset are read, so a shape is reported on the pass that first sees it; the incident
-//! reference is derived from the shape, so a later pass naming it again is the same incident.
+//! offset are read, so new slow lines are reported on the pass that sees them; the incident
+//! reference is fixed, so one slow store is one incident however many statements it slows.
 
 use crate::incident::{self, Finding};
 use crate::log::log;
@@ -44,12 +44,9 @@ pub fn group(text: &str) -> Vec<Shape> {
     by.into_values().collect()
 }
 
-fn fnv(s: &str) -> String {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in s.bytes() {
-        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
-    }
-    format!("{h:016x}")
+fn is_host_bound(shape: &str) -> bool {
+    let u = shape.trim().to_ascii_uppercase();
+    u == "CONNECT" || u.starts_with("START TRANSACTION") || u.starts_with("BEGIN")
 }
 
 pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_sh: &str) {
@@ -73,23 +70,24 @@ pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_
         log(&format!("watchtower: slow-query-check skipped — {incident_sh} not readable"));
         return;
     }
-    for s in &shapes {
-        let body = format!(
-            "A lifecycle query took over the slow-query threshold.\n\nshape: {}\nverbs: {}\ncount: {}\np50: {}ms\nmax: {}ms\n\nEvery query over 1s is a defect: find the verb's query and fix its plan or its index.\n",
-            s.shape,
-            s.verbs.join(", "),
-            s.count(),
-            s.p50(),
-            s.max()
-        );
-        let short: String = s.shape.chars().take(80).collect();
-        let f = Finding::new(db, home_repo, &format!("SLOW QUERY: {short}"), &body)
-            .priority(1)
-            .reference(format!("incident:slow-query-{}", fnv(&s.shape)))
-            .cause("slow-query");
-        incident::file(incident_sh, &f);
-        log(&format!("watchtower: slow-query-check filed incident for a shape ({} hit(s), max {}ms)", s.count(), s.max()));
+    let contended = shapes.iter().any(|s| is_host_bound(&s.shape));
+    let worst = shapes.iter().map(Shape::max).max().unwrap_or(0);
+    let hits: usize = shapes.iter().map(Shape::count).sum();
+    let mut body = String::from("The lifecycle store is responding slowly. One incident covers every statement seen slow; the shapes are listed as evidence.\n\n");
+    if contended {
+        body.push_str("Verdict: host contention. A connection handshake or transaction start has no plan and no index, and it was slow in the same window, so the latency is the host (process churn, CPU or memory pressure), not any one query. Do not tune indexes; find what is loading the box.\n\n");
+    } else {
+        body.push_str("Verdict: query-attributable. No connect or transaction-start was slow in this window; find each verb's query and fix its plan or its index.\n\n");
     }
+    for s in &shapes {
+        body.push_str(&format!("shape: {}\nverbs: {}\ncount: {}\np50: {}ms\nmax: {}ms\n\n", s.shape, s.verbs.join(", "), s.count(), s.p50(), s.max()));
+    }
+    let f = Finding::new(db, home_repo, "SLOW STORE: lifecycle queries over threshold", &body)
+        .priority(1)
+        .reference("incident:slow-query".to_string())
+        .cause("slow-query");
+    incident::file(incident_sh, &f);
+    log(&format!("watchtower: slow-query-check filed one incident for {} shape(s) ({hits} hit(s), max {worst}ms, contended: {contended})", shapes.len()));
     let _ = std::fs::write(&stamp, end.to_string());
 }
 
@@ -117,8 +115,8 @@ mod tests {
         run(&d, &log_path, "db", "spira", &inc);
         run(&d, &log_path, "db", "spira", &inc);
         let got = std::fs::read_to_string(&calls).unwrap();
-        assert_eq!(got.matches("incident:slow-query-").count(), 1, "{got}");
-        assert!(got.contains("|1|SLOW QUERY: SELECT * FROM bead WHERE id = ?") || got.contains("|1|file"), "{got}");
+        assert_eq!(got.matches("incident:slow-query").count(), 1, "{got}");
+        assert!(got.contains("|1|SLOW STORE"), "{got}");
         assert!(got.contains("count: 5") && got.contains("p50: 1700ms") && got.contains("max: 1900ms"), "{got}");
     }
 
@@ -133,9 +131,32 @@ mod tests {
     }
 
     #[test]
-    fn distinct_shapes_get_distinct_references() {
+    fn distinct_shapes_group_separately() {
         let g = group("1\ta\t1100\tX\n2\tb\t1200\tY\n3\ta\t1300\tX\n");
         assert_eq!(g.len(), 2);
-        assert_ne!(fnv("X"), fnv("Y"));
+    }
+
+    #[test]
+    fn many_shapes_file_one_incident_and_a_slow_connect_says_contention() {
+        let d = testkit::TempDir::new("wt-slow-many");
+        let (inc, calls) = fake_incident(&d);
+        let log_path = d.join("slow-queries.log");
+        std::fs::write(&log_path, "1\tlist\t2600\tCONNECT\n2\tshow\t5300\tSELECT a FROM bead\n3\tfact\t2300\tSTART TRANSACTION; INSERT INTO event\n").unwrap();
+        run(&d, &log_path, "db", "spira", &inc);
+        let got = std::fs::read_to_string(&calls).unwrap();
+        assert_eq!(got.matches("incident:slow-query").count(), 1, "{got}");
+        assert!(got.contains("host contention") && !got.contains("query-attributable"), "{got}");
+        assert!(got.contains("shape: CONNECT") && got.contains("shape: SELECT a FROM bead"), "{got}");
+    }
+
+    #[test]
+    fn slow_selects_alone_are_query_attributable() {
+        let d = testkit::TempDir::new("wt-slow-q");
+        let (inc, calls) = fake_incident(&d);
+        let log_path = d.join("slow-queries.log");
+        std::fs::write(&log_path, "1\tlist\t2600\tSELECT a FROM bead\n").unwrap();
+        run(&d, &log_path, "db", "spira", &inc);
+        let got = std::fs::read_to_string(&calls).unwrap();
+        assert!(got.contains("query-attributable") && !got.contains("host contention"), "{got}");
     }
 }
