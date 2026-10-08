@@ -256,6 +256,24 @@ impl Bd for RealBd {
     fn duplicate(&self, db: &str, id: &str, survivor: &str) -> bool {
         self.run(db, &["duplicate", id, "--of", survivor]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
+    fn live_successor(&self, db: &str, id: &str) -> Option<String> {
+        let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
+        if rc != 0 {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(json_only(&out)).ok()?;
+        let obj = if v.is_array() { v.get(0)?.clone() } else { v };
+        let successor = obj
+            .get("dependencies")?
+            .as_array()?
+            .iter()
+            .find(|d| d.get("dependency_type").and_then(|t| t.as_str()) == Some("supersedes"))?
+            .get("id")?
+            .as_str()?
+            .to_string();
+        let row = spira_config::lc_state::row(&successor).ok()??;
+        (!row.terminal()).then_some(successor)
+    }
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String> {
         let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
         if rc != 0 {

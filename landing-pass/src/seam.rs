@@ -137,8 +137,9 @@ const INCIDENT: &str = r#"case "$1" in
     */*) [ -r "$1" ] || exit 2; __p="$1" ;;
     *) __p="$(command -v "$1")" || exit 2 ;;
 esac
+if [ -n "$2" ]; then export SPIRA_INCIDENT_LABELS="$2"; else unset SPIRA_INCIDENT_LABELS; fi
 __id="$(SPIRA_INCIDENT_TYPE=bug SPIRA_INCIDENT_PRIORITY=1 SPIRA_INCIDENT_ACTOR=landing \
-    SPIRA_INCIDENT_LABELS="$2" SPIRA_INCIDENT_REPO="$3" SPIRA_INCIDENT_REF="$4" \
+    SPIRA_INCIDENT_REPO="$3" SPIRA_INCIDENT_REF="$4" \
     SPIRA_INCIDENT_CAUSE=base-suite-red bash "$__p" file "$5" - <<< "$6")" || exit 1
 printf '\036%s' "$__id"
 exit 0

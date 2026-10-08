@@ -787,7 +787,7 @@ impl<'a> Pass<'a> {
             return;
         }
         let named = if suite == "-" { "- (the gate named none; read its output below)".to_string() } else { suite.to_string() };
-        let labels = if self.s.scope_label.is_empty() { "plan".to_string() } else { format!("{},plan", self.s.scope_label) };
+        let labels = self.s.scope_label.clone();
         let title = format!("{name}'s own gate fails against {base} — nothing can land");
         let payload = [
             format!("{name}'s landing gate was run against {base} itself and failed there, so every branch of"),

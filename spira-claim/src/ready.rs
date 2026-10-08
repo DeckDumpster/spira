@@ -298,6 +298,13 @@ mod tests {
     }
 
     #[test]
+    fn a_base_red_incident_without_plan_is_in_no_builder_bucket() {
+        let rows = vec![row("sp-incident", &["spira", "repo:spira"])];
+        let parts = vec![part("builder", &["spira", "plan"], &[])];
+        assert_eq!(bucket(&rows, &parts, "", ""), vec![("builder".to_string(), 0)]);
+    }
+
+    #[test]
     fn bucket_counts_an_unlabeled_bead_in_exactly_one_bucket() {
         let rows = vec![row("a", &[])];
         let parts = vec![part("builder", &[], &[]), part("ops", &[], &[])];

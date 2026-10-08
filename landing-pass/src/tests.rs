@@ -634,7 +634,8 @@ fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
     fs::write(&h.s.incident, "").unwrap();
     h.run();
     let inc = h.lib.find("incident ");
-    assert!(inc.starts_with("incident plan spira basefail:spira:-@"), "{inc}");
+    assert!(inc.starts_with("incident  spira basefail:spira:-@"), "{inc}");
+    assert!(!inc.split_whitespace().nth(1).is_some_and(|l| l.split(',').any(|x| x == "plan")), "a base-red incident is never claimable plan work: {inc}");
     assert!(!inc.contains("basefail:spira:- "), "{inc}");
 }
 
@@ -651,7 +652,7 @@ fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
     h.run();
     assert_eq!(h.lib.count("incident "), 1);
     let inc = h.lib.find("incident ");
-    assert!(inc.starts_with("incident plan spira basefail:spira:test-x.sh spira's own gate fails against local/main — nothing can land"), "{inc}");
+    assert!(inc.starts_with("incident  spira basefail:spira:test-x.sh spira's own gate fails against local/main — nothing can land"), "{inc}");
     assert!(inc.contains("  failing suite    test-x.sh\n  gate verdict     BASE_FAIL (base-red)"), "{inc}");
     assert!(h.logged("CHECK6 spira: the base's own red is sp-inc1 (suite test-x.sh)"));
     assert!(!h.lib.has("reopen"));
