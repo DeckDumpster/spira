@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS batch (
     opened_at BIGINT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_batch_opened ON batch (opened_at, batch_id);
+
 CREATE TABLE IF NOT EXISTS batch_member (
     batch_id VARCHAR(64) NOT NULL,
     bead_id  VARCHAR(64) NOT NULL,
