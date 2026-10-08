@@ -226,11 +226,92 @@ pub fn ensure_admin(
     Ok((make(pw), format!("root's password set; credential written to {} (0600)", cred_path.display())))
 }
 
-/// Once root has a password, every `bd` on this box connects as root with it: the beads
-/// credentials file (`$BEADS_CREDENTIALS_FILE`, else `~/.config/beads/credentials` — bd's own
-/// password lookup after `BEADS_DOLT_PASSWORD`) carries it, 0600, in the `[host:port]` section
-/// bd resolves. Without it, closing passwordless root locked every bd client out ("Access
-/// denied for user 'root'"). Any other section is kept; this one is replaced.
+pub const BEADS_USER: &str = "beads";
+
+/// SQL giving `BEADS_USER` the password and every privilege on the beads database `db` and
+/// nothing else. `db` is quoted into a backtick identifier, so only a plain name is accepted.
+pub fn beads_user_sql(db: &str, password: &str) -> Result<String, String> {
+    if db.is_empty() || !db.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(format!("the beads database name {db:?} is not a plain identifier — refusing to place it in a GRANT"));
+    }
+    if password.is_empty() || password.chars().any(|c| c == '\'' || c == '\\' || c == '"' || c.is_control()) {
+        return Err("the beads user's password is empty or carries a quote, backslash or control character".into());
+    }
+    let u = BEADS_USER;
+    Ok(format!("CREATE USER IF NOT EXISTS '{u}'@'%' IDENTIFIED BY '{password}';\nALTER USER '{u}'@'%' IDENTIFIED BY '{password}';\nGRANT ALL ON `{db}`.* TO '{u}'@'%';\n"))
+}
+
+/// The password already in `file`'s `[host:port]` section, if any.
+pub fn read_beads_credential(file: &Path, host: &str, port: u16) -> Option<String> {
+    let header = format!("[{host}:{port}]");
+    let mut in_section = false;
+    for line in std::fs::read_to_string(file).ok()?.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_section = t == header;
+        } else if in_section {
+            if let Some((k, v)) = t.split_once('=') {
+                if k.trim() == "password" && !v.trim().is_empty() {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Point a beads database's `metadata.json` at `BEADS_USER` (`dolt_server_user`), keeping every other key.
+pub fn set_beads_user(metadata: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(metadata).map_err(|e| format!("cannot read {}: {e}", metadata.display()))?;
+    let mut v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{} is not JSON: {e}", metadata.display()))?;
+    let obj = v.as_object_mut().ok_or_else(|| format!("{} is not a JSON object", metadata.display()))?;
+    if obj.get("dolt_server_user").and_then(|u| u.as_str()) == Some(BEADS_USER) {
+        return Ok(format!("{} already names {BEADS_USER}", metadata.display()));
+    }
+    obj.insert("dolt_server_user".into(), serde_json::Value::String(BEADS_USER.into()));
+    let tmp = metadata.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())? + "\n").map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, metadata).map_err(|e| format!("cannot replace {}: {e}", metadata.display()))?;
+    Ok(format!("{} now names {BEADS_USER}", metadata.display()))
+}
+
+/// Give `bd` its own Dolt user instead of root: created as `admin` with grants on `db` alone,
+/// its password kept in the beads credentials file (`ensure_beads_credential`), and the
+/// database's `metadata.json` pointed at it. A password already in the file's section is
+/// reused unless it is the admin's own; re-running converges.
+pub fn ensure_beads_user(
+    file: &Path,
+    metadata: &Path,
+    db: &str,
+    admin: &Admin,
+    tmp_parent: &Path,
+    mut run: impl FnMut(&[String], &[(String, String)]) -> (i32, String),
+) -> Result<Vec<String>, String> {
+    let host = admin.host.clone().unwrap_or_else(|| "127.0.0.1".into());
+    let password = match read_beads_credential(file, &host, admin.port) {
+        Some(p) if p != admin.password => p,
+        _ => random_secret()?,
+    };
+    let sql = beads_user_sql(db, &password)?;
+    let dir = PrivateDir::new(tmp_parent, "bdu")?;
+    let pw_file = dir.write("admin", &admin.password)?;
+    let sql_file = dir.write("beads-user.sql", &sql)?;
+    let args = vec!["admin-apply-ddl".to_string(), sql_file.to_string_lossy().to_string()];
+    let (rc, out) = run(&args, &admin_env(admin, &pw_file));
+    if rc != 0 {
+        let out = redact(out.trim_end(), &[&password, &admin.password]);
+        return Err(format!("creating the {BEADS_USER} user as {} failed (spira-lc exit {rc}){}", admin.user, if out.is_empty() { String::new() } else { format!(": {out}") }));
+    }
+    let mut lines = vec![format!("{BEADS_USER} user granted on {db} only")];
+    lines.push(ensure_beads_credential(file, &host, admin.port, &password)?);
+    lines.push(set_beads_user(metadata)?);
+    Ok(lines)
+}
+
+/// The beads credentials file (`$BEADS_CREDENTIALS_FILE`, else `~/.config/beads/credentials` —
+/// bd's own password lookup after `BEADS_DOLT_PASSWORD`) carries a password, 0600, in the
+/// `[host:port]` section bd resolves. Without it, closing passwordless root locked every bd
+/// client out ("Access denied for user"). Any other section is kept; this one is replaced.
 pub fn ensure_beads_credential(file: &Path, host: &str, port: u16, password: &str) -> Result<String, String> {
     let header = format!("[{host}:{port}]");
     let old = match std::fs::read_to_string(file) {
@@ -325,6 +406,42 @@ mod tests {
         assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
         let msg = ensure_beads_credential(&f, "127.0.0.1", 3307, "new").unwrap();
         assert!(msg.contains("already"), "{msg}");
+    }
+
+
+    #[test]
+    fn beads_user_sql_grants_the_one_database_and_refuses_a_hostile_name() {
+        let sql = beads_user_sql("beads_db", "pw").unwrap();
+        assert!(sql.contains("GRANT ALL ON `beads_db`.* TO 'beads'@'%'"), "{sql}");
+        assert!(!sql.contains("*.*"), "{sql}");
+        assert!(beads_user_sql("a`; DROP", "pw").is_err());
+        assert!(beads_user_sql("db", "p'w").is_err());
+    }
+
+    #[test]
+    fn ensure_beads_user_connects_bd_as_beads_not_root() {
+        let d = testkit::TempDir::new("lc-beads-user");
+        let cred = d.path().join("beads/credentials");
+        let meta = d.path().join("metadata.json");
+        std::fs::write(&meta, "{\"dolt_database\":\"spira\",\"dolt_mode\":\"server\"}").unwrap();
+        let admin = Admin { user: "root".into(), password: "rootpw".into(), host: None, port: 3307 };
+        let mut sql_seen = String::new();
+        let lines = ensure_beads_user(&cred, &meta, "spira", &admin, d.path(), |args, _| {
+            sql_seen = std::fs::read_to_string(&args[1]).unwrap();
+            (0, String::new())
+        }).unwrap();
+        assert!(sql_seen.contains("GRANT ALL ON `spira`.*"), "{sql_seen}");
+        let pw = read_beads_credential(&cred, "127.0.0.1", 3307).unwrap();
+        assert_ne!(pw, "rootpw");
+        assert!(sql_seen.contains(&pw));
+        assert!(!lines.join("\n").contains(&pw));
+        let m: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(m["dolt_server_user"], "beads");
+        assert_eq!(m["dolt_database"], "spira");
+        ensure_beads_user(&cred, &meta, "spira", &admin, d.path(), |_, _| (0, String::new())).unwrap();
+        assert_eq!(read_beads_credential(&cred, "127.0.0.1", 3307).unwrap(), pw);
+        let failed = ensure_beads_user(&cred, &meta, "spira", &admin, d.path(), |_, _| (1, format!("bad {pw}")));
+        assert!(!failed.unwrap_err().contains(&pw));
     }
 
     use super::*;

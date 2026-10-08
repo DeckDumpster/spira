@@ -1631,10 +1631,13 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
         let admin_cred = nonempty_env("SPIRA_LC_ADMIN_PASSWORD_FILE").unwrap_or_else(|| spira_config::resolve::lc_admin_credential_default(&env_map));
         let (admin, msg) = lifecycle_store::ensure_admin(Path::new(&admin_cred), &std::env::temp_dir(), host, port, run)?;
         lines.push(msg);
-        // Every bd on this box connects as root: hand it the password root now has.
         let beads_cred = nonempty_env("BEADS_CREDENTIALS_FILE").unwrap_or_else(|| format!("{}/.config/beads/credentials", bootstrap::env_var("HOME")));
-        let bd_host = admin.host.clone().unwrap_or_else(|| "127.0.0.1".into());
-        lines.push(lifecycle_store::ensure_beads_credential(Path::new(&beads_cred), &bd_host, port, &admin.password)?);
+        let beads_dir = bootstrap::declared("SPIRA_DB").ok_or("SPIRA_DB is declared empty — cannot locate the beads database bd must connect to")?;
+        let metadata = Path::new(&beads_dir).join(".beads/metadata.json");
+        let meta_text = std::fs::read_to_string(&metadata).map_err(|e| format!("cannot read {}: {e}", metadata.display()))?;
+        let db = serde_json::from_str::<serde_json::Value>(&meta_text).ok().and_then(|v| v.get("dolt_database").and_then(|d| d.as_str().map(String::from)))
+            .ok_or_else(|| format!("{} names no dolt_database", metadata.display()))?;
+        lines.extend(lifecycle_store::ensure_beads_user(Path::new(&beads_cred), &metadata, &db, &admin, &std::env::temp_dir(), run)?);
         admin
     };
     lines.extend(lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, run)?);

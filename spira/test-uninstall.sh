@@ -636,6 +636,23 @@ rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
 
 # ==========================================================================
 echo
+echo "BEADS CREDENTIAL SECTION — uninstall removes the section install wrote, and only it:"
+# ==========================================================================
+BCRED="$TMP/home/.config/beads/credentials"
+mkdir -p "$(dirname "$BCRED")"
+printf '[10.0.0.1:3307]\npassword = other\n[127.0.0.1:3307]\npassword = beadspw\n' > "$BCRED"
+un >/dev/null
+isfile "beads credential: the file survives while another section remains" "$BCRED"
+nowant "beads credential: install's section is gone"  "beadspw" "$(cat "$BCRED")"
+want   "beads credential: another host's section is kept" "[10.0.0.1:3307]" "$(cat "$BCRED")"
+printf '[127.0.0.1:3307]\npassword = beadspw\n' > "$BCRED"
+un >/dev/null
+nofile "beads credential: a file left with nothing is removed" "$BCRED"
+un >/dev/null
+iszero "beads credential: a second run with no file exits 0" "$?"
+
+# ==========================================================================
+echo
 echo "TIMER RACE (T2, sp-6k3pr) — a timer firing mid-uninstall does not resurrect its service:"
 # ==========================================================================
 # spira-broker.service/.timer are only in the manifest when SPIRA_BROKER_BIN is
