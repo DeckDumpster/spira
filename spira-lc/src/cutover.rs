@@ -61,6 +61,12 @@ fn is_row_key(x: &str) -> bool {
         && x.chars().last().is_some_and(|c| c != '-')
 }
 
+/// One point-keyed statement: `bead_id` is the primary key, so a duplicate is ignored by the
+/// engine rather than probed for by a second read inside the write.
+fn create_bead_script(id: &str, at: i64) -> String {
+    format!("INSERT IGNORE INTO bead (bead_id, state, holds, version, updated_at) VALUES ({}, 'READY', '[]', 0, {at});\n", q(id))
+}
+
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
@@ -69,12 +75,7 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, format!("create-bead: {id:?} is not a bead id"));
     }
     let at = crate::db::now_epoch();
-    let script = format!(
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at)\n\
-         SELECT {id}, 'READY', '[]', 0, {at} FROM (SELECT 1) x WHERE NOT EXISTS (SELECT 1 FROM bead WHERE bead_id = {id});\n",
-        id = q(id),
-        at = at,
-    );
+    let script = create_bead_script(id, at);
     match conn.run_plain(&script) {
         Ok(()) => (0, String::new()),
         Err(e) => cannot_tell(e),
@@ -1009,6 +1010,14 @@ fn stacked_dependents_from(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn create_bead_is_one_ignoring_insert() {
+        let s = create_bead_script("sp-a'b", 7);
+        assert!(s.starts_with("INSERT IGNORE INTO bead"), "{s}");
+        assert!(!s.contains("NOT EXISTS"), "{s}");
+        assert_eq!(s.matches(';').count(), 1);
+    }
 
     fn stacked(id: &str, prereq: &str, prereq_tip: &str) -> (String, bead::BeadRow) {
         let mut row = bead::BeadRow::filed(id);
