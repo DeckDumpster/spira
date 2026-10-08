@@ -203,6 +203,17 @@ impl Run<'_> {
         self.systemctl(&["start", &unit]);
     }
 
+    /// A predecessor installs the round-template refresh on any box with a git home repo, and
+    /// its refresh needs a round VM host this box does not have: it fails on its first tick and
+    /// the predecessor's own deploy.sh then refuses on the failed unit. Take the unit out of
+    /// the box the way an operator without a VM host would.
+    fn without_round_vm_host(&self) {
+        for u in first_fields(&self.systemctl(&["list-unit-files", "spira-round-template*", "--no-legend", "--plain"]).out) {
+            self.systemctl(&["disable", "--now", &u]);
+            self.systemctl(&["reset-failed", &u]);
+        }
+    }
+
     fn gh(&self, args: &[&str]) -> Cmd {
         let mut c = Cmd::new("gh").args(args.iter().copied());
         if let Some(r) = &self.o.gh_repo {
@@ -693,6 +704,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
                     r.install_tarball(&tb);
                     r.sync_scratch("phase B");
                     let prc = r.install_sh();
+                    r.without_round_vm_host();
                     r.is0(&format!("phase B: install.sh ({pt}) exits 0"), prc);
                     // A failed install leaves the database down; deploy.sh would then read as an
                     // upgrade failure. Attribute it to the install instead.
@@ -817,6 +829,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     if arc != 0 {
         return;
     }
+    r.without_round_vm_host();
 
     // Seed: an open bead, a closed bead, two statutes.
     h.run(&r.bd(&["create", "--title", "aged-install: open seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
