@@ -18,6 +18,9 @@ pub struct NextArgs<'a> {
 
 pub const EXIT_TIMEOUT: i32 = 124;
 
+// A sibling fork inherits the lock's descriptor until it execs, so a lock just released can read as held for a moment.
+const LOCK_GRACE: Duration = Duration::from_millis(500);
+
 pub fn dedupfile(run: &str, name: &str) -> std::path::PathBuf {
     paths::watchd_dir(run).join(format!("{name}.dedup"))
 }
@@ -34,9 +37,9 @@ pub fn cmd_next(rows: &[Row], ctx: &Context, args: &NextArgs) -> Result<String, 
     let Some(lf) = paths::logfile(&ctx.run, &r.name, r.kind, &r.target) else { return Err(2) };
 
     let lock_path = paths::tail_lockfile(&ctx.run, &r.name);
-    let _held = match lock::try_lock(&lock_path) {
-        Ok(Ok(f)) => f,
-        Ok(Err(())) => {
+    let _held = match lock::wait_for_lock(&lock_path, LOCK_GRACE) {
+        Ok(Some(f)) => f,
+        Ok(None) => {
             eprintln!("watchd: another reader already holds '{}' — one reader per watcher", r.name);
             return Err(3);
         }
