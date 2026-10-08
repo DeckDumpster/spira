@@ -32,7 +32,7 @@ pub fn lc_return(w: &World, id: &str) {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, dry_run: bool) -> i32 {
+pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, harness_fault: bool, dry_run: bool) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
@@ -54,7 +54,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         return FAIL;
     }
     let actor = actor(w);
-    let cause = EjectCause::decide(red, suites);
+    let cause = EjectCause::decide(red, harness_fault, suites);
     if !dry_run && require_lc(w, "eject").is_err() {
         return FAIL;
     }

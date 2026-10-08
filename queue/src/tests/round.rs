@@ -131,6 +131,15 @@ fn ejecting_the_last_member_closes_the_round() {
 }
 
 #[test]
+fn a_harness_fault_eject_naming_suites_is_not_charged() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "round VM lacked the config delta", "--suites", "test-b.sh", "--harness-fault"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_reopen sp-b eject test-b.sh") && !t.lib.has("bead_reopen sp-b eject-red"));
+}
+
+#[test]
 fn abandon_returns_the_members_and_closes_the_round() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
