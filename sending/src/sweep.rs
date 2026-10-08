@@ -164,8 +164,8 @@ impl<'a> Sweep<'a> {
                 break;
             }
             match self.opts.scope {
-                Scope::SkipQueue if r.queued => continue,
-                Scope::QueueOnly if !r.queued => continue,
+                Scope::SkipQueue if r.forge_queued => continue,
+                Scope::QueueOnly if !r.forge_queued => continue,
                 _ => {}
             }
             self.repo(r);

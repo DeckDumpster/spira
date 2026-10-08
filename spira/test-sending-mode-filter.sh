@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-sending-mode-filter.sh — sending.sh --skip-queue leaves a queue-mode (queue or
-#   queue.local) repository's branches untouched across passes; --queue-only sweeps only
-#   queue-mode repositories.
+# test-sending-mode-filter.sh — sending.sh --skip-queue leaves a queue-mode (queue.forge)
+#   repository's branches untouched across passes; --queue-only sweeps only queue.forge
+#   repositories. A queue.local repository is swept by both: no forge retires its branches.
 #
 #   ./test-sending-mode-filter.sh
 #
@@ -109,11 +109,8 @@ nowant "queue-mode repo's branch is not mentioned under --skip-queue" "sp-skip-q
 is   "queue-mode branch still exists after --skip-queue" 0 \
     "$(branch_exists "$QREPO" spira/sp-skip-q; echo $?)"
 
-# sp-ksmdb: queue.local reaps via spira-lc close-on-land exactly like queue mode, so the
-# per-pass sentinel sweep (--skip-queue) must leave its branches alone too — landed-but-
-# unpublished work there is still needed by publish-red attribution.
-nowant "queue.local repo's branch is not mentioned under --skip-queue" "sp-skip-ql" "$out1"
-is   "queue.local branch still exists after --skip-queue" 0 \
+want "queue.local repo's branch is SENT under --skip-queue" "SENT sp-skip-ql" "$out1"
+is   "queue.local branch is gone after --skip-queue" 1 \
     "$(branch_exists "$QLREPO" spira/sp-skip-ql; echo $?)"
 
 # A second --skip-queue pass changes nothing further for the queue-mode repo: this is not
@@ -123,10 +120,6 @@ nowant "a second --skip-queue pass still never mentions the queue-mode repo's br
     "sp-skip-q" "$out1b"
 is   "queue-mode branch still exists after a second --skip-queue pass" 0 \
     "$(branch_exists "$QREPO" spira/sp-skip-q; echo $?)"
-nowant "a second --skip-queue pass still never mentions the queue.local repo's branch" \
-    "sp-skip-ql" "$out1b"
-is   "queue.local branch still exists after a second --skip-queue pass" 0 \
-    "$(branch_exists "$QLREPO" spira/sp-skip-ql; echo $?)"
 
 # ======================================================================================
 echo
@@ -144,11 +137,9 @@ want "sp-only-q is SENT under --queue-only" "SENT sp-only-q" "$out2"
 is   "sp-skip-q is now gone"  1 "$(branch_exists "$QREPO" spira/sp-skip-q; echo $?)"
 is   "sp-only-q is now gone"  1 "$(branch_exists "$QREPO" spira/sp-only-q; echo $?)"
 
-want "sp-skip-ql (left standing by --skip-queue) is SENT under --queue-only" \
-    "SENT sp-skip-ql" "$out2"
-want "sp-only-ql is SENT under --queue-only" "SENT sp-only-ql" "$out2"
-is   "sp-skip-ql is now gone" 1 "$(branch_exists "$QLREPO" spira/sp-skip-ql; echo $?)"
-is   "sp-only-ql is now gone" 1 "$(branch_exists "$QLREPO" spira/sp-only-ql; echo $?)"
+nowant "queue.local repo's branches are not mentioned under --queue-only" "sp-only-ql" "$out2"
+is   "queue.local branch still exists after --queue-only" 0 \
+    "$(branch_exists "$QLREPO" spira/sp-only-ql; echo $?)"
 
 nowant "push-mode repo's branch is not mentioned under --queue-only" "sp-only-p" "$out2"
 is   "push-mode branch still exists after --queue-only" 0 \

@@ -356,6 +356,12 @@ impl Registry {
         matches!(self.land(name).as_str(), "queue" | "queue.local")
     }
 
+    /// True only for `queue.forge`: the forge's merge queue retires those branches itself,
+    /// which `queue.local` does not.
+    pub fn land_forge_queued(&self, name: &str) -> bool {
+        self.land(name) == "queue"
+    }
+
     /// `repo_gate <name>`.
     pub fn gate(&self, name: &str) -> Option<String> {
         self.field(name, Column::Gate)
@@ -950,6 +956,11 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg2.land("q"), "queue");
         assert!(reg2.land_queued("q"));
         assert!(!reg2.land_queued("ghost"));
+        assert!(reg2.land_forge_queued("q"));
+        let ql = "l | /l | queue.local | main | |\n";
+        let reg3 = Registry::new(Some(ql), &env, Path::new("/h/home"));
+        assert!(reg3.land_queued("l") && !reg3.land_forge_queued("l"));
+        assert!(!reg3.land_forge_queued("ghost"));
     }
 
     #[test]

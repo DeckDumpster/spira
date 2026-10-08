@@ -26,7 +26,7 @@ pub struct Repo {
     pub root: Option<String>,
     /// spira_landrefs: [0] is the base (spira_landref); a second is its local counterpart.
     pub landrefs: Vec<String>,
-    pub queued: bool,
+    pub forge_queued: bool,
 }
 
 impl Repo {
@@ -133,7 +133,7 @@ impl Context {
                                 .get(2)
                                 .map(|s| s.split_whitespace().map(str::to_string).collect())
                                 .unwrap_or_default(),
-                            queued: f.get(3).copied() == Some("1"),
+                            forge_queued: f.get(3).copied() == Some("1"),
                         });
                     }
                 }
@@ -624,7 +624,7 @@ pub mod tests {
         assert_eq!(c.chamber, vec!["builder", "ops", "spike"]);
         assert_eq!(c.repo("spira").unwrap().base(), Some("origin/main"));
         assert_eq!(c.repo("spira").unwrap().landrefs.len(), 2);
-        assert!(c.repo("other").unwrap().queued);
+        assert!(c.repo("other").unwrap().forge_queued);
         assert_eq!(c.repo("other").unwrap().root, None);
         let mut cut = b.clone();
         cut.truncate(b.len() - 5);

@@ -13,8 +13,8 @@ pub struct Repo {
     pub name: String,
     /// None: no path is configured for it.
     pub root: Option<PathBuf>,
-    /// Land mode queue or queue.local (repo_land_queued).
-    pub queued: bool,
+    /// Land mode queue.forge: the forge retires its branches. queue.local is not.
+    pub forge_queued: bool,
 }
 
 /// A repository's land ref, its land refs (the base plus any local landing ref), and the
