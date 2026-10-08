@@ -255,7 +255,7 @@ fn leading_timestamp(line: &str) -> Option<&str> {
 }
 
 fn title_map() -> HashMap<String, String> {
-    let raw = io::contentjson(&["list", "--all", "--limit", "0"]);
+    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
     let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
     rows.iter()
         .filter_map(|i| {
@@ -271,7 +271,7 @@ fn title_map() -> HashMap<String, String> {
 // ---------------------------------------------------------------------------------------
 
 fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
-    let raw = io::contentjson(&["list", "--all", "--limit", "0"]);
+    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
     let Some(rows) = io::json_rows(raw) else {
         push(out, "SP_INFLOW_WIN", "?");
         push(out, "SP_INFLOW_N", "?");

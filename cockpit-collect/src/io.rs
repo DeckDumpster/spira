@@ -253,6 +253,20 @@ pub fn contentjson(args: &[&str]) -> Option<String> {
     content(&full).map(|s| json_only(&s).to_string())
 }
 
+/// `contentjson`, memoised for the life of this process: one probe pass reads a full-table list
+/// once however many sections want it. A probe is its own short-lived process, so the memo
+/// never outlives a tick (law-reduce-the-count-never-throttle-the-job).
+pub fn contentjson_shared(args: &[&str]) -> Option<String> {
+    static MEMO: std::sync::Mutex<Vec<(Vec<String>, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+    let key: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    if let Some((_, hit)) = MEMO.lock().ok()?.iter().find(|(k, _)| *k == key) {
+        return hit.clone();
+    }
+    let fresh = contentjson(args);
+    MEMO.lock().ok()?.push((key, fresh.clone()));
+    fresh
+}
+
 /// Parse a `contentjson` response into a `Vec<Value>`, the shape every probe needs:
 /// the answer is either a bare object or an array. Empty/unparseable input (a refusal, per
 /// `contentjson`'s contract) returns `None`, never an empty vec — the two are different claims.
