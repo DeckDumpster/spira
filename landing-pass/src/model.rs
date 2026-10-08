@@ -290,6 +290,8 @@ pub enum GateOutcome {
 
 pub const GATE_NOVERDICT: i32 = 75;
 pub const GATE_BASEFAIL: i32 = 76;
+/// Must equal `spira_claim::events::BASE_RED_CAUSE`, which classifies it as uncharged.
+pub const BASE_RED_CAUSE: &str = "gate-base-red";
 
 impl GateOutcome {
     /// `spira_gate_outcome`.

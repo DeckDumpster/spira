@@ -773,6 +773,7 @@ impl<'a> Pass<'a> {
             }
             return;
         }
+        self.lib.bump_requeue(id, crate::model::BASE_RED_CAUSE);
         if !w.basefail_filed.get() {
             w.basefail_filed.set(true);
             let sha = self.git.rev_parse(&w.repo.path, &w.base_fq).unwrap_or_default();

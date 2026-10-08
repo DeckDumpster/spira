@@ -339,6 +339,14 @@ pub fn run(
             "{br} rebased but the gate reached no verdict — left at its pre-rebase tip, not reopened"
         ));
     }
+    if gate == Gate::BaseRed {
+        let _ = repo.run(["update-ref", &bref, &old_tip, &new_tip]);
+        sync(&holder);
+        log(Outcome::Error, "gate-base-red");
+        return not_attempted(format!(
+            "{br} rebased but the base fails its own gate — left at its pre-rebase tip, not reopened, no attempt charged"
+        ));
+    }
     if gate != Gate::Green {
         let _ = repo.run(["update-ref", &bref, &old_tip, &new_tip]);
         sync(&holder);

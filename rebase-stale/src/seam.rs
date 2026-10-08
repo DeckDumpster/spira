@@ -43,9 +43,11 @@ pub enum Gate {
     Green,
     Red,
     NoVerdict,
+    BaseRed,
 }
 
 const GATE_NO_VERDICT: i32 = 75;
+const GATE_BASE_RED: i32 = 76;
 
 pub struct LibSeam {
     pub home: PathBuf,
@@ -171,6 +173,7 @@ impl Seam for LibSeam {
                 let gate = match o.status.code() {
                     Some(0) => Gate::Green,
                     Some(GATE_NO_VERDICT) => Gate::NoVerdict,
+                    Some(GATE_BASE_RED) => Gate::BaseRed,
                     _ => Gate::Red,
                 };
                 (gate, String::from_utf8_lossy(&o.stdout).into_owned())
