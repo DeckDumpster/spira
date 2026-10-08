@@ -18,10 +18,12 @@ use reconciler_engine::effect::{
     append_event, compose_no_effect, is_shadowed, kind_of, load_pending, measure, save_pending, Outcome,
     PendingEffect, PendingMap, RemedyEvent,
 };
+use reconciler_engine::holds::{self, Outcome as HoldOutcome};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use spira_desired_state::compose::Composite;
 use spira_desired_state::resource::{parse_resource, CockpitSpec, DiskSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
 use spira_desired_state::store::FsStore;
+mod hold_sweep;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -116,6 +118,7 @@ struct Config {
     remedy_log: PathBuf,
     effect_state: PathBuf,
     mail_sh: String,
+    mail_root: PathBuf,
     release: String,
     shadow_kinds: Vec<String>,
     effect_passes: u32,
@@ -222,6 +225,7 @@ impl Config {
             // SPIRA_MAIL_SH / SPIRA_RECONCILER_SHADOW_KINDS / SPIRA_RECONCILER_EFFECT_PASSES
             // are not registered config keys — left as direct env reads.
             mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string()),
+            mail_root: PathBuf::from(cfg("SPIRA_MAIL")?),
             release: release_name(&harness_home()),
             shadow_kinds: env::var("SPIRA_RECONCILER_SHADOW_KINDS")
                 .unwrap_or_default()
@@ -1227,6 +1231,65 @@ fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Hold sweep: every held bead visited, moved one step for its kind (reconciler_engine::holds).
+// Throttled to its own cadence — it costs a store read per held bead — and its remedies are
+// telemetered and measured like any other, under the kind `holds`.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const HOLD_SWEEP_INTERVAL_SECS: u64 = 600;
+
+fn run_hold_sweep(cfg: &Config, pending: &mut PendingMap) {
+    let state_path = cfg.spira_run.join("reconciler-holds.json");
+    let mut state = holds::load_state(&state_path);
+    if cfg.now_secs.saturating_sub(state.last_pass) < HOLD_SWEEP_INTERVAL_SECS {
+        return;
+    }
+    let mut live = hold_sweep::Live {
+        lc_bin: cfg.lc_bin.clone(),
+        mail_sh: cfg.mail_sh.clone(),
+        mail_root: cfg.mail_root.clone(),
+        actor: "reconciler".to_string(),
+        now: cfg.now_secs,
+    };
+    let shadow = is_shadowed(&cfg.shadow_kinds, "holds");
+    match holds::sweep(cfg.now_secs, &mut live, &mut state, shadow) {
+        Err(e) => {
+            log_print(cfg, &format!("reconciler: holds: cannot tell, nothing acted on: {e}"));
+            state.last_pass = cfg.now_secs;
+        }
+        Ok(report) => {
+            let judged: Vec<String> = pending.keys().filter(|k| k.starts_with("holds:")).cloned().collect();
+            for key in judged {
+                judge_pending(cfg, pending, &key, if report.wanted.contains(&key) { 1.0 } else { 0.0 });
+            }
+            for note in &report.skipped {
+                log_print(cfg, &format!("reconciler: holds: skipped {note}"));
+            }
+            for t in &report.taken {
+                let desc = format!("{} {}", t.action.name(), t.bead);
+                match &t.outcome {
+                    HoldOutcome::Done => {
+                        log_print(cfg, &format!("reconciler: {} → remedy: {desc}", t.key));
+                        write_event(cfg, "remedy", &t.key, &desc, 1.0, None);
+                        pending.insert(
+                            t.key.clone(),
+                            PendingEffect { action: desc, metric: "gap".into(), before: 1.0, acted_at: cfg.now_secs, passes_seen: 0 },
+                        );
+                    }
+                    HoldOutcome::Shadowed => {
+                        log_print(cfg, &format!("reconciler: {} → remedy held (shadow): {desc}", t.key));
+                        write_event(cfg, "shadow", &t.key, &desc, 1.0, None);
+                    }
+                    HoldOutcome::Failed(e) => log_print(cfg, &format!("reconciler: {} → {desc} failed: {e}", t.key)),
+                }
+            }
+            log_print(cfg, &format!("reconciler: holds: visited {}, acted {}", report.visited, report.taken.len()));
+        }
+    }
+    let _ = holds::save_state(&state_path, &state);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Main pass
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1268,6 +1331,8 @@ fn run_pass() -> Result<(), String> {
     for check in checks {
         evaluate(&cfg, &mut state, &mut pending, check);
     }
+
+    run_hold_sweep(&cfg, &mut pending);
 
     let _ = save_state(&cfg.state_path, &state);
     let _ = save_pending(&cfg.effect_state, &pending);
@@ -1548,6 +1613,7 @@ mod tests {
             remedy_log: PathBuf::from("/dev/null"),
             effect_state: PathBuf::from("/dev/null"),
             mail_sh: "/bin/true".into(),
+            mail_root: PathBuf::new(),
             release: "r-test".into(),
             shadow_kinds: Vec::new(),
             effect_passes: 2,
@@ -1594,6 +1660,7 @@ mod tests {
             remedy_log: base.remedy_log.clone(),
             effect_state: base.effect_state.clone(),
             mail_sh: base.mail_sh.clone(),
+            mail_root: base.mail_root.clone(),
             release: base.release.clone(),
             shadow_kinds: base.shadow_kinds.clone(),
             effect_passes: base.effect_passes,

@@ -8,6 +8,7 @@
 pub mod alert;
 pub mod core;
 pub mod effect;
+pub mod holds;
 pub mod io;
 
 pub use alert::{classify_escalation, compose_alert, should_alert, EscalationClass};
