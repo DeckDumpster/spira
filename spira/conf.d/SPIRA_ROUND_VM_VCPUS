@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=round
 DOC=SPIRA_ROUND_VM_VCPUS — vCPUs each round VM gets.
+SCHEMA=Virtual CPUs given to each round VM (unit: count; default 16; sane range 2-64). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_ROUND_VM_VCPUS:=16}"
 SPIRA_CONF_DEFAULT_EOF

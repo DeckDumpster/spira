@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=round
 DOC=SPIRA_ROUND_VM_MIRROR_PORT — port the round VM's git mirror daemon listens on.
+SCHEMA=TCP port round-vm serves its state mirror on (unit: port number; default 9430; range 1-65535). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_ROUND_VM_MIRROR_PORT:=9430}"
 SPIRA_CONF_DEFAULT_EOF
