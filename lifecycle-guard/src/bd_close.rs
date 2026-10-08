@@ -36,11 +36,13 @@ pub(crate) fn gh_close() -> &'static Regex {
     R.get_or_init(|| Regex::new(r#""(?:pr|issue|run)""#).unwrap())
 }
 
-/// The machine, this analyser, and the door itself.
+/// The machine, this analyser, and the doors: `bd.rs`, and `content.rs`, the cockpit's
+/// allowlisted passthrough, which names `close` only as a match pattern for its own check.
 pub(crate) fn in_scope(rel: &str) -> bool {
     !(rel.starts_with("lifecycle/")
         || rel.starts_with("lifecycle-guard/")
         || rel == "spira-lc/src/bd.rs"
+        || rel == "spira-lc/src/content.rs"
         || rel == "spira-config/src/lifecycle_row.rs"
         // Acceptance seeds a PREDECESSOR install as it was before an upgrade — an aged store
         // whose closed bead is closed the way that release closed it. It is a fixture for a
@@ -124,6 +126,7 @@ mod tests {
         let door = r#"fn close(&mut self, id: &str, r: &str) { run(&["close", id, "--reason", r]) }"#;
         assert!(scan_rust_rel("spira-lc/src/bd.rs", door).is_empty());
         assert_eq!(scan_rust_rel("spira-lc/src/callers.rs", door), vec![1]);
+        assert!(scan_rust_rel("spira-lc/src/content.rs", door).is_empty());
     }
 
     fn scan_rust_rel(rel: &str, src: &str) -> Vec<usize> {
