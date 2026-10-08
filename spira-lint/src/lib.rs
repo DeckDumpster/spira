@@ -429,6 +429,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::scratch_fence::ScratchFence),
         Box::new(rules::wiki_add_fence::WikiAddFence),
         Box::new(rules::tmux_scope_fence::TmuxScopeFence),
+        Box::new(rules::wall_clock_budget::WallClockBudget),
     ]
 }
 
