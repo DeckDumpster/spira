@@ -617,6 +617,9 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
         Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
     }
 
+    let certified: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    io::lc_certify_round(env_, &certified, batch);
+
     let run = io::round_land(env_, repo, batch)?;
     let mut landed = run.outcome;
     let alarm = match landed {
