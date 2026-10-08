@@ -17,8 +17,7 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-/// `git merge-base --is-ancestor <candidate> <base>` — the fact the migration classifier's
-/// rule 1 (a legacy LANDED record whose tip is an ancestor of base) needs, and the fast path in [`content_on_base`] below.
+/// `git merge-base --is-ancestor <candidate> <base>` — the fast path in [`content_on_base`] below.
 pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
     spira_config::bounded::bounded("git")
         .arg("-C")

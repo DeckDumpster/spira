@@ -1,6 +1,6 @@
 use crate::finding::{Class, Finding};
 use crate::rules::{
-    landstate_path_allowed, Rules, BD_GLOBAL_VALUE_FLAGS, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS,
+    Rules, BD_GLOBAL_VALUE_FLAGS, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS,
     FORBIDDEN_READY_FLAGS, FORBIDDEN_UPDATE_FLAGS, ORACLE_SUBCOMMANDS, READ_VERBS,
 };
 use std::collections::{HashMap, HashSet};
@@ -341,7 +341,7 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
 
     // Direct calls into the landstate ledger: land_mark/landed/landed_sha, the shell half of
     // this bead's read barrier. Independent of the bd/bdq call graph above — these are lib.sh
-    // functions, never bd/bdq itself, and every call site outside the allow-list is a finding.
+    // functions, never bd/bdq itself, and every call site is a finding.
     // The same reach through the binary: `landing-pass mark|state|landed|cited-commit|
     // close-on-land` (sp-ts2qr), by any path to it.
     for call in &all_calls {
@@ -350,9 +350,6 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
             continue;
         }
         let rel = &parsed[call.scope.file_idx].rel_path;
-        if landstate_path_allowed(rel) {
-            continue;
-        }
         let (callee, detail) = match oracle {
             Some(verb) => (
                 format!("landing-pass {verb}"),
@@ -415,9 +412,7 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
             &rules.deleted_state_paths,
             &mut findings,
         );
-        if !landstate_path_allowed(&pf.rel_path) {
-            find_landstate_reads(pf.tree.root_node(), pf.text.as_bytes(), &pf.rel_path, &mut findings);
-        }
+        find_landstate_reads(pf.tree.root_node(), pf.text.as_bytes(), &pf.rel_path, &mut findings);
     }
 
     Ok(ShellScan { findings })

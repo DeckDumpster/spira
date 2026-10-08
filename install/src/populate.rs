@@ -21,7 +21,6 @@ use serde_json::Value;
 pub struct Inputs {
     pub bd_bin: String,
     pub bd_db: String,
-    pub landstate_dir: String,
     pub queue_dir: String,
     pub ask_label: Option<String>,
 }
@@ -54,7 +53,7 @@ pub fn unknown_repo_line(ids: &[String]) -> Option<String> {
 
 /// `spira-lc` argv (after the program name) for one population run.
 pub fn args(i: &Inputs) -> Vec<String> {
-    let mut a: Vec<String> = ["classify", "--every-bead", "--bd-bin", &i.bd_bin, "--bd-db", &i.bd_db, "--landstate-dir", &i.landstate_dir, "--queue-dir", &i.queue_dir]
+    let mut a: Vec<String> = ["classify", "--every-bead", "--bd-bin", &i.bd_bin, "--bd-db", &i.bd_db, "--queue-dir", &i.queue_dir]
         .iter()
         .map(|s| s.to_string())
         .collect();
@@ -105,14 +104,14 @@ mod tests {
     use super::*;
 
     fn inputs() -> Inputs {
-        Inputs { bd_bin: "bd".into(), bd_db: "/db".into(), landstate_dir: "/run/landstate".into(), queue_dir: "/run/queue".into(), ask_label: Some("ask-x".into()) }
+        Inputs { bd_bin: "bd".into(), bd_db: "/db".into(), queue_dir: "/run/queue".into(), ask_label: Some("ask-x".into()) }
     }
 
     #[test]
     fn the_argv_is_the_classifiers_every_bead_mode_with_every_path() {
         let a = args(&inputs());
         assert_eq!(a[..2], ["classify".to_string(), "--every-bead".to_string()]);
-        for (flag, v) in [("--bd-db", "/db"), ("--landstate-dir", "/run/landstate"), ("--queue-dir", "/run/queue"), ("--ask-label", "ask-x"), ("--bd-bin", "bd")] {
+        for (flag, v) in [("--bd-db", "/db"), ("--queue-dir", "/run/queue"), ("--ask-label", "ask-x"), ("--bd-bin", "bd")] {
             let at = a.iter().position(|x| x == flag).unwrap_or_else(|| panic!("{flag} missing"));
             assert_eq!(a[at + 1], v);
         }

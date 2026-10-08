@@ -1614,11 +1614,9 @@ fn populate_phase(dry: bool) -> Result<(), String> {
         return Ok(());
     }
     let need = |k: &str| bootstrap::declared(k).ok_or_else(|| format!("{k} is declared empty — cannot locate what the population reads"));
-    let run_dir = need("SPIRA_RUN")?;
     let inputs = install::populate::Inputs {
         bd_bin: bootstrap::declared("SPIRA_BD").unwrap_or_else(|| "bd".into()),
         bd_db: need("SPIRA_DB")?,
-        landstate_dir: format!("{run_dir}/landstate"),
         queue_dir: need("SPIRA_QUEUE_DIR")?,
         ask_label: bootstrap::declared("SPIRA_ASK_LABEL"),
     };

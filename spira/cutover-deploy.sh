@@ -97,7 +97,7 @@ for name in "${REPOS[@]}"; do
     fi
     SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$SPIRA_LC_CRED_FILE" spira-lc classify \
         --home "$SPIRA_CONFIG_HOME" --bd-bin "${SPIRA_BD:-bd}" --bd-db "$SPIRA_DB" \
-        --landstate-dir "$SPIRA_RUN/landstate" --queue-dir "$SPIRA_QUEUE_DIR" --repo "$name" || exit 1
+        --queue-dir "$SPIRA_QUEUE_DIR" --repo "$name" || exit 1
 done
 
 say "retiring lifecycle_enforce"
