@@ -24,8 +24,21 @@ pub fn snooze_reason(until: i64) -> String {
     format!("{SNOOZE_PREFIX}{until}")
 }
 
+/// The `wait` hold's reason for an aeon checkpointed across a world stop:
+/// `checkpoint-until:<epoch seconds>`. It keeps the bead unclaimable like a snooze, and
+/// `world start` lifts it; the expiry only bounds a stop that is never followed by a start.
+pub const CHECKPOINT_PREFIX: &str = "checkpoint-until:";
+
+pub fn checkpoint_reason(until: i64) -> String {
+    format!("{CHECKPOINT_PREFIX}{until}")
+}
+
+pub fn is_checkpoint(reason: &str) -> bool {
+    reason.starts_with(CHECKPOINT_PREFIX)
+}
+
 pub fn snooze_until(reason: &str) -> Option<i64> {
-    reason.strip_prefix(SNOOZE_PREFIX)?.trim().parse().ok()
+    reason.strip_prefix(SNOOZE_PREFIX).or_else(|| reason.strip_prefix(CHECKPOINT_PREFIX))?.trim().parse().ok()
 }
 
 /// One `spira_lifecycle.bead` row, as `spira-lc list` / `show` print it.
@@ -176,6 +189,14 @@ pub fn index(rows: Vec<Row>) -> HashMap<String, Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_checkpoint_reason_snoozes_like_a_timed_wait_and_is_told_apart() {
+        let r = checkpoint_reason(1_900_000_000);
+        assert_eq!(snooze_until(&r), Some(1_900_000_000));
+        assert!(is_checkpoint(&r) && !is_checkpoint(&snooze_reason(5)));
+        assert_eq!(snooze_until(&snooze_reason(5)), Some(5));
+    }
 
     #[test]
     fn predicates_name_the_old_bd_decisions() {

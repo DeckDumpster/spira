@@ -6,6 +6,7 @@
 //! were three separate re-derivations (the exact drift lib.sh's own comments warn about);
 //! in Rust they are one function each, called from three binaries.
 
+pub mod checkpoint;
 pub mod fleet;
 pub mod notice;
 pub mod proc;
