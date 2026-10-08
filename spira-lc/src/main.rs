@@ -305,10 +305,8 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         return cmd_list_batches(conn);
     }
     let mut clauses = Vec::new();
-    let mut scope = String::new();
     if let Some(state) = flag(args, "--state") {
         clauses.push(format!("state = '{}'", rows::escape(&state)));
-        scope.push_str(&format!(" AND to_state = '{}'", rows::escape(&state)));
     }
     // --hold <kind>: beads currently carrying that hold (design §3.1: "Holds are a
     // dimension, not states"), e.g. every poison-held bead regardless of its underlying
@@ -316,26 +314,53 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     // lc_holds call against every dispatchable bead.
     if let Some(kind) = flag(args, "--hold") {
         clauses.push(format!("JSON_CONTAINS(holds, '\"{}\"')", rows::escape(&kind)));
-        scope.push_str(&format!(
-            " AND lc_key IN (SELECT bead_id FROM bead WHERE JSON_CONTAINS(holds, '\"{}\"'))",
-            rows::escape(&kind)
-        ));
     }
     let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
-    // `since` comes from one grouped pass over the event log joined on (key, state). A
-    // correlated per-row subquery is not resolved through event_lc_key_idx by Dolt and
-    // took 85 s on 3.7k rows, past every caller's timeout (sp-c3azm).
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth, s.since AS since FROM bead \
-         LEFT JOIN (SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1{scope} GROUP BY lc_key, to_state) s \
-         ON s.lc_key = bead.bead_id AND s.to_state = bead.state{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth FROM bead{where_clause} ORDER BY bead_id"
     );
-    match conn.query(&sql) {
-        Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    let mut beads = match conn.query(&sql) {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    };
+    // `since` is read for the returned rows only, by key, so the cost follows the rows
+    // returned and not the whole event log. A grouped pass or correlated subquery over the
+    // log scaled with every event ever written (sp-c3azm, sp-utv2df).
+    let ids: Vec<String> = beads
+        .iter()
+        .filter_map(|b| b.get("bead_id").and_then(Value::as_str))
+        .map(|id| format!("'{}'", rows::escape(id)))
+        .collect();
+    let mut since: std::collections::HashMap<(String, String), Value> = std::collections::HashMap::new();
+    for chunk in ids.chunks(500) {
+        let q = format!(
+            "SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 AND lc_key IN ({}) GROUP BY lc_key, to_state",
+            chunk.join(",")
+        );
+        match conn.query(&q) {
+            Ok(r) => {
+                for row in r {
+                    let k = row.get("lc_key").and_then(Value::as_str).unwrap_or_default().to_string();
+                    let st = row.get("to_state").and_then(Value::as_str).unwrap_or_default().to_string();
+                    since.insert((k, st), row.get("since").cloned().unwrap_or(Value::Null));
+                }
+            }
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        }
     }
+    for b in beads.iter_mut() {
+        let key = (
+            b.get("bead_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+            b.get("state").and_then(Value::as_str).unwrap_or_default().to_string(),
+        );
+        let v = since.get(&key).cloned().unwrap_or(Value::Null);
+        if let Some(o) = b.as_object_mut() {
+            o.insert("since".into(), v);
+        }
+    }
+    (0, serde_json::to_string_pretty(&Value::Array(beads)).unwrap())
 }
 
 /// Derived table of the latest applied event into each (key, state) of a machine. Joined,
