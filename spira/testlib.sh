@@ -739,7 +739,8 @@ lc_aeon_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
-    hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"; exit 0 ;;
+    hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"
+        mkdir -p "$SPIRA_RUN/lc-hold"; printf '%s %s %s\n' "${3:-}" "${4:-}" "${5:-}" > "$SPIRA_RUN/lc-hold/${2:-}"; exit 0 ;;
     reopen)
         # sp-swh8b8: the row moves to REWORK first, then the store follows (open, unassigned),
         # exactly as spira-lc's own reopen door does; the claim this stand-in recorded is dropped.
@@ -771,8 +772,9 @@ def read(path):
 def row(b):
     i = b["id"]
     labels = b.get("labels") or []
+    held = read(os.path.join(run, "lc-hold", i)) is not None
     r = {"bead_id": i, "state": "READY", "reason": "", "tip": "", "holder": None, "lease_until": None,
-         "version": 0, "holds": (["poison"] if "spira-poison" in labels else []) + (["ask"] if ask and ask in labels else [])}
+         "version": 0, "holds": (["poison"] if "spira-poison" in labels or held else []) + (["ask"] if ask and ask in labels else [])}
     pinned, claim = read(os.path.join(run, "lc-row", i)), read(os.path.join(run, "lc-claim", i))
     if pinned:
         f = pinned.split()
@@ -787,6 +789,8 @@ def row(b):
         r["state"], r["holder"] = "WORKING", claim
     elif b.get("status") == "in_progress":
         r["state"], r["holder"] = "WORKING", (b.get("assignee") or None)
+    if r["state"] == "SUBMITTED" and not r["tip"]:
+        r["tip"] = "fixturetip"
     return r
 rows = {b["id"]: row(b) for b in beads
         if isinstance(b, dict) and b.get("id") and b.get("issue_type") not in ("epic", "event")}
@@ -815,6 +819,12 @@ elif verb == "unclaim":
     claim = os.path.join(run, "lc-claim", i)
     if os.path.exists(claim):
         os.remove(claim)
+elif verb == "hold":
+    i = args[1] if len(args) > 1 else ""
+    if i not in rows:
+        sys.exit(1)
+    os.makedirs(os.path.join(run, "lc-hold"), exist_ok=True)
+    open(os.path.join(run, "lc-hold", i), "w").write(" ".join(args[2:]) + "\n")
 elif verb == "event":
     i = args[2] if len(args) > 2 else ""
     opt = {args[k]: args[k + 1] for k in range(3, len(args) - 1) if args[k].startswith("--")}
@@ -838,6 +848,9 @@ elif verb == "event":
     elif "Submit" in kind:
         os.makedirs(os.path.join(run, "lc-row"), exist_ok=True)
         open(os.path.join(run, "lc-row", i), "w").write("SUBMITTED\n")
+    elif "GateRed" in kind and r["state"] == "SUBMITTED":
+        os.makedirs(os.path.join(run, "lc-row"), exist_ok=True)
+        open(os.path.join(run, "lc-row", i), "w").write("REWORK policy-violation %s\n" % r["tip"])
 ' "$@"
 STUB
     } > "$dir/spira-lc"
