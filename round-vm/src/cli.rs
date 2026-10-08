@@ -248,6 +248,10 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         return 2;
     }
     if std::fs::File::open(&cfg.host_key).is_err() {
+        if refresh {
+            eprintln!("round-vm refresh: SPIRA_ROUND_VM_HOST_KEY not readable ({}) — this box runs no round VMs; nothing to refresh", cfg.host_key.display());
+            return 0;
+        }
         eprintln!("round-vm template: SPIRA_ROUND_VM_HOST_KEY not readable: {}", cfg.host_key.display());
         return 2;
     }
@@ -397,5 +401,45 @@ mod tests {
         assert_eq!(main_with(s(&["template"])), 2);
         assert_eq!(main_with(s(&["template", "/t", "--vmid", "x"])), 2);
         assert_eq!(main_with(s(&["refresh"])), 2);
+    }
+
+    #[test]
+    fn refresh_without_a_host_key_is_a_clean_skip_but_template_still_refuses() {
+        use crate::config::Fields;
+        let tmp = crate::testutil::TempDir::new();
+        let tree = tmp.path().join("tree");
+        std::fs::create_dir_all(&tree).unwrap();
+        assert!(crate::run::git(&["-C", &tree.to_string_lossy(), "init", "-q"]).is_ok());
+        let cfg = Config::build(Fields {
+            run: tmp.path().to_string_lossy().into(),
+            spira_home: None,
+            pve_env: "/nonexistent/pve.env".into(),
+            ssh_user: "root".into(),
+            ssh_port: 22,
+            state_dir: tmp.path().join("state").to_string_lossy().into(),
+            host_key: tmp.path().join("no_such_key").to_string_lossy().into(),
+            host_pubkey: "/nonexistent/key.pub".into(),
+            host_addr: None,
+            cache_home: None,
+            testenv_registry: None,
+            vcpus: 1,
+            maxpar: 1,
+            max_retries: 0,
+            retry_interval_secs: 1,
+            mirror_port: 1,
+            setup_alarm_secs: 1,
+            acquire_deadline_secs: 1,
+            mailbox: "operator".into(),
+            net_iface: "lo".into(),
+            boot_tries: 1,
+            boot_poll_secs: 1,
+            ssh_tries: 1,
+            stream_every_secs: 1,
+            attr_linger_secs: 1,
+        });
+        let a = crate::template::TemplateArgs { tree_dir: tree, rev: None, toolchain: None };
+        let pool = pool_for(&cfg);
+        assert_eq!(template(&cfg, &a, true, &pool), 0);
+        assert_eq!(template(&cfg, &a, false, &pool), 2);
     }
 }
