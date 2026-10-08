@@ -370,3 +370,4 @@ sccache_dav_max_gb
 round_certify_wall_secs
 reap_idle_secs
 reap_disk_floor_gib
+store_check_timeout

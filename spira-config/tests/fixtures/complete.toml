@@ -295,6 +295,7 @@ statute_core_local = "law-filed-bead-queued-xor-escalated,law-no-filing-only-esc
 statute_page = "wiki/notes/common-law.md"
 statute_source = "llm-wiki"
 stranded_runner_min_age = 300
+store_check_timeout = "30"
 submitted_label = "spira-submitted"
 suites_budget = 1800
 suites_priority = "3"
