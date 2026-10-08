@@ -65,6 +65,7 @@ pub const VERBS: &[&str] = &[
     "drop",
     "returned",
     "content-on-base",
+    "supersede",
     "state",
     "holds",
     "held",
@@ -152,6 +153,13 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             }
             let proof = a(1);
             with_row(m, &a(0), &actor_or(args.get(2), "sending"), |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }))
+        }
+        "supersede" => {
+            if !need(2) {
+                return usage("supersede <bead-id> <successor-id> [actor]");
+            }
+            let by = a(1);
+            with_row(m, &a(0), &actor_or(args.get(2), "groomer"), |_| Ok(BeadEventKind::Supersede { by: by.clone() }))
         }
         "state" => {
             if !need(1) {

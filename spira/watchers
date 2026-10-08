@@ -150,3 +150,5 @@ round-duty|daemon|@SPIRA_HOME@/round-duty.sh watch --interval 15|@SPIRA_HOME@/ro
 # notify does not re-escalate handled asks. Retire any overlay row named `asks`: a name is unique
 # across the manifest and the overlay's copy would refuse it.
 asks|daemon|@SPIRA_HOME@/asks.sh watch --interval 60|@SPIRA_HOME@/asks.sh health
+
+supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_HOME@/supersede-duty.sh health
