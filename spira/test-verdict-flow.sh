@@ -136,7 +136,7 @@ xbead_of() {   # xbead_of <mailbox> -> X-Spira-Bead of the newest message
 # command substitution runs in a subshell and any variable this set would be lost on return.
 send_question() {
     local mailbox="$1" work_bead="${2:-}"
-    local args=(send "$mailbox" --from "Builder <builder@spira>" --subject "Should I proceed with option A?" \
+    local args=(send "$mailbox" --from "Builder <builder@spira>" --subject "Should I proceed with option A? [${work_bead:-none} ${3:-}]" \
         --kind question --class policy --default "proceed with option A")
     [ -n "$work_bead" ] && args+=(--bead "$work_bead")
     if [ "${3:-}" = "allow-blocking" ]; then
@@ -276,7 +276,7 @@ echo "UC-15: a reply to a bare tracking bead (no kind) closes that bead directly
 BEAD_T="sp-vf-track"
 seed_bead "$BEAD_T"
 is "SEEN RED: tracking bead is open before sendmail" "open" "$(bead_status "$BEAD_T")"
-SPIRA_MAIL_LINT_CONSIDERED="test" run send operator --from "Gate <gate@spira>" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" run send operator --from "Gate <gate@spira>" \
     --subject "Test message" --bead "$BEAD_T" <<< "body" >/dev/null 2>&1
 MSGID_T="$(msgid_of operator)"
 compose_reply "$MSGID_T" "All looks good." "Re: Test message" | run sendmail >/dev/null 2>&1; rc=$?

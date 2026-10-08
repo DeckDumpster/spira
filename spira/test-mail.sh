@@ -277,7 +277,7 @@ echo
 echo "repeat guard — override bypasses the guard, recorded on the message"
 
 out="$(qbody "$SUBJ_A2" "close or fix" \
-    | SPIRA_MAIL_REPEAT_CONSIDERED="testing override" SPIRA_MAIL_OPERATOR_CONSIDERED="testing override" mail send operator \
+    | SPIRA_MAIL_REPEAT_CONSIDERED="testing override" mail send operator \
         --from "Sentinel <sentinel@spira>" --subject "$SUBJ_A2" \
         --kind question --class policy --default "close or fix" 2>&1)"
 is "SPIRA_MAIL_REPEAT_CONSIDERED lets the repeat through" 0 "$?"

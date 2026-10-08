@@ -115,7 +115,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
 
     let mut body = body;
     let mut rerouted = false;
-    if mailbox == "operator" && env.operator_considered.is_none() {
+    if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
         if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body) {
             eprintln!(
                 "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class (permissions, policy, destructive-on-production-data), a default and a '## Class basis' section; everything else is the concierge's judgement, and carries no ask label."
