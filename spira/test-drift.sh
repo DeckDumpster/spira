@@ -115,6 +115,13 @@ is "unshipped unit file: exits 1" "1" "$rc"
 want "unshipped unit file: named" "test-stray.service" "$out"
 rm -f "$UNITDIR/test-stray.service"
 
+touch "$UNITDIR/test-permanent.service"
+printf '\n[[unit]]\npath = "test-permanent.service"\nreason = "dead unit, kept"\npermanent = true\n' >> "$LMANIFEST"
+out="$(ldrift)"; rc=$?
+is "permanent declaration needs no bead: exits 0" "0" "$rc"
+nowant "permanent declaration: not reported" "test-permanent" "$out"
+rm -f "$UNITDIR/test-permanent.service"
+
 out="$(drift units "$UNITDIR")"; rc=$?
 is "back to clean: exits 0" "0" "$rc"
 
