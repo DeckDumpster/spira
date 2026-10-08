@@ -49,6 +49,12 @@ fn unit_set_is_sorted_spira_units_without_transient_ones() {
 }
 
 #[test]
+fn unit_set_leaves_out_units_a_release_directory_render_never_keeps() {
+    let t = "spira-cert-sweep-full-prod.timer enabled\nspira-round-template-prod.service static\nspira-a.service static\n";
+    assert_eq!(unit_set(t), s(&["spira-a.service static"]));
+}
+
+#[test]
 fn missing_release_bins_names_what_is_missing_and_nothing_when_complete() {
     let d = TempDir::new("acc-bins");
     fs::create_dir_all(d.join("bin")).unwrap();

@@ -838,7 +838,7 @@ fn main() -> ExitCode {
                     }
                     clean_partial_init(&db, &dbname, dolt_port);
                     if tries < max_tries && out.contains("invalid connection") {
-                        info("  bd init hit an invalid connection — removed the partial database, retrying");
+                        info(&format!("  bd init hit an invalid connection — removed the partial database, retrying: {}", out.trim().lines().last().unwrap_or("")));
                         std::thread::sleep(std::time::Duration::from_secs(2 * tries as u64));
                         continue;
                     }
@@ -1298,7 +1298,11 @@ fn clean_partial_init(db: &str, dbname: &str, port: u16) {
     let _ = std::fs::remove_dir_all(Path::new(db).join(".dolt"));
     if dbname.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && !dbname.is_empty() {
         // batch-job: dropping the partial database; bounded at 30 s.
-        let _ = Command::new("timeout").args(["30", "dolt", "--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", &format!("DROP DATABASE IF EXISTS `{dbname}`")]).stdin(Stdio::null()).output();
+        match Command::new("timeout").args(["30", "dolt", "--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", &format!("DROP DATABASE IF EXISTS `{dbname}`")]).stdin(Stdio::null()).output() {
+            Ok(o) if !o.status.success() => eprintln!("install: could not drop the partial database {dbname}: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => eprintln!("install: could not drop the partial database {dbname}: {e}"),
+            _ => {}
+        }
     }
 }
 

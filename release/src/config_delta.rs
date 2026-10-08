@@ -157,14 +157,21 @@ pub struct Txn {
     pub undo: Delta,
 }
 
-/// `delta` applied to `original`: the tables with the added keys (an added key already in
-/// any layer is the operator's and stays), then with the dropped keys also removed, and what
-/// undoes both.
+/// `delta` applied to `original`: the added keys (one an operator already set stays; one held as
+/// the empty string was written undefaulted by an install and takes the release's value), then
+/// the dropped keys removed, and what undoes both.
 fn apply(original: &[Table], delta: &Delta) -> Result<(Vec<Table>, Vec<Table>, Delta), String> {
     let mut pre = original.to_vec();
     let mut undo = Delta::default();
     for (k, v) in &delta.added {
-        if pre.iter().any(|t| get(t, k).is_some()) {
+        let blank = |t: &Table| get(t, k).and_then(Value::as_str) == Some("");
+        if pre.iter().any(|t| get(t, k).is_some() && !blank(t)) {
+            continue;
+        }
+        if pre.iter().any(blank) {
+            for t in pre.iter_mut().filter(|t| blank(t)) {
+                set(t, k, v.clone())?;
+            }
             continue;
         }
         set(&mut pre[0], k, v.clone())?;

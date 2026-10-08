@@ -63,10 +63,16 @@ impl Run<'_> {
         }
     }
 
+    /// `deploy.sh` re-renders units, so it needs the `SPIRA_HOME_REPO` the install had: without
+    /// it the cert-sweep and round-template units resolve out of the manifest and are pruned.
+    fn deploy_sh(&self) -> Cmd {
+        self.forge(self.tool("deploy.sh")).env("SPIRA_HOME_REPO", self.o.scratch_name())
+    }
+
     /// `deploy.sh` of the release under test: always `--allow-draft` (acceptance runs before
     /// the draft is published), and the local tarball when this run was handed one.
     fn deploy_tag(&self) -> Cmd {
-        let mut c = self.forge(self.tool("deploy.sh")).arg("--allow-draft");
+        let mut c = self.deploy_sh().arg("--allow-draft");
         if let Some(t) = &self.o.a.tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
@@ -75,7 +81,7 @@ impl Run<'_> {
 
     /// `deploy.sh` of the predecessor (a rollback), with its local tarball when handed one.
     fn deploy_prev(&self, prev: &str) -> Cmd {
-        let mut c = self.forge(self.tool("deploy.sh"));
+        let mut c = self.deploy_sh();
         if let Some(t) = &self.o.a.prev_tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
@@ -195,6 +201,17 @@ impl Run<'_> {
     fn start_sentinel(&self) {
         let unit = first_fields(&self.systemctl(&["list-unit-files", "spira-sentinel*.service", "--no-legend", "--plain"]).out).into_iter().next().unwrap_or_default();
         self.systemctl(&["start", &unit]);
+    }
+
+    /// A predecessor installs the round-template refresh on any box with a git home repo, and
+    /// its refresh needs a round VM host this box does not have: it fails on its first tick and
+    /// the predecessor's own deploy.sh then refuses on the failed unit. Take the unit out of
+    /// the box the way an operator without a VM host would.
+    fn without_round_vm_host(&self) {
+        for u in first_fields(&self.systemctl(&["list-unit-files", "spira-round-template*", "--no-legend", "--plain"]).out) {
+            self.systemctl(&["disable", "--now", &u]);
+            self.systemctl(&["reset-failed", &u]);
+        }
     }
 
     fn gh(&self, args: &[&str]) -> Cmd {
@@ -687,6 +704,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
                     r.install_tarball(&tb);
                     r.sync_scratch("phase B");
                     let prc = r.install_sh();
+                    r.without_round_vm_host();
                     r.is0(&format!("phase B: install.sh ({pt}) exits 0"), prc);
                     // A failed install leaves the database down; deploy.sh would then read as an
                     // upgrade failure. Attribute it to the install instead.
@@ -811,6 +829,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     if arc != 0 {
         return;
     }
+    r.without_round_vm_host();
 
     // Seed: an open bead, a closed bead, two statutes.
     h.run(&r.bd(&["create", "--title", "aged-install: open seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
