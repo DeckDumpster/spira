@@ -34,6 +34,10 @@ active = true
 name = "spira-watchtower.timer"
 enabled = true
 active = true
+[[resources.spec.units]]
+name = "spira-reconciler.timer"
+enabled = true
+active = true
 
 [[resources]]
 apiVersion = "spira/v1"

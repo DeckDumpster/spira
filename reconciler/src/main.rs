@@ -1464,6 +1464,7 @@ fn run_pass() -> Result<(), String> {
 
     if cfg.spira_run.join("world.halted").exists() {
         log_print(&cfg, "reconciler: skipped — world is halted");
+        stamp_pass(&cfg);
         return Ok(());
     }
 
@@ -1511,8 +1512,13 @@ fn run_pass() -> Result<(), String> {
     let elapsed = clock::now_secs(&cfg.seams.date).saturating_sub(cfg.now_secs);
     log_print(&cfg, &format!("reconciler: complete ({} checks, {}s)", n, elapsed));
 
+    stamp_pass(&cfg);
     drop(lock_file);
     Ok(())
+}
+
+fn stamp_pass(cfg: &Config) {
+    let _ = fs::write(paths::pass_stamp(&cfg.spira_run), format!("{}\n", clock::now_secs(&cfg.seams.date)));
 }
 
 #[cfg(test)]

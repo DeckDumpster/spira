@@ -11,6 +11,10 @@ pub fn status_log(run: &Path) -> PathBuf {
     run.join("tsd").join("reconciler-status.jsonl")
 }
 
+pub fn pass_stamp(run: &Path) -> PathBuf {
+    run.join("reconciler-pass.stamp")
+}
+
 pub fn remedy_log(run: &Path) -> PathBuf {
     run.join("tsd").join("reconciler-remedy.jsonl")
 }

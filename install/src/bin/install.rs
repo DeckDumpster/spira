@@ -539,6 +539,20 @@ fn tool_status(name: &str, args: &[&str]) -> i32 {
     Command::new(name).args(args).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
 }
 
+/// Every `*.toml` directly inside `dir`, sorted — the operator's own fragments, composed after
+/// the shipped default. An absent directory is no fragments.
+fn operator_fragments(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    found
+}
+
 fn tool_output(name: &str, args: &[&str], extra_env: &[(&str, &str)]) -> (i32, String) {
     // batch-job: this runs whatever its caller names, as long as that takes
     let mut c = Command::new(name);
@@ -1146,6 +1160,27 @@ fn main() -> ExitCode {
             let _ = std::fs::write(Path::new(&run).join("install-linger-enabled"), "");
         }
         info(&format!("enabled linger for {linger_user}"));
+        changes += 1;
+    }
+
+    // ---- phase 4.7: desired state ---------------------------------------------------------
+    phase("phase 4.7: desired state");
+    let release_root = nonempty_env("SPIRA_HOME").map(|h| PathBuf::from(h).parent().map(Path::to_path_buf).unwrap_or_default()).unwrap_or_default();
+    let default_doc = release_root.join("desired-state/examples/default.toml");
+    if opts.dry {
+        would(&format!("run: spira compose {} + every *.toml in SPIRA_DESIRED_FRAGMENTS_DIR", default_doc.display()));
+    } else {
+        let mut docs = vec![default_doc.to_string_lossy().into_owned()];
+        if let Ok(dir) = spira_config::process::cfg("SPIRA_DESIRED_FRAGMENTS_DIR") {
+            docs.extend(operator_fragments(Path::new(&dir)));
+        }
+        let args: Vec<&str> = std::iter::once("compose").chain(docs.iter().map(String::as_str)).collect();
+        let (rc, out) = tool_output("spira", &args, &[]);
+        print!("{out}");
+        if rc != 0 {
+            eprintln!("install: phase desired state failed — spira compose exited {rc}; the reconciler has no composite to converge to");
+            return ExitCode::from(2);
+        }
         changes += 1;
     }
 
