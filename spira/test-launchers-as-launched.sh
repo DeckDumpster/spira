@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 
-for b in mail spira-lc spira-config watchd release health layout cockpit-collect spira-install python3 tmux; do
+for b in mail spira-lc spira-config watchd release health lc-view layout cockpit-collect spira-install python3 tmux; do
     command -v "$b" >/dev/null 2>&1 || bail "$b is not on PATH"
 done
 
@@ -23,7 +23,7 @@ mkdir -p "$TMP/releases" "$TMP/stubs" "$TMP/run" "$TMP/tmux"
 
 R="$TMP/releases/rel1"
 mkdir -p "$R/bin"
-for b in mail spira-lc spira-config watchd release health layout cockpit-collect inbox-triage; do
+for b in mail spira-lc spira-config watchd release health lc-view layout cockpit-collect inbox-triage; do
     p="$(command -v "$b" 2>/dev/null)" && cp "$p" "$R/bin/$b"
 done
 ln -s "$ROOT/spira" "$R/spira"

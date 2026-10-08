@@ -111,12 +111,13 @@ cp "$COCKPIT_DIR/tmux-env.sh" "$ROOT/cockpit/"
 cp "$HERE/conf.sh" "$ROOT/spira/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$ROOT/spira/"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/bin/health"
-chmod +x "$ROOT/bin/health"
+cp "$ROOT/bin/health" "$ROOT/bin/lc-view"
+chmod +x "$ROOT/bin/health" "$ROOT/bin/lc-view"
 
 tmux new-session -d -s brain -x 200 -y 50
 WIN2=brain:0
 SESS2=$(tmux list-panes -t "$WIN2" -F '#{pane_id}')
-HP2=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS2" "PATH='$ROOT/bin:$PATH' health loop")
+HP2=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS2" "PATH='$ROOT/bin:$PATH' lc-view loop 10")
 tmux set-option -p -t "$HP2" @cockpit health
 # What `up` sets on a real cockpit — marks the WINDOW, independent of any pane tag.
 tmux set-option -w -t "$WIN2" @cockpit_up 1

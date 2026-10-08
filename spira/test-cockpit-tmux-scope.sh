@@ -57,7 +57,8 @@ FAKE_COCK="$T/fake-cockpit"; mkdir -p "$FAKE_COCK"
 # "$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:...", so the stub goes there.
 FAKE_RELEASE="$T"; mkdir -p "$FAKE_RELEASE/bin"
 printf '#!/usr/bin/env bash\nsleep 600\n' > "$FAKE_RELEASE/bin/health"
-chmod +x "$FAKE_RELEASE/bin/health"
+cp "$FAKE_RELEASE/bin/health" "$FAKE_RELEASE/bin/lc-view"
+chmod +x "$FAKE_RELEASE/bin/health" "$FAKE_RELEASE/bin/lc-view"
 
 # REAL: the default socket (no -L) — stands in for the cockpit's own server. Named
 # "brain", not "cockpit", so section 2 below is free to use "cockpit" as the session
