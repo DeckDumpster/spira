@@ -188,6 +188,13 @@ want "undeclared file: marked UNSHIPPED" "UNSHIPPED" "$out"
 nowant "undeclared file: declared ones still accepted" "refuse-manual-stop" "$out"
 rm -f "$UNITDIR/test-stray.service"
 
+touch "$UNITDIR/test-permanent.service"
+printf '\n[[unit]]\npath = "test-permanent.service"\nreason = "dead unit, kept"\npermanent = true\n' >> "$LMANIFEST"
+out="$(ldrift)"; rc=$?
+is "permanent declaration needs no bead: exits 0" "0" "$rc"
+nowant "permanent declaration: not reported" "test-permanent" "$out"
+rm -f "$UNITDIR/test-permanent.service"
+
 # A commit naming the bead is not landed-ness: only the lifecycle record's LANDED is.
 git -C "$LREPO" commit -q --allow-empty -m "spira: land sp-local-guard"
 land_base
