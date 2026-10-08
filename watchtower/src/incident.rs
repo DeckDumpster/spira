@@ -106,6 +106,10 @@ impl Finding {
 /// shape of `bash "$INC" file "..." - >/dev/null || true` at every bash call site: a failed
 /// filing is logged by the caller, never fatal to the check that found the thing.
 pub fn file(incident_sh: &str, f: &Finding) -> bool {
+    if let Some(cause) = f.cause.as_deref().filter(|c| crate::ctrl_gate::condition_suspended(c)) {
+        crate::log::log(&format!("watchtower: {cause} is suspended in the control plane — not filing {}", f.title));
+        return false;
+    }
     let mut cmd = spira_config::bounded::bounded("bash");
 cmd.envs(spira_config::release_env::child_path_env_for_process());
     cmd.arg(incident_sh).arg("file").arg(&f.title).arg("-");

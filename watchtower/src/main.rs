@@ -12,6 +12,7 @@ mod disk_mem;
 mod disabled_timer;
 mod drift;
 mod env;
+mod ctrl_gate;
 mod failed_units;
 mod gate_wait;
 mod git;

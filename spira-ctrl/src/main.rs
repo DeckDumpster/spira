@@ -138,6 +138,19 @@ fn cmd_suspend(args: &[String]) -> ExitCode {
     let by = env::var("USER").unwrap_or_else(|_| "operator".to_string());
     let tz = spira_config::process::cfg("SPIRA_TZ").unwrap_or_else(|e| die(&e));
     let mut data = load_or_die();
+    if !ctrl::is_suspended(&data, subject) {
+        let units: Vec<String> = sc_lines(&["--user", "list-unit-files", "--no-legend", "--no-pager"])
+            .iter()
+            .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+            .collect();
+        if !ctrl::is_consultable(subject, &units, &spira_instance()) {
+            eprintln!(
+                "ctrl: refused: nothing consults {subject}. A subject is a unit (its name without extension or instance suffix) or a watchtower condition: {}",
+                ctrl::WATCHTOWER_CONDITIONS.join(" ")
+            );
+            return ExitCode::from(1);
+        }
+    }
     ctrl::suspend(&mut data, subject, &reason, &owner, &today(&tz), &by);
     if let Err(e) = ctrl::write_atomic(&ctrl_path(), &data) {
         eprintln!("ctrl: failed to update control file: {e}");

@@ -8,6 +8,7 @@ description = "watchtower — hands Ops the pipeline's vital signs (the sweep) a
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 spira-config = { path = "../spira-config" }
+spira-ctrl = { path = "../spira-ctrl" }
 
 [[bin]]
 name = "watchtower"
