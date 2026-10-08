@@ -169,6 +169,7 @@ if [ -n "$toolchain" ] && [ ! -x "$CARGO_HOME/bin/rustc" ]; then
 fi
 export PATH="$CARGO_HOME/bin:$PATH"
 export SPIRA_HOME="$work/spira"
+export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml"
 if [ ! -x "$CARGO_HOME/bin/sccache" ]; then
     echo "round-vm template: installing sccache (webdav backend) into $CARGO_HOME/bin" >&2
     cargo install sccache --locked --no-default-features --features webdav --quiet
@@ -527,6 +528,12 @@ mod tests {
     fn the_script_names_the_harness_home_before_testenv_runs() {
         let home = TEMPLATE_SCRIPT.find("export SPIRA_HOME=\"$work/spira\"").expect("testenv refuses without SPIRA_HOME");
         assert!(home < TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap());
+    }
+
+    #[test]
+    fn the_script_names_the_one_config_source_before_testenv_runs() {
+        let toml = TEMPLATE_SCRIPT.find("export SPIRA_TOML=\"$work/spira-config/tests/fixtures/complete.toml\"").expect("testenv refuses without SPIRA_TOML");
+        assert!(toml < TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap());
     }
 
     #[test]
