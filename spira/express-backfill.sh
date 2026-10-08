@@ -9,6 +9,6 @@ ids="$(bdq list --label "$LABEL" --all --limit 0 --json | python3 -c 'import jso
 for b in json.load(sys.stdin): print(b["id"])')" || { echo "express-backfill: cannot list labelled beads" >&2; exit 2; }
 rc=0
 for id in $ids; do
-    if timeout 30 spira-lc express "$id" >/dev/null 2>&1; then echo "express: $id"; else echo "FAILED: $id" >&2; rc=1; fi
+    if timeout 5 spira-lc express "$id" >/dev/null 2>&1; then echo "express: $id"; else echo "FAILED: $id" >&2; rc=1; fi
 done
 exit "$rc"

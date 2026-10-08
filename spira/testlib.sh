@@ -733,7 +733,7 @@ except Exception: print("")' 2>/dev/null
 # A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
 # Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0),
 # `reopen <id> <cause>` (row pinned REWORK, claim dropped, bd reopened), `hold <id> <kind> <reason>`
-# (appended to $SPIRA_RUN/lc-holds.log, exit 0), `express|unexpress <id>` (a $SPIRA_RUN/lc-express/<id> marker),
+# (appended to $SPIRA_RUN/lc-holds.log, exit 0),
 # `unclaim <id> <actor>` (spira-lc's own rule: a WORKING row is released only by its holder,
 # else exit 1; any other state is already released, 0), and
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
