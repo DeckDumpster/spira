@@ -18,7 +18,7 @@ gen() {
 }
 
 one() {
-  gen | dolt --host "$host" --port "$port" --no-tls -u root -p '' --use-db "$db" sql -r csv 2>&1 |
+  gen | timeout ${BENCH_TIMEOUT:-300} dolt --host "$host" --port "$port" --no-tls -u root -p '' --use-db "$db" sql -r csv 2>&1 |
     grep -E '^[0-9.]+$' | sort -n |
     awk '{a[NR]=$1} END{if(!NR){print "n=0"; exit 1} print "n="NR" p50="a[int(NR/2)+1]" p90="a[int(NR*0.9)+1]" p99="a[int(NR*0.99)+1]" max="a[NR]}'
 }
