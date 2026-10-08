@@ -180,7 +180,7 @@ if [ -n "$inc_id" ]; then
     want "and says no bead was reopened or charged"    "no attempt charged" "$shown"
     want "and carries the gate's own output"           "this branch did not cause it" "$shown"
     labels="$(B label list "$inc_id" 2>&1)"
-    want "it lands in the builders partition"          "plan" "$labels"
+    nowant "it is not offered as builder work (no plan label)" "plan" "$labels"
     want "labelled with the repository"                "repo:$REPONAME" "$labels"
 fi
 
