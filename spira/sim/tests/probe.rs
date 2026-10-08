@@ -226,6 +226,9 @@ fn hits(beads: Vec<Value>) -> Vec<(String, String)> {
 /// because the probe can also produce rows that trip them.
 #[test]
 fn probe_rows_trip_the_matching_views_and_a_clean_set_trips_none() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
     let (w, s) = world("");
     std::fs::write(w.join("list.json"), clean_list(&s)).unwrap();
     std::fs::write(w.join("run/landstate/sp-c"), format!("CERTIFIED {} 1800000000\n", s.certified)).unwrap();
