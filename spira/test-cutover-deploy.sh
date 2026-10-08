@@ -192,6 +192,7 @@ wantrc "cutover-deploy.sh exits 0 again" 0 "$rc2"
 echo
 echo "a rotated credential file re-syncs the database password:"
 NEW_PW="rotated-$$-not-real"
+ORIG_PW="$(cat "$CRED")"
 printf '%s' "$NEW_PW" > "$CRED"
 out3="$(run_deploy 2>&1)"; rc3=$?
 [ "$rc3" = 0 ] || printf '%s\n' "$out3" >&2
@@ -200,7 +201,7 @@ timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira
 wantrc "the rotated credential authenticates as spira_lc" 0 $?
 lc_sql sql -q "SELECT 1" >/dev/null 2>&1
 wantrc "the superseded password no longer authenticates" 1 $?
-printf '%s' "$ROOT_PW" > "$CRED"
+printf '%s' "$ORIG_PW" > "$CRED"
 run_deploy >/dev/null 2>&1
 lc_sql sql -q "SELECT 1" >/dev/null 2>&1
 wantrc "restoring the credential file restores authentication" 0 $?
