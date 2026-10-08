@@ -139,10 +139,9 @@ aeon-watch|daemon|@SPIRA_HOME@/aeon-watch.sh watch --interval 600|@SPIRA_HOME@/a
 queue-watch|daemon|queue-watch watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @SPIRA_HOME@|queue-watch health --run @SPIRA_RUN@
 
 # ROUND-DUTY wakes the round owner when certified branches are waiting and no round is running
-# (ROUND DUE), and relays each line a round appends to rounds/<round>.result. A
-# rounds/<n>.running marker suppresses ROUND DUE, so a leftover one would silence it with no
-# symptom: round-duty.sh reports a marker older than SPIRA_ROUND_MARKER_MAX_AGE, or whose round
-# has since written a .result, as stale, removes it and goes on judging.
+# (ROUND DUE), and relays each line a round appends to rounds/<round>.result.
+# Whether a round is running comes from `queue round status`; when that cannot be answered it
+# says ROUND STATE UNKNOWN instead of paging ROUND DUE.
 round-duty|daemon|@SPIRA_HOME@/round-duty.sh watch --interval 15|@SPIRA_HOME@/round-duty.sh health
 
 # ASKS announces each bead newly carrying SPIRA_ASK_LABEL (NEW ASK <id>: <title>) into the log and
