@@ -756,6 +756,17 @@ fn main() -> ExitCode {
         } else {
             info(&format!("initialising database at {db}"));
             let _ = std::fs::create_dir_all(&db);
+            let id_prefix = match spira_config::resolve::key_for_process("SPIRA_ID_PREFIX") {
+                Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+                Ok(_) => {
+                    eprintln!("install: spira.id_prefix resolved empty — refusing to init the database");
+                    return ExitCode::from(2);
+                }
+                Err(e) => {
+                    eprintln!("install: cannot resolve spira.id_prefix: {e}");
+                    return ExitCode::from(2);
+                }
+            };
             if let Some(_dd) = &dolt_data {
                 if which_prog("dolt").is_none() {
                     eprintln!("install: phase database failed — dolt is not on PATH — required to init the database");
@@ -787,7 +798,7 @@ fn main() -> ExitCode {
                 let mut tries = 0;
                 loop {
                     tries += 1;
-                    let (rc, out) = bd_output(&db, &["init", "--non-interactive", "--prefix", "sp", "--skip-agents", "--skip-hooks", "--server", "--server-host", "127.0.0.1", "--server-port", &dolt_port.to_string(), "--database", &dbname, "--external", "-q"]);
+                    let (rc, out) = bd_output(&db, &["init", "--non-interactive", "--prefix", &id_prefix, "--skip-agents", "--skip-hooks", "--server", "--server-host", "127.0.0.1", "--server-port", &dolt_port.to_string(), "--database", &dbname, "--external", "-q"]);
                     if rc == 0 {
                         break;
                     }
@@ -807,7 +818,7 @@ fn main() -> ExitCode {
                 let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             } else {
                 // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if bd_init_bounded().current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
+                if bd_init_bounded().current_dir(&db).args(["init", "--prefix", &id_prefix]).status().map(|s| s.success()).unwrap_or(false) != true {
                     eprintln!("install: phase database failed — bd init failed");
                     return ExitCode::from(2);
                 }
