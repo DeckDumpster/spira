@@ -557,8 +557,8 @@ impl Host for GitHost {
         let addrs = host_addresses(&String::from_utf8_lossy(&out.stdout));
         if !out.status.success() || !addrs.iter().any(|a| a == &self.listen) {
             return Err(format!(
-                "{} is not an address of this host (ip -br addr: {}); the host's address has changed — \
-                 set round_vm_host_addr (and sccache_dav_addr) to the current one with spira-config set, then re-activate the release",
+                "{} is not an address of this host (ip -br addr: {}); a pinned round_vm_host_addr no longer names this host — \
+                 set it to auto, which resolves the address each round",
                 self.listen,
                 addrs.join(" ")
             ));
@@ -756,7 +756,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         return 2;
     }
     let Some(host_addr) = cfg.host_addr.clone() else {
-        eprintln!("round-vm run: SPIRA_ROUND_VM_HOST_ADDR not set");
+        eprintln!("round-vm run: this host's address is unresolved (SPIRA_ROUND_VM_HOST_ADDR, auto by default)");
         return 2;
     };
     if fs::File::open(&cfg.host_key).is_err() {
@@ -1484,7 +1484,7 @@ mod tests {
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
         let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into() };
         let e = foreign.prepare_mirror(&tree).unwrap_err();
-        assert!(e.contains("not an address of this host") && e.contains("spira-config set"), "{e}");
+        assert!(e.contains("not an address of this host") && e.contains("set it to auto"), "{e}");
         stop_mirror(&state).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener survived teardown");
     }

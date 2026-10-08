@@ -522,7 +522,8 @@ impl World for Real {
     /// `spira_config::process::cfg`, never the raw environment and never a second,
     /// crate-local document discovery.
     fn sccache_dav_addr(&self) -> Option<String> {
-        spira_config::process::cfg("SPIRA_SCCACHE_DAV_ADDR").ok().filter(|v| !v.is_empty())
+        let v = spira_config::process::cfg("SPIRA_SCCACHE_DAV_ADDR").ok().filter(|v| !v.is_empty())?;
+        spira_config::hostaddr::resolve_hostport(&v).ok()
     }
 
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
