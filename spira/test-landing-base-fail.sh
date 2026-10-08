@@ -145,7 +145,7 @@ echo "gate: VERDICT=BASE_FAIL reason=base-red branch=$1 repo=${2:-?} suite='"$BA
 exit 76'
 
 incidents() {
-    B list --status open,in_progress --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:$REPONAME" --json 2>/dev/null \
+    B list --status open,in_progress --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}repo:$REPONAME" --json 2>/dev/null \
       | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin)
