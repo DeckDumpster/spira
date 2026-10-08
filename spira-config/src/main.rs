@@ -78,6 +78,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+fn env_nonempty(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|v| !v.is_empty())
+}
+
 use spira_config::chamber;
 use spira_config::{edit_text, is_retired_path, remove_retired_text};
 use spira_config::locate::locate;
@@ -336,7 +340,7 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
             }
             eprintln!(
                 "spira: containment check failed for instance {} — halting",
-                env::var("SPIRA_INSTANCE").unwrap_or_default()
+                env_nonempty("SPIRA_INSTANCE").unwrap_or_default()
             );
             ExitCode::FAILURE
         }
@@ -360,7 +364,7 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
 fn cmd_env_bootstrap_sh() -> ExitCode {
     let current_path = env::var("PATH").unwrap_or_default();
     let home = env::var("HOME").unwrap_or_default();
-    let spira_path = env::var("SPIRA_PATH").unwrap_or_default();
+    let spira_path = env_nonempty("SPIRA_PATH").unwrap_or_default();
     let existing_bd = env::var("SPIRA_BD").unwrap_or_default();
     print!(
         "{}",
@@ -407,7 +411,7 @@ fn cmd_check_bd() -> ExitCode {
 /// `SPIRA_SYSTEMCTL` are read from the environment, same not-yet-exported reason as every
 /// other `cmd_*` function here that reads a per-copy fact `conf.sh` passes explicitly.
 fn cmd_unit(args: &[String]) -> ExitCode {
-    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
+    let instance = env_nonempty("SPIRA_INSTANCE").unwrap_or_default();
     if args.first().map(String::as_str) == Some("--watch") {
         return match args.get(1) {
             Some(name) => {
@@ -540,8 +544,8 @@ fn parse_column(s: &str) -> Option<Column> {
 fn cmd_repo_containment_check() -> ExitCode {
     // conf.sh has just resolved and EXPORTED these from the one source of config (lib.sh is
     // this check's only caller, right after it) — read as resolved config, never as a default.
-    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
-    let workspaces = env::var("SPIRA_WORKSPACES").unwrap_or_default();
+    let instance = env_nonempty("SPIRA_INSTANCE").unwrap_or_default();
+    let workspaces = env_nonempty("SPIRA_WORKSPACES").unwrap_or_default();
     let map_text = env::var("SPIRA_REPO_MAP")
         .ok()
         .filter(|p| !p.is_empty())

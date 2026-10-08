@@ -60,7 +60,9 @@ fn main() -> ExitCode {
 /// rows — cfg() is unavailable here on pain of a cycle), so this is a raw env read, not
 /// the one door; the caller shell already resolved `$SPIRA_RUN` before exec'ing this.
 fn run_escape(args: &[String]) -> Result<(), String> {
-    let root = PathBuf::from(env::var("SPIRA_RUN").unwrap_or_default());
+    let Some(root) = env::var("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from) else {
+        return Err("SPIRA_RUN is not set — refusing to write an escape row to a relative path".into());
+    };
     escape_row(
         &root,
         &args.first().cloned().unwrap_or_default(),

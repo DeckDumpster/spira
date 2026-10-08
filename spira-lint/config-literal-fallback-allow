@@ -5,6 +5,3 @@
 
 # Debt the registered-key extension (literal or empty default on any key with a spira/conf.d
 # entry) found on its first run. Same shrink-only rule: fix the read, then delete the line.
-release/src/canary.rs
-spira-config/src/main.rs
-tsd/src/main.rs
