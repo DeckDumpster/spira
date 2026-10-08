@@ -47,7 +47,7 @@ print(by)'
 }
 
 _sd_note() {
-    timeout 5 bdq note "$1" "$2" >/dev/null 2>&1 || _sd_say "NOTE FAILED $1: $2"
+    BD_TIMEOUT=5 bdq note "$1" "$2" >/dev/null 2>&1 || _sd_say "NOTE FAILED $1: $2"
 }
 
 _sd_adjudicate() {
