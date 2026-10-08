@@ -220,9 +220,19 @@ pub fn staged_for_resolution(spec: &str, releases: Option<&Path>, sha: &str) -> 
     let (_, _, _, original) = read_layers(spec)?;
     let from_layers = original.iter().rev().find_map(|t| get(t, "spira.releases").and_then(Value::as_str)).filter(|s| !s.is_empty()).map(PathBuf::from);
     let Some(releases) = releases.map(Path::to_path_buf).or(from_layers) else { return Ok(None) };
-    let rel = releases.join(sha);
-    let Some(delta) = load(&rel)? else { return Ok(None) };
-    let (_, post, _) = apply(&original, &delta)?;
+    stage_tree_delta(&original, &releases.join(sha))
+}
+
+/// [`staged_for_resolution`] for a source tree (or release) at `tree`: the round VM stages
+/// the delta its head declares before any release exists to read it from.
+pub fn staged_for_tree(spec: &str, tree: &Path) -> Result<Option<(PathBuf, String)>, String> {
+    let (_, _, _, original) = read_layers(spec)?;
+    stage_tree_delta(&original, tree)
+}
+
+fn stage_tree_delta(original: &[Table], tree: &Path) -> Result<Option<(PathBuf, String)>, String> {
+    let Some(delta) = load(tree)? else { return Ok(None) };
+    let (_, post, _) = apply(original, &delta)?;
     let dir = scratch_dir()?;
     let mut staged = Vec::new();
     for (i, t) in post.iter().enumerate() {
