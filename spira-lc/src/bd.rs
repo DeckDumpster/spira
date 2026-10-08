@@ -89,11 +89,15 @@ pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
 /// enforce), with `--parent` set by this layer, never the caller — see bead.sh's own
 /// `--parent` doc for why an inherited `branch:` label made `groomer split-piece` a
 /// two-step dance that this avoids by filing with the right labels from the start.
-pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Result<String, String> {
+pub fn file_child(title: &str, persona: &str, repo: &str, parent: Option<&str>) -> Result<String, String> {
     // bead.sh, by name on the launcher's PATH (sp-gypjk) — never repository-relative.
     let bead_sh = "bead.sh";
-    let out = spira_config::bounded::bounded(bead_sh)
-        .args(["file", title, "--for", persona, "--repo", repo, "--parent", parent])
+    let mut cmd = spira_config::bounded::bounded(bead_sh);
+    cmd.args(["file", title, "--for", persona, "--repo", repo]);
+    if let Some(parent) = parent {
+        cmd.args(["--parent", parent]);
+    }
+    let out = cmd
         .output()
         .map_err(|e| format!("running {bead_sh}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -101,6 +105,18 @@ pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Resul
         return Err(format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)));
     }
     Ok(stdout.trim().to_string())
+}
+
+/// `bead.sh dep add <id> <depends-on>`: `id` is blocked until `depends-on` is closed.
+pub fn add_blocker(id: &str, depends_on: &str) -> Result<(), String> {
+    let out = spira_config::bounded::bounded("bead.sh")
+        .args(["dep", "add", id, depends_on, "--type", "blocks"])
+        .output()
+        .map_err(|e| format!("running bead.sh: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(())
 }
 
 /// `mail send operator` — an ask carrying the channel back (design §3.5's `work

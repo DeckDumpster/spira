@@ -192,8 +192,16 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
         Ok(None) => return (CANNOT_TELL, format!("work {verb}: {bead_id} carries no repo: label")),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    match crate::bd::file_child(title, &persona, &repo, bead_id) {
+    // A child of a bead that carries spira-open-children cannot land after it, so a
+    // follow-up that needs this bead landed first is filed unparented and blocked on it.
+    let after_landing = args.iter().any(|a| a == "--after-landing");
+    let parent = if after_landing { None } else { Some(bead_id) };
+    match crate::bd::file_child(title, &persona, &repo, parent) {
         Ok(new_id) => match crate::cutover::cmd_create_bead(&[new_id.clone()], conn) {
+            (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
+                Ok(()) => (0, new_id),
+                Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
+            },
             (0, _) => (0, new_id),
             (_, e) => (
                 CANNOT_TELL,
