@@ -472,6 +472,7 @@ fn reconcile_epics(cfg: &Config, sha: &str) {
         return;
     }
     let Ok(env) = verify::pre_activate_env(cfg, &rel) else { return };
+    // batch-job: a one-off migration over the READY roster, bounded by timeout 120
     let mut cmd = Command::new("timeout");
     cmd.arg("120").arg(&bin).args(["reconcile-epics", "--apply"]).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
     for (k, v) in env {
