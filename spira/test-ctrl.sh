@@ -121,6 +121,9 @@ rc_is "refused subject was not recorded" 1 "$(ctrl check not-a-thing; echo $?)"
 out="$(ctrl suspend slow-query --reason "x" --owner sp-x000 2>&1)"; rc=$?
 rc_is "suspend of a watchtower condition succeeds" 0 $rc
 ctrl resume slow-query >/dev/null
+ctrl suspend not-yet-installed --force --reason "x" --owner sp-x000 >/dev/null 2>&1; rc=$?
+rc_is "--force suspends a unit not installed yet" 0 $rc
+ctrl resume not-yet-installed >/dev/null
 ctrl suspend test-unit --reason "unit under test" --owner sp-x000 >/dev/null
 
 # check after suspend → exits 0
