@@ -7,8 +7,10 @@
 //!
 //! A bead's close is the machine's: `spira-lc close <id> --reason-file -` records the terminal
 //! event (DROPPED, or SUPERSEDED when the reason names a successor) and then closes the store
-//! — `spira-lc/src/bd.rs` is that door, the one file in scope that may hand bd a `close`, and
-//! `spira-config/src/lifecycle_row.rs` (`close`) is the one client that hands spira-lc one.
+//! — `spira-lc/src/bd.rs` is that door, and `spira-lc/src/content.rs` the cockpit's allowlisted
+//! pass-through to it (a `close` only with `--reason --force`); the only files in scope that
+//! may name a bd `close`. `spira-config/src/lifecycle_row.rs` (`close`) is the one client that
+//! hands spira-lc one.
 //!
 //! Line-oriented over the masked source (`landstate::mask_rust`) with short literals restored,
 //! the same shape as `bd_status.rs`. A line that also names `"pr"`/`"issue"`/`"run"` is gh's
@@ -41,6 +43,7 @@ pub(crate) fn in_scope(rel: &str) -> bool {
     !(rel.starts_with("lifecycle/")
         || rel.starts_with("lifecycle-guard/")
         || rel == "spira-lc/src/bd.rs"
+        || rel == "spira-lc/src/content.rs"
         || rel == "spira-config/src/lifecycle_row.rs"
         // Acceptance seeds a PREDECESSOR install as it was before an upgrade — an aged store
         // whose closed bead is closed the way that release closed it. It is a fixture for a
@@ -123,6 +126,9 @@ mod tests {
         assert!(lines("x/src/a.rs", src).is_empty(), "{:?}", scan_text("x/src/a.rs", src));
         let door = r#"fn close(&mut self, id: &str, r: &str) { run(&["close", id, "--reason", r]) }"#;
         assert!(scan_rust_rel("spira-lc/src/bd.rs", door).is_empty());
+        let pass = r#"fn check(a: &[&str]) { match a { ["close", id, rest @ ..] => {} _ => {} } }"#;
+        assert_eq!(lines("spira-lc/src/content.rs", pass), vec![1]);
+        assert!(scan_rust_rel("spira-lc/src/content.rs", pass).is_empty());
         assert_eq!(scan_rust_rel("spira-lc/src/callers.rs", door), vec![1]);
     }
 
