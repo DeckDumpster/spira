@@ -102,7 +102,7 @@ is "the fixture holds the events" "$EVENTS" "$(root_sql --use-db spira_lifecycle
 
 # A wall-clock budget flips under shared load; the cost is asserted on the plan instead.
 plan="$(root_sql --use-db spira_lifecycle sql -r csv -q "EXPLAIN FORMAT=TREE SELECT e.lc_key, e.to_state, MAX(e.at) AS since FROM event e JOIN bead b ON b.bead_id = e.lc_key AND b.state = e.to_state WHERE e.machine = 'bead' AND e.applied = 1 GROUP BY e.lc_key, e.to_state" 2>&1; echo "rc=$?")"
-case "$plan" in *event_since_idx*) ok "the since join is served by event_since_idx" ;; *) bad "the since join is served by event_since_idx: $(printf %s "$plan" | tr "\n" " ")" ;; esac
+case "$plan" in *"MergeJoin"*"index: [event.machine,event.applied,event.lc_key,event.to_state,event.at]"*) ok "the since join is a merge join over the event_since_idx columns" ;; *) bad "the since join is a merge join over the event_since_idx columns: $(printf %s "$plan" | tr "\n" " ")" ;; esac
 
 for args in "list" "list --state READY"; do
     out="$(spira-lc $args 2>"$TMP/err")"
