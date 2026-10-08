@@ -107,7 +107,7 @@ if [ -n "$stale_unit" ]; then
     diff_out="$(inst --diff 2>&1)"; rc=$?
     is "diff exits non-zero on stale unit" "1" "$rc"
     want "diff names the stale unit" "DIFFERS" "$diff_out"
-    want "diff shows what changed" "stale modification" "$diff_out"
+    want "diff shows what changed ($(basename "$stale_unit"))" "stale modification" "$diff_out"
 else
     bad "stale unit test" "no .service file found in DEST to modify"
 fi

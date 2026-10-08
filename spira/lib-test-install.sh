@@ -69,7 +69,7 @@ install_fixture_build() {
     mkdir -p "$fixture/systemd" "$fixture/spira"
     # *.yaml: units-install renders dolt-server{,-test}.yaml whenever SPIRA_{DOLT,TESTDB}_DATA
     # resolve non-empty. suite-covers.sh: lib.sh sources it unconditionally.
-    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer \
+    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer "$_LIB_INSTALL_SELF/../systemd/"*.socket \
              "$_LIB_INSTALL_SELF/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$fixture/systemd/$(basename "$f")"
@@ -181,7 +181,7 @@ install_fixture_render() {
     shift
     cache_root="${SPIRA_TEST_INSTALL_CACHE:-${TMP:-${TMPDIR:-/tmp}}/spira-install-render-cache}"
     tmpl_hash="$( { cat "$_LIB_INSTALL_SELF/../systemd/"*.service \
-                        "$_LIB_INSTALL_SELF/../systemd/"*.timer 2>/dev/null
+                        "$_LIB_INSTALL_SELF/../systemd/"*.timer "$_LIB_INSTALL_SELF/../systemd/"*.socket 2>/dev/null
                     command -v units-install | xargs -r cat 2>/dev/null
                   } | _lib_install_hash )"
     mkdir -p "$cache_root/$tmpl_hash"
@@ -200,7 +200,7 @@ install_fixture_render() {
 mk_install_fixture() {
     local fixture="$1" tmp="$2" spira="$1/spira" systemd="$1/systemd" cockpit="$1/cockpit" f
     mkdir -p "$spira" "$systemd" "$cockpit" "$spira/statutes"
-    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer \
+    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer "$_LIB_INSTALL_SELF/../systemd/"*.socket \
              "$_LIB_INSTALL_SELF/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$systemd/$(basename "$f")"
@@ -273,7 +273,7 @@ tinstall_fixture() {   # tinstall_fixture <dir>
     src="$(cd "$(dirname "$src")" && pwd -P)"
     mkdir -p "$dir/systemd" "$dir/spira"
     local f
-    for f in "$src/../systemd/"*.service "$src/../systemd/"*.timer "$src/../systemd/"*.yaml; do
+    for f in "$src/../systemd/"*.service "$src/../systemd/"*.timer "$src/../systemd/"*.socket "$src/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$dir/systemd/$(basename "$f")"
     done

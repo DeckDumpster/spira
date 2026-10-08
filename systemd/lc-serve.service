@@ -12,6 +12,7 @@
 Description=spira-lc — the lifecycle store's same-user service (bead/delivery/batch state)
 Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
 After=dolt-beads.service
+Requires=lc-serve.socket
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -30,10 +31,8 @@ Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=SPIRA_LC_USER=spira_lc
 Environment=SPIRA_LC_SOCKET=%t/spira-lc/sock
 Type=simple
-# serve binds the socket itself (no socket activation: it does not take LISTEN_FDS), inside
-# the runtime directory systemd creates for it under %t and removes on stop.
-RuntimeDirectory=spira-lc
-RuntimeDirectoryMode=0700
+# lc-serve.socket owns the listening socket and serve accepts on the inherited descriptor, so a
+# restart of this service queues connections. The socket unit owns the runtime directory.
 ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve %t/spira-lc/sock
 Restart=on-failure
 RestartSec=5
@@ -41,4 +40,4 @@ StandardOutput=append:@SPIRA_RUN@/spira-lc.log
 StandardError=append:@SPIRA_RUN@/spira-lc.log
 
 [Install]
-WantedBy=default.target
+# Socket-activated (lc-serve.socket), not enabled directly.

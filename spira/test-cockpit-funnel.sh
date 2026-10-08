@@ -247,7 +247,19 @@ want "pane shows gate in red"      "gate"    "$pane"
 want "pane shows conflict in red"  "conflict" "$pane"
 nowant "pane does not say anomaly" "anomaly" "$pane"
 
+echo "--- (b0) one failed read after a good one serves the last snapshot ---"
+out_s="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$REPO" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_LC_BIN="$TMP/no-such-spira-lc" \
+    cockpit-collect once 2>/dev/null)"
+vals() { printf '%s' "$out_s" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+is "stale: SP_QUEUE_DEPTH is the previous snapshot's" "$(val SP_QUEUE_DEPTH)" "$(vals SP_QUEUE_DEPTH)"
+is "stale: SP_LC_STALE_S is reported" "1" "$([ -n "$(vals SP_LC_STALE_S)" ] && echo 1)"
+
 echo "--- (b) spira-lc unreachable ---"
+rm -rf "$RUN/lc-snapshot"
 # SPIRA_LC_BIN names a program that does not exist: CANNOT TELL renders "?" everywhere.
 out_b="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \

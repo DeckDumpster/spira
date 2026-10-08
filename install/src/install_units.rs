@@ -265,6 +265,10 @@ fn apply(ctx: &Ctx, unit: &str, action: Action) {
 /// which that denies outright. `kill` sends the signal directly, bypassing job control, and
 /// `Restart=always` brings the process back under the just-reloaded unit file.
 fn restart_active(ctx: &Ctx, unit: &str) {
+    if unit.ends_with(".socket") {
+        println!("install: {unit} changed — left listening; its service restarts onto it");
+        return;
+    }
     let base = unit.strip_suffix(".timer").unwrap_or(unit);
     if base == "dolt-beads.service" || unit == "dolt-beads.service" {
         if ctx.systemctl.kill(unit).is_ok() {
@@ -468,7 +472,7 @@ pub fn split_not_active(not_active: &[String], in_testenv: bool) -> NotActiveSpl
     // (that is spira-install's phase 4.5, against a real Dolt server): in a fixture it cannot
     // reach active either, and is named, never silently dropped (sp-xfqnr).
     let (watchers, other): (Vec<String>, Vec<String>) =
-        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service");
+        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || u == "lc-serve.socket");
     NotActiveSplit { warn_only: watchers, fatal: other }
 }
 

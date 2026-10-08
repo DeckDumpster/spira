@@ -41,23 +41,20 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
-    if std::path::Path::new(&socket_path).exists() {
-        let _ = std::fs::remove_file(&socket_path);
-    }
-    let listener = match UnixListener::bind(&socket_path) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("spira-lc serve: cannot bind {socket_path}: {e}");
-            return 2;
-        }
+    let listener = match inherited_listener(
+        std::env::var("LISTEN_PID").ok().as_deref(),
+        std::env::var("LISTEN_FDS").ok().as_deref(),
+        std::process::id(),
+    ) {
+        Some(l) => l,
+        None => match bind_socket(&socket_path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("spira-lc serve: cannot bind {socket_path}: {e}");
+                return 2;
+            }
+        },
     };
-    // Group-readable/writable only: the operator's group (spira) can reach the socket, the
-    // credential this process holds is never written to it, only used to answer requests.
-    if let Ok(meta) = std::fs::metadata(&socket_path) {
-        let mut perms = meta.permissions();
-        perms.set_mode(0o660);
-        let _ = std::fs::set_permissions(&socket_path, perms);
-    }
 
     eprintln!("spira-lc serve: listening on {socket_path}");
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
@@ -75,6 +72,33 @@ pub fn run(args: &[String]) -> i32 {
         }
     });
     0
+}
+
+/// The first descriptor systemd passes (fd 3) when it owns the listening socket, so a restart
+/// of this process queues connections in the kernel instead of refusing them. Only honoured
+/// when `LISTEN_PID` names this process.
+fn inherited_listener(pid: Option<&str>, fds: Option<&str>, me: u32) -> Option<UnixListener> {
+    use std::os::unix::io::FromRawFd;
+    if pid?.parse::<u32>().ok()? != me || fds?.parse::<u32>().ok()? < 1 {
+        return None;
+    }
+    // SAFETY: LISTEN_PID matched, so systemd opened fd 3 for this process and nothing else owns it.
+    Some(unsafe { UnixListener::from_raw_fd(3) })
+}
+
+fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
+    if std::path::Path::new(socket_path).exists() {
+        let _ = std::fs::remove_file(socket_path);
+    }
+    let listener = UnixListener::bind(socket_path)?;
+    // Group-readable/writable only: the operator's group (spira) can reach the socket, the
+    // credential this process holds is never written to it, only used to answer requests.
+    if let Ok(meta) = std::fs::metadata(socket_path) {
+        let mut perms = meta.permissions();
+        perms.set_mode(0o660);
+        let _ = std::fs::set_permissions(socket_path, perms);
+    }
+    Ok(listener)
 }
 
 fn handle(stream: UnixStream, conn: &Conn) {
@@ -125,6 +149,14 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inherited_listener_needs_this_process_and_a_descriptor() {
+        assert!(super::inherited_listener(None, None, 7).is_none());
+        assert!(super::inherited_listener(Some("8"), Some("1"), 7).is_none(), "another process's descriptors are not ours");
+        assert!(super::inherited_listener(Some("7"), Some("0"), 7).is_none());
+        assert!(super::inherited_listener(Some("x"), Some("1"), 7).is_none());
+    }
+
     #[test]
     fn peer_uid_reads_the_connecting_process() {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
