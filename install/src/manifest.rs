@@ -144,6 +144,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-escape-census.timer", true));
     m.units.push(t("spira-reclaim.service", false));
     m.units.push(t("spira-reclaim.timer", true));
+    m.units.push(t("spira-target-reap.service", false));
+    m.units.push(t("spira-target-reap.timer", true));
 
     // promote.sh / spira-promote.*: retired by deploy.sh's split-checkout replacement.
     m.optional.push("spira-promote.service".into());
@@ -510,6 +512,18 @@ mod tests {
         assert!(strays.is_empty(), "manifest units the watcher glob would match: {strays:?}");
         assert!(m.template_names().contains(&"spira-refresh.timer"));
         assert!(m.template_names().contains(&"spira-notify.timer"));
+    }
+
+    #[test]
+    fn the_target_reap_timer_is_installed_enabled_and_runs_the_floor_mode() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-target-reap.service" && !u.enable));
+        assert!(m.units.iter().any(|u| u.name == "spira-target-reap.timer" && u.enable));
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let svc = std::fs::read_to_string(dir.join("spira-target-reap.service")).unwrap();
+        assert!(svc.contains("bin/target-reap --if-below-floor"));
+        let timer = std::fs::read_to_string(dir.join("spira-target-reap.timer")).unwrap();
+        assert!(timer.contains("OnUnitActiveSec=2min") && timer.contains("Unit=spira-target-reap.service"));
     }
 
     #[test]

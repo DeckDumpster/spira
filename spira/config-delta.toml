@@ -15,3 +15,5 @@
 "spira.round_vm_retry_interval" = "60"
 "spira.round_vm_max_retries" = "0"
 "spira.round_vm_mirror_port" = "9430"
+"spira.reap_idle_secs" = 21600
+"spira.reap_disk_floor_gib" = 50

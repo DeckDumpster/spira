@@ -1,0 +1,19 @@
+[Unit]
+Description=Spira target-reap — reclaim idle worktrees' build output when free space is under the floor
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/target-reap --if-below-floor
+TimeoutStartSec=300
+StandardOutput=append:@SPIRA_RUN@/target-reap.log
+StandardError=append:@SPIRA_RUN@/target-reap.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance
