@@ -1,9 +1,6 @@
 TYPE=string
 GROUP=flow
-DOC=SPIRA_FLOW_BASELINE_HOURS — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_FLOW_BASELINE_HOURS — hours of history the flow velocity baseline is taken from.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_FLOW_BASELINE_HOURS:=24}"
 SPIRA_CONF_DEFAULT_EOF
