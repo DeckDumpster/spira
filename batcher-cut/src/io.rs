@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration};
 
-use batcher::core::{Member, MergeResult, PoolHistory};
+use batcher::core::{Member, MergeResult};
 
 /// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
 /// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
@@ -237,29 +237,43 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
 }
 
 // ---------------------------------------------------------------------------------------
-// The certified pool: the lifecycle machine's CERTIFIED beads, narrowed to this repo, with
+// The round pool: the lifecycle machine's unheld SUBMITTED and CERTIFIED beads, narrowed to this repo, with
 // title/priority/express filled in from the bead store. Same construction as queue-watch's
 // snapshot(), which this borrows from directly.
 // ---------------------------------------------------------------------------------------
 
-fn read_certified(env: &Env) -> Result<Vec<(String, String, u64)>, String> {
-    let out = lcq(env, &["list", "--state", "CERTIFIED"])?;
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
-    let mut certified: Vec<(String, String, u64)> = rows
-        .iter()
-        .filter_map(|r| {
+fn holds_empty(r: &serde_json::Value) -> bool {
+    match r.get("holds") {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::Array(a)) => a.is_empty(),
+        Some(serde_json::Value::String(t)) => serde_json::from_str::<Vec<serde_json::Value>>(t).map(|a| a.is_empty()).unwrap_or(false),
+        Some(_) => false,
+    }
+}
+
+fn read_pool(env: &Env) -> Result<Vec<(String, String, u64)>, String> {
+    let mut pool: Vec<(String, String, u64)> = Vec::new();
+    for state in ["CERTIFIED", "SUBMITTED"] {
+        let out = lcq(env, &["list", "--state", state])?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+        pool.extend(rows.iter().filter(|r| holds_empty(r)).filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
             let tip = r.get("tip").and_then(|t| t.as_str()).unwrap_or("none").to_string();
-            let epoch = match r.get("updated_at") {
-                Some(serde_json::Value::Number(n)) => n.as_u64().unwrap_or(0),
-                Some(serde_json::Value::String(t)) => t.parse().unwrap_or(0),
-                _ => 0,
-            };
+            let epoch = [r.get("since"), r.get("updated_at")]
+                .into_iter()
+                .flatten()
+                .find_map(|v| match v {
+                    serde_json::Value::Number(n) => n.as_u64(),
+                    serde_json::Value::String(t) => t.parse().ok(),
+                    _ => None,
+                })
+                .unwrap_or(0);
             Some((id, tip, epoch))
-        })
-        .collect();
-    certified.sort();
-    Ok(certified)
+        }));
+    }
+    pool.sort();
+    pool.dedup_by(|a, b| a.0 == b.0);
+    Ok(pool)
 }
 
 fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
@@ -305,16 +319,17 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
     branches.get(id).map(String::as_str) == Some(tip)
 }
 
-/// The certified pool for `repo`: every CERTIFIED bead whose tip is still the
+/// The round pool for `repo`: every unheld SUBMITTED or CERTIFIED bead whose tip is still the
 /// live tip of `refs/heads/spira/<id>` in this repo's own checkout, with title/priority/
 /// express filled in from one bulk `bd show`.
 ///
-/// Membership is the lifecycle machine's CERTIFIED state alone (sp-mve9i, design §3.4): bd's
-/// status and the retired submitted label decide nothing. The sp-1346p shape — a stale
+/// Membership is the lifecycle machine's SUBMITTED/CERTIFIED state with no hold, and no gate
+/// verdict: the round's full suite is the trial. bd's status and the retired submitted label
+/// decide nothing. The sp-1346p shape — a stale
 /// record of an incident, an ask, a test bead or work already landed — is a row the machine
 /// must not hold CERTIFIED (drop it there), not one this reader second-guesses from bd.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
-    let certified = read_certified(env)?;
+    let certified = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
     let certified: Vec<_> = certified.into_iter().filter(|(id, tip, _)| tip_current(tip, id, &branches)).collect();
     let ids: Vec<String> = certified.iter().map(|(id, _, _)| id.clone()).collect();
@@ -395,32 +410,6 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
     }
     fixes.retain(|id| texts.contains_key(id));
     fixes
-}
-
-// ---------------------------------------------------------------------------------------
-// Pool history: this repo's own batch-round TSD rows (`tsd_append_round`'s "members"/
-// "duration_ms"), never the live pool — that was the tautology, certify_rate and duration
-// both derived from the pool being judged. No completed round yet: PoolHistory::default(),
-// which adaptive_n reads as N=1 (law-batcher-earns-the-round-by-parity's own floor).
-// ---------------------------------------------------------------------------------------
-
-/// `_pool_len` stays in the signature so callers don't have to change; the answer no longer
-/// depends on it.
-pub fn pool_history(run_dir: &Path, repo_name: &str, _pool_len: usize) -> PoolHistory {
-    let path = run_dir.join("tsd").join("batch-round.jsonl");
-    let Ok(text) = fs::read_to_string(&path) else { return PoolHistory::default() };
-    for line in text.lines().rev() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-        if v.get("repo").and_then(|r| r.as_str()) != Some(repo_name) {
-            continue;
-        }
-        let members = v.get("members").and_then(|m| m.as_str()).and_then(|s| s.parse::<f64>().ok());
-        let duration_ms = v.get("duration_ms").and_then(|m| m.as_str()).and_then(|s| s.parse::<f64>().ok());
-        let (Some(members), Some(duration_ms)) = (members, duration_ms) else { continue };
-        let round_duration_mins = (duration_ms / 1000.0 / 60.0).max(1.0 / 60.0);
-        return PoolHistory { certify_rate_per_min: members / round_duration_mins, round_duration_mins };
-    }
-    PoolHistory::default()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -763,7 +752,25 @@ pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, file
     conflict_streak_clear(env, id);
 }
 
-/// Takes a member the batcher withdraws out of CERTIFIED on the lifecycle machine (sp-mve9i).
+/// A SUBMITTED member the round carried to a green corpus has earned CERTIFIED, so `land-local`
+/// can walk it Deliver -> Delivered: the round's full suite is its trial, recorded as the gate
+/// key. A refusal (tip moved, already certified) is said on stderr and never blocks the round.
+pub fn lc_certify_round(env: &Env, members: &[(String, String)], round_key: &str) {
+    for (id, tip) in members {
+        let Ok(Ok(row)) = lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o)) else { continue };
+        let bead = row.get("bead").cloned().unwrap_or_default();
+        if bead.get("state").and_then(|s| s.as_str()) != Some("SUBMITTED") {
+            continue;
+        }
+        let Some(version) = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))) else { continue };
+        let kind = serde_json::json!({"GatePass": {"tip": tip, "gate_key": format!("round:{round_key}")}}).to_string();
+        if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "SUBMITTED", "--version", &version.to_string(), "--actor", "batcher", "--kind", &kind]) {
+            eprintln!("batcher: LIFECYCLE: {id} not certified by its round on spira-lc: {e}");
+        }
+    }
+}
+
+/// Takes a member the batcher withdraws out of the pool on the lifecycle machine (sp-mve9i).
 /// The pool is the machine's CERTIFIED rows alone — bd's reopen no longer keeps a withdrawn
 /// member out of the next round — so the withdrawal is the machine's too, by queue eject's
 /// own route: `Deliver`, then `Returned(batch-ejected)`, to REWORK, where the builder's next
@@ -781,6 +788,14 @@ pub fn lc_withdraw(env: &Env, id: &str) {
     let Some(mut version) = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))) else {
         return fail("show: no version".into());
     };
+    if state == "SUBMITTED" {
+        let tip = bead.get("tip").and_then(|t| t.as_str()).unwrap_or("");
+        let kind = serde_json::json!({"GateRed": {"tip": tip, "reason": "suites-failed"}}).to_string();
+        if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "SUBMITTED", "--version", &version.to_string(), "--actor", "batcher", "--kind", &kind]) {
+            fail(format!("GateRed: {e}"));
+        }
+        return;
+    }
     if state == "CERTIFIED" {
         let v = version.to_string();
         if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "CERTIFIED", "--version", &v, "--actor", "batcher", "--kind", "\"Deliver\""]) {
@@ -1900,55 +1915,6 @@ case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
 }
 
 #[cfg(test)]
-mod pool_history_tests {
-    use super::*;
-    use batcher::core::adaptive_n;
-
-    fn tmpdir(tag: &str) -> testkit::TempDir {
-        testkit::TempDir::new(&format!("batcher-cut-poolhist-{tag}"))
-    }
-
-    fn write_round(dir: &Path, repo: &str, members: &str, duration_ms: &str) {
-        let tsd = dir.join("tsd");
-        fs::create_dir_all(&tsd).unwrap();
-        let line = format!(
-            r#"{{"ts":"2026-09-27T00:00:00Z","host":"h","family":"batch-round","repo":"{repo}","verdict":"green","members":"{members}","duration_ms":"{duration_ms}","base":"deadbeef"}}"#
-        );
-        fs::write(tsd.join("batch-round.jsonl"), format!("{line}\n")).unwrap();
-    }
-
-    #[test]
-    fn no_history_defaults_and_adaptive_n_is_one_not_four() {
-        let d = tmpdir("none");
-        let hist = pool_history(&d, "spira", 30);
-        assert_eq!(hist, PoolHistory::default());
-        assert_eq!(adaptive_n(hist), 1);
-    }
-
-    // SEEN RED on today's code: adaptive_n(pool_history(..., n)) always came back as n
-    // itself, clamped — this asserted 7 with pool_len=30 and got 30.
-    #[test]
-    fn rate_comes_from_the_last_rounds_own_record_not_the_live_pool() {
-        let d = tmpdir("real");
-        write_round(&d, "spira", "7", "600000"); // 7 members landed over 10 minutes
-        let hist = pool_history(&d, "spira", 30);
-        assert_eq!(adaptive_n(hist), 7);
-        assert_ne!(adaptive_n(hist), 30_u32.clamp(4, 30), "must not equal clamp(pool_len, 4, 30)");
-
-        // Same history, a different live pool passed in: the answer does not move.
-        let hist_other = pool_history(&d, "spira", 2);
-        assert_eq!(adaptive_n(hist_other), adaptive_n(hist));
-    }
-
-    #[test]
-    fn only_this_repos_own_rows_count() {
-        let d = tmpdir("otherrepo");
-        write_round(&d, "other", "20", "60000");
-        assert_eq!(pool_history(&d, "spira", 5), PoolHistory::default());
-    }
-}
-
-#[cfg(test)]
 mod pool_parity_tests {
     use super::*;
 
@@ -2210,18 +2176,29 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn the_certified_pool_is_the_machines_certified_beads() {
+    fn the_round_pool_is_the_machines_unheld_submitted_and_certified_beads() {
         let d = scratch("certified");
         let reply = r#"[{"bead_id":"sp-b","tip":"bbbb","updated_at":1790000002},{"bead_id":"sp-a","tip":"aaaa","updated_at":"1790000001"},{"bead_id":"sp-n","tip":null,"updated_at":null}]"#;
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
-            read_certified(&e).unwrap(),
+            read_pool(&e).unwrap(),
             vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001), ("sp-b".into(), "bbbb".into(), 1790000002), ("sp-n".into(), "none".into(), 0)]
         );
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
-        assert!(log.contains("list --state CERTIFIED"), "{log}");
-        assert!(read_certified(&env(&d, Some(fake_lc(&d, "not json")))).unwrap_err().contains("unparsed"));
-        assert!(read_certified(&env(&d, None)).is_err());
+        assert!(log.contains("list --state CERTIFIED") && log.contains("list --state SUBMITTED"), "{log}");
+        assert!(read_pool(&env(&d, Some(fake_lc(&d, "not json")))).unwrap_err().contains("unparsed"));
+        assert!(read_pool(&env(&d, None)).is_err());
+    }
+
+    #[test]
+    fn a_held_row_is_not_in_the_round_pool() {
+        let d = scratch("held");
+        let reply = r#"[{"bead_id":"sp-h","tip":"hhhh","since":5,"updated_at":9,"holds":["ask"]},{"bead_id":"sp-s","tip":"ssss","since":3,"updated_at":9,"holds":"[]"},{"bead_id":"sp-j","tip":"jjjj","updated_at":4,"holds":[]},{"bead_id":"sp-t","tip":"tttt","updated_at":4,"holds":"[\"wait\"]"}]"#;
+        let e = env(&d, Some(fake_lc(&d, reply)));
+        assert_eq!(
+            read_pool(&e).unwrap(),
+            vec![("sp-j".to_string(), "jjjj".to_string(), 4), ("sp-s".into(), "ssss".into(), 3)]
+        );
     }
 
     #[test]
@@ -2340,7 +2317,7 @@ mod lc_withdraw_tests {
         testkit::write_exe(
             &bin,
             &format!(
-                "#!/bin/bash\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"bead_id\":\"'$2'\",\"state\":\"{state}\",\"version\":4}}}}' ;; esac\nexit 0\n",
+                "#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"bead_id\":\"'$2'\",\"state\":\"{state}\",\"version\":4}}}}' ;; esac\nexit 0\n",
                 log.display()
             ),
         );
@@ -2374,6 +2351,35 @@ mod lc_withdraw_tests {
                 calls.contains("event bead sp-a --expect IN_DELIVERY --version 5 --actor batcher --kind {\"Returned\":{\"reason\":\"batch-ejected\"}}"),
                 "{tag}: {calls}"
             );
+        }
+    }
+
+    /// A SUBMITTED member never got a certificate, so its ejection is the machine's own
+    /// GateRed to REWORK, quoted against the tip.
+    #[test]
+    fn an_ejected_submitted_member_is_gate_red_to_rework() {
+        let d = testkit::TempDir::new("batcher-cut-lcw-submitted");
+        fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
+        let mut e = super::lifecycle_tests_env(&d);
+        e.lc_bin = Some(lc_stub(&d, "SUBMITTED"));
+        eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[], true);
+        let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
+        assert!(calls.contains("event bead sp-a --expect SUBMITTED --version 4 --actor batcher --kind {\"GateRed\":{"), "{calls}");
+        assert!(calls.contains("\"reason\":\"suites-failed\""), "{calls}");
+        assert!(!calls.contains("Deliver"), "{calls}");
+    }
+
+    /// The round's green corpus certifies its SUBMITTED survivors, and only those.
+    #[test]
+    fn a_green_round_certifies_its_submitted_members_only() {
+        for (state, certified) in [("SUBMITTED", true), ("CERTIFIED", false)] {
+            let d = testkit::TempDir::new(&format!("batcher-cut-lcc-{state}"));
+            let mut e = super::lifecycle_tests_env(&d);
+            e.lc_bin = Some(lc_stub(&d, state));
+            lc_certify_round(&e, &[("sp-a".into(), "aaaa".into())], "k1");
+            let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
+            let passed = calls.contains("\"GatePass\"") && calls.contains("\"gate_key\":\"round:k1\"") && calls.contains("\"tip\":\"aaaa\"");
+            assert_eq!(passed, certified, "{state}: {calls}");
         }
     }
 

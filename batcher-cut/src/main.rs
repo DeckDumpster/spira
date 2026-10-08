@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use batcher::core::{
-    adaptive_n, combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
+    combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
     stacked_into, stale_retry_due, topo_order, CombineInput, Ejection, Member, MergeResult, TriggerInputs, TriggerReason,
 };
 use batcher::attrib::JobResult;
@@ -215,18 +215,17 @@ fn cut(o: &Opts) -> Result<(), String> {
         return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
     };
 
-    let pool = batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?);
+    let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?));
+    if let batcher::core::RoundKind::Feature(root) = &kind {
+        println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
+    }
     let open = io::read_open_batch(&env_, &repo.name)?;
-    let hist = io::pool_history(&env_.run, &repo.name, pool.len());
-    let n = adaptive_n(hist);
-    let last_arrival = pool.iter().map(|m| m.certified_at).max();
-    let q_minutes: u64 = cfg_parse::<u64>("SPIRA_QUEUE_BATCH_WAIT")? / 60;
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());
     }
 
-    let inputs = TriggerInputs { pool: &pool, now: now(), last_arrival, n, q_minutes, main_red: false, batch_open: open.is_some() };
+    let inputs = TriggerInputs { pool: &pool, main_red: false, batch_open: open.is_some() };
     let Some(reason) = should_cut(&inputs) else {
         println!("{}", skipped_event("no trigger").text);
         return Ok(());
@@ -618,6 +617,9 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
         Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
         Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
     }
+
+    let certified: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    io::lc_certify_round(env_, &certified, batch);
 
     let run = io::round_land(env_, repo, batch)?;
     let mut landed = run.outcome;
