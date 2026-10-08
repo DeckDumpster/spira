@@ -263,7 +263,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "sending",
 ];
 
 const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by"];
@@ -279,6 +279,7 @@ const TOOLS: &[(&str, &str)] = &[
     ("queue", "queue"),
     ("landing-pass", "landing-pass"),
     ("strand", "strand"),
+    ("sending", "sending"),
 ];
 
 /// A tool call's wall: a groomer sweep or a queue step reads the whole graph, so this is the
@@ -344,6 +345,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("strand report", &["czar", "groomer"]),
     ("strand detect-livelocked", &["groomer"]),
     ("fence", &["czar"]),
+    ("sending --dry-run", &["ops", "czar"]),
 ];
 
 /// A request's own arguments with the client's reserved trailer split off: `... [--stdin
@@ -743,6 +745,9 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             if tool == "census" && !(a.is_empty() || a == &[s("--with-suppressed")]) {
                 return Err(usage(tool, "takes only --with-suppressed"));
             }
+            if tool == "sending" && !matches!(a.iter().map(String::as_str).collect::<Vec<_>>().as_slice(), ["--dry-run"] | ["--dry-run", "--no-fetch"]) {
+                return Err(usage(tool, "takes only --dry-run [--no-fetch]"));
+            }
             if tool == "groom" && a.first().map(String::as_str) == Some("split-piece") {
                 split_piece_args(&a[1..])?;
             }
@@ -992,6 +997,18 @@ mod tests {
     fn a_tool_subcommand_absent_from_the_table_is_refused_for_everyone() {
         assert_eq!(gate("queue", &v(&["flush", "--actor", "czar"])).unwrap_err().0, REFUSED);
         assert_eq!(gate("groom", &v(&["--actor", "groomer"])).unwrap_err().0, REFUSED);
+    }
+
+    #[test]
+    fn sending_is_a_read_only_dry_run_for_ops_alone() {
+        let ok = |xs: &[&str], who: &str| plan("sending", "-", &call(xs, who));
+        assert_eq!(ok(&["--dry-run"], "ops").unwrap(), vec![tool("sending", &["--dry-run"])]);
+        assert!(ok(&["--dry-run", "--no-fetch"], "ops").is_ok());
+        for bad in [&["--all"][..], &[][..], &["sp-x1"][..], &["--dry-run", "--all"][..], &["reap-stale"][..]] {
+            assert!(ok(bad, "ops").is_err(), "{bad:?}");
+        }
+        assert_eq!(gate("sending", &v(&["--dry-run", "--actor", "builder"])).unwrap_err().0, REFUSED);
+        assert!(gate("sending", &v(&["--dry-run", "--actor", "ops"])).is_ok());
     }
 
     #[test]
