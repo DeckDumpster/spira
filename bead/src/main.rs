@@ -143,8 +143,8 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
-fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>) -> i32 {
-    if incident.is_none() && mirror.is_none() {
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>, express: bool) -> i32 {
+    if incident.is_none() && mirror.is_none() && !express {
         return bdq_status(home, args);
     }
     let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
@@ -157,16 +157,25 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
             eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
             return 1;
         }
-        eprintln!("bead: file: created, but could not read its id to mirror its title; `spira-lc backfill-titles` fills it");
+        eprintln!("bead: file: created, but could not read its id to mirror its title or mark it express; `spira-lc backfill-titles` fills the title, `bead.sh amend <id> --express` marks it");
         return 0;
     };
     if let Some((title, priority)) = mirror {
         mirror_to_lifecycle(&new_id, Some(title), priority);
     }
-    let Some(incident) = incident else { return 0 };
-    let rc = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
-    if rc != 0 {
-        eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
+    let mut rc = 0;
+    if express {
+        if let Err(e) = spira_config::lifecycle_row::set_express(&new_id, true) {
+            eprintln!("bead: file: {new_id} filed but not marked express: {e}; mark it: bead.sh amend {new_id} --express");
+            rc = 1;
+        }
+    }
+    if let Some(incident) = incident {
+        let r = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
+        if r != 0 {
+            eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
+        }
+        rc |= r;
     }
     rc
 }
@@ -437,6 +446,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
     };
+
+    // Transitional: the label is still read by consumers not yet moved to the lifecycle row.
     let express_label = cfg_label("SPIRA_EXPRESS_LABEL");
 
     if submitted && kind != "work" {
@@ -513,7 +524,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("--no-inherit-labels".into());
         }
         let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
-        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)))
+        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express)
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -561,7 +572,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, incident_parent.as_deref(), None)
+        bdq_create(home, &bd_args, incident_parent.as_deref(), None, express)
     }
 }
 
@@ -636,9 +647,14 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
     }
     if express {
-        let express_label = cfg_label("SPIRA_EXPRESS_LABEL");
-        rc |= bdq_status(home, &s(&["label", "add", &id, &express_label]));
-        changed.push_str("Marked express.");
+        rc |= bdq_status(home, &s(&["label", "add", &id, &cfg_label("SPIRA_EXPRESS_LABEL")]));
+        match spira_config::lifecycle_row::set_express(&id, true) {
+            Ok(()) => changed.push_str("Marked express."),
+            Err(e) => {
+                eprintln!("bead: amend: {id} not marked express: {e}");
+                rc |= 1;
+            }
+        }
     }
     if let Some(n) = &note {
         rc |= bdq_status(

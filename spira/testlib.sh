@@ -733,7 +733,7 @@ except Exception: print("")' 2>/dev/null
 # A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
 # Verbs: `show <id>` / `state <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0),
 # `reopen <id> <cause>` (row pinned REWORK, claim dropped, bd reopened), `hold <id> <kind> <reason>`
-# (appended to $SPIRA_RUN/lc-holds.log, exit 0),
+# (appended to $SPIRA_RUN/lc-holds.log, exit 0), `express|unexpress <id>` (a $SPIRA_RUN/lc-express/<id> marker),
 # `unclaim <id> <actor>` (spira-lc's own rule: a WORKING row is released only by its holder,
 # else exit 1; any other state is already released, 0), and
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
@@ -748,6 +748,8 @@ lc_aeon_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
+    express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
+    unexpress) rm -f "${SPIRA_RUN:?}/lc-express/${2:?}"; exit 0 ;;
     hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"
         mkdir -p "$SPIRA_RUN/lc-hold"; printf '%s %s %s\n' "${3:-}" "${4:-}" "${5:-}" > "$SPIRA_RUN/lc-hold/${2:-}"; exit 0 ;;
     reopen)

@@ -77,6 +77,8 @@ pub const VERBS: &[&str] = &[
     "certify",
     "resubmit",
     "renew",
+    "express",
+    "unexpress",
 ];
 
 pub fn is_verb(v: &str) -> bool {
@@ -124,6 +126,13 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 return usage("release <bead-id> [actor]");
             }
             with_row(m, &a(0), &actor_or(args.get(1), "sentinel"), |_| Ok(BeadEventKind::Release))
+        }
+        "express" | "unexpress" => {
+            if !need(1) {
+                return usage(&format!("{verb} <bead-id> [actor]"));
+            }
+            let kind = if verb == "express" { BeadEventKind::Express } else { BeadEventKind::Unexpress };
+            with_row(m, &a(0), &actor_or(args.get(1), "bead"), |_| Ok(kind.clone()))
         }
         "holder-dead" => {
             if !need(1) {

@@ -91,6 +91,7 @@ BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
     want "file --express: express label present" "express" "$LABELS"
+    is "file --express: the lifecycle row is marked express" "yes" "$([ -f "$RUN/lc-express/$BID" ] && echo yes || echo no)"
 else
     bad "file --express: could not create bead" "output: $out"
 fi
@@ -165,6 +166,7 @@ if [ -n "$BID" ]; then
         bash "$SH/bead.sh" amend "$BID" --express 2>&1 >/dev/null || true
     LABELS="$(labels_of "$BID")"
     want "amend --express: express label added" "express" "$LABELS"
+    is "amend --express: the lifecycle row is marked express" "yes" "$([ -f "$RUN/lc-express/$BID" ] && echo yes || echo no)"
 else
     bad "amend --express: could not create bead" "output: $out"
 fi

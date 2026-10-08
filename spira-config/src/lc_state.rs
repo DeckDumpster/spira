@@ -55,6 +55,7 @@ pub struct Row {
     pub holder: Option<String>,
     pub lease_until: Option<i64>,
     pub holds: Vec<String>,
+    pub express: bool,
 }
 
 impl Row {
@@ -125,6 +126,7 @@ fn row_of(r: &Value) -> Row {
         holder: scalar(r.get("holder")).filter(|h| !h.is_empty()),
         lease_until: scalar(r.get("lease_until")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
         holds: holds(r.get("holds")),
+        express: matches!(scalar(r.get("express")).as_deref(), Some("1" | "true")),
     }
 }
 

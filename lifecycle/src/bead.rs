@@ -126,6 +126,9 @@ pub struct BeadRow {
     /// When the row last entered LANDED or CERTIFIED (the event's `at`); unset otherwise.
     #[serde(default)]
     pub since: Option<i64>,
+    /// The one sanctioned way to put a bead ahead of the line; orthogonal to state.
+    #[serde(default)]
+    pub express: bool,
 }
 
 impl BeadRow {
@@ -146,6 +149,7 @@ impl BeadRow {
             stack: Stack::new(),
             stack_depth: 0,
             since: None,
+            express: false,
         }
     }
 }
@@ -209,6 +213,10 @@ pub enum BeadEventKind {
     /// and only forward — a lease never shrinks. A holder that stops renewing (a dead aeon)
     /// still expires, and the stale-lease reaper's `HolderDead` clears it as before.
     Renew { lease_until: i64 },
+    /// Put the bead ahead of the line. Idempotent: a second `Express` applies and changes nothing.
+    Express,
+    /// Withdraw `Express`. Idempotent likewise.
+    Unexpress,
 }
 
 /// The classifier's no-evidence default for a closed bead; the one terminal reason a
@@ -399,6 +407,15 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             new.version += 1;
             Outcome::applied(new)
         }
+        BeadEventKind::Express | BeadEventKind::Unexpress => {
+            if row.state.is_terminal() {
+                return terminal(row);
+            }
+            let mut new = row.clone();
+            new.express = matches!(ev.kind, BeadEventKind::Express);
+            new.version += 1;
+            Outcome::applied(new)
+        }
         BeadEventKind::Unhold { kind } => {
             if row.state.is_terminal() {
                 return terminal(row);
@@ -509,7 +526,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Open => illegal(row, kind),
@@ -575,7 +592,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -651,7 +668,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -706,7 +723,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => {
                 illegal(row, kind)
             }
         },
@@ -756,7 +773,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -791,7 +808,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -804,7 +821,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => terminal(row),
         },
     }
 }
@@ -1027,6 +1044,8 @@ mod tests {
 
     fn sample_kinds() -> Vec<BeadEventKind> {
         vec![
+            BeadEventKind::Express,
+            BeadEventKind::Unexpress,
             BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
             BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
             BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
@@ -1153,6 +1172,17 @@ mod tests {
         let mut r = row(BeadState::Dropped);
         r.reason = Some(RESIDUE_RULE.into());
         assert!(!apply(&r, &classifier_ev(BeadState::Dropped, reclassify(BeadState::Dropped, RESIDUE_RULE))).applied);
+    }
+
+    #[test]
+    fn express_is_orthogonal_to_state_and_reversible() {
+        for state in [BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Rework] {
+            let r = row(state);
+            let on = apply(&r, &ev(state, 0, BeadEventKind::Express));
+            assert!(on.applied && on.row.express && on.row.state == state, "{state:?}");
+            let off = apply(&on.row, &ev(state, 1, BeadEventKind::Unexpress));
+            assert!(off.applied && !off.row.express && off.row.state == state, "{state:?}");
+        }
     }
 
     #[test]

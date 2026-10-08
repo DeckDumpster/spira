@@ -269,7 +269,8 @@ certified_rows() {
         read -r st tip ep < "$f"
         [ "$st" = CERTIFIED ] || continue
         grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
-        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
+        ex=0; [ -f "${SPIRA_RUN:-/nonexistent}/lc-express/$(basename "$f")" ] && ex=1
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s,"express":"%s"}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}" "$ex"; sep=','
     done
     printf ']\n'
 }
@@ -363,8 +364,8 @@ print(" ".join(d[0].get("labels") or []))' 2>/dev/null; }
 # A batch member is a bead WAITING FOR A ROUND: open and carrying the submitted label
 # (sp-1346p) — a CERTIFIED record of a closed bead is stale and never batched.
 plant() {   # plant <id> [express]
-    local id="$1" express_label="" lbls="\"spira\",\"plan\",\"repo:$REPONAME\",\"spira-submitted\""
-    [ "${2:-}" = express ] && lbls="$lbls,\"express\""
+    local id="$1" lbls="\"spira\",\"plan\",\"repo:$REPONAME\",\"spira-submitted\""
+    [ "${2:-}" = express ] && { mkdir -p "$RUN/lc-express"; : > "$RUN/lc-express/$id"; }
     printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
         "$id" "$id" "$lbls" | testdb_seed
 }
@@ -373,7 +374,7 @@ plant() {   # plant <id> [express]
 # CERTIFIED right after an eject (sp-pedat) is actually in, still waiting on its aeon.
 plant_open() {
     local id="$1" lbls="\"spira\",\"plan\",\"repo:$REPONAME\""
-    [ "${2:-}" = express ] && lbls="$lbls,\"express\""
+    [ "${2:-}" = express ] && { mkdir -p "$RUN/lc-express"; : > "$RUN/lc-express/$id"; }
     printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
         "$id" "$id" "$lbls" | testdb_seed
 }

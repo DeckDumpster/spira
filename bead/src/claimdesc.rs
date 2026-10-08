@@ -242,6 +242,7 @@ mod tests {
             holder: Some(holder.to_string()).filter(|h| !h.is_empty()),
             lease_until: lease,
             holds: vec![],
+            express: false,
         };
         let live = live_claim(Some(&row("WORKING", "aeon-x", Some(now + 3600))), now).unwrap();
         assert_eq!((live.assignee.as_str(), live.lease.as_str()), ("aeon-x", "2026-10-02T13:00:00Z"));

@@ -79,6 +79,30 @@ pub fn ensure_row_with(bin: &str, id: &str) -> Result<(), String> {
     }
 }
 
+/// Record `Express`/`Unexpress` on the bead's lifecycle row: express is lifecycle state.
+pub fn set_express_with(bin: &str, id: &str, on: bool) -> Result<(), String> {
+    let verb = if on { "express" } else { "unexpress" };
+    let out = Command::new("timeout")
+        .args([LC_TIMEOUT_SECS, bin, verb, id])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{bin} {verb} {id} exited {}: {}{}",
+            out.status.code().map_or("signal".into(), |c| c.to_string()),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+pub fn set_express(id: &str, on: bool) -> Result<(), String> {
+    set_express_with(&lc_bin(), id, on)
+}
+
 pub fn ensure_row(id: &str) -> Result<(), String> {
     ensure_row_retrying(&lc_bin(), id, ROW_ATTEMPTS, 250)
 }
