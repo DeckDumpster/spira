@@ -6,7 +6,7 @@
 #   supersede-duty.sh watch [--interval S] [--ticks N]   loop forever (or N times)
 #   supersede-duty.sh health                         non-zero when the loop stopped polling
 #
-# A supersede-request is an operator hold whose latest hold event carries cause
+# A supersede-request is a manual hold whose latest hold event carries cause
 # supersede-request and the successor as its detail. Each one is surfaced (log line and
 # Concierge inbox) and decided in the same pass: the successor LANDED supersedes the bead;
 # any other successor state lifts the hold, so the bead is never parked on a request nothing
@@ -40,7 +40,7 @@ for r in rows:
     try: ev = json.loads(r.get("evidence") or "{}")
     except Exception: continue
     h = ev.get("Hold") if isinstance(ev, dict) else None
-    if h and str(h.get("kind")).lower() == "operator":
+    if h and str(h.get("kind")).lower() in ("manual", "operator"):
         by = h.get("detail") if h.get("cause") == "supersede-request" else None
 if not by: sys.exit(1)
 print(by)'
@@ -66,7 +66,7 @@ _sd_adjudicate() {
     case "$own" in
         LANDED|SUPERSEDED|DROPPED|DONE)
             _sd_settled "$id" && return 0
-            timeout 5 spira-lc unhold "$id" operator "$ACTOR" >/dev/null 2>&1
+            timeout 5 spira-lc unhold "$id" manual "$ACTOR" >/dev/null 2>&1
             _sd_settle "$id"
             _sd_say "SUPERSEDE REQUEST $id: already $own; nothing to do"
             return 0 ;;
@@ -74,7 +74,7 @@ _sd_adjudicate() {
     _sd_settled "$id.failed" || _sd_say "SUPERSEDE REQUEST $id: successor $succ"
     st="$(timeout 5 spira-lc state "$succ" 2>/dev/null)"
     if [ "$succ" = "$id" ] || [ -z "$st" ]; then
-        timeout 5 spira-lc unhold "$id" operator "$ACTOR" || { _sd_retry "$id" "unhold failed"; return 0; }
+        timeout 5 spira-lc unhold "$id" manual "$ACTOR" || { _sd_retry "$id" "unhold failed"; return 0; }
         _sd_note "$id" "supersede-request by $succ refused: ${st:-no lifecycle row for $succ}. Hold lifted; the bead proceeds."
         _sd_say "SUPERSEDE REQUEST $id: refused, successor $succ has no usable row; unheld"
     elif [ "$st" = LANDED ]; then
@@ -84,7 +84,7 @@ _sd_adjudicate() {
         _sd_note "$id" "supersede-request confirmed: $succ is LANDED. Superseded by $succ."
         _sd_say "SUPERSEDE REQUEST $id: confirmed, superseded by LANDED $succ"
     else
-        timeout 5 spira-lc unhold "$id" operator "$ACTOR" || { _sd_retry "$id" "unhold failed"; return 0; }
+        timeout 5 spira-lc unhold "$id" manual "$ACTOR" || { _sd_retry "$id" "unhold failed"; return 0; }
         _sd_note "$id" "supersede-request by $succ refused: $succ is $st, not LANDED. Hold lifted; the bead proceeds."
         _sd_say "SUPERSEDE REQUEST $id: refused, $succ is $st; unheld"
     fi
@@ -96,7 +96,7 @@ cmd_pass() {
         [ -n "$id" ] || continue
         succ="$(_sd_request_of "$id")" || continue
         _sd_adjudicate "$id" "$succ"
-    done < <(timeout 5 spira-lc list-held operator 2>/dev/null)
+    done < <(timeout 5 spira-lc list-held manual 2>/dev/null)
 }
 
 _sd_write_health() {

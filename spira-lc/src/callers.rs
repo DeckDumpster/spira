@@ -305,7 +305,8 @@ fn with_row(
         Ok(k) => k,
         Err(a) => return a,
     };
-    Answer::code(event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0)
+    let (code, text) = event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default());
+    Answer { code, stderr: if code == 0 { String::new() } else { text }, ..Default::default() }
 }
 
 fn event(m: &mut dyn Machine, machine: &str, id: &str, expect: &str, version: &str, actor: &str, kind: &str) -> (i32, String) {
