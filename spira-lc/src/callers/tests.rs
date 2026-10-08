@@ -824,7 +824,7 @@ fn claimable_by_a_builder(f: &mut Fake, id: &str) -> bool {
         &BeadEvent {
             expect: row.state,
             version: row.version,
-            kind: BeadEventKind::Claim { holder: "aeon-2".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4 },
+            kind: BeadEventKind::Claim { holder: "aeon-2".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None },
             actor: "aeon-2".into(),
             at: None,
         },

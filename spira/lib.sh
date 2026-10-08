@@ -538,10 +538,11 @@ lc_event_bead() {
 # through the stale-lease reaper's HolderDead, not through the next claimant. Also refused:
 # DepthExceeded, when stack-depth exceeds stack-max-depth. The trailing three args are the
 # caller's own stack proposal, forwarded as given; omitted, an unstacked claim.
+# The seventh arg is the claiming persona (fayth), recorded on the row; omitted, NULL.
 #
 # An applied claim appends the `claimed` fact the attempt counters fold.
 lc_claim_bead() {
-    local id="$1" holder="$2" lease_until="$3" stack="${4:-}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version cur_holder rc
+    local id="$1" holder="$2" lease_until="$3" stack="${4:-}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" persona="${7:-}" row state version cur_holder rc
     [ -n "$stack" ] || stack='{}'
     # A bead filed by any path that skips row creation (a raw create in the beads CLI — acceptance, and at
     # least four actors in production; sp-tb4yk) has no lifecycle row, and `spira-lc show`
@@ -554,8 +555,10 @@ lc_claim_bead() {
     IFS=$'\t' read -r state version cur_holder _ <<< "$row"
     [ -n "$state" ] || return 2
     [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
+    local persona_json=null
+    [ -z "$persona" ] || persona_json="\"$persona\""
     lc_event_bead "$id" "$state" "$version" "$holder" \
-        "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth}}"
+        "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth,\"persona\":$persona_json}}"
     rc=$?
     if [ "$rc" -eq 3 ]; then
         # A refusal is not "not mine" until the row says so: a double-sent claim applies once.

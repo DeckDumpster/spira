@@ -108,6 +108,9 @@ pub struct BeadRow {
     pub tip: Option<String>,
     pub gate_key: Option<String>,
     pub holder: Option<String>,
+    /// The claiming persona (fayth), recorded at `claim`; NULL for a row claimed before it was recorded.
+    #[serde(default)]
+    pub persona: Option<String>,
     pub lease_until: Option<i64>,
     pub holds: BTreeSet<HoldKind>,
     pub reason: Option<String>,
@@ -134,6 +137,7 @@ impl BeadRow {
             tip: None,
             gate_key: None,
             holder: None,
+            persona: None,
             lease_until: None,
             holds: BTreeSet::new(),
             reason: None,
@@ -158,7 +162,7 @@ pub enum BeadEventKind {
     /// multi-row check the caller makes before ever proposing a claim (see
     /// `claim_refusal_for_stale_stack`). `stack_max_depth` is the caller's own config read,
     /// carried as evidence exactly like `lease_until`.
-    Claim { holder: String, lease_until: i64, #[serde(default)] stack: Stack, #[serde(default)] stack_depth: u32, #[serde(default)] stack_max_depth: u32 },
+    Claim { holder: String, lease_until: i64, #[serde(default)] stack: Stack, #[serde(default)] stack_depth: u32, #[serde(default)] stack_max_depth: u32, #[serde(default)] persona: Option<String> },
     Release,
     HolderDead,
     Submit { tip: String },
@@ -283,6 +287,7 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
     }
     if out.applied && out.row.state.is_terminal() {
         out.row.holder = None;
+        out.row.persona = None;
         out.row.lease_until = None;
     }
     out
@@ -444,13 +449,14 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
 
     match row.state {
         BeadState::Ready => match kind {
-            Claim { holder, lease_until, stack, stack_depth, stack_max_depth } => {
+            Claim { holder, lease_until, stack, stack_depth, stack_max_depth, persona } => {
                 if *stack_depth > *stack_max_depth {
                     return depth_exceeded(row, *stack_depth, *stack_max_depth);
                 }
                 let mut new = row.clone();
                 new.state = BeadState::Working;
                 new.holder = Some(holder.clone());
+                new.persona = persona.clone();
                 new.lease_until = Some(*lease_until);
                 new.stack = stack.clone();
                 new.stack_depth = *stack_depth;
@@ -485,6 +491,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 let mut new = row.clone();
                 new.state = BeadState::Ready;
                 new.holder = None;
+                new.persona = None;
                 new.lease_until = None;
                 // The claim this stack belonged to is voided; the next claim proposes a
                 // fresh one rather than carrying a stale one into READY.
@@ -725,13 +732,14 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         },
 
         BeadState::Rework => match kind {
-            Claim { holder, lease_until, stack, stack_depth, stack_max_depth } => {
+            Claim { holder, lease_until, stack, stack_depth, stack_max_depth, persona } => {
                 if *stack_depth > *stack_max_depth {
                     return depth_exceeded(row, *stack_depth, *stack_max_depth);
                 }
                 let mut new = row.clone();
                 new.state = BeadState::Working;
                 new.holder = Some(holder.clone());
+                new.persona = persona.clone();
                 new.lease_until = Some(*lease_until);
                 new.stack = stack.clone();
                 new.stack_depth = *stack_depth;
@@ -882,7 +890,7 @@ mod tests {
 
     fn sample_kinds() -> Vec<BeadEventKind> {
         vec![
-            BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 },
+            BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
             BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
             BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
             BeadEventKind::Release,
@@ -1003,12 +1011,28 @@ mod tests {
     #[test]
     fn claim_from_ready_enters_working() {
         let r = row(BeadState::Ready);
-        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 });
+        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
         let out = apply(&r, &e);
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Working);
         assert_eq!(out.row.holder.as_deref(), Some("aeon-1"));
         assert_eq!(out.row.version, 1);
+    }
+
+    #[test]
+    fn a_claim_records_its_persona_beside_the_holder_and_a_legacy_claim_has_none() {
+        let claim = |persona: Option<&str>| {
+            let k = BeadEventKind::Claim { holder: "aeon-mindy".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: persona.map(String::from) };
+            apply(&BeadRow::filed("sp-x"), &ev(BeadState::Ready, 0, k)).row
+        };
+        let (builder, ops) = (claim(Some("builder")), claim(Some("ops")));
+        assert_eq!((builder.holder.as_deref(), builder.persona.as_deref()), (Some("aeon-mindy"), Some("builder")));
+        assert_eq!((ops.holder.as_deref(), ops.persona.as_deref()), (Some("aeon-mindy"), Some("ops")));
+        assert_eq!(claim(None).persona, None);
+        let legacy: BeadEventKind = serde_json::from_str(r#"{"Claim":{"holder":"aeon-mindy","lease_until":1}}"#).unwrap();
+        assert!(matches!(legacy, BeadEventKind::Claim { persona: None, .. }));
+        let released = apply(&builder, &ev(BeadState::Working, builder.version, BeadEventKind::Release));
+        assert!(released.applied && released.row.persona.is_none());
     }
 
     #[test]
@@ -1121,7 +1145,7 @@ mod tests {
     #[test]
     fn expect_mismatch_never_mutates() {
         let r = row(BeadState::Ready);
-        let e = ev(BeadState::Working, 0, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 });
+        let e = ev(BeadState::Working, 0, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
         let out = apply(&r, &e);
         assert!(!out.applied);
         assert_eq!(out.row, r);
@@ -1132,7 +1156,7 @@ mod tests {
     fn stale_version_never_mutates() {
         let mut r = row(BeadState::Ready);
         r.version = 5;
-        let e = ev(BeadState::Ready, 4, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 });
+        let e = ev(BeadState::Ready, 4, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
         let out = apply(&r, &e);
         assert!(!out.applied);
         assert_eq!(out.row, r);
@@ -1332,7 +1356,7 @@ mod tests {
         let mut r = row(BeadState::Ready);
         let mut last = r.version;
         let chain: Vec<(BeadState, BeadEventKind)> = vec![
-            (BeadState::Ready, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 }),
+            (BeadState::Ready, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }),
             (BeadState::Working, BeadEventKind::Submit { tip: "t1".into() }),
             (BeadState::Submitted, BeadEventKind::GatePass { tip: "t1".into(), gate_key: "k".into() }),
             (BeadState::Certified, BeadEventKind::Deliver),
@@ -1477,7 +1501,7 @@ mod tests {
     // ── stacked dependents (design stacked-dependents-2026-09-28 §1) ──────────────────
 
     fn claim_ev(expect: BeadState, version: Version, stack: Stack, stack_depth: u32, stack_max_depth: u32) -> BeadEvent {
-        ev(expect, version, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth })
+        ev(expect, version, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth, persona: None })
     }
 
     #[test]
@@ -1802,7 +1826,7 @@ mod tests {
         assert_eq!(late.row.state, BeadState::Ready);
         // And once a successor claims it, the dead holder's renewal cannot touch the new lease.
         let mut succ = reaped.row.clone();
-        succ = apply(&succ, &BeadEvent { actor: "aeon-next".into(), ..ev(BeadState::Ready, succ.version, BeadEventKind::Claim { holder: "aeon-next".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 }) }).row;
+        succ = apply(&succ, &BeadEvent { actor: "aeon-next".into(), ..ev(BeadState::Ready, succ.version, BeadEventKind::Claim { holder: "aeon-next".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) }).row;
         let out = apply(&succ, &renew_by("aeon-mindy", &succ, 5_000));
         assert!(!out.applied);
         assert_eq!(out.row.lease_until, Some(900));
