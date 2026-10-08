@@ -27,7 +27,7 @@ impl RealBd {
         })
     }
 
-    fn run(&self, db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
+    pub(crate) fn run(&self, db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
         let mut attempt = 0u32;
         loop {
             attempt += 1;

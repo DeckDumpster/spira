@@ -1,0 +1,16 @@
+[Unit]
+Description=Settle incidents whose fix has landed every five minutes
+
+[Timer]
+# Short, so a landed fix is settled before the sentinel next summons Ops onto the incident.
+OnBootSec=3min
+OnActiveSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=spira-incident-settle.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=maintenance

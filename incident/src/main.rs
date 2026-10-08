@@ -6,6 +6,7 @@
 //!   incident alarm <title> [-|<file>]  note a detector's condition in the Concierge inbox, no bead
 //!   incident drain                    file everything the spool is holding
 //!   incident list                     open incidents
+//!   incident settle                   close incidents whose fixes landed and whose detector is quiet
 //!   incident collapse <dup> --of <keep>  mark <dup> a duplicate of <keep> and label it for the meter
 //!
 //! `backfill-ref-labels`, `retire-unsatisfiable-delivers` and `repair-mismatch-delivers`
@@ -538,6 +539,35 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Close the incidents whose fixes have landed and whose detector is quiet; leave the rest.
+/// Exit 1 only when the candidates could not be read — a skipped incident is not a failure.
+fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
+    let home = spira_home_dir();
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let settler = incident::settle_real::RealSettler {
+        bd,
+        db: env.db.clone().unwrap_or_default(),
+        incident_label: env_or("SPIRA_INCIDENT_LABEL", "incident"),
+        home_repo: env.home_repo.clone(),
+        registry: spira_config::repos::Registry::from_env(env_map, &home),
+        release_sha: raw_env("SPIRA_RELEASE").and_then(|r| incident::settle_real::release_sha_of(&r)),
+    };
+    match incident::settle::settle(&settler) {
+        Ok(outcomes) => {
+            for o in &outcomes {
+                ilog(env, &format!("settle: {o:?}"));
+            }
+            let closed = outcomes.iter().filter(|o| matches!(o, incident::settle::Outcome::Closed { .. })).count();
+            println!("settled {closed} of {}", outcomes.len());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("incident settle: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 impl Env {
     fn repo_override_ref(&self) -> Option<String> {
         env("SPIRA_INCIDENT_REF")
@@ -609,6 +639,12 @@ fn main() -> ExitCode {
             cmd_drain(&env_cfg, &bd, &mailer, &clock)
         }
         Some("list") => cmd_list(&env_cfg, &bd),
+        Some("settle") => {
+            if env_cfg.db.is_none() {
+                return require_db(&env_cfg);
+            }
+            cmd_settle(&env_cfg, &bd)
+        }
         Some("collapse") => {
             let (Some(dup), Some("--of"), Some(keep), None) = (args.get(1), args.get(2).map(String::as_str), args.get(3), args.get(4)) else {
                 eprintln!("usage: incident collapse <dup> --of <keep>");
@@ -629,7 +665,7 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents\n  incident collapse <dup> --of <keep>  mark a duplicate incident");
+            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident");
             ExitCode::from(1)
         }
     }

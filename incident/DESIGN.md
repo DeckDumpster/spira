@@ -192,3 +192,15 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   a LANDED row (the fresh bead counts from zero and its body names the history). A failed
   `relate` is logged, not fatal: the bead exists and its body still cites the
   predecessor.
+
+- **`incident settle` closes an incident whose fix has landed (sp-8acg4g).** The incident's
+  `blocks` edges are its fixes. When every one is LANDED/DONE and, for the home repo, the
+  active release carries its landing commit, the incident's own detector runs once: quiet
+  closes it through the machine with the fix id, landing sha and timestamp; still firing
+  notes "fix landed but the alarm persists" and labels `settle-fired:<hash of fixes>` so a
+  later pass records nothing more, and Ops claims it as the unblocked bead it already is.
+  The only detector today is `systemctl --user is-failed` for a `incident:<unit>` ref; any
+  other incident has no probe and is never closed on a guess. While a fix is unlanded the
+  `blocks` edge keeps the incident unclaimable, and `spira-claim` no longer lets an
+  incident-labelled bead stack on a merely certified fix (`rank::stack_cap`). Run by
+  `spira-incident-settle.timer`.

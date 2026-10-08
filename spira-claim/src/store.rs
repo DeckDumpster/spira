@@ -59,6 +59,8 @@ pub struct Config {
     /// "" means no override (per Ryan 2026-10-05: no direct env read — `roster` used to
     /// read `SPIRA_FAYTHS` itself).
     pub fayths: String,
+    /// `SPIRA_INCIDENT_LABEL` — an incident never stacks on a fix that has not landed.
+    pub incident_label: String,
 }
 
 /// Every field of [`Config`], each its own `cfg`/`cfg_parse` call — `Err` names the first
@@ -80,6 +82,7 @@ pub fn load_config() -> Result<Config, String> {
         claim_retries: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRIES")?,
         claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
         fayths: spira_config::process::cfg("SPIRA_FAYTHS")?,
+        incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
     })
 }
 
