@@ -4,9 +4,7 @@
 //! mail, checking whether the Concierge is running — is a caller's job (sp-fufyb); nothing
 //! here reads a clock, a file or a socket.
 //!
-//! Used by reconciler-flow only. reconciler's structural `escalate()` deliberately does not
-//! call this — it files a bead through incident.sh, whose own recurrence-count dedup already
-//! absorbs a persisting gap, which a live mail destination cannot do for itself.
+//! Used by reconciler, reconciler-flow and reconciler-alert: one note per gap streak.
 
 use crate::core::{RawStatus, Verdict};
 

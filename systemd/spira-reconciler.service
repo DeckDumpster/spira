@@ -1,6 +1,6 @@
 [Unit]
 Description=Spira reconciler — structural invariants: fleet, units, store, cockpit, release, disk, queue
-Documentation=file://@SPIRA_HOME@/reconciler.sh
+Documentation=file://@SPIRA_HOME@/reconciler/src/main.rs
 After=default.target
 
 [Service]
@@ -13,9 +13,9 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/reconciler.sh --pass
-# A pass reads local files and shells to a handful of read-mostly tools (systemctl, tmux,
-# git); 60 s is generous for all of them together.
+ExecStart=@SPIRA_PROD_ROOT@/bin/reconciler --pass
+# A pass reads local files and runs a handful of read-mostly tools (systemctl, tmux, git,
+# df); 60 s is generous for all of them together.
 TimeoutStartSec=60
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@

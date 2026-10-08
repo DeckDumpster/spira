@@ -3,21 +3,19 @@
 //! `mail`. Every function here does exactly one read, one write or one subprocess call —
 //! the dedup and classification logic lives in `reconciler_engine::alert`, not here.
 
-use std::io::Write;
 use std::process::Stdio;
 
 // Persistence for which streak each invariant last alerted for lives in reconciler-engine::io
 // now — reconciler-flow shares the exact same file format instead of a second copy of it.
-pub use reconciler_engine::io::{load_alerted, save_alerted, AlertedSinceMap};
+pub use reconciler_engine::io::{load_alerted, save_alerted};
 
-/// True if `concierge.sh status` reports a live session — false for "not running" AND for
-/// "cannot tell" (concierge.sh missing, or the call itself failed): either way there is
-/// nobody to wake, so the alert must fall back to operator mail rather than being typed
-/// into a session that will never read it.
-pub fn concierge_is_running(concierge_sh: &str) -> bool {
-    spira_config::bounded::bounded("bash")
-        .arg(concierge_sh)
-        .arg("status")
+/// True if tmux has a session of this name — false for "not running" AND for "cannot tell"
+/// (tmux missing, or the call itself failed): either way there is nobody to wake, so the
+/// alert must fall back to operator mail rather than being typed into a session that will
+/// never read it.
+pub fn session_is_running(tmux: &str, session: &str) -> bool {
+    spira_config::bounded::bounded(tmux)
+        .args(["has-session", "-t", &format!("={session}")])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -26,42 +24,4 @@ pub fn concierge_is_running(concierge_sh: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Sends one message through `mail send`. A spawn failure, a non-zero exit, or invalid
-/// UTF-8 in stderr are all reported distinctly (mirroring czar-pass's `run_forge`) so a
-/// caller never mistakes "mail refused it" for "the wake was delivered".
-pub fn mail_send(
-    mail_sh: &str,
-    mailbox: &str,
-    from: &str,
-    subject: &str,
-    kind: &str,
-    default: Option<&str>,
-    class: Option<&str>,
-    body: &str,
-) -> Result<(), String> {
-    let mut cmd = spira_config::bounded::bounded(mail_sh);
-    cmd.arg("send").arg(mailbox).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
-    if let Some(d) = default {
-        cmd.arg("--default").arg(d);
-    }
-    if let Some(c) = class {
-        cmd.arg("--class").arg(c);
-    }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("mail spawn failed: {}", e))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("mail: failed to wait: {}", e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("mail send {} exited {}: {}", mailbox, output.status, stderr.trim()));
-    }
-    Ok(())
-}
+pub use reconciler_engine::mail::send as mail_send;

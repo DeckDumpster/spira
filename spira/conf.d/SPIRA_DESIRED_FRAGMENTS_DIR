@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=desired
+DOC=WHERE THE OPERATOR'S OWN DESIRED-STATE FRAGMENTS LIVE — every *.toml in it is composed.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE OPERATOR'S OWN DESIRED-STATE FRAGMENTS LIVE — every *.toml in it is one
+    # producer in the federation `spira compose` merges.
+    : "${SPIRA_DESIRED_FRAGMENTS_DIR:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/desired.d}"
+SPIRA_CONF_DEFAULT_EOF

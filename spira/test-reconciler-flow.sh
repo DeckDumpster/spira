@@ -64,10 +64,10 @@ command -v reconciler-flow >/dev/null 2>&1 || { echo "test-reconciler-flow: reco
 
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
-# SPIRA_DUCKDB_BIN/SPIRA_MAIL_SH/SPIRA_RECONCILER_FLOW_STATE/ALERTED/STATUS_LOG are not
-# registered config keys (confirmed in reconciler-flow/src/main.rs's own Config::from_env,
-# which comments each one so) — they stay plain env reads, never tl_config.
-export SPIRA_DUCKDB_BIN="duckdb"
+# reconciler-flow runs duckdb, mail, tsd-write and date by bare name, so a stub is a file
+# of that name on PATH ahead of the real one — there is no environment seam for any of them.
+STUB_BIN="$T/stub-bin"; mkdir -p "$STUB_BIN"
+export PATH="$STUB_BIN:$PATH"
 export SPIRA_DESIRED_DIR="$T/desired"
 # SPIRA_BD declared both ways: reconciler-flow resolves it via cfg() (tl_config), but the
 # spira-lc stand-in lc_mirror_bd installs is a plain bash stub reading ${SPIRA_BD:-bd}
@@ -84,7 +84,7 @@ lc_mirror_bd "$T/lc"; export SPIRA_LC_BIN
 # Stub mail: records every "send concierge" call so the alert path is observable without
 # a real mailbox. Any other subcommand is refused loudly — a call this suite did not expect.
 MAIL_LOG="$T/mail-calls.log"
-cat > "$T/mail" <<STUB
+cat > "$STUB_BIN/mail" <<STUB
 #!/usr/bin/env bash
 if [ "\$1" = "send" ] && [ "\$2" = "concierge" ]; then
     { printf 'CALL %s\n' "\$*"; cat; printf '\n---\n'; } >> "$MAIL_LOG"
@@ -93,27 +93,32 @@ fi
 printf 'stub mail: unexpected invocation: %s\n' "\$*" >&2
 exit 1
 STUB
-chmod +x "$T/mail"
-export SPIRA_MAIL_SH="$T/mail"
+chmod +x "$STUB_BIN/mail"
 
 # Stub exporter: stands for tsd-lifecycle-export, which the pass must run itself. It counts its
 # calls and fails on demand ($T/export-fail), so "the pass ran it" and "a failed export blinds
 # the stage invariants" are both observable.
 EXPORT_LOG="$T/export-calls.log"
-cat > "$T/export" <<STUB
+cat > "$STUB_BIN/tsd-lifecycle-export" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$EXPORT_LOG"
 [ -e "$T/export-fail" ] && { echo "dolt unreachable" >&2; exit 1; }
 exit 0
 STUB
-chmod +x "$T/export"
-export SPIRA_TSD_LIFECYCLE_EXPORT_BIN="$T/export"
+chmod +x "$STUB_BIN/tsd-lifecycle-export"
 
-# THE CLOCK. Grace periods are judged against reconciler-flow's own clock, which honours
-# SPIRA_NOW: `advance N` moves it N seconds ahead of the wall instead of sleeping N seconds.
-NOW_OFFSET=0
-advance() { NOW_OFFSET=$((NOW_OFFSET + $1)); }
-run_pass() { SPIRA_NOW=$(( $(date +%s) + NOW_OFFSET )) reconciler-flow --pass >"$T/pass-out.log" 2>&1; }
+# THE CLOCK. Grace periods are judged against the time reconciler-flow reads from `date`, so
+# a `date` stub on PATH for the pass alone moves it: `advance N` shifts it N seconds ahead of
+# the wall instead of sleeping N seconds, and every other `date` in this suite stays real.
+CLOCK_BIN="$T/clock-bin"; mkdir -p "$CLOCK_BIN"
+OFFSET_FILE="$T/clock-offset"; echo 0 > "$OFFSET_FILE"
+cat > "$CLOCK_BIN/date" <<CLOCK
+#!/usr/bin/env bash
+exec /bin/date -d "@\$(( \$(/bin/date +%s) + \$(cat "$OFFSET_FILE") ))" "\$@"
+CLOCK
+chmod +x "$CLOCK_BIN/date"
+advance() { echo $(( $(cat "$OFFSET_FILE") + $1 )) > "$OFFSET_FILE"; }
+run_pass() { PATH="$CLOCK_BIN:$PATH" reconciler-flow --pass >"$T/pass-out.log" 2>&1; }
 status_of() {
     # Last reconciler-status.jsonl line for key $1, field $2 ("status" or "is_gap").
     # Under run/tsd/ (design reconciler-time-series-2026-09-27 §2, sp-69m85).
@@ -392,7 +397,10 @@ echo "   satisfied and never mistaken for the missing-family case"
 # ============================================================================
 reset_env
 emit_landed rcf-any 60
-SPIRA_DUCKDB_BIN="$T/no-such-duckdb-binary" run_pass
+mkdir -p "$T/broken-duckdb-bin"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$T/broken-duckdb-bin/duckdb"
+chmod +x "$T/broken-duckdb-bin/duckdb"
+PATH="$T/broken-duckdb-bin:$PATH" run_pass
 is "a broken duckdb binary is unobservable, not satisfied" unobservable "$(status_of flow:velocity:queue status)"
 
 # ============================================================================

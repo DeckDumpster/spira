@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use serde_json::Value;
-use std::io::Write as _;
 
 /// One duckdb -json -c invocation, parsed. Empty stdout (a `SELECT` with no matching rows in
 /// an old duckdb, or a query that legitimately returns nothing) is `Ok(vec![])`, not an
@@ -429,34 +428,6 @@ fn read_flow_floors(desired_dir: &Path) -> Option<(Option<f64>, Option<u64>)> {
         .and_then(|v| v.as_integer())
         .map(|i| i as u64);
     Some((velocity_floor, dwell_limit))
-}
-
-/// Sends one message to the Concierge mailbox — the alert path a flow gap has no
-/// deterministic remedy to try instead of (per the design). Deduplication across passes is
-/// explicitly a separate bead's mandate (sp-fufyb); this sends once per pass a gap is
-/// confirmed (`is_gap`), relying on mail's own settle/tidy handling in the meantime.
-pub fn mail_concierge(mail_sh: &str, subject: &str, body: &str) -> Result<(), String> {
-    // `mail` is a compiled binary now (sp-ooh1k), invoked directly by name — never `bash
-    // <path>`, which only ever worked while this was a shell script.
-    let mut child = spira_config::bounded::bounded(mail_sh)
-        .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "note"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("{mail_sh}: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    let out = child.wait_with_output().map_err(|e| format!("{mail_sh}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "{mail_sh} send concierge: exit {}: {}",
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

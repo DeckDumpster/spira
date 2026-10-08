@@ -68,18 +68,18 @@ tl_config SPIRA_MAIL="$SPIRA_RUN/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
     SPIRA_MAIL_INDEX="$SPIRA_RUN/mail/index" SPIRA_MAIL_MUTE=0
 mkdir -p "$SPIRA_RUN"
 
-# Stub concierge.sh: "status" answers from a file the scenario toggles, so the fixture never
-# starts a real tmux session. SPIRA_REPO is where czar-pass/main.sh's own convention (and
-# doctor.sh) expect concierge.sh to live: $SPIRA_REPO/concierge.sh.
-FX_REPO="$T/fx-repo"; mkdir -p "$FX_REPO"
-export SPIRA_REPO="$FX_REPO"
-cat > "$FX_REPO/concierge.sh" <<'CEOF'
+# Stub tmux: "has-session -t =concierge" answers from a file the scenario toggles, so the
+# fixture never starts a real tmux session. reconciler-alert runs tmux by bare name, so the
+# stub is found on PATH ahead of the real one.
+STUB_BIN="$T/stub-bin"; mkdir -p "$STUB_BIN"
+cat > "$STUB_BIN/tmux" <<'CEOF'
 #!/usr/bin/env bash
-[ "${1:-}" = status ] || exit 2
+[ "${1:-}" = has-session ] && [ "${3:-}" = "=concierge" ] || exit 2
 [ -f "$CONCIERGE_RUNNING_FLAG" ] && exit 0
 exit 1
 CEOF
-chmod +x "$FX_REPO/concierge.sh"
+chmod +x "$STUB_BIN/tmux"
+export PATH="$STUB_BIN:$PATH"
 export CONCIERGE_RUNNING_FLAG="$T/concierge-running"
 touch "$CONCIERGE_RUNNING_FLAG"   # concierge running by default; case 8 removes it
 

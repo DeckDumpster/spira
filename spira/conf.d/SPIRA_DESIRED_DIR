@@ -1,9 +1,8 @@
 TYPE=string
 GROUP=desired
-DOC=SPIRA_DESIRED_DIR — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=WHERE THE MATERIALISED DESIRED-STATE COMPOSITE AND ITS VERSION HISTORY LIVE.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    # WHERE THE MATERIALISED DESIRED-STATE COMPOSITE AND ITS VERSION HISTORY LIVE — host
+    # operator state, beside the operator's own fragments, never inside a checkout.
+    : "${SPIRA_DESIRED_DIR:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/desired}"
 SPIRA_CONF_DEFAULT_EOF

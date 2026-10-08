@@ -371,3 +371,6 @@ round_certify_wall_secs
 reap_idle_secs
 reap_disk_floor_gib
 store_check_timeout
+desired_fragments_dir
+reconciler_shadow_kinds
+reconciler_effect_passes

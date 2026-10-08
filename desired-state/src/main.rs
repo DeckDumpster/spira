@@ -7,11 +7,9 @@
 //! Both `apply` and `compose` run the same composer; `apply` is `compose` for the case where
 //! a fresh install has only one fragment to hand it — see the design's own account of why
 //! that is not a special case, just the smallest federation. `compose` with no arguments
-//! merges every `*.toml` fragment already sitting in `~/.config/spira/desired.d/`.
+//! merges every `*.toml` fragment already sitting in `SPIRA_DESIRED_FRAGMENTS_DIR`.
 //!
-//! The composite and its version history live under `$SPIRA_DESIRED_DIR`, defaulting to
-//! `${XDG_CONFIG_HOME:-$HOME/.config}/spira/desired` — the same host config directory
-//! `~/.config/spira/desired.d/` (the operator's own fragments) already lives under.
+//! The composite and its version history live under `SPIRA_DESIRED_DIR`.
 
 use std::env;
 use std::fs;
@@ -23,21 +21,13 @@ use spira_desired_state::producer::{parse_fragment, Fragment};
 use spira_desired_state::resource::json_schema;
 use spira_desired_state::store::{now_rfc3339, FsStore, MaterializeOutcome};
 
-fn config_home() -> PathBuf {
-    env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"))
-}
-
-fn desired_dir() -> PathBuf {
+fn desired_dir() -> Result<PathBuf, String> {
     spira_desired_state::store::default_dir()
 }
 
 /// The operator's own fragments — one producer among the federation, not a special case.
-fn desired_fragments_dir() -> PathBuf {
-    env::var("SPIRA_DESIRED_FRAGMENTS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| config_home().join("spira").join("desired.d"))
+fn desired_fragments_dir() -> Result<PathBuf, String> {
+    spira_config::process::cfg("SPIRA_DESIRED_FRAGMENTS_DIR").map(PathBuf::from)
 }
 
 /// `*.toml` files directly inside `dir`, sorted so a compose over the same directory always
@@ -82,7 +72,14 @@ fn run_compose(paths: &[String]) -> ExitCode {
         }
     };
     let contributors: Vec<_> = fragments.iter().map(|f| f.producer.clone()).collect();
-    let store = FsStore::new(desired_dir());
+    let dir = match desired_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("spira: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let store = FsStore::new(dir);
     match store.write_version(&composite, &contributors, &now_rfc3339()) {
         Ok(MaterializeOutcome::NewVersion { version }) => {
             println!("materialised version {version}");
@@ -107,14 +104,19 @@ fn cmd_apply(document: Option<&String>) -> ExitCode {
     run_compose(std::slice::from_ref(path))
 }
 
-/// With no paths given, composes every `*.toml` fragment in `$SPIRA_DESIRED_FRAGMENTS_DIR`
-/// (default `~/.config/spira/desired.d/`) — the operator's own producer, and every other
-/// producer that drops its fragment there.
+/// With no paths given, composes every `*.toml` fragment in `SPIRA_DESIRED_FRAGMENTS_DIR` —
+/// the operator's own producer, and every other producer that drops its fragment there.
 fn cmd_compose(paths: &[String]) -> ExitCode {
     if !paths.is_empty() {
         return run_compose(paths);
     }
-    let dir = desired_fragments_dir();
+    let dir = match desired_fragments_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("spira: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let found = fragment_files_in(&dir);
     if found.is_empty() {
         eprintln!(

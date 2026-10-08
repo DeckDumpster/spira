@@ -5,7 +5,7 @@
 # preference to the ad-hoc bash/env defaults each invariant fell back to before (sp-8c3ib).
 #
 # WHAT THIS SUITE CHECKS.
-#   1. reconciler.sh exists, is executable, and a pass completes inside its budget.
+#   1. reconciler is on PATH, and a pass completes inside its budget.
 #   2. flock: a concurrent pass is skipped.
 #   3. Units, POSITIVE CONTROL: every unit enabled+active → no gap, no remedy run.
 #   4. Units: N disabled timers → each gets `enable --now`, each escalates only if the
@@ -17,14 +17,15 @@
 #      whatever state it is in (sp-ocmes evidence, 2026-09-25: never restart dolt-beads).
 #   8. Fleet: a fleet of 3 with 150 ready and 0 live → gap, escalate, no remedy command
 #      (starting an aeon is not one of this bead's deterministic remedies).
-#   9. Fleet: SPIRA_MAX_LIVE_AEONS unset → unobservable, never satisfied.
+#   9. Fleet, POSITIVE CONTROL: a staffed partition → satisfied, nothing escalated.
 #  10. Cockpit, POSITIVE CONTROL: sessions + both dashboards present → satisfied.
-#  11. Cockpit: no dashboards, no `cockpit.down` marker → gap → cockpit.sh --no-attach run.
+#  11. Cockpit: no dashboards, no `cockpit.down` marker → gap → `layout ensure` run; no tmux
+#      server → gap → `rebuild` run.
 #  12. Cockpit: `cockpit.down` present → satisfied, no remedy run (a deliberate state is
 #      not a fault — law-a-deliberate-state-is-not-a-fault).
 #  13. Release: checkout on a non-main branch with no activated release → gap, escalate.
 #  14. Release: checkout on main → satisfied.
-#  15. Queue: a certified branch that no longer merges onto its base → gap → queue.sh
+#  15. Queue: a certified branch that no longer merges onto its base → gap → queue
 #      eject run (reopens it for rebase).
 #  16. Queue: a certified branch that still merges cleanly → satisfied.
 #  17. Queue: a lock held past the pre-flight wall → gap, escalate.
@@ -33,9 +34,9 @@
 #  19. Unobservable: systemctl unreadable → status=unobservable, never satisfied.
 #  20. A remedy that does not close its gap escalates on the next pass instead of being
 #      retried blind, and is not retried a second time.
-#  21. Fleet: a materialised Composite's ceiling is read even when fleet-status.sh's own
+#  21. Fleet: a materialised Composite's ceiling is read even when the configured
 #      SPIRA_MAX_LIVE_AEONS column is empty (so this is a gap, not unobservable).
-#  22. Units: a materialised Composite's UnitsSpec names the unit set — units-manifest.sh's
+#  22. Units: a materialised Composite's UnitsSpec names the unit set — the installer's ENABLE
 #      own list is not consulted once one exists.
 #  23. Cockpit: a materialised Composite's CockpitSpec.dashboards replaces the hardcoded
 #      health+mail pair, both when it demands more and when it demands less.
@@ -46,15 +47,16 @@
 #  26. Fleet: that same pool-at-0 carve-out does not silence a lane partition, which draws
 #      outside SPIRA_MAX_AEONS and so is starved for a different reason.
 #  27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy run.
-#  28. Disk: a path below the floor -> gap -> disk-remedy.sh run.
-#  29. Disk: an ERR row (path unreadable) -> unobservable, never satisfied, no remedy run.
-#  30. Disk: a materialised Composite's DiskSpec names the paths checked — disk-usage.sh's
+#  28. Disk: a path below the floor -> gap -> the remedy sequence (target-reap, podman prunes).
+#  29. Disk: a Composite-named path df cannot read -> unobservable, never satisfied, no remedy run.
+#  30. Disk: a materialised Composite's DiskSpec names the paths checked — the
 #      no-Composite default set is never consulted once one exists.
 #  31. Disk: a materialised Composite's DiskSpec.floor_pct replaces the bash/env default
 #      (SPIRA_DISK_FLOOR_PCT), so the same reading can gap under one and satisfy the other.
-#  32. Fleet: no ceiling declared, N partitions reported -> ONE escalation, not one per
-#      partition (an unobservable ceiling is one cause, not N; N incident.sh filings on a
-#      real fleet can outrun the reconciler oneshot's own timeout).
+#
+# Unit tests in reconciler/src/main.rs cover what config cannot express here: no Fleet ceiling
+# at all (SPIRA_MAX_LIVE_AEONS is a u32 that always resolves) is unobservable, never satisfied,
+# and is ONE escalation however many partitions report.
 #
 #  33. Junk rows: a READY lifecycle row whose id is no bead in the store is dropped through
 #      spira-lc with the evidence; a row whose bead exists is untouched; an unreadable
@@ -67,19 +69,13 @@
 # on a healthy fixture before 4-9 and 11-17 add the trigger and assert it does.
 #
 # tier: T2
-# covers: reconciler/src/*.rs reconciler-engine/src/**.rs desired-state/src/store.rs
-#         desired-state/src/resource.rs spira/reconciler.sh
-#         spira/units-manifest.sh spira/fleet-status.sh spira/queue-certified-list.sh
-#         spira/disk-usage.sh spira/disk-remedy.sh
-#         spira/conf.sh cockpit/ops/src/layout.rs
+# covers: reconciler/src/main.rs reconciler-engine/src/**.rs desired-state/src/store.rs
+#         desired-state/src/resource.rs spira/conf.sh cockpit/ops/src/layout.rs
 #         systemd/spira-reconciler.service systemd/spira-reconciler.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
-
-RECONCILER_SH="$HERE/reconciler.sh"
-[ -x "$RECONCILER_SH" ] || bail "reconciler.sh not found or not executable: $RECONCILER_SH"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
@@ -121,16 +117,18 @@ desired_state_clear() {
 }
 
 # ------------------------------------------------------------------------------------------
-# Stubs. Every IO seam the reconciler shells out to is overridden with a small script this
-# suite controls — no real systemctl/tmux/git/queue is ever touched (law-run-the-suite-in-a-container
-# notwithstanding: this is the "explicit, minimal environment" half of that rule).
+# Stubs. The reconciler runs every tool by bare name, so each IO seam is a small script of
+# that name in STUB_BIN, which rpass() puts ahead of the real PATH for the pass alone — no
+# real systemctl/tmux/git/queue is ever touched, and there is no environment seam to set.
 # ------------------------------------------------------------------------------------------
+
+STUB_BIN="$T/stub-bin"; mkdir -p "$STUB_BIN"
+rpass() { PATH="$STUB_BIN:$PATH" reconciler --pass >/dev/null 2>&1; }
 
 SYSTEMCTL_STATE="$T/systemctl-state"   # "<unit> <enabled|disabled> <active|inactive>" per line
 SYSTEMCTL_CALLS="$T/systemctl-calls.log"
 : > "$SYSTEMCTL_STATE"; : > "$SYSTEMCTL_CALLS"
-STUB_SYSTEMCTL="$T/systemctl"
-cat > "$STUB_SYSTEMCTL" <<'SEOF'
+cat > "$STUB_BIN/systemctl" <<'SEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SYSTEMCTL_CALLS"
 args=("$@"); args=("${args[@]:1}")   # drop --user
@@ -150,13 +148,12 @@ case "$verb" in
     *) exit 0 ;;
 esac
 SEOF
-chmod +x "$STUB_SYSTEMCTL"
-export SPIRA_SYSTEMCTL="$STUB_SYSTEMCTL" SYSTEMCTL_STATE SYSTEMCTL_CALLS
+chmod +x "$STUB_BIN/systemctl"
+export SYSTEMCTL_STATE SYSTEMCTL_CALLS
 
 TMUX_STATE="$T/tmux-state"   # controls has-session/list-panes responses
 : > "$TMUX_STATE"
-STUB_TMUX="$T/tmux"
-cat > "$STUB_TMUX" <<'TEOF'
+cat > "$STUB_BIN/tmux" <<'TEOF'
 #!/usr/bin/env bash
 case "$1" in
     list-sessions) grep -q '^server=down$' "$TMUX_STATE" 2>/dev/null && exit 1; exit 0 ;;
@@ -165,15 +162,14 @@ case "$1" in
     *) exit 0 ;;
 esac
 TEOF
-chmod +x "$STUB_TMUX"
-export SPIRA_TMUX="$STUB_TMUX" TMUX_STATE
+chmod +x "$STUB_BIN/tmux"
+export TMUX_STATE
 
 GIT_BRANCH_STATE="$T/git-branch"     # branch name for `rev-parse --abbrev-ref HEAD`
 MERGE_STATE="$T/git-merge-state"     # "clean" or "conflict"
 echo main > "$GIT_BRANCH_STATE"
 echo clean > "$MERGE_STATE"
-STUB_GIT="$T/git"
-cat > "$STUB_GIT" <<'GEOF'
+cat > "$STUB_BIN/git" <<'GEOF'
 #!/usr/bin/env bash
 case " $* " in
     *" --abbrev-ref "*) cat "$GIT_BRANCH_STATE"; exit 0 ;;
@@ -187,79 +183,100 @@ case " $* " in
 esac
 exit 0
 GEOF
-chmod +x "$STUB_GIT"
-export SPIRA_GIT="$STUB_GIT" GIT_BRANCH_STATE MERGE_STATE
+chmod +x "$STUB_BIN/git"
+export GIT_BRANCH_STATE MERGE_STATE
 
 UNITS_LIST="$T/units-list"
 : > "$UNITS_LIST"
-STUB_UNITS_MANIFEST="$T/units-manifest.sh"
-printf '#!/usr/bin/env bash\ncat "%s"\n' "$UNITS_LIST" > "$STUB_UNITS_MANIFEST"
-chmod +x "$STUB_UNITS_MANIFEST"
-export SPIRA_UNITS_MANIFEST_SH="$STUB_UNITS_MANIFEST"
+printf '#!/usr/bin/env bash\n[ "$1" = "--list-enable" ] && cat "%s"\n' "$UNITS_LIST" > "$STUB_BIN/units-install"
+chmod +x "$STUB_BIN/units-install"
 
+# FLEET_LINES: "<labels>\t<ready>\t<live>\t<is-task>" per partition (a missing 4th column
+# means task). The chamber, the claimable-work count and the live-aeon count are three tools,
+# so three stubs read this one fixture; a partition's fayth is its labels with commas as "_".
 FLEET_LINES="$T/fleet-lines"
-printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
-STUB_FLEET_STATUS="$T/fleet-status.sh"
-printf '#!/usr/bin/env bash\ncat "%s"\n' "$FLEET_LINES" > "$STUB_FLEET_STATUS"
-chmod +x "$STUB_FLEET_STATUS"
-export SPIRA_FLEET_STATUS_SH="$STUB_FLEET_STATUS"
+: > "$FLEET_LINES"
+cat > "$STUB_BIN/spira-config" <<'FEOF'
+#!/usr/bin/env bash
+fayth_of() { printf 'p-%s' "${1//,/_}"; }
+case "$1 $2" in
+    "fayth partitions") awk -F'\t' 'NF>=3{print $1"\t"}' "$FLEET_LINES" ;;
+    "fayth task") awk -F'\t' 'NF>=3 && ($4==""||$4==1){gsub(",","_",$1); printf "p-%s ", $1}' "$FLEET_LINES" ;;
+    "fayth lane") awk -F'\t' 'NF>=3 && $4=="0"{gsub(",","_",$1); printf "p-%s ", $1}' "$FLEET_LINES" ;;
+    "fayth for-labels") fayth_of "$3"; echo ;;
+    "repo landref") echo "origin/main" ;;
+    *) exit 1 ;;
+esac
+FEOF
+cat > "$STUB_BIN/spira-claim" <<'FEOF'
+#!/usr/bin/env bash
+[ "$1" = "ready-count" ] || exit 1
+awk -F'\t' -v l="$2" '$1==l{print $2; found=1} END{if(!found)print 0}' "$FLEET_LINES"
+FEOF
+cat > "$STUB_BIN/strand" <<'FEOF'
+#!/usr/bin/env bash
+[ "$1" = "aeon-count" ] || exit 1
+awk -F'\t' -v f="$2" '{l=$1; gsub(",","_",l); if("p-" l==f){print $3; found=1}} END{if(!found)print 0}' "$FLEET_LINES"
+FEOF
+chmod +x "$STUB_BIN/spira-config" "$STUB_BIN/spira-claim" "$STUB_BIN/strand"
+export FLEET_LINES
 
-CERTIFIED_LINES="$T/certified-lines"
+CERTIFIED_LINES="$T/certified-lines"   # "<bead-id> <tip> <epoch>" per certified bead
 : > "$CERTIFIED_LINES"
-STUB_CERTIFIED_LIST="$T/queue-certified-list.sh"
-printf '#!/usr/bin/env bash\ncat "%s"\n' "$CERTIFIED_LINES" > "$STUB_CERTIFIED_LIST"
-chmod +x "$STUB_CERTIFIED_LIST"
-export SPIRA_QUEUE_CERTIFIED_LIST_SH="$STUB_CERTIFIED_LIST"
+printf '#!/usr/bin/env bash\n[ "$1" = "certified-list" ] && cat "%s"\n' "$CERTIFIED_LINES" > "$STUB_BIN/queue-helpers"
+chmod +x "$STUB_BIN/queue-helpers"
 
 COCKPIT_CALLS="$T/cockpit-calls.log"
 : > "$COCKPIT_CALLS"
-STUB_COCKPIT_SH="$T/cockpit.sh"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$COCKPIT_CALLS" > "$STUB_COCKPIT_SH"
-chmod +x "$STUB_COCKPIT_SH"
-export SPIRA_COCKPIT_SH="$STUB_COCKPIT_SH"
+for tool in rebuild layout; do
+    printf '#!/usr/bin/env bash\nprintf "%s %%s\\n" "$*" >> "%s"\n' "$tool" "$COCKPIT_CALLS" > "$STUB_BIN/$tool"
+    chmod +x "$STUB_BIN/$tool"
+done
 
-DISK_LINES="$T/disk-lines"        # "<path>\t<free-pct-or-ERR>" per line, cat'd verbatim
+DISK_LINES="$T/disk-lines"        # "<path>\t<free-pct>" per line; a path not listed is unreadable
 : > "$DISK_LINES"
 DISK_USAGE_CALLS="$T/disk-usage-calls.log"
 : > "$DISK_USAGE_CALLS"
-STUB_DISK_USAGE="$T/disk-usage.sh"
-cat > "$STUB_DISK_USAGE" <<'DUEOF'
+cat > "$STUB_BIN/df" <<'DUEOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$DISK_USAGE_CALLS"
-cat "$DISK_LINES"
+path="${!#}"
+printf '%s\n' "$path" >> "$DISK_USAGE_CALLS"
+pct="$(awk -F'\t' -v p="$path" '$1==p{print $2}' "$DISK_LINES")"
+[ -n "$pct" ] || { echo "df: $path: No such file or directory" >&2; exit 1; }
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 100 %s %s 0%% %s\n' "$((100 - pct))" "$pct" "$path"
 DUEOF
-chmod +x "$STUB_DISK_USAGE"
-export SPIRA_DISK_USAGE_SH="$STUB_DISK_USAGE" DISK_LINES DISK_USAGE_CALLS
+chmod +x "$STUB_BIN/df"
+export DISK_LINES DISK_USAGE_CALLS
 
 DISK_REMEDY_CALLS="$T/disk-remedy-calls.log"
 : > "$DISK_REMEDY_CALLS"
-STUB_DISK_REMEDY="$T/disk-remedy.sh"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$DISK_REMEDY_CALLS" > "$STUB_DISK_REMEDY"
-chmod +x "$STUB_DISK_REMEDY"
-export SPIRA_DISK_REMEDY_SH="$STUB_DISK_REMEDY"
+printf '#!/usr/bin/env bash\nprintf "target-reap %%s\\n" "$*" >> "%s"\n' "$DISK_REMEDY_CALLS" > "$STUB_BIN/target-reap"
+cat > "$STUB_BIN/podman" <<'POEOF'
+#!/usr/bin/env bash
+[ "$1" = "info" ] && exit 0
+printf 'podman %s\n' "$*" >> "$DISK_REMEDY_CALLS"
+POEOF
+chmod +x "$STUB_BIN/target-reap" "$STUB_BIN/podman"
+export DISK_REMEDY_CALLS
 
 QUEUE_CALLS="$T/queue-calls.log"
 : > "$QUEUE_CALLS"
-STUB_QUEUE_DIR="$T/stub-queue"; mkdir -p "$STUB_QUEUE_DIR"
-STUB_QUEUE_BIN="$STUB_QUEUE_DIR/queue"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$QUEUE_CALLS" > "$STUB_QUEUE_BIN"
-chmod +x "$STUB_QUEUE_BIN"
-export PATH="$STUB_QUEUE_DIR:$PATH"   # the reconciler calls queue by name
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$QUEUE_CALLS" > "$STUB_BIN/queue"
+chmod +x "$STUB_BIN/queue"
 
-INC_LOG="$T/incident-calls.log"
-: > "$INC_LOG"
-STUB_INC="$T/incident.sh"
-cat > "$STUB_INC" <<'IEOF'
+# Stub mail: an escalation is one `send concierge` whose body carries "invariant: <key>".
+MAIL_LOG="$T/mail-calls.log"
+: > "$MAIL_LOG"
+cat > "$STUB_BIN/mail" <<'IEOF'
 #!/usr/bin/env bash
-cat >/dev/null
-printf 'cause=%s ref=%s\n' "${SPIRA_INCIDENT_CAUSE:-}" "${SPIRA_INCIDENT_REF:-}" >> "$INC_LOG"
-exit 0
+[ "$1" = "send" ] && [ "$2" = "concierge" ] || exit 1
+{ printf 'CALL %s\n' "$*"; cat; printf '\n---\n'; } >> "$MAIL_LOG"
 IEOF
-chmod +x "$STUB_INC"
-export SPIRA_INCIDENT_SH="$STUB_INC" INC_LOG
+chmod +x "$STUB_BIN/mail"
+export MAIL_LOG
 
 export SPIRA_REPO_MAP="$T/repo-map"
-tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_DOLT_DATA=/var/lib/dolt
 printf 'testrepo | %s | queue | origin/main | | \n' "$T/repo" > "$SPIRA_REPO_MAP"
 mkdir -p "$T/repo"
 # queue_repo_names walks $SPIRA_RUN/queue/*/ — the Queue checks only ever look at a repo
@@ -268,7 +285,7 @@ mkdir -p "$T/repo"
 mkdir -p "$SPIRA_RUN/queue/testrepo"
 
 LC_CALLS="$T/lc-calls.log"; BD_JSON="$T/bd-json"; LC_ROWS="$T/lc-rows"
-STUB_LC="$T/spira-lc"; STUB_BD="$T/bd"
+STUB_LC="$STUB_BIN/spira-lc"; STUB_BD="$T/bd"
 cat > "$STUB_LC" <<'LEOF'
 #!/usr/bin/env bash
 case "$1" in
@@ -281,14 +298,14 @@ cat > "$STUB_BD" <<'BEOF'
 cat "$BD_JSON"; [ -f "$BD_JSON.fail" ] && exit 1; exit 0
 BEOF
 chmod +x "$STUB_LC" "$STUB_BD"
-export SPIRA_LC_BIN="$STUB_LC" SPIRA_BD="$STUB_BD" LC_CALLS BD_JSON LC_ROWS
+export SPIRA_BD="$STUB_BD" LC_CALLS BD_JSON LC_ROWS
 tl_config SPIRA_BD="$STUB_BD"
 : > "$LC_CALLS"; printf '[{"id":"sp-real"}]\n' > "$BD_JSON"; printf '[]\n' > "$LC_ROWS"
 
 reset_state() {
-    rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/tsd/reconciler-status.jsonl" \
-          "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
-    : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$INC_LOG"
+    rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/reconciler-alerted.json" \
+          "$SPIRA_RUN/tsd/reconciler-status.jsonl" "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
+    : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$MAIL_LOG"
     : > "$DISK_USAGE_CALLS"; : > "$DISK_REMEDY_CALLS"
     desired_state_clear
 }
@@ -300,13 +317,11 @@ status_jsonl() { cat "$SPIRA_RUN/tsd/reconciler-status.jsonl" 2>/dev/null || tru
 printf 'test-reconciler.sh\n'
 
 # ==========================================================================================
-printf '\n%s\n' "1. reconciler.sh exists, executable, budget"
+printf '\n%s\n' "1. reconciler is on PATH, and a pass completes inside its budget"
 # ==========================================================================================
-[ -f "$RECONCILER_SH" ] && ok "reconciler.sh exists" || bad "reconciler.sh missing"
-[ -x "$RECONCILER_SH" ] && ok "reconciler.sh is executable" || bad "reconciler.sh not executable"
 reset_state
 _t0="$(date +%s)"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 _t1="$(date +%s)"
 [ $((_t1-_t0)) -lt 10 ] && ok "pass completed in $((_t1-_t0))s (budget: 10s)" || bad "pass exceeded budget"
 
@@ -315,7 +330,7 @@ printf '\n%s\n' "2. flock: concurrent pass is skipped"
 # ==========================================================================================
 _lock="$SPIRA_RUN/reconciler.lock"
 exec 9>"$_lock"; flock 9
-_out="$(reconciler.sh --pass 2>&1 || true)"
+_out="$(PATH="$STUB_BIN:$PATH" reconciler --pass 2>&1 || true)"
 exec 9>&-
 want "concurrent pass logs 'already running'" "already running" "$_out"
 
@@ -332,10 +347,10 @@ spira-sentinel.timer enabled active
 spira-loom-prod.service enabled active
 dolt-beads.service enabled active
 EOF
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 _calls="$(cat "$SYSTEMCTL_CALLS")"
 lack "no enable/restart calls when everything is healthy" "enable" "$(grep -v is- <<<"$_calls" || true)"
-[ ! -s "$INC_LOG" ] && ok "no incident filed when everything is healthy" || bad "unexpected incident: $(cat "$INC_LOG")"
+[ ! -s "$MAIL_LOG" ] && ok "no incident filed when everything is healthy" || bad "unexpected incident: $(cat "$MAIL_LOG")"
 
 # ==========================================================================================
 printf '\n%s\n' "4. Units: disabled timers each get enable --now"
@@ -347,7 +362,7 @@ a.timer disabled inactive
 b.timer disabled inactive
 c.timer disabled inactive
 EOF
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 _n="$(grep -c -- '--user enable --now' "$SYSTEMCTL_CALLS" || true)"
 is "3 disabled timers each get enable --now" "3" "$_n"
 want "status jsonl records a gap for a.timer" '"key":"units-timer:a.timer"' "$(status_jsonl)"
@@ -358,7 +373,7 @@ printf '\n%s\n' "5. Units: active-but-not-enabled daemon gets enable, never --no
 reset_state
 printf 'spira-loom-prod.service\n' > "$UNITS_LIST"
 printf 'spira-loom-prod.service disabled active\n' > "$SYSTEMCTL_STATE"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "enable is called" "--user enable spira-loom-prod.service" "$(cat "$SYSTEMCTL_CALLS")"
 lack "restart is never called for an active daemon" "restart" "$(cat "$SYSTEMCTL_CALLS")"
 lack "--now is never used on a running daemon" "enable --now spira-loom-prod" "$(cat "$SYSTEMCTL_CALLS")"
@@ -369,7 +384,7 @@ printf '\n%s\n' "6. Units: an inactive daemon gets restarted"
 reset_state
 printf 'spira-loom-prod.service\n' > "$UNITS_LIST"
 printf 'spira-loom-prod.service enabled inactive\n' > "$SYSTEMCTL_STATE"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "restart is called on an inactive daemon" "--user restart spira-loom-prod.service" "$(cat "$SYSTEMCTL_CALLS")"
 
 # ==========================================================================================
@@ -378,32 +393,33 @@ printf '\n%s\n' "7. Store: dolt-beads is never restarted, only escalated"
 reset_state
 printf 'dolt-beads.service\n' > "$UNITS_LIST"
 printf 'dolt-beads.service disabled inactive\n' > "$SYSTEMCTL_STATE"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 _calls="$(cat "$SYSTEMCTL_CALLS")"
 lack "no restart of dolt-beads" "restart dolt-beads" "$_calls"
 lack "no enable of dolt-beads" "enable --now dolt-beads" "$_calls"
 lack "no plain enable of dolt-beads" "enable dolt-beads" "$_calls"
-want "dolt-beads down escalates" "cause=store:dolt-beads.service" "$(cat "$INC_LOG")"
+want "dolt-beads down escalates" "invariant: store:dolt-beads.service" "$(cat "$MAIL_LOG")"
 
 # ==========================================================================================
 printf '\n%s\n' "8. Fleet: 3 live ceiling, 150 ready, 0 live -> gap, escalate, no remedy"
 # ==========================================================================================
 reset_state
 : > "$UNITS_LIST"
-printf 'builder\t150\t0\nTOTAL\t3\t0\n' > "$FLEET_LINES"
-reconciler.sh --pass >/dev/null 2>&1
-want "fleet gap escalates" "cause=fleet:builder" "$(cat "$INC_LOG")"
+printf 'builder\t150\t0\n' > "$FLEET_LINES"
+tl_config SPIRA_MAX_LIVE_AEONS=3 SPIRA_MAX_AEONS=6
+rpass
+want "fleet gap escalates" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
 want "status jsonl records desired=3 observed=0" '"desired":"3","observed":"0"' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "9. Fleet: SPIRA_MAX_LIVE_AEONS unset -> unobservable, never satisfied"
+printf '\n%s\n' "9. Fleet, POSITIVE CONTROL: live meets the desired -> satisfied, no escalation"
 # ==========================================================================================
 reset_state
-printf 'builder\t150\t0\nTOTAL\t\t0\n' > "$FLEET_LINES"
-reconciler.sh --pass >/dev/null 2>&1
-want "fleet with no ceiling is unobservable" '"status":"unobservable"' "$(status_jsonl)"
-lack "unobservable fleet is never reported satisfied" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
-printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
+printf 'builder\t2\t2\n' > "$FLEET_LINES"
+rpass
+want "a fully staffed partition is satisfied" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
+[ ! -s "$MAIL_LOG" ] && ok "no escalation for a staffed fleet" || bad "unexpected escalation: $(cat "$MAIL_LOG")"
+: > "$FLEET_LINES"
 
 # ==========================================================================================
 printf '\n%s\n' "10. Cockpit, POSITIVE CONTROL: sessions + both dashboards present"
@@ -413,7 +429,7 @@ cat > "$TMUX_STATE" <<'EOF'
 tag=health
 tag=mail
 EOF
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 [ ! -s "$COCKPIT_CALLS" ] && ok "no cockpit repair when dashboards are present" || bad "unexpected cockpit call: $(cat "$COCKPIT_CALLS")"
 
 # ==========================================================================================
@@ -421,16 +437,23 @@ printf '\n%s\n' "11. Cockpit: no dashboards, no down marker -> gap -> repair run
 # ==========================================================================================
 reset_state
 : > "$TMUX_STATE"
-reconciler.sh --pass >/dev/null 2>&1
-want "cockpit.sh --no-attach is run to repair" "--no-attach" "$(cat "$COCKPIT_CALLS")"
+rpass
+want "layout ensure heals a cockpit whose dashboards are missing" "layout ensure" "$(cat "$COCKPIT_CALLS")"
+lack "rebuild is not run while the server and sessions are up" "rebuild" "$(cat "$COCKPIT_CALLS")"
+
+reset_state
+printf 'server=down\n' > "$TMUX_STATE"
+rpass
+want "rebuild makes a cockpit when the tmux server is gone" "rebuild" "$(cat "$COCKPIT_CALLS")"
+lack "layout ensure cannot create a cockpit, so it is not the remedy for no server" "layout" "$(cat "$COCKPIT_CALLS")"
 
 # ==========================================================================================
-printf '\n%s\n' "12. Cockpit: layout.sh down marker present -> satisfied, no repair"
+printf '\n%s\n' "12. Cockpit: layout down marker present -> satisfied, no repair"
 # ==========================================================================================
 reset_state
 : > "$TMUX_STATE"
 : > "$SPIRA_RUN/cockpit.down"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 [ ! -s "$COCKPIT_CALLS" ] && ok "a deliberate down is never repaired" || bad "unexpected cockpit call: $(cat "$COCKPIT_CALLS")"
 want "status jsonl reports satisfied while down" '"key":"cockpit","status":"satisfied"' "$(status_jsonl)"
 rm -f "$SPIRA_RUN/cockpit.down"
@@ -440,33 +463,33 @@ printf '\n%s\n' "13. Release: non-main branch, no activated release -> gap, esca
 # ==========================================================================================
 reset_state
 echo "feature-x" > "$GIT_BRANCH_STATE"
-reconciler.sh --pass >/dev/null 2>&1
-want "release gap escalates" "cause=release" "$(cat "$INC_LOG")"
+rpass
+want "release gap escalates" "invariant: release" "$(cat "$MAIL_LOG")"
 
 # ==========================================================================================
 printf '\n%s\n' "14. Release: checkout on main -> satisfied"
 # ==========================================================================================
 reset_state
 echo "main" > "$GIT_BRANCH_STATE"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "status jsonl reports release satisfied on main" '"key":"release","status":"satisfied"' "$(status_jsonl)"
 
 # ==========================================================================================
 printf '\n%s\n' "15. Queue: a certified branch that no longer merges -> gap -> eject"
 # ==========================================================================================
 reset_state
-echo "sp-abc123 spira/sp-abc123 origin/main" > "$CERTIFIED_LINES"
+echo "sp-abc123 deadbeef 1" > "$CERTIFIED_LINES"
 echo "conflict" > "$MERGE_STATE"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "queue eject is run for the unmergeable branch" "eject sp-abc123" "$(cat "$QUEUE_CALLS")"
 
 # ==========================================================================================
 printf '\n%s\n' "16. Queue: a certified branch that still merges cleanly -> satisfied"
 # ==========================================================================================
 reset_state
-echo "sp-abc123 spira/sp-abc123 origin/main" > "$CERTIFIED_LINES"
+echo "sp-abc123 deadbeef 1" > "$CERTIFIED_LINES"
 echo "clean" > "$MERGE_STATE"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 [ ! -s "$QUEUE_CALLS" ] && ok "no eject for a branch that still merges" || bad "unexpected eject: $(cat "$QUEUE_CALLS")"
 : > "$CERTIFIED_LINES"
 
@@ -487,8 +510,8 @@ touch -d "@$(( $(date +%s) - 10 ))" "$_lockfile"
 ( exec 9<>"$_lockfile"; flock 9; sleep 5 ) &
 _holder=$!
 sleep 0.3
-reconciler.sh --pass >/dev/null 2>&1
-want "a held, stale lock escalates" "cause=queue-lock-age:testrepo" "$(cat "$INC_LOG")"
+rpass
+want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
 wait "$_holder" 2>/dev/null || true
 rm -f "$_lockfile"
 unset SPIRA_PREFLIGHT_WALL_SECS
@@ -504,9 +527,9 @@ tl_config SPIRA_RECONCILER_GRACE_SECS=300
 reset_state
 printf 'a.timer\n' > "$UNITS_LIST"
 printf 'a.timer disabled inactive\n' > "$SYSTEMCTL_STATE"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 lack "no remedy run inside the grace period" "enable --now" "$(cat "$SYSTEMCTL_CALLS")"
-[ ! -s "$INC_LOG" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(cat "$INC_LOG")"
+[ ! -s "$MAIL_LOG" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(cat "$MAIL_LOG")"
 want "the gap is still recorded in the time series" '"key":"units-timer:a.timer","status":"gap"' "$(status_jsonl)"
 export SPIRA_RECONCILER_GRACE_SECS=0
 tl_config SPIRA_RECONCILER_GRACE_SECS=0
@@ -517,7 +540,7 @@ printf '\n%s\n' "19. Unobservable: systemctl unreadable -> unobservable, never s
 reset_state
 printf 'z.timer\n' > "$UNITS_LIST"
 : > "$SYSTEMCTL_STATE"   # no row for z.timer: the stub reports "unreadable" and exits 1
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "z.timer reports unobservable" '"key":"units:z.timer","status":"unobservable"' "$(status_jsonl)"
 lack "unobservable is never reported satisfied" '"key":"units:z.timer","status":"satisfied"' "$(status_jsonl)"
 
@@ -529,21 +552,22 @@ printf 'r.timer\n' > "$UNITS_LIST"
 # The stub's canned response never changes: enable --now is attempted but the unit stays
 # disabled/inactive on every subsequent read, exactly like a unit whose enable is masked.
 printf 'r.timer disabled inactive\n' > "$SYSTEMCTL_STATE"
-reconciler.sh --pass >/dev/null 2>&1   # pass 1: remedy attempted
+rpass   # pass 1: remedy attempted
 _n1="$(grep -c -- '--user enable --now r.timer' "$SYSTEMCTL_CALLS" || true)"
 is "pass 1 attempts the remedy once" "1" "$_n1"
-[ ! -s "$INC_LOG" ] && ok "pass 1 does not escalate yet" || bad "pass 1 escalated early: $(cat "$INC_LOG")"
+[ ! -s "$MAIL_LOG" ] && ok "pass 1 does not escalate yet" || bad "pass 1 escalated early: $(cat "$MAIL_LOG")"
 
-reconciler.sh --pass >/dev/null 2>&1   # pass 2: still a gap
+rpass   # pass 2: still a gap
 _n2="$(grep -c -- '--user enable --now r.timer' "$SYSTEMCTL_CALLS" || true)"
 is "pass 2 does not retry the remedy blind" "1" "$_n2"
-want "pass 2 escalates instead" "cause=units-timer:r.timer" "$(cat "$INC_LOG")"
+want "pass 2 escalates instead" "invariant: units-timer:r.timer" "$(cat "$MAIL_LOG")"
 
 # ==========================================================================================
-printf '\n%s\n' "21. Fleet: a materialised Composite's ceiling is read instead of fleet-status.sh's own SPIRA_MAX_LIVE_AEONS column"
+printf '\n%s\n' "21. Fleet: a materialised Composite's ceiling is read instead of the configured SPIRA_MAX_LIVE_AEONS"
 # ==========================================================================================
 reset_state
-printf 'TOTAL\t\t0\nbuilder\t5\t0\n' > "$FLEET_LINES"   # empty TOTAL column: fleet-status.sh itself has no ceiling
+printf 'builder\t5\t0\n' > "$FLEET_LINES"
+tl_config SPIRA_MAX_LIVE_AEONS=9   # the configured ceiling would desire 5 live; the Composite's 3 must win
 desired_state_write \
 '[[resource]]
 apiVersion = "spira/v1"
@@ -554,15 +578,16 @@ name = "fleet"
 [resource.spec]
 ceiling = 3
 lane_cap = 1'
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 lack "the Composite's ceiling makes this observable, not unobservable" '"key":"fleet:builder","status":"unobservable"' "$(status_jsonl)"
-want "fleet gap escalates against the Composite's ceiling" "cause=fleet:builder" "$(cat "$INC_LOG")"
+want "the desired live count is bounded by the Composite's ceiling, not the configured one" '"desired":"3","observed":"0"' "$(status_jsonl)"
+want "fleet gap escalates against the Composite's ceiling" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
 
 # ==========================================================================================
-printf '\n%s\n' "22. Units: a materialised Composite's UnitsSpec names the unit set instead of units-manifest.sh"
+printf '\n%s\n' "22. Units: a materialised Composite's UnitsSpec names the unit set instead of the installer's ENABLE set"
 # ==========================================================================================
 reset_state
-printf 'wrong.service\n' > "$UNITS_LIST"    # units-manifest.sh's own list — must be ignored
+printf 'wrong.service\n' > "$UNITS_LIST"    # the installer's own ENABLE list — must be ignored
 printf 'right.service enabled active\n' > "$SYSTEMCTL_STATE"
 desired_state_write \
 '[[resource]]
@@ -575,8 +600,8 @@ name = "units"
 name = "right.service"
 enabled = true
 active = true'
-reconciler.sh --pass >/dev/null 2>&1
-lack "units-manifest.sh's own unit is never checked" "wrong.service" "$(cat "$SYSTEMCTL_CALLS")"
+rpass
+lack "the installer's own unit is never checked" "wrong.service" "$(cat "$SYSTEMCTL_CALLS")"
 want "the Composite's unit is checked and satisfied" '"key":"units-daemon:right.service","status":"satisfied"' "$(status_jsonl)"
 
 # ==========================================================================================
@@ -595,8 +620,8 @@ producer = "test"
 name = "cockpit"
 [resource.spec]
 dashboards = ["queue"]'
-reconciler.sh --pass >/dev/null 2>&1
-want "health alone no longer satisfies once the Composite asks for queue" "--no-attach" "$(cat "$COCKPIT_CALLS")"
+rpass
+want "health alone no longer satisfies once the Composite asks for queue" "layout ensure" "$(cat "$COCKPIT_CALLS")"
 
 reset_state
 cat > "$TMUX_STATE" <<'TEOF'
@@ -611,7 +636,7 @@ producer = "test"
 name = "cockpit"
 [resource.spec]
 dashboards = ["queue"]'
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 [ ! -s "$COCKPIT_CALLS" ] && ok "queue alone satisfies the Composite's own dashboard list" || bad "unexpected cockpit call: $(cat "$COCKPIT_CALLS")"
 
 # ==========================================================================================
@@ -629,8 +654,8 @@ name = "release"
 [resource.spec]
 release = "v9"
 allow_override = false'
-reconciler.sh --pass >/dev/null 2>&1
-want "a non-main checkout not at the declared release still gaps and escalates" "cause=release" "$(cat "$INC_LOG")"
+rpass
+want "a non-main checkout not at the declared release still gaps and escalates" "invariant: release" "$(cat "$MAIL_LOG")"
 
 reset_state
 echo "feature-x" > "$GIT_BRANCH_STATE"
@@ -644,27 +669,29 @@ name = "release"
 [resource.spec]
 release = "v9"
 allow_override = true'
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "allow_override lets a local override satisfy — a deliberate state is not a fault" '"key":"release","status":"satisfied"' "$(status_jsonl)"
 
 # ==========================================================================================
 printf '\n%s\n' "25. Fleet: SPIRA_MAX_AEONS=0 satisfies a starved task partition, not a gap"
 # ==========================================================================================
 reset_state
-printf 'builder\t150\t0\t1\nTOTAL\t3\t0\t0\n' > "$FLEET_LINES"   # pool column: 0 == deliberately paused
-reconciler.sh --pass >/dev/null 2>&1
+printf 'builder\t150\t0\t1\n' > "$FLEET_LINES"
+tl_config SPIRA_MAX_LIVE_AEONS=3 SPIRA_MAX_AEONS=0   # pool 0 == deliberately paused
+rpass
 want "a deliberately paused task pool satisfies the builder partition" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
-lack "no escalation while the pool is deliberately paused" "cause=fleet:builder" "$(cat "$INC_LOG")"
+lack "no escalation while the pool is deliberately paused" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
 
 # ==========================================================================================
 printf '\n%s\n' "26. Fleet: the pool-at-0 carve-out does not cover a lane partition"
 # ==========================================================================================
 reset_state
-printf 'ops\t5\t0\t0\nTOTAL\t3\t0\t0\n' > "$FLEET_LINES"   # is-task=0: ops draws outside SPIRA_MAX_AEONS
-reconciler.sh --pass >/dev/null 2>&1
+printf 'ops\t5\t0\t0\n' > "$FLEET_LINES"   # is-task=0: ops draws outside SPIRA_MAX_AEONS
+rpass
 want "a starved lane partition still gaps while the task pool is paused" '"key":"fleet:ops","status":"gap"' "$(status_jsonl)"
-want "a starved lane partition still escalates while the task pool is paused" "cause=fleet:ops" "$(cat "$INC_LOG")"
-printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
+want "a starved lane partition still escalates while the task pool is paused" "invariant: fleet:ops" "$(cat "$MAIL_LOG")"
+: > "$FLEET_LINES"
+tl_config SPIRA_MAX_AEONS=6
 
 # ==========================================================================================
 printf '\n%s\n' "27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy"
@@ -673,27 +700,40 @@ reset_state
 : > "$UNITS_LIST"          # 22 left "wrong.service" here, unread by any systemctl fixture since
 echo main > "$GIT_BRANCH_STATE"   # 24 left this on "feature-x" — a positive control must not inherit it
 printf '/\t40\n/var/lib/dolt\t62\n' > "$DISK_LINES"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 [ ! -s "$DISK_REMEDY_CALLS" ] && ok "no disk remedy when every path is above its floor" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
 want "status jsonl reports / satisfied" '"key":"disk:/","status":"satisfied"' "$(status_jsonl)"
-[ ! -s "$INC_LOG" ] && ok "no incident filed when every path is healthy" || bad "unexpected incident: $(cat "$INC_LOG")"
+[ ! -s "$MAIL_LOG" ] && ok "no incident filed when every path is healthy" || bad "unexpected incident: $(cat "$MAIL_LOG")"
 
 # ==========================================================================================
-printf '\n%s\n' "28. Disk: a path below the floor -> gap -> disk-remedy.sh run"
+printf '\n%s\n' "28. Disk: a path below the floor -> gap -> the remedy sequence runs"
 # ==========================================================================================
 reset_state
 printf '/\t4\n' > "$DISK_LINES"
-reconciler.sh --pass >/dev/null 2>&1
-_n="$(wc -l < "$DISK_REMEDY_CALLS" | tr -d ' ')"
-is "disk-remedy.sh is run exactly once for the breached path" "1" "$_n"
+rpass
+_calls="$(cat "$DISK_REMEDY_CALLS")"
+want "the landed worktrees' build output is reaped" "target-reap" "$_calls"
+want "dangling podman images are pruned" "podman image prune -f" "$_calls"
+want "unattached podman volumes are pruned" "podman volume prune -f" "$_calls"
+is "the remedy sequence runs once for the breached path" "3" "$(wc -l < "$DISK_REMEDY_CALLS" | tr -d ' ')"
 want "status jsonl records the gap" '"key":"disk:/","status":"gap","desired":">= 15% free","observed":"4% free"' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "29. Disk: an ERR row (path unreadable) -> unobservable, never satisfied, no remedy"
+printf '\n%s\n' "29. Disk: a Composite-named path df cannot read -> unobservable, never satisfied, no remedy"
 # ==========================================================================================
 reset_state
-printf '/no/such/path\tERR\n' > "$DISK_LINES"
-reconciler.sh --pass >/dev/null 2>&1
+: > "$DISK_LINES"   # df cannot read /no/such/path
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Disk"
+producer = "test"
+[resource.metadata]
+name = "disk"
+[resource.spec]
+floor_pct = 15
+paths = ["/no/such/path"]'
+rpass
 want "status jsonl reports unobservable" '"key":"disk:/no/such/path","status":"unobservable"' "$(status_jsonl)"
 lack "unobservable disk path is never reported satisfied" '"key":"disk:/no/such/path","status":"satisfied"' "$(status_jsonl)"
 [ ! -s "$DISK_REMEDY_CALLS" ] && ok "no remedy run for a path that cannot be read" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
@@ -713,8 +753,8 @@ name = "disk"
 [resource.spec]
 floor_pct = 15
 paths = ["/srv/custom"]'
-reconciler.sh --pass >/dev/null 2>&1
-want "disk-usage.sh is called with the Composite's own path" "/srv/custom" "$(cat "$DISK_USAGE_CALLS")"
+rpass
+want "df is asked about the Composite's own path" "/srv/custom" "$(cat "$DISK_USAGE_CALLS")"
 want "status jsonl reports the Composite's path satisfied" '"key":"disk:/srv/custom","status":"satisfied"' "$(status_jsonl)"
 
 # ==========================================================================================
@@ -732,18 +772,8 @@ name = "disk"
 [resource.spec]
 floor_pct = 25
 paths = ["/"]'
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "20% free gaps against a Composite floor of 25%, though it would satisfy the default 15%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
-
-# ==========================================================================================
-printf '\n%s\n' "32. Fleet: no ceiling, N partitions -> one escalation, not one per partition"
-# ==========================================================================================
-reset_state
-printf 'spira,plan\t150\t0\nops\t10\t0\nqa\t5\t0\nTOTAL\t\t0\n' > "$FLEET_LINES"
-reconciler.sh --pass >/dev/null 2>&1
-_n="$(grep -c 'cause=fleet' "$INC_LOG" || true)"
-is "an undeclared ceiling files one incident, not one per partition" "1" "$_n"
-printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
 
 # ==========================================================================================
 printf '\n%s\n' "33. Junk rows: a rowless READY id is dropped, a real bead's row is not"
@@ -751,12 +781,12 @@ printf '\n%s\n' "33. Junk rows: a rowless READY id is dropped, a real bead's row
 reset_state; : > "$LC_CALLS"; rm -f "$BD_JSON.fail"
 printf '[{"id":"sp-real"},{"id":"sp-other"}]\n' > "$BD_JSON"
 printf '[{"bead_id":"sp-real","state":"READY"},{"bead_id":"fixture key","state":"READY"}]\n' > "$LC_ROWS"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 want "the rowless READY id is dropped through spira-lc" "drop fixture key" "$(cat "$LC_CALLS")"
 lack "a real bead's row is untouched" "sp-real" "$(cat "$LC_CALLS")"
 
 reset_state; : > "$LC_CALLS"; touch "$BD_JSON.fail"
-reconciler.sh --pass >/dev/null 2>&1
+rpass
 lack "an unreadable store drops nothing" "drop" "$(cat "$LC_CALLS")"
 rm -f "$BD_JSON.fail"
 

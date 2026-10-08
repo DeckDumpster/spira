@@ -91,8 +91,10 @@ chmod +x "$STUB_FORGE"
 tl_config SPIRA_FORGE="$STUB_FORGE"
 export FORGE_LOG="$T/forge-calls.log"
 
-# Stub incident.sh: records cause and ref, exits 0
-STUB_INC="$T/incident.sh"
+# Stub incident: records cause and ref, exits 0. czar-pass runs it by bare name, so it is
+# found on PATH ahead of the release's own.
+STUB_BIN="$T/stub-bin"; mkdir -p "$STUB_BIN"
+STUB_INC="$STUB_BIN/incident"
 cat > "$STUB_INC" <<'IEOF'
 #!/usr/bin/env bash
 printf 'incident: cause=%s ref=%s subj=%s priority=%s labels=%s\n' \
@@ -101,7 +103,7 @@ printf 'incident: cause=%s ref=%s subj=%s priority=%s labels=%s\n' \
 exit 0
 IEOF
 chmod +x "$STUB_INC"
-export SPIRA_INCIDENT_SH="$STUB_INC"
+export PATH="$STUB_BIN:$PATH"
 export INC_LOG="$T/incident-calls.log"
 
 # Never actually summon an aeon
@@ -574,15 +576,15 @@ want "sort-failed: incident filed with cause=sort-failed" "cause=sort-failed" "$
 printf '\n%s\n' "25. LOOP-STALLED: no landing pass complete within the threshold"
 # ==========================================================================================
 # Stub systemctl so is-failed is deterministic: non-zero → inference branch, not det-restart.
-STUB_SC="$T/stub-systemctl.sh"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_SC"
-chmod +x "$STUB_SC"
+STUB_SC_BIN="$T/stub-systemctl-bin"; mkdir -p "$STUB_SC_BIN"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_SC_BIN/systemctl"
+chmod +x "$STUB_SC_BIN/systemctl"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
 _recent_ts="$(date -u -d '@'"$(( $(date +%s) - 100 ))" +%Y-%m-%dT%H:%M:%SZ)"
 printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
     "$_recent_ts" > "$SPIRA_RUN/landing.log"
-SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
+PATH="$STUB_SC_BIN:$PATH" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=no when last pass is 100s old (threshold 3000s)" \
     "CLASS=loop-stalled DETECTED=no" "$_log"
@@ -592,7 +594,7 @@ printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n'
     "$_old_ts" > "$SPIRA_RUN/landing.log"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
 tl_config SPIRA_CZAR_STAGE_LOOP_STALLED=act
-SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
+PATH="$STUB_SC_BIN:$PATH" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=yes when last pass is 4000s old (threshold 3000s)" \
@@ -698,7 +700,7 @@ printf '\n%s\n' "29. LOOP-STALLED: no log at all, a log with no pass-complete li
 # SPIRA_LOOP_STALL_SECS must actually change the outcome, not just exist in the allowlist.
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* \
       "$INC_LOG" "$SPIRA_RUN/landing.log"
-SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
+PATH="$STUB_SC_BIN:$PATH" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=no when landing.log does not exist" \
     "CLASS=loop-stalled DETECTED=no" "$_log"
@@ -706,7 +708,7 @@ want "loop-stalled: DETECTED=no when landing.log does not exist" \
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
 printf '%s spira: verdict spira: PR 72 red\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
+PATH="$STUB_SC_BIN:$PATH" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=no when the log has no 'pass complete' line" \
     "CLASS=loop-stalled DETECTED=no" "$_log"
@@ -716,7 +718,7 @@ _thresh_ts="$(date -u -d '@'"$(( $(date +%s) - 100 ))" +%Y-%m-%dT%H:%M:%SZ)"
 printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
     "$_thresh_ts" > "$SPIRA_RUN/landing.log"
 tl_config SPIRA_LOOP_STALL_SECS=50
-SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
+PATH="$STUB_SC_BIN:$PATH" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: configurable threshold — 100s age fires at threshold=50s" \
     "CLASS=loop-stalled DETECTED=yes" "$_log"

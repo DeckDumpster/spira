@@ -9,6 +9,7 @@
 
 use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
+use reconciler_engine::paths;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -43,13 +44,36 @@ fn main() -> ExitCode {
 // Configuration
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// Every program the pass runs, by name on the launcher's PATH. A test injects its own;
+/// nothing here is read from the environment.
+#[derive(Clone)]
+struct Seams {
+    incident: String,
+    forge: String,
+    systemctl: String,
+    spira_lc: String,
+    sentinel: String,
+}
+
+impl Seams {
+    fn production() -> Seams {
+        Seams {
+            incident: "incident".to_string(),
+            forge: must_cfg("SPIRA_FORGE"),
+            systemctl: "systemctl".to_string(),
+            spira_lc: "spira-lc".to_string(),
+            sentinel: "sentinel".to_string(),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct Config {
     spira_run: PathBuf,
     czar_log: PathBuf,
     qc_log: PathBuf,
     marker: PathBuf,
-    incident_sh: String,
-    forge_sh: String,
+    seams: Seams,
     queue_dir: PathBuf,
     stall_secs: u64,
     ci_queued_max: u64,
@@ -65,8 +89,6 @@ struct Config {
     czar_label: String,
     express_label: String,
     land_unit: String,
-    systemctl: String,
-    spira_lc: String,
     repo_map: Option<PathBuf>,
     /// `SPIRA_CZAR_STAGE_<CLASS>` for every registered class (spira/conf.d), resolved once
     /// at construction via `cfg` — `stage()` below only ever looks this map up, it never
@@ -81,61 +103,6 @@ struct Config {
 /// config-registry bug, not a defaulting decision).
 const CZAR_STAGE_CLASSES: &[&str] =
     &["ATTRIBUTION_FAILED", "BASE_RED", "CI_RED", "CI_STALLED", "DEADLOCK", "LOOP_STALLED", "POOL_IDLE", "SORT_FAILED", "STARVED"];
-
-/// `SPIRA_*` values a bash process `Config::from_env`'s own callers spawn (`. "$SPIRA_HOME/
-/// lib.sh"` in `summon_fayth_czar`, inheriting this process's own environment) must never
-/// see pre-set — the same per-copy-fact / host-policy keys `cockpit-collect`'s
-/// `bootstrap_config` names (wave4-decomposition.md row (b)): a nested conf.sh that sees
-/// one of these already set skips deriving it fresh from whatever THAT call was actually
-/// pointed at.
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
-
-/// Wave 4.8 ("retire conf re-import seams in Rust"): every `env::var(...)` read below used
-/// to see only this process's own already-set environment — no spira.toml load at all
-/// (wave4-decomposition.md row (b) names czar-pass by file). Merges
-/// `spira_config::resolve()`'s in-process answer into THIS process's own environment once,
-/// inserting a key only when it is not already set (conf.sh's own `${VAR:=default}` rule)
-/// and never one of [`NEVER_EXPORTED`], so every `env::var(...)` read below (and in any
-/// child this process spawns) sees a toml override exactly as conf.sh would have resolved
-/// it. Best-effort: a missing registry or a containment refusal leaves the environment
-/// exactly as it was.
-/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
-/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
-/// `harness_home` already use. `resolve_for_process` needs a REAL `home/conf.d` to
-/// resolve almost every key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it
-/// refuse outright ("no config registry at conf.d"), exactly what a bare shell with no
-/// `$SPIRA_HOME` exported would otherwise hit.
-fn harness_home() -> PathBuf {
-    if let Ok(h) = env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return PathBuf::from(h);
-        }
-    }
-    let Ok(exe) = env::current_exe() else { return PathBuf::new() };
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors()
-        .skip(1)
-        .take(4)
-        .map(|a| a.join("spira"))
-        .find(|p| p.join("lib.sh").is_file())
-        .unwrap_or_default()
-}
-
-fn merge_resolved_env() {
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let home = harness_home();
-    let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(&home, &repo, &env_map) {
-        for (k, v) in resolved.values {
-            if NEVER_EXPORTED.contains(&k.as_str()) {
-                continue;
-            }
-            if env::var_os(&k).is_none() {
-                env::set_var(k, v);
-            }
-        }
-    }
-}
 
 /// One source of config (per Ryan 2026-10-05): a registered key's value comes from
 /// `spira_config::process::cfg`, resolved from `$SPIRA_TOML` — never from this process's
@@ -166,13 +133,7 @@ where
 }
 
 impl Config {
-    fn from_env() -> Config {
-        // merge_resolved_env() remains for the one thing it still does: making a resolved
-        // value visible to the bash children this process spawns (incident_sh, forge_sh,
-        // ...) that read their own SPIRA_* from their inherited environment. Config's own
-        // fields below no longer round-trip through that merged environment — they read
-        // $SPIRA_TOML directly via `cfg`/`cfg_parse`.
-        merge_resolved_env();
+    fn from_process(seams: Seams) -> Config {
         let spira_run_str = must_cfg("SPIRA_RUN");
         if spira_run_str.is_empty() {
             eprintln!("czar-pass: FATAL: cannot resolve spira.run (SPIRA_RUN resolved empty)");
@@ -191,36 +152,18 @@ impl Config {
             .collect();
         let repo_map = must_cfg("SPIRA_REPO_MAP");
         Config {
-            // SPIRA_CZAR_LOG/SPIRA_QUEUE_LOG/SPIRA_CZAR_PASS_MARKER/SPIRA_RECONCILER_STATE/
-            // SPIRA_RECONCILER_STATUS_LOG/SPIRA_LAND_UNIT/SPIRA_SYSTEMCTL/
-            // SPIRA_INCIDENT_SH are not registered config keys (spira/conf.d has no entry
-            // for any of them) — left as plain env reads with their existing defaults.
-            czar_log: env::var("SPIRA_CZAR_LOG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("czar.log")),
-            qc_log: env::var("SPIRA_QUEUE_LOG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("landing.log")),
-            marker: env::var("SPIRA_CZAR_PASS_MARKER")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("czar-pass.swept")),
-            // By name on the launcher's PATH (sp-gypjk); SPIRA_INCIDENT_SH / SPIRA_FORGE
-            // remain the seams that name another script. forge.sh is retired (sp-t4y60) —
-            // sp-yv4b3 found this default still naming the deleted script.
-            incident_sh: env::var("SPIRA_INCIDENT_SH").unwrap_or_else(|_| "incident.sh".into()),
-            forge_sh: must_cfg("SPIRA_FORGE"),
+            czar_log: spira_run.join("czar.log"),
+            qc_log: spira_run.join("landing.log"),
+            marker: spira_run.join("czar-pass.swept"),
+            seams,
             queue_dir: PathBuf::from(must_cfg("SPIRA_QUEUE_DIR")),
             stall_secs: must_cfg_parse("SPIRA_LOOP_STALL_SECS"),
             ci_queued_max: must_cfg_parse("SPIRA_CI_QUEUED_MAX_SECS"),
             ci_red_max: must_cfg_parse("SPIRA_CI_RED_MAX_SECS"),
             base_unreadable_grace: must_cfg_parse("SPIRA_BASE_CI_UNREADABLE_GRACE_SECS"),
             lock_path: spira_run.join("czar-pass.lock"),
-            reconciler_state: env::var("SPIRA_RECONCILER_STATE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-state.json")),
-            reconciler_status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-status.jsonl")),
+            reconciler_state: paths::state(&spira_run),
+            reconciler_status_log: paths::status_log(&spira_run),
             // Batcher's own adaptive_n floor (batcher/src/core.rs: raw.clamp(4.0, 30.0)) — a
             // pool below this can never be a PoolFull trigger, whatever the adaptive ceiling
             // turns out to be, so it is the one threshold this detector can check without
@@ -231,9 +174,7 @@ impl Config {
             scope_label: must_cfg("SPIRA_SCOPE_LABEL"),
             czar_label: must_cfg("SPIRA_CZAR_LABEL"),
             express_label: must_cfg("SPIRA_EXPRESS_LABEL"),
-            land_unit: env::var("SPIRA_LAND_UNIT").unwrap_or_else(|_| "spira-landing".to_string()),
-            systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
-            spira_lc: "spira-lc".to_string(),
+            land_unit: "spira-landing".to_string(),
             repo_map: (!repo_map.is_empty()).then(|| PathBuf::from(repo_map)),
             stages,
             now_secs: now,
@@ -348,7 +289,8 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
             } else {
                 format!("{},{}", cfg.scope_label, cfg.czar_label)
             };
-            let mut child = script(&cfg.incident_sh)
+            // batch-job: the incident binary's store write has no short bound
+            let mut child = Command::new(&cfg.seams.incident)
                 .arg("file")
                 .arg(subj)
                 .arg("-")
@@ -393,7 +335,8 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
             if !cfg.scope_label.is_empty() {
                 labels = format!("{},{}", cfg.scope_label, labels);
             }
-            let mut child = script(&cfg.incident_sh)
+            // batch-job: the incident binary's store write has no short bound
+            let mut child = Command::new(&cfg.seams.incident)
                 .arg("file")
                 .arg(subj)
                 .arg("-")
@@ -440,9 +383,9 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
 /// `world.halted` pre-check this used to need is gone too: `sentinel --summon` runs the
 /// SAME `world_gate` sentinel's own pass does, which also catches a live DRAIN this
 /// hand-rolled check never did.
-fn summon_fayth_czar(_cfg: &Config) {
+fn summon_fayth_czar(cfg: &Config) {
     // batch-job: this runs whatever its caller names, as long as that takes
-    let _ = Command::new("sentinel")
+    let _ = Command::new(&cfg.seams.sentinel)
         .arg("--summon")
         .arg("czar")
         .stderr(Stdio::null())
@@ -550,24 +493,14 @@ fn file_mtime(path: &Path) -> Option<u64> {
 // its invariant unobservable instead of silently reading the failure as "satisfied".
 /// A harness script: a bare name (sp-gypjk: the release's `spira/`, on the launcher's PATH)
 /// is exec'd by name; a path (a test seam's mock) goes through `bash`, as before.
-fn script(s: &str) -> Command {
-    if s.contains('/') {
-        let mut c = Command::new("bash");
-c.envs(spira_config::release_env::child_path_env_for_process());
-        c.arg(s);
-        c
-    } else {
-        Command::new(s)
-    }
-}
-
-fn run_forge(forge_sh: &str, args: &[&str]) -> Result<String, String> {
-    run_forge_on(forge_sh, args, None)
+fn run_forge(forge: &str, args: &[&str]) -> Result<String, String> {
+    run_forge_on(forge, args, None)
 }
 
 /// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
-fn run_forge_on(forge_sh: &str, args: &[&str], path: Option<&std::ffi::OsStr>) -> Result<String, String> {
-    let mut cmd = script(forge_sh);
+fn run_forge_on(forge: &str, args: &[&str], path: Option<&std::ffi::OsStr>) -> Result<String, String> {
+    // batch-job: a forge query is bounded by the forge's own client timeouts
+    let mut cmd = Command::new(forge);
     if let Some(p) = path {
         cmd.env("PATH", p);
     }
@@ -577,11 +510,11 @@ fn run_forge_on(forge_sh: &str, args: &[&str], path: Option<&std::ffi::OsStr>) -
     let output = cmd
         .stderr(Stdio::null())
         .output()
-        .map_err(|e| format!("forge.sh spawn failed: {}", e))?;
+        .map_err(|e| format!("forge spawn failed: {}", e))?;
     if !output.status.success() {
-        return Err(format!("forge.sh exited {}", output.status));
+        return Err(format!("forge exited {}", output.status));
     }
-    String::from_utf8(output.stdout).map_err(|e| format!("forge.sh: non-utf8 output: {}", e))
+    String::from_utf8(output.stdout).map_err(|e| format!("forge: non-utf8 output: {}", e))
 }
 
 fn parse_field(output: &str, key: &str) -> Option<String> {
@@ -607,7 +540,7 @@ fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_env();
+    let cfg = Config::from_process(Seams::production());
 
     // World halted
     if cfg.spira_run.join("world.halted").exists() {
@@ -747,7 +680,7 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
             if let Some(branch) = read_branch(&open_path) {
                 if let Some(rp) = repo_root(&repo_name, &cfg.repo_map) {
                     let rp_str = rp.to_string_lossy().to_string();
-                    let out = run_forge(&cfg.forge_sh, &["run-id", &rp_str, &branch]);
+                    let out = run_forge(&cfg.seams.forge, &["run-id", &rp_str, &branch]);
                     let rid = out.map(|s| s.trim().to_string()).unwrap_or_default();
                     if !rid.is_empty() {
                         run_id = rid;
@@ -761,12 +694,12 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
 
     if !run_id.is_empty() {
         let desc = format!("workflow-rerun {}", run_id);
-        let forge = cfg.forge_sh.clone();
+        let forge = cfg.seams.forge.clone();
         let rid = run_id.clone();
         let rp = repo_path.clone();
         det_action(cfg, "deadlock", &desc, move || {
             // batch-job: runs a gate, build or forge script that takes as long as its work
-            let _ = Command::new("bash").arg(&forge).args(["workflow-rerun", &rp, &rid]).status();
+            let _ = Command::new(&forge).args(["workflow-rerun", &rp, &rid]).status();
         });
         if let Some(st) = state.get_mut("deadlock") {
             record_remedy(st, cfg.now_secs, &desc);
@@ -930,7 +863,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
 
     let age = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
     let unit_service = format!("{}.service", cfg.land_unit);
-    let is_failed = spira_config::bounded::bounded(&cfg.systemctl)
+    let is_failed = spira_config::bounded::bounded(&cfg.seams.systemctl)
         .args(["--user", "is-failed", &unit_service])
         .stderr(Stdio::null())
         .output()
@@ -940,7 +873,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
         .unwrap_or(false);
 
     if is_failed && !verdict.remedy_failed {
-        let sc = cfg.systemctl.clone();
+        let sc = cfg.seams.systemctl.clone();
         let svc = unit_service.clone();
         let desc = format!("reset-failed + start {}", cfg.land_unit);
         det_action(cfg, "loop-stalled", &desc, move || {
@@ -1016,7 +949,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
             let cis_key = format!("ci-stalled:{}", repo_safe);
             let cir_key = format!("ci-red:{}", repo_safe);
 
-            let ci_out = match run_forge(&cfg.forge_sh, &["batch-ci-status", &repo_path_str, &branch]) {
+            let ci_out = match run_forge(&cfg.seams.forge, &["batch-ci-status", &repo_path_str, &branch]) {
                 Ok(out) => out,
                 Err(e) => {
                     // A failed forge call is not "no CI activity": both invariants for this
@@ -1054,12 +987,12 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
                 let stalled_s = cis_v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
                 if !run_id.is_empty() && !cis_v.remedy_failed {
                     let desc = format!("workflow-rerun {} ({}, queued {}s)", run_id, repo_name, stalled_s);
-                    let forge = cfg.forge_sh.clone();
+                    let forge = cfg.seams.forge.clone();
                     let rp = repo_path_str.clone();
                     let rid = run_id.clone();
                     det_action(cfg, "ci-stalled", &desc, move || {
                         // batch-job: runs a gate, build or forge script that takes as long as its work
-                        let _ = Command::new("bash").arg(&forge).args(["workflow-rerun", &rp, &rid]).status();
+                        let _ = Command::new(&forge).args(["workflow-rerun", &rp, &rid]).status();
                     });
                     if let Some(st) = state.get_mut(&cis_key) {
                         record_remedy(st, cfg.now_secs, &desc);
@@ -1163,7 +1096,7 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
             let repo_safe = repo_name.replace(',', "-");
             let key = format!("base-red:{}", repo_safe);
 
-            let ci_out = run_forge(&cfg.forge_sh, &["batch-ci-status", &repo_path_str, &base_branch]);
+            let ci_out = run_forge(&cfg.seams.forge, &["batch-ci-status", &repo_path_str, &base_branch]);
             let run_id = ci_out.as_ref().ok().and_then(|out| parse_field(out, "run-id"));
 
             if run_id.is_none() {
@@ -1278,7 +1211,7 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 /// or unparseable machine reads as depth 0, said on stderr: a stall detector must not invent a
 /// pool it could not see.
 fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
-    let out = match spira_config::bounded::bounded(&cfg.spira_lc).args(["list", "--state", "CERTIFIED"]).output() {
+    let out = match spira_config::bounded::bounded(&cfg.seams.spira_lc).args(["list", "--state", "CERTIFIED"]).output() {
         Ok(o) if o.status.success() => o.stdout,
         Ok(o) => {
             eprintln!("czar-pass: spira-lc list --state CERTIFIED exited {}", o.status);
@@ -1383,58 +1316,18 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Wave 4.8: merge_resolved_env() must reach a registry key `Config::from_env` never
-    // hardcoded a default for (SPIRA_CZAR_LABEL's conf.d default, "czar-trigger", is the
-    // same literal already in czar_label's own unwrap_or_else below — this proves the
-    // MERGE path, not merely that the two defaults happen to agree), and must never leak
-    // a NEVER_EXPORTED key into this process's own environment.
-    #[test]
-    fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
-        let dir = testkit::TempDir::new("czar-pass-merge-env");
-        let home = dir.join("spira");
-        fs::create_dir_all(home.join("conf.d")).unwrap();
-        fs::write(
-            home.join("conf.d/SPIRA_CZAR_LABEL"),
-            "TYPE=string\nGROUP=czar\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CZAR_LABEL:=czar-trigger}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        // merge_resolved_env() calls resolve_for_process on THIS process's own
-        // environment (it has no env parameter of its own to hand a synthetic one to),
-        // so SPIRA_TOML has to be real and ambient here too (per Ryan 2026-10-05: one
-        // source of config — "SPIRA_TOML is not set" is a refusal, not "defaults only").
-        // The complete fixture's own czar_label ("czar-trigger") already matches what
-        // this synthetic conf.d declares as its default, so no override is needed.
-        let toml = spira_config::process::fixture_toml(&dir, &[]);
-        let _g = testkit::env(&[
-            ("SPIRA_CZAR_LABEL", None),
-            ("SPIRA_MAX_AEONS", None),
-            ("SPIRA_HOME", home.to_str()),
-            ("SPIRA_TOML", toml.to_str()),
-        ]);
-
-        merge_resolved_env();
-
-        let got_label = env::var("SPIRA_CZAR_LABEL").ok();
-        let got_max_aeons = env::var_os("SPIRA_MAX_AEONS");
-
-        drop(_g);
-
-        assert_eq!(got_label, Some("czar-trigger".to_string()), "a registry default must reach the real environment");
-        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
-        let _ = fs::remove_dir_all(&dir);
-    }
 
     // REGRESSION (sp-yv4b3): production queue-watch went blind — "forge check-status 459:
     // No such file or directory (os error 2)" — because this default named the retired
     // `forge.sh` instead of the release's `forge` binary. Fails on the pre-fix default.
     //
-    // This is the one test in this binary allowed to drive `Config::from_env` end to end
+    // This is the one test in this binary allowed to drive `Config::from_process` end to end
     // (per the one-source-of-config rule, `cfg`'s resolution is a `OnceLock` — fixed for
     // the rest of this process after the first call, so only one test may ever set
     // `SPIRA_TOML` meaningfully). Every other test that needs a `Config` uses `test_config`
     // below, passing values directly instead of through the environment.
     #[test]
-    fn config_from_env_resolves_forge_sh_through_cfg() {
+    fn config_from_process_resolves_forge_through_cfg() {
         let dir = testkit::TempDir::new("czar-pass-config-from-env");
         let toml = spira_config::process::fixture_toml(&dir, &[]);
         // The real, checked-in spira/conf.d (this crate's own repo layout: `czar-pass/`
@@ -1443,10 +1336,10 @@ mod tests {
         let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
         let g = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str())]);
 
-        let cfg = Config::from_env();
+        let cfg = Config::from_process(Seams::production());
         drop(g);
 
-        assert_eq!(cfg.forge_sh, "forge", "Config::from_env must resolve SPIRA_FORGE through cfg(), not an inline default");
+        assert_eq!(cfg.seams.forge, "forge", "Config::from_process must resolve SPIRA_FORGE through cfg(), not an inline default");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1454,7 +1347,7 @@ mod tests {
     // on the child's PATH. PATH goes to the spawn only; mutating the process PATH raced the
     // other tests' forks.
     #[test]
-    fn default_forge_sh_actually_reaches_a_bare_forge_stub_on_path() {
+    fn default_forge_actually_reaches_a_bare_forge_stub_on_path() {
         let dir = scratch_dir("default-forge-stub");
         testkit::write_exe(
             dir.join("forge"),
@@ -1630,7 +1523,7 @@ mod tests {
     //
     // Every case runs in Shadow stage (the default with no SPIRA_CZAR_STAGE_* set):
     // det_action/infer only append a CZAR-WOULD line there, so a "fire" case never spawns
-    // a real forge.sh workflow-rerun or files a real incident — exactly what a unit test
+    // a real forge workflow-rerun or files a real incident — exactly what a unit test
     // wants from a detector whose whole job is to trigger a side effect.
     // ────────────────────────────────────────────────────────────────────────────────
 
@@ -1642,8 +1535,15 @@ mod tests {
             czar_log: dir.join("czar.log"),
             qc_log: dir.join("landing.log"),
             marker: dir.join("czar-pass.swept"),
-            incident_sh: dir.join("incident.sh").to_string_lossy().to_string(),
-            forge_sh: dir.join("forge.sh").to_string_lossy().to_string(),
+            seams: Seams {
+                incident: dir.join("incident").to_string_lossy().to_string(),
+                forge: dir.join("forge").to_string_lossy().to_string(),
+                // A path that cannot exist, so `systemctl is-failed` always fails to spawn
+                // (is_failed = false) instead of depending on the test host's real systemd.
+                systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
+                spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
+                sentinel: dir.join("sentinel").to_string_lossy().to_string(),
+            },
             queue_dir: dir.join("queue"),
             stall_secs: 3000,
             ci_queued_max: 600,
@@ -1659,10 +1559,6 @@ mod tests {
             czar_label: "czar-trigger".to_string(),
             express_label: "express".to_string(),
             land_unit: "spira-landing".to_string(),
-            // A path that cannot exist, so `systemctl is-failed` always fails to spawn
-            // (is_failed = false) instead of depending on the test host's real systemd.
-            systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
-            spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
             repo_map: None,
             // Every case here runs in Shadow stage (the suite's own doc comment above) —
             // an empty map's lookup already defaults to Shadow, matching that intent.
@@ -1670,6 +1566,10 @@ mod tests {
             now_secs: now,
             now_iso: "2026-01-01T00:00:00Z".to_string(),
         }
+    }
+
+    fn stub_forge(path: &str, body: impl AsRef<str>) {
+        testkit::write_exe(path, &format!("#!/bin/sh\n{}", body.as_ref()));
     }
 
     fn write_repo_open(dir: &Path, repo: &str, branch: &str) {
@@ -1828,7 +1728,7 @@ mod tests {
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
         let queued_since = now - cfg.ci_queued_max - 1; // just past threshold, no run-id
-        fs::write(&cfg.forge_sh, format!("printf 'queued-since: {}\\n'\n", queued_since)).unwrap();
+        stub_forge(&cfg.seams.forge, format!("printf 'queued-since: {}\\n'\n", queued_since));
         let mut state = StateMap::new();
         let (cis_v, cis_remedy, cis_tier, cir_v, _r2, _t2) = detect_ci(&cfg, &mut state);
         assert!(cis_v.is_gap);
@@ -1845,7 +1745,7 @@ mod tests {
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
         let queued_since = now - 10; // well inside the threshold
-        fs::write(&cfg.forge_sh, format!("printf 'queued-since: {}\\n'\n", queued_since)).unwrap();
+        stub_forge(&cfg.seams.forge, format!("printf 'queued-since: {}\\n'\n", queued_since));
         let mut state = StateMap::new();
         let (cis_v, cis_remedy, _t1, _cir_v, _r2, _t2) = detect_ci(&cfg, &mut state);
         assert!(!cis_v.is_gap);
@@ -1860,11 +1760,7 @@ mod tests {
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
         let completed = now - cfg.ci_red_max - 1;
-        fs::write(
-            &cfg.forge_sh,
-            format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed),
-        )
-        .unwrap();
+        stub_forge(&cfg.seams.forge, format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed));
         let mut state = StateMap::new();
         let (_cis_v, _r1, _t1, cir_v, cir_remedy, cir_tier) = detect_ci(&cfg, &mut state);
         assert!(cir_v.is_gap);
@@ -1880,11 +1776,7 @@ mod tests {
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
         let completed = now - 5; // well inside ci_red_max
-        fs::write(
-            &cfg.forge_sh,
-            format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed),
-        )
-        .unwrap();
+        stub_forge(&cfg.seams.forge, format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed));
         let mut state = StateMap::new();
         let (_cis_v, _r1, _t1, cir_v, cir_remedy, _t2) = detect_ci(&cfg, &mut state);
         assert!(!cir_v.is_gap);
@@ -1897,7 +1789,7 @@ mod tests {
         let mut cfg = test_config(&dir, 2_000_000_000);
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        fs::write(&cfg.forge_sh, "exit 1\n").unwrap();
+        stub_forge(&cfg.seams.forge, "exit 1\n");
         let mut state = StateMap::new();
         let (cis_v, cis_remedy, _t1, cir_v, cir_remedy, _t2) = detect_ci(&cfg, &mut state);
         assert!(matches!(cis_v.status, RawStatus::Unobservable { .. }));
@@ -1912,7 +1804,7 @@ mod tests {
         let mut cfg = test_config(&dir, 2_000_000_000);
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        fs::write(&cfg.forge_sh, "printf 'run-id: 1\\nrun-conclusion: success\\n'\n").unwrap();
+        stub_forge(&cfg.seams.forge, "printf 'run-id: 1\\nrun-conclusion: success\\n'\n");
         let mut state = StateMap::new();
         let (v, remedy, _tier) = detect_base_red(&cfg, &mut state);
         assert!(!v.is_gap);
@@ -1925,11 +1817,7 @@ mod tests {
         let mut cfg = test_config(&dir, 2_000_000_000);
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        fs::write(
-            &cfg.forge_sh,
-            "printf 'run-id: 1\\nrun-conclusion: failure\\nhead-sha: deadbeef\\nrun-url: https://example/run/1\\n'\n",
-        )
-        .unwrap();
+        stub_forge(&cfg.seams.forge, "printf 'run-id: 1\\nrun-conclusion: failure\\nhead-sha: deadbeef\\nrun-url: https://example/run/1\\n'\n");
         let mut state = StateMap::new();
         let (v, remedy, tier) = detect_base_red(&cfg, &mut state);
         assert!(v.is_gap, "a red base fires on the very first pass — there is no age threshold");
@@ -1944,7 +1832,7 @@ mod tests {
         let mut cfg = test_config(&dir, now);
         write_repo_open(&dir, "spira", "spira/queue/abc123");
         cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        fs::write(&cfg.forge_sh, "exit 0\n").unwrap(); // succeeds but names no run at all
+        stub_forge(&cfg.seams.forge, "exit 0\n"); // succeeds but names no run at all
         let mut state = StateMap::new();
 
         let (v1, remedy1, _t1) = detect_base_red(&cfg, &mut state);
