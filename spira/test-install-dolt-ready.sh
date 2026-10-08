@@ -233,6 +233,7 @@ case "\$*" in
         [ -f "\$_calls_file" ] && _n="\$(cat "\$_calls_file")"
         _n=\$((_n + 1))
         printf '%s' "\$_n" > "\$_calls_file"
+        printf '%s\\n' "\$*" > "$TMP/bd-init-args"
         case "\$_fail_mode" in
             ok) : ;;
             other)
@@ -316,7 +317,7 @@ run_install() {
     # registered, so they stay in the env -i prefix below.
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" \
-        SPIRA_BD="$MOCK_BIN/bd" SPIRA_DB="$FAKE_DB" SPIRA_DOLT_DATA="$_DOLT_DATA"
+        SPIRA_BD="$MOCK_BIN/bd" SPIRA_DB="$FAKE_DB" SPIRA_DOLT_DATA="$_DOLT_DATA" SPIRA_ID_PREFIX=lab
     env -i \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
@@ -338,7 +339,7 @@ run_install() {
 
 reset_state() {
     rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
-    rm -f "$TMP/dolt-ready-calls" "$TMP/bd-init-calls"
+    rm -f "$TMP/dolt-ready-calls" "$TMP/bd-init-calls" "$TMP/bd-init-args"
 }
 
 start_listener() {
@@ -388,6 +389,8 @@ _rc2=$?
 stop_listener
 
 is0 "readiness-wait: install exits 0 despite a slow-to-ready server" "$_rc2"
+want "id-prefix: bd init gets the configured spira.id_prefix" "--prefix lab " "$(cat "$TMP/bd-init-args" 2>/dev/null)"
+nowant "id-prefix: bd init does not get a hard-coded sp" "--prefix sp " "$(cat "$TMP/bd-init-args" 2>/dev/null)"
 _calls2="$(cat "$TMP/dolt-ready-calls" 2>/dev/null || echo 0)"
 [ "${_calls2:-0}" -ge 3 ] \
     && ok  "readiness-wait: install retried the query until it answered" \
