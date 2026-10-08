@@ -14,3 +14,6 @@ StandardError=append:@SPIRA_RUN@/target-reap.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance
