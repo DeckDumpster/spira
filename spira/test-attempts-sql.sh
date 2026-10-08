@@ -163,24 +163,24 @@ JSONL
 # identical bead with no clear reads 3 (c4, below) — proving the drop to 0 is the floor, not
 # an empty events table.
 seedt c1 claimed '' '2026-09-06 00:00:01'
-seedt c1 claimed '' '2026-09-06 00:00:02'
-seedt c1 claimed '' '2026-09-06 00:00:03'
+seedt c1 claimed '' '2026-09-06 00:00:21'
+seedt c1 claimed '' '2026-09-06 00:00:41'
 seedt c1 poison.cleared operator '2026-09-06 00:01:00'
 is "c1: three claims before a clear, nothing since = 0 attempts" "0" "$(num "$(attempts_of c1)")"
 
 # c2: the same three claims and clear, plus ONE claim after it. The clear discounts the old
 # three; it is not a permanent exemption, so the new claim is the whole count.
 seedt c2 claimed '' '2026-09-06 00:00:01'
-seedt c2 claimed '' '2026-09-06 00:00:02'
-seedt c2 claimed '' '2026-09-06 00:00:03'
+seedt c2 claimed '' '2026-09-06 00:00:21'
+seedt c2 claimed '' '2026-09-06 00:00:41'
 seedt c2 poison.cleared operator '2026-09-06 00:01:00'
 seedt c2 claimed '' '2026-09-06 00:02:00'
 is "c2: three claims, cleared, one new claim = 1 attempt (not 4)" "1" "$(num "$(attempts_of c2)")"
 
 # c4 (CONTROL): the same three claims as c1, never cleared. Proves c1's 0 came from the floor.
 seedt c4 claimed '' '2026-09-06 00:00:01'
-seedt c4 claimed '' '2026-09-06 00:00:02'
-seedt c4 claimed '' '2026-09-06 00:00:03'
+seedt c4 claimed '' '2026-09-06 00:00:21'
+seedt c4 claimed '' '2026-09-06 00:00:41'
 is "CONTROL c4: three claims, never cleared = 3 attempts" "3" "$(num "$(attempts_of c4)")"
 
 # c5: a floor placed after every real row (created/label_added included) makes the matched
