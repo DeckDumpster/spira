@@ -27,11 +27,13 @@ gate_with() {
 
 echo "test-gate-base-evidence.sh"
 
-echo "the same suite red on both: charged to the base, named, with the base's own output"
+echo "the same suite red on both: inherited, not judged: the branch passes, the base's red is named with its own output"
 out="$(gate_with '  test-shared.sh                   RED     rc=1 after 2s' \
                  $'  test-shared.sh                   RED     rc=1 after 2s\nBASE-ONLY-EVIDENCE')"
-want   "base-red verdict"                 "reason=base-red"       "$out"
-want   "the suite is named, not -"        "suite=test-shared.sh"  "$out"
+want   "the branch passes"                "VERDICT=PASS"          "$out"
+nowant "it is not collapsed to base-red"  "reason=base-red"       "$out"
+want   "the shared red is marked inherited" "inherited, not judged" "$out"
+want   "the suite is named"               "test-shared.sh"        "$out"
 want   "the base's own output is carried" "BASE-ONLY-EVIDENCE"    "$out"
 
 echo "a base trial with only timeouts is NO_VERDICT, not BASE_FAIL"
@@ -42,11 +44,11 @@ want   "VERDICT is NO_VERDICT"            "VERDICT=NO_VERDICT"    "$out"
 want   "timed suite is named"             "suite=test-slow.sh"    "$out"
 nowant "not charged as BASE_FAIL"         "VERDICT=BASE_FAIL"     "$out"
 
-echo "a base with both genuine failures and timeouts is still BASE_FAIL"
+echo "a base with both genuine failures and timeouts: the shared red is inherited, never a pass without saying so"
 out="$(gate_with $'  test-real.sh                     RED     rc=1 after 2s\n  test-slow.sh                     TIMEOUT after 600s' \
                  $'  test-real.sh                     RED     rc=1 after 2s\n  test-slow.sh                     TIMEOUT after 600s')"
-want   "base-red verdict retained"        "reason=base-red"       "$out"
-want   "VERDICT is BASE_FAIL"             "VERDICT=BASE_FAIL"     "$out"
+want   "the shared red is marked inherited" "inherited, not judged" "$out"
+want   "the shared red is named"          "test-real.sh"          "$out"
 
 echo "a suite red only on the branch is the branch's, even while the base is red elsewhere"
 out="$(gate_with $'  test-shared.sh                   RED     rc=1 after 2s\n  test-mine.sh                     RED     rc=1 after 2s' \
