@@ -6,6 +6,7 @@ pub mod cockpit_no_bd;
 pub mod env_set_var_leak;
 pub mod conf_key_registry;
 pub mod config_env_read;
+pub mod config_delta;
 pub mod config_fence;
 pub mod config_literal_fallback;
 pub mod covers_entries;
