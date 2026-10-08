@@ -259,6 +259,16 @@ child_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$new_id" --json 2>&1)" # ba
 want "file-followup: the new bead's parent is the bound bead, not asked for" "\"parent\": \"$BID\"" "$child_json"
 nowant "file-followup: did not inherit the bound bead's branch label" "branch:" "$child_json"
 
+# ── file-followup --after-landing: unparented, blocked on the bound bead ─────────────
+out="$(work_as "$BID" file-followup "a followup that needs the parent landed" --after-landing 2>&1)"; rc=$?
+is "after-landing: exits 0" "0" "$rc"
+al_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
+[ -n "$al_id" ] || bail "after-landing produced no new bead id"
+al_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$al_id" --json 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
+nowant "after-landing: not a child of the bound bead" "\"parent\": \"$BID\"" "$al_json"
+want   "after-landing: blocked on the bound bead" "\"id\": \"$BID\"" "$al_json"
+want   "after-landing: the edge is a blocking one" "\"dependency_type\": \"blocks\"" "$al_json"
+
 # ── split: same mechanism, its own bead ───────────────────────────────────────────────
 out="$(work_as "$BID" split "a split piece filed by the container-tier suite" 2>&1)"; rc=$?
 is "split: exits 0" "0" "$rc"
