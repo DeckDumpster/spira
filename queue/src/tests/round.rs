@@ -300,3 +300,21 @@ fn a_caller_holding_the_lock_runs_the_verbs_under_it() {
     t.var("SPIRA_QUEUE_LOCK_HELD", "1");
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
 }
+
+#[test]
+fn eject_also_ejects_the_members_stacked_on_the_ejected_one() {
+    let t = round_world();
+    t.git.bases.borrow_mut().insert(("ta".into(), "tb".into()), "own-commit-of-a".into());
+    t.git.bases.borrow_mut().insert(("ta".into(), "tc".into()), "b0".into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "red on lint"]), 0, "{}", t.err());
+    assert!(t.out().contains("ejected sp-b from round") && t.out().contains("stacked on sp-a"), "{}", t.out());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.starts_with(&format!("eject-member {batch} sp-b ")) && c.ends_with("stacked on sp-a")), "b's reason names a");
+    assert!(t.lib.has("bead_reopen sp-b eject "));
+    let rec = kv_of(&t, "round");
+    assert_eq!((rec["members"].as_str(), rec["head"].as_str()), ("sp-c:tc", "merged-tc"));
+    assert_eq!(rec["ejected"].trim(), "sp-a sp-b");
+    assert!(!t.lib.has("bead_reopen sp-c eject "), "an independent member stays");
+}

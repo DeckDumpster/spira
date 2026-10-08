@@ -106,6 +106,8 @@ pub trait Git {
     /// `rev-parse --verify -q <rev>`.
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String>;
     fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool;
+    /// `merge-base <a> <b>`; None when they share no history.
+    fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String>;
     /// `update-ref <ref> <new> [<old>]` — a CAS when `old` is given.
     fn update_ref(&self, repo: &Path, refname: &str, new: &str, old: Option<&str>) -> bool;
     /// `show-ref --verify --quiet <ref>`.

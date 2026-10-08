@@ -21,6 +21,7 @@ mod verdict;
 struct FGit {
     refs: RefCell<BTreeMap<String, String>>,
     anc: RefCell<BTreeSet<(String, String)>>,
+    bases: RefCell<BTreeMap<(String, String), String>>,
     commits: RefCell<BTreeSet<String>>,
     trees: RefCell<BTreeMap<String, String>>,
     log: RefCell<Vec<RangeCommit>>,
@@ -60,6 +61,10 @@ impl Git for FGit {
     }
     fn is_ancestor(&self, _: &Path, a: &str, b: &str) -> bool {
         a == b || self.anc.borrow().contains(&(a.to_string(), b.to_string()))
+    }
+    fn merge_base(&self, _: &Path, a: &str, b: &str) -> Option<String> {
+        let m = self.bases.borrow();
+        m.get(&(a.to_string(), b.to_string())).or_else(|| m.get(&(b.to_string(), a.to_string()))).cloned()
     }
     fn update_ref(&self, _: &Path, r: &str, new: &str, old: Option<&str>) -> bool {
         self.calls.borrow_mut().push(format!("update-ref {r} {new} {}", old.unwrap_or("-")));
