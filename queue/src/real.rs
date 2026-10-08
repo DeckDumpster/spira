@@ -1301,32 +1301,21 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
 
     #[test]
     fn push_adds_app_credentials_only_when_configured() {
-        let _serial = crate::testutil::serial();
-        let bindir = crate::testutil::tmpdir("push-bin");
-        let args_file = bindir.join("git-args");
-        testkit::write_exe(bindir.join("git"), &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", args_file.display()));
-        let old_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut p = std::ffi::OsString::from(bindir.path());
-        p.push(":");
-        p.push(&old_path);
-        let path = p.to_str().unwrap().to_string();
-        let env = testkit::env(&[("PATH", Some(&path)), ("SPIRA_GH_APP_ID", None), ("SPIRA_GH_APP_INSTALLATION_ID", None)]);
-
-        let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
-
-        assert!(lib.push(Path::new("/repo"), "origin", "main"));
-        let plain = fs::read_to_string(&args_file).unwrap();
+        let args = ["-q".to_string(), "origin".to_string(), "main".to_string()];
+        let argv = |app| {
+            crate::ops::helpers::push_command(Path::new("/repo"), &args, app)
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let plain = argv(false);
         assert!(!plain.contains("credential.helper"), "{plain}");
         assert!(plain.contains("push"), "{plain}");
-
-        fs::remove_file(&args_file).ok();
-        drop(env);
-        let _env = testkit::env(&[("PATH", Some(&path)), ("SPIRA_GH_APP_ID", Some("1")), ("SPIRA_GH_APP_INSTALLATION_ID", Some("2"))]);
-        assert!(lib.push(Path::new("/repo"), "origin", "main"));
-        let with_creds = fs::read_to_string(&args_file).unwrap();
+        let with_creds = argv(true);
         assert!(with_creds.contains("credential.helper"), "{with_creds}");
         assert!(with_creds.contains("insteadOf=git@github.com:"), "{with_creds}");
+        assert!(with_creds.contains("push"), "{with_creds}");
     }
 
     #[test]

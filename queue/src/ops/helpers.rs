@@ -303,7 +303,10 @@ pub fn git_push_cmd(repo: &Path, args: &[String]) -> Command {
             false
         }
     };
-    let app_configured = declared("SPIRA_GH_APP_ID") && declared("SPIRA_GH_APP_INSTALLATION_ID");
+    push_command(repo, args, declared("SPIRA_GH_APP_ID") && declared("SPIRA_GH_APP_INSTALLATION_ID"))
+}
+
+pub(crate) fn push_command(repo: &Path, args: &[String], app_configured: bool) -> Command {
     let mut c = Command::new("git");
     c.arg("-C").arg(repo);
     if app_configured {
