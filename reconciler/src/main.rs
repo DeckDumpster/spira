@@ -22,6 +22,7 @@ use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use spira_desired_state::compose::Composite;
 use spira_desired_state::resource::{parse_resource, CockpitSpec, DiskSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
 use spira_desired_state::store::FsStore;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -132,6 +133,7 @@ struct Config {
     cockpit_sh: String,
     queue_bin: String,
     lc_bin: String,
+    bd_bin: String,
     queue_dir: PathBuf,
     repo_map: Option<PathBuf>,
     releases_dir: PathBuf,
@@ -254,7 +256,8 @@ impl Config {
                 .unwrap_or_else(|_| "cockpit.sh".to_string()),
             // The queue binary, by name on the launcher's PATH (sp-gypjk).
             queue_bin: "queue".into(),
-            lc_bin: "spira-lc".into(),
+            lc_bin: spira_config::lifecycle_row::lc_bin(),
+            bd_bin: cfg("SPIRA_BD")?,
             queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
             repo_map: Some(PathBuf::from(cfg("SPIRA_REPO_MAP")?)),
             releases_dir: PathBuf::from(cfg("SPIRA_RELEASES")?),
@@ -964,6 +967,84 @@ fn observe_queue_lock_age(cfg: &Config) -> Vec<Check> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Junk rows: a READY lifecycle row whose id is no bead in the store (prose and fixture
+// keys). Unreadable store or machine is unobservable, never an empty store — an empty
+// reading must not drop every row.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const JUNK_ROW_PREFIX: &str = "junk-row:";
+
+fn junk_row_ids(rows: &[spira_config::lc_state::Row], store_ids: &HashSet<String>) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.state == "READY" && !store_ids.contains(&r.bead_id))
+        .map(|r| r.bead_id.clone())
+        .collect()
+}
+
+fn store_bead_ids(cfg: &Config) -> Result<HashSet<String>, String> {
+    if cfg.bd_bin.is_empty() {
+        return Err("SPIRA_BD is not set".into());
+    }
+    let out = spira_config::bounded::bounded(&cfg.bd_bin)
+        .args(["-C", &cfg.spira_db, "list", "--all", "--brief", "--json", "--limit", "0"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| format!("{}: {}", cfg.bd_bin, e))?;
+    if !out.status.success() {
+        return Err(format!("{} list exited {}", cfg.bd_bin, out.status.code().unwrap_or(-1)));
+    }
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)
+        .map_err(|e| format!("{} list: unparsable json: {}", cfg.bd_bin, e))?;
+    let ids: HashSet<String> = rows
+        .iter()
+        .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+    if ids.is_empty() {
+        return Err("the store lists no beads".into());
+    }
+    Ok(ids)
+}
+
+fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
+    let unobservable = |reason: String| {
+        vec![Check {
+            key: "junk-row".into(),
+            raw: RawStatus::Unobservable { reason },
+            remedy: Remedy::Escalate,
+        }]
+    };
+    let store_ids = match store_bead_ids(cfg) {
+        Ok(ids) => ids,
+        Err(e) => return unobservable(e),
+    };
+    let rows = match spira_config::lc_state::list_with(&cfg.lc_bin) {
+        Ok(rows) => rows,
+        Err(e) => return unobservable(e),
+    };
+    junk_row_ids(&rows, &store_ids)
+        .into_iter()
+        .map(|id| Check {
+            key: format!("{}{}", JUNK_ROW_PREFIX, id),
+            raw: RawStatus::Gap {
+                desired: "a bead in the store".into(),
+                observed: "lifecycle row with no bead".into(),
+                since_hint: None,
+            },
+            remedy: Remedy::Command {
+                program: cfg.lc_bin.clone(),
+                args: vec![
+                    "drop".into(),
+                    id,
+                    "reconciler: READY lifecycle row whose id is no bead in the store".into(),
+                    "reconciler".into(),
+                ],
+            },
+        })
+        .collect()
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // evaluate: run one Check through the pure engine, act on the verdict.
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1167,6 +1248,9 @@ fn run_pass() -> Result<(), String> {
     checks.extend(observe_queue_mergeable(&cfg));
     checks.extend(observe_queue_lock_age(&cfg));
     checks.push(observe_lc_orphans(&cfg));
+    let junk = observe_junk_rows(&cfg);
+    state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
+    checks.extend(junk);
 
     let n = checks.len();
     for check in checks {
@@ -1430,6 +1514,18 @@ mod tests {
         assert!(ran.exists(), "a kind the switch does not name still acts");
     }
 
+    #[test]
+    fn junk_rows_are_ready_rows_without_a_bead() {
+        let row = |id: &str, state: &str| spira_config::lc_state::Row {
+            bead_id: id.into(),
+            state: state.into(),
+            ..Default::default()
+        };
+        let store: HashSet<String> = ["sp-real".to_string()].into();
+        let rows = vec![row("sp-real", "READY"), row("prose key", "READY"), row("gone", "LANDED")];
+        assert_eq!(junk_row_ids(&rows, &store), vec!["prose key".to_string()]);
+    }
+
     fn test_config() -> Config {
         Config {
             spira_run: PathBuf::from("/tmp"),
@@ -1457,6 +1553,7 @@ mod tests {
             cockpit_sh: String::new(),
             queue_bin: String::new(),
             lc_bin: String::new(),
+            bd_bin: String::new(),
             queue_dir: PathBuf::from("/dev/null"),
             repo_map: None,
             releases_dir: PathBuf::new(),
@@ -1502,6 +1599,7 @@ mod tests {
             cockpit_sh: base.cockpit_sh.clone(),
             queue_bin: base.queue_bin.clone(),
             lc_bin: base.lc_bin.clone(),
+            bd_bin: base.bd_bin.clone(),
             queue_dir: base.queue_dir.clone(),
             repo_map: base.repo_map.clone(),
             releases_dir: base.releases_dir.clone(),

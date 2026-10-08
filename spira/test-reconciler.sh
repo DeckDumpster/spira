@@ -56,6 +56,10 @@
 #      partition (an unobservable ceiling is one cause, not N; N incident.sh filings on a
 #      real fleet can outrun the reconciler oneshot's own timeout).
 #
+#  33. Junk rows: a READY lifecycle row whose id is no bead in the store is dropped through
+#      spira-lc with the evidence; a row whose bead exists is untouched; an unreadable
+#      store drops nothing.
+#
 # 1-20 run with no Composite ever materialised — every invariant's fallback to its old
 # bash/env default, still the state of an install that has not adopted desired-state yet.
 #
@@ -262,6 +266,24 @@ mkdir -p "$T/repo"
 # that has a directory here, so "testrepo" must exist for the whole run even on passes
 # that leave its certified-list/lock fixtures empty.
 mkdir -p "$SPIRA_RUN/queue/testrepo"
+
+LC_CALLS="$T/lc-calls.log"; BD_JSON="$T/bd-json"; LC_ROWS="$T/lc-rows"
+STUB_LC="$T/spira-lc"; STUB_BD="$T/bd"
+cat > "$STUB_LC" <<'LEOF'
+#!/usr/bin/env bash
+case "$1" in
+    list) cat "$LC_ROWS" ;;
+    *) printf '%s\n' "$*" >> "$LC_CALLS" ;;
+esac
+LEOF
+cat > "$STUB_BD" <<'BEOF'
+#!/usr/bin/env bash
+cat "$BD_JSON"; [ -f "$BD_JSON.fail" ] && exit 1; exit 0
+BEOF
+chmod +x "$STUB_LC" "$STUB_BD"
+export SPIRA_LC_BIN="$STUB_LC" SPIRA_BD="$STUB_BD" LC_CALLS BD_JSON LC_ROWS
+tl_config SPIRA_BD="$STUB_BD"
+: > "$LC_CALLS"; printf '[{"id":"sp-real"}]\n' > "$BD_JSON"; printf '[]\n' > "$LC_ROWS"
 
 reset_state() {
     rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/tsd/reconciler-status.jsonl" \
@@ -722,5 +744,20 @@ reconciler.sh --pass >/dev/null 2>&1
 _n="$(grep -c 'cause=fleet' "$INC_LOG" || true)"
 is "an undeclared ceiling files one incident, not one per partition" "1" "$_n"
 printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
+
+# ==========================================================================================
+printf '\n%s\n' "33. Junk rows: a rowless READY id is dropped, a real bead's row is not"
+# ==========================================================================================
+reset_state; : > "$LC_CALLS"; rm -f "$BD_JSON.fail"
+printf '[{"id":"sp-real"},{"id":"sp-other"}]\n' > "$BD_JSON"
+printf '[{"bead_id":"sp-real","state":"READY"},{"bead_id":"fixture key","state":"READY"}]\n' > "$LC_ROWS"
+reconciler.sh --pass >/dev/null 2>&1
+want "the rowless READY id is dropped through spira-lc" "drop fixture key" "$(cat "$LC_CALLS")"
+lack "a real bead's row is untouched" "sp-real" "$(cat "$LC_CALLS")"
+
+reset_state; : > "$LC_CALLS"; touch "$BD_JSON.fail"
+reconciler.sh --pass >/dev/null 2>&1
+[ ! -s "$LC_CALLS" ] && ok "an unreadable store drops nothing" || bad "dropped on an unreadable store: $(cat "$LC_CALLS")"
+rm -f "$BD_JSON.fail"
 
 tl_summary
