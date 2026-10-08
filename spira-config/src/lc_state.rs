@@ -138,9 +138,13 @@ pub fn parse_show(text: &str) -> Result<Option<Row>, String> {
 }
 
 fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
-    // The call-deadline cap (spira-lint): 5 s, the same bound sending's lifecycle read keeps.
+    run_within(bin, args, 5)
+}
+
+fn run_within(bin: &str, args: &[&str], secs: u32) -> Result<(i32, String), String> {
+    // batch-job: the interactive default is 5 s (the call-deadline cap); a batch caller passes more.
     let out = Command::new("timeout")
-        .arg("5")
+        .arg(secs.to_string())
         .arg(bin)
         .args(args)
         .stdin(Stdio::null())
@@ -151,6 +155,7 @@ fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
     if code != 0 && code != 1 {
         let why = String::from_utf8_lossy(&out.stderr);
         let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message");
+        let why = if code == 124 { format!("timed out after {secs}s") } else { why.to_string() };
         return Err(format!("{bin} {} exited {code}: {why}", args.join(" ")));
     }
     Ok((code, stdout))
@@ -159,12 +164,21 @@ fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
 /// Every lifecycle row (`spira-lc list`). Err when the machine cannot answer: a caller that
 /// cannot read the state must not decide as if it had (law-a-control-that-cannot-check-must-refuse).
 pub fn list_with(bin: &str) -> Result<Vec<Row>, String> {
-    parse_rows(&list_raw_with(bin)?)
+    list_within(bin, 5)
+}
+
+/// `list_with` for a batch caller that can wait out a loaded store: `secs` bounds the read.
+pub fn list_within(bin: &str, secs: u32) -> Result<Vec<Row>, String> {
+    parse_rows(&list_raw_within(bin, secs)?)
 }
 
 /// `spira-lc list`'s stdout, unparsed, for a caller that keeps the last good answer.
 pub fn list_raw_with(bin: &str) -> Result<String, String> {
-    match run(bin, &["list"])? {
+    list_raw_within(bin, 5)
+}
+
+fn list_raw_within(bin: &str, secs: u32) -> Result<String, String> {
+    match run_within(bin, &["list"], secs)? {
         (0, out) => Ok(out),
         (rc, _) => Err(format!("{bin} list exited {rc}")),
     }
@@ -243,5 +257,14 @@ mod tests {
         let bin = bin.to_string_lossy().into_owned();
         assert_eq!(row_with(&bin, "sp-x"), Ok(None));
         assert!(list_with(&bin).unwrap_err().contains("exited 2"));
+    }
+
+    #[test]
+    fn a_list_past_its_deadline_says_it_timed_out() {
+        let t = testkit::TempDir::new("lcstate-deadline");
+        let bin = t.path().join("lc");
+        testkit::write_exe(&bin, "#!/bin/sh\nexec sleep 5\n");
+        let bin = bin.to_string_lossy().into_owned();
+        assert!(list_within(&bin, 1).unwrap_err().contains("timed out after 1s"));
     }
 }
