@@ -122,14 +122,15 @@ tl_config SPIRA_RUN="$TMP/run" SPIRA_GH_APP_ID=99999 SPIRA_GH_APP_INSTALLATION_I
 # queue-helpers git-push resolves SPIRA_GH_APP_* through spira_config from $SPIRA_TOML.
 (
     export PATH="$BIN:$PATH"
-    export SPIRA_HOME="$HERE/.."
+    export SPIRA_HOME="$HERE"
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
     rm -f "$TMP/git-args"
     spira_git_push "$TMP/fake-repo" -q origin main
-) 2>/dev/null || true
+) 2>"$TMP/push-err" || true
+cat "$TMP/push-err" | sed 's/^/# stderr: /'
 
 args_with="$(cat "$TMP/git-args" 2>/dev/null)"
 want "credential.helper flag present"     "credential.helper"              "$args_with"
@@ -145,7 +146,7 @@ rm -f "$TMP/git-args"
 tl_config SPIRA_RUN="$TMP/run" SPIRA_GH_APP_ID="" SPIRA_GH_APP_INSTALLATION_ID=""
 (
     export PATH="$BIN:$PATH"
-    export SPIRA_HOME="$HERE/.."
+    export SPIRA_HOME="$HERE"
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
     # shellcheck disable=SC1090
