@@ -112,6 +112,11 @@ mod tests {
         }
     }
 
+    fn unique_dir(tag: &str) -> TempDir {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        TempDir::new(&format!("{tag}-{nanos}"))
+    }
+
     fn append(p: &std::path::Path, text: &str) {
         std::fs::OpenOptions::new().create(true).append(true).open(p).unwrap().write_all(text.as_bytes()).unwrap();
     }
@@ -124,7 +129,7 @@ mod tests {
 
     #[test]
     fn echoes_and_repeats_are_dropped_a_new_line_is_delivered_and_unread_falls_to_zero() {
-        let d = TempDir::new("watchd-next");
+        let d = unique_dir("watchd-next");
         let log = d.join("inbox.log");
         append(&log, "");
         assert_eq!(run_next(&d, &log, 0), Err(EXIT_TIMEOUT));
@@ -141,7 +146,7 @@ mod tests {
 
     #[test]
     fn a_second_reader_is_refused_and_history_is_not_replayed_on_first_use() {
-        let d = TempDir::new("watchd-next-lock");
+        let d = unique_dir("watchd-next-lock");
         let log = d.join("inbox.log");
         append(&log, "old history line\n");
         let run = d.join("run").display().to_string();
