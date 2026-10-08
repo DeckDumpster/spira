@@ -104,8 +104,8 @@ step's wall time is reported as `LINT: <n>s of the 900s cap`. Without `--base` n
 ### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
 
 The batcher attributes a red round **while its corpus runs** (batcher-cut DESIGN.md §4). Two
-additions to `run`, both active only when `--attr-spool <dir>` is given; without it `run` is
-unchanged.
+additions to `run`; streaming (1) runs on every `run`, so a run killed by a wall cap keeps every
+verdict already produced — the spool (2) is active only when `--attr-spool <dir>` is given.
 
 1. **Streaming.** While the remote batch runs, every `SPIRA_ROUND_VM_STREAM_SECS` (default 10)
    `run` pulls `round-work/.runtime/spira/batch-results/` and copies each suite's `.out` and then

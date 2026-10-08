@@ -820,8 +820,23 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         lint: args.base.is_some(),
     };
     let t0 = Instant::now();
+    let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
+    let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
     let Some(spool_dir) = args.attr_spool.clone() else {
-        let remote_rc = match env.remote.run_batch(&vm.addr, &job) {
+        let streamed = std::thread::scope(|sc| {
+            let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
+            let mut last: Option<Instant> = None;
+            while !batch.is_finished() {
+                if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
+                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                    last = Some(Instant::now());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let _ = fs::remove_dir_all(&stream_scratch);
+            batch.join().unwrap_or_else(|_| Err("the batch thread panicked".into()))
+        });
+        let remote_rc = match streamed {
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 return 2;
@@ -840,8 +855,6 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
     let pid = std::process::id();
     let in_flight = AtomicUsize::new(0);
     let mirror_lock = Mutex::new(());
-    let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
-    let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{pid}"));
     std::thread::scope(|sc| {
         let mut server = Server {
             spool: Spool { dir: spool_dir },
@@ -861,11 +874,7 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         let mut last: Option<Instant> = None;
         while !batch.is_finished() {
             if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
-                if env.remote.pull(&vm.addr, REMOTE_RESULTS, &stream_scratch).is_ok() {
-                    if let Err(e) = stream_into(&stream_scratch, &results_dir) {
-                        eprintln!("round-vm run: streaming results: {e}");
-                    }
-                }
+                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
                 last = Some(Instant::now());
             }
             server.serve(sc, false);
@@ -895,6 +904,16 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         }
         code
     })
+}
+
+/// One streaming pass: every verdict the VM has so far lands in `results_dir`, so a run cut
+/// before its final pull keeps them.
+fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path) {
+    if remote.pull(addr, REMOTE_RESULTS, scratch).is_ok() {
+        if let Err(e) = stream_into(scratch, results_dir) {
+            eprintln!("round-vm run: streaming results: {e}");
+        }
+    }
 }
 
 /// `run`'s exit code for a non-zero remote exit (DESIGN.md §2.2): testenv's own contract
@@ -1421,6 +1440,9 @@ mod tests {
         /// (job id, whether the batch was still running when the job started)
         attrs: Mutex<Vec<(String, bool)>>,
         batch_running: std::sync::atomic::AtomicBool,
+        /// the corpus runs until its results have been pulled once, then the connection drops
+        hold_for_stream: bool,
+        result_pulls: std::sync::atomic::AtomicUsize,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -1443,6 +1465,8 @@ mod tests {
                 hold_for_attr: false,
                 attrs: Mutex::new(vec![]),
                 batch_running: std::sync::atomic::AtomicBool::new(false),
+                hold_for_stream: false,
+                result_pulls: std::sync::atomic::AtomicUsize::new(0),
             }
         }
     }
@@ -1456,6 +1480,9 @@ mod tests {
             if self.hold_for_attr {
                 wait_until(|| !self.attrs.lock().unwrap().is_empty());
             }
+            if self.hold_for_stream {
+                wait_until(|| self.result_pulls.load(std::sync::atomic::Ordering::SeqCst) > 0);
+            }
             self.batch_running.store(false, std::sync::atomic::Ordering::SeqCst);
             self.rc.clone()
         }
@@ -1468,6 +1495,9 @@ mod tests {
             Ok(if job.job == "j2" { 1 } else { 0 })
         }
         fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), String> {
+            if remote_path == REMOTE_RESULTS {
+                self.result_pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             let files = self.files.get(remote_path).ok_or("no such remote dir")?;
             for (rel, body) in files {
                 let p = local.join(rel);
@@ -1797,6 +1827,19 @@ mod tests {
         assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
         assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
         assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
+    }
+
+    #[test]
+    fn a_run_cut_before_its_final_pull_keeps_the_verdicts_already_produced() {
+        let mut fx = fixture();
+        fx.cfg.stream_every = Duration::ZERO;
+        let remote = FakeRemote { hold_for_stream: true, rc: Ok(255), ..FakeRemote::green() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 2);
+        for s in ["test-a.sh", "test-b.sh"] {
+            assert!(fx.d.path().join("results").join(format!("{s}.result")).is_file(), "{s} streamed before the cut");
+        }
+        assert!(fx.fp.live_vms().is_empty());
     }
 
     #[test]
