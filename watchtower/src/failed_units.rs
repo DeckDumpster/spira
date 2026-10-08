@@ -26,6 +26,9 @@ pub fn gather(systemctl: &str) -> Option<Vec<String>> {
         if line.trim().is_empty() {
             continue;
         }
+        if is_not_found(line) {
+            continue;
+        }
         if let Some(u) = extract_unit_name(line) {
             units.push(u);
         }
@@ -51,6 +54,14 @@ fn extract_unit_name(line: &str) -> Option<String> {
     } else {
         Some(token.to_string())
     }
+}
+
+/// A unit whose file is gone keeps a residual failed state; LoadState=not-found is absent,
+/// not failing.
+fn is_not_found(line: &str) -> bool {
+    extract_unit_name(line).is_some_and(|u| {
+        line.split_whitespace().skip_while(|t| *t != u).nth(1) == Some("not-found")
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +164,13 @@ mod tests {
             assert_eq!(got.as_deref(), Some(*want));
             assert_ne!(got.as_deref(), Some("\u{25cf}"));
         }
+    }
+
+    #[test]
+    fn a_not_found_unit_is_absent_not_failed() {
+        assert!(is_not_found("○ spira-watch-refresh-prod.service not-found failed failed spira-watch-refresh-prod.service"));
+        assert!(!is_not_found("● spira-x.service loaded failed failed Spira x"));
+        assert!(!is_not_found("● spira-x.service"));
     }
 
     #[test]
