@@ -578,6 +578,7 @@ mod probe_tests {
             mail_from: None,
             lint_considered: Some("test".into()),
             repeat_considered: Some("test".into()),
+            operator_considered: None,
             allow_blocking: false,
             bead_id: None,
             lock_timeout_ms: 1000,
