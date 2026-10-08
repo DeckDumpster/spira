@@ -121,12 +121,11 @@ ms=$(( ($(date +%s%N) - t0) / 1000000 ))
 wantrc "list-all exits 0" 0 $rc
 is "list-all returns every row" "$((ROWS + 1))" "$(wc -l < "$TMP/all.out" | tr -d ' ')"
 want "the planted WORKING row with no holder is in the read" "sp-planted	WORKING	" "$(cat "$TMP/all.out")"
-plan="$(root_sql --use-db spira_lifecycle sql -q "EXPLAIN SELECT bead_id, state, holder FROM bead" -r csv)"
-is "the read plans as one scan row over bead" "1,SIMPLE,bead" "$(printf '%s\n' "$plan" | sed -n 2p | cut -d, -f1-3)"
-for q in "EXPLAIN SELECT bead_id, state, holder FROM bead" "EXPLAIN FORMAT=TREE SELECT bead_id FROM bead" "DESCRIBE PLAN SELECT bead_id FROM bead"; do echo "# DBG [$q]"; root_sql --use-db spira_lifecycle sql -q "$q" | sed "s/^/# DBG /"; done
+plan="$(root_sql --use-db spira_lifecycle sql -q "EXPLAIN SELECT bead_id, state, holder FROM bead")"
+want "the read plans as a scan of bead" "name: bead" "$plan"
 case "$plan" in
-    *[Jj]oin*|*Subquery*) bad "the consistency read plans a join or subquery: $plan" ;;
-    *) ok "the consistency read is a single-table scan, no join or subquery" ;;
+    *[Jj]oin*|*Subquery*|*Filter*) bad "the consistency read plans more than a single-table scan: $plan" ;;
+    *) ok "the consistency read is a single-table scan, no join, filter or subquery" ;;
 esac
 echo "# list-all of $((ROWS + 1)) rows took ${ms} ms (informational: wall clock on a shared store is not asserted)"
 
