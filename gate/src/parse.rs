@@ -41,14 +41,28 @@ pub fn failed_tests(out: &str) -> Vec<String> {
     seen
 }
 
-/// The fence named by the first `<fence>: REFUSED` line, e.g. `lifecycle-guard`.
+/// The fence named by the first `<fence>: REFUSED` line, e.g. `lifecycle-guard`; failing that,
+/// the first line opening with a hyphenated lowercase rule token and `: `, e.g. a lint's
+/// `process-exit-in-library: ...`.
 pub fn fence_refusal(out: &str) -> Option<String> {
-    out.lines().find_map(|l| {
-        let name = l.trim().split_once(": REFUSED")?.0;
-        let ok = !name.is_empty()
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-        ok.then(|| name.to_string())
-    })
+    let ident = |n: &str| {
+        !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    };
+    out.lines()
+        .find_map(|l| {
+            let name = l.trim().split_once(": REFUSED")?.0;
+            ident(name).then(|| name.to_string())
+        })
+        .or_else(|| {
+            out.lines().find_map(|l| {
+                let name = l.split_once(": ")?.0;
+                let rule = name.contains('-')
+                    && !name.starts_with('-')
+                    && !name.ends_with('-')
+                    && name.chars().all(|c| c.is_ascii_lowercase() || c == '-');
+                rule.then(|| name.to_string())
+            })
+        })
 }
 
 /// `ran_suites`: every suite the runner reported any status for.
@@ -254,6 +268,9 @@ mod tests {
         assert_eq!(fence_refusal(out), Some("lifecycle-guard".to_string()));
         assert_eq!(fence_refusal("some text: REFUSED\n"), None);
         assert_eq!(fence_refusal("all green"), None);
+        let lint = "scanning\nprocess-exit-in-library: spira/x.rs:13: lists a path that no longer needs an exception\n";
+        assert_eq!(fence_refusal(lint), Some("process-exit-in-library".to_string()));
+        assert_eq!(fence_refusal("error: boom\ngate: x\nsome-text here: y\n"), None);
     }
 
     #[test]
