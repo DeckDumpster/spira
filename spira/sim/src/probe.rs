@@ -209,7 +209,7 @@ pub fn lc_port(world: &Path) -> Result<String, String> {
     Ok(port.trim().to_string())
 }
 
-fn landstate_of(world: &Path) -> impl Fn(&str) -> Option<String> {
+pub fn landstate_of(world: &Path) -> impl Fn(&str) -> Option<String> {
     let dir = world.join("run/landstate");
     move |id: &str| std::fs::read_to_string(dir.join(id)).ok().and_then(|s| s.split_whitespace().next().map(str::to_string))
 }

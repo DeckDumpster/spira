@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use spira_sim::probe::{git_facts, names, parse_branches, probe, refuse_foreign, rows, GitFacts, Lineage};
+use spira_sim::probe::{git_facts, landstate_of, names, parse_branches, probe, refuse_foreign, rows, GitFacts, Lineage};
 use spira_sim::trace::{bead_row, violations, Snapshot, Trace};
 use spira_sim::world::PRODUCTION_LOCATORS;
 use std::collections::BTreeMap;
@@ -123,7 +123,7 @@ fn rows_from_fixture_lifecycle_json_and_git() {
     let (w, s) = world("[]");
     std::fs::write(w.join("run/landstate/sp-c"), format!("CERTIFIED {} 1800000000\n", s.certified)).unwrap();
     let facts = git_facts(&w).unwrap();
-    let ls = |id: &str| std::fs::read_to_string(w.join("run/landstate").join(id)).ok().and_then(|t| t.split_whitespace().next().map(str::to_string));
+    let ls = landstate_of(&w);
     let rows: BTreeMap<String, Value> = rows(&clean_list(&s), &ls, &facts).unwrap().into_iter().map(|r| (r["bead"].as_str().unwrap().to_string(), bead_row(&r).unwrap())).collect();
     assert_eq!(rows.keys().cloned().collect::<Vec<_>>(), ["sp-c", "sp-l", "sp-m", "sp-r", "sp-u"]);
 
