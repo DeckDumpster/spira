@@ -1680,7 +1680,7 @@ fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
 /// A `spira-config` standing in for one release's schema: `validate` loads iff every key in
 /// `needs` is in the layers `$SPIRA_TOML` names and none of `refuses` is.
 fn schema(needs: &[&str], refuses: &[&str]) -> String {
-    let mut s = String::from("#!/bin/sh\n[ \"$1\" = validate ] || exit 2\ncfg=$(cat $(echo \"$SPIRA_TOML\" | tr : ' '))\n");
+    let mut s = String::from("#!/bin/sh\nPATH=/usr/bin:/bin\n[ \"$1\" = validate ] || exit 2\ncfg=$(cat $(echo \"$SPIRA_TOML\" | tr : ' '))\n");
     for k in needs {
         s.push_str(&format!("echo \"$cfg\" | grep -q '{k}' || {{ echo \"config has no {k}\" >&2; exit 1; }}\n"));
     }
@@ -1742,7 +1742,7 @@ fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edi
 
 #[test]
 fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_files_alone() {
-    let probe = "#!/bin/sh\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";
+    let probe = "#!/bin/sh\nPATH=/usr/bin:/bin\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";
     let mut g = delta_git("[added]\n\"spira.new_key\" = 300\n");
     g.extra.push(("spira/pre-activate.sh".into(), probe.into(), true));
     let w = World::with_git(g);
