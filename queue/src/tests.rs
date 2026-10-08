@@ -1549,7 +1549,7 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
         vec![
             format!("build h1 --repo {REPO} --bin-dir {wts}/target/release {common}"),
             format!("verify h1 {common}"),
-            format!("activate h1 --repo {REPO} --landed-ref local/main {common}"),
+            format!("activate h1 --repo {REPO} --landed-ref local/main --drain-wait {} {common}", crate::ops::deploy::LAND_DRAIN_WAIT_SECS),
         ]
     );
     assert!(t.scripts.release_calls.borrow().iter().all(|(_, _, db)| db == "/db"), "every release child gets SPIRA_DB");
@@ -1565,6 +1565,11 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\""));
     assert!(calls.iter().any(|c| c.starts_with("bead_close sp-b h1")));
     assert!(!t.err().contains("LAND DEPLOY FAILED"));
+}
+
+#[test]
+fn land_drain_wait_is_explicit_and_below_the_round_cap() {
+    assert!(crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0 && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60);
 }
 
 #[test]
