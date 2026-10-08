@@ -434,15 +434,20 @@ pub fn land_modes_missing(modes: &[String]) -> Vec<&'static str> {
     LAND_MODES.iter().copied().filter(|m| !modes.iter().any(|x| if *m == "queue" { is_queue_mode(x) } else { x == m })).collect()
 }
 
+/// Units installed only while `SPIRA_REPO` is a git checkout. A deploy re-renders under the
+/// release directory, which is not one, so an upgrade and a rollback never keep these.
+const GIT_CHECKOUT_UNITS: [&str; 2] = ["spira-cert-sweep-", "spira-round-template-"];
+
 /// The installed `spira-*` unit files, "name state" per line, sorted; transient units
-/// excluded (a landing pass alive at snapshot time is not part of an install).
+/// excluded (a landing pass alive at snapshot time is not part of an install), and so are
+/// the `GIT_CHECKOUT_UNITS`.
 pub fn unit_set(list_unit_files: &str) -> Vec<String> {
     let mut v: Vec<String> = list_unit_files
         .lines()
         .filter_map(|l| {
             let mut f = l.split_whitespace();
             let (n, s) = (f.next()?, f.next().unwrap_or(""));
-            (n.starts_with("spira-") && s != "transient").then(|| format!("{n} {s}"))
+            (n.starts_with("spira-") && s != "transient" && !GIT_CHECKOUT_UNITS.iter().any(|p| n.starts_with(p))).then(|| format!("{n} {s}"))
         })
         .collect();
     v.sort();
