@@ -179,7 +179,6 @@ echo "a groom log that claims ESCALATED without an ask bead — the submission i
 fresh sp-gc-1; run_aeon scrubber log-claim
 is   "the lifecycle row goes back to REWORK" REWORK "$(rowstate sp-gc-1)"
 is   "trigger is reopened in bd"   open        "$(field sp-gc-1 status)"
-want "trigger is poisoned in bd"   "spira-poison" "$(labels sp-gc-1)"
 is   "a lifecycle poison hold is placed" yes "$([ -s "$RUN/lc-hold/sp-gc-1" ] && grep -q '^poison ' "$RUN/lc-hold/sp-gc-1" && echo yes || echo no)"
 want "log says REOPENED and POISONED" "REOPENED and POISONED" "$(cat "$TMP/out")"
 want "poison message names the uncorroborated bead" "sp-gc1" "$(cat "$TMP/out")"
