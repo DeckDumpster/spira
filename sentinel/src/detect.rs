@@ -552,21 +552,30 @@ impl<'a> Sentinel<'a> {
         if self.cfg.overlap_defer.is_empty() {
             return Vec::new();
         }
+        let Some(rows) = self.state_rows() else {
+            return Vec::new();
+        };
+        let args = vec![
+            "list".into(),
+            "--all".into(),
+            "--limit".into(),
+            "0".into(),
+            "--exclude-type".into(),
+            "epic,event".into(),
+        ];
+        let Ok(raw) = self.bd().json(self.h, &args) else {
+            return Vec::new();
+        };
+        let Ok(listed) = parse_beads(&raw) else {
+            return Vec::new();
+        };
         let mut beads = Vec::new();
-        for status in ["open", "in_progress"] {
-            let args = vec![
-                "list".into(),
-                "--status".into(),
-                status.into(),
-                "--limit".into(),
-                "0".into(),
-                "--exclude-type".into(),
-                "epic,event".into(),
-            ];
-            if let Ok(raw) = self.bd().json(self.h, &args) {
-                if let Ok(v) = parse_beads(&raw) {
-                    beads.extend(v.into_iter().map(|b| (status == "in_progress", b)));
-                }
+        for b in listed {
+            let Some(r) = rows.iter().find(|r| r.bead_id == b.id) else { continue };
+            if lc_state::is_working(&r.state) {
+                beads.push((true, b));
+            } else if lc_state::is_claimable(&r.state) {
+                beads.push((false, b));
             }
         }
         let ask = &self.cfg.ask;
@@ -632,8 +641,11 @@ impl<'a> Sentinel<'a> {
             }
             out.push(DeferOutcome::Deferred { id: o.id.clone(), repo: o.repo.clone(), holder_id: o.holder_id.clone() });
         }
+        let Some(rows) = self.state_rows() else {
+            return out;
+        };
         let args: Vec<String> =
-            ["list", "--status", "open", "--limit", "0", "--label", label.as_str()].iter().map(|s| s.to_string()).collect();
+            ["list", "--all", "--limit", "0", "--label", label.as_str()].iter().map(|s| s.to_string()).collect();
         let Ok(raw) = self.bd().json(self.h, &args) else {
             return out;
         };
@@ -641,7 +653,7 @@ impl<'a> Sentinel<'a> {
             return out;
         };
         for b in labelled {
-            if current.contains(b.id.as_str()) {
+            if current.contains(b.id.as_str()) || !rows.iter().any(|r| r.bead_id == b.id && lc_state::is_claimable(&r.state)) {
                 continue;
             }
             self.bd().quiet(self.h, &["label", "remove", &b.id, label], None);

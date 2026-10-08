@@ -2633,21 +2633,15 @@ fn overlap_world(r: &FakeRunner, w: &World) {
     r.on(move |s| {
         (s.prog == "spira-config" && s.args == ["repo", "root", "spira"]).then(|| ok(&format!("{root}\n"))).flatten()
     });
-    r.on(|s| {
-        if !is_bd(s, "list") || !s.args.iter().any(|a| a == "--exclude-type") {
-            return None;
-        }
-        if s.args.iter().any(|a| a == "in_progress") {
-            return ok(r#"[{"id":"sp-busy","status":"in_progress","issue_type":"task","labels":["spira","repo:spira"]}]"#);
-        }
-        let asked = "needs-operator"; // literal-ok: test fixture
-        ok(&format!(r#"[
-          {{"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]}},
-          {{"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]}},
-          {{"id":"sp-alone","status":"open","issue_type":"task","labels":["spira","repo:spira"]}},
-          {{"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira","{asked}"]}}
-        ]"#))
-    });
+    const LIST: &str = r#"[
+      {"id":"sp-busy","status":"in_progress","issue_type":"task","labels":["spira","repo:spira"]},
+      {"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
+      {"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
+      {"id":"sp-alone","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
+      {"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira","needs-operator"]}
+    ]"#; // literal-ok: test fixture
+    r.on(|s| (is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type")).then(|| ok(LIST)).flatten());
+    r.on(|s| (s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")).then(|| ok(&lc_mirror(LIST))).flatten());
     r.on(|s| {
         if s.prog != "git" {
             return None;
@@ -2722,18 +2716,18 @@ fn audit_defers_the_later_bead_and_resumes_one_that_no_longer_overlaps() {
     overlap_world(&r, &w);
     r.on(|s| {
         (is_bd(s, "list") && s.args.iter().any(|a| a == "--label"))
-            .then(|| ok(r#"[{"id":"sp-stale","status":"open","issue_type":"task","labels":["spira",
+            .then(|| ok(r#"[{"id":"sp-alone","status":"open","issue_type":"task","labels":["spira",
 "hold-back-fo"]}]"#))
             .flatten()
     });
     overlap_run(&w, &r, &sink, &clock, Mode::Audit);
     assert!(sink.has("DEFERRED sp-late spira sp-early"), "{}", sink.text());
-    assert!(sink.has("RESUMED sp-stale"));
+    assert!(sink.has("RESUMED sp-alone"));
     assert!(sink.has("ACT deferred 1 file-overlap bead(s)"));
     let add = |id: &str| r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", id, OVERLAP_LABEL]).is_some();
     assert!(add("sp-late"));
     assert!(!add("sp-early"), "the holder is never deferred");
-    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "remove", "sp-stale", OVERLAP_LABEL]).is_some());
+    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "remove", "sp-alone", OVERLAP_LABEL]).is_some());
     // literal-ok: test fixture
     assert!(r.find(|s| is_bd(s, "label") && s.args.iter().any(|a| a == "needs-operator") && s.args.iter().any(|a| a == "sp-late")).is_none());
 }
