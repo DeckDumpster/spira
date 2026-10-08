@@ -71,6 +71,7 @@ pub fn run(w: &dyn World) -> i32 {
             lines: {
                 let mut v = check_store(w);
                 v.extend(check_dolt_telemetry(w));
+                v.extend(check_root_closed(w));
                 v
             },
         },
@@ -447,6 +448,22 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
     }
 
     out
+}
+
+pub fn check_root_closed(w: &dyn World) -> Vec<Line> {
+    let db = w.env("SPIRA_DB").unwrap_or_default();
+    let meta = Path::new(&db).join(".beads").join("metadata.json");
+    let Some(m) = w.read_store_meta(&meta) else { return Vec::new() };
+    let Some(port) = m.dolt_server_port else { return Vec::new() };
+    let host = if m.dolt_server_host.is_empty() { "127.0.0.1".to_string() } else { m.dolt_server_host };
+    match w.dolt_root_passwordless(&host, port) {
+        Some(true) => vec![fail(
+            format!("dolt root on {host}:{port} is passwordless"),
+            "Anyone on the host can administer the store. Run install: it gives bd its own user and\n        moves root onto the password in the admin credential file.",
+        )],
+        Some(false) => vec![ok(format!("dolt root on {host}:{port} requires a password"))],
+        None => Vec::new(),
+    }
 }
 
 const DOLT_EVENTS_MAX: usize = 100;
