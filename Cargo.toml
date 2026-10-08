@@ -96,6 +96,13 @@ opt-level = 0
 incremental = true
 debug = "line-tables-only"
 
+# The timing suite measures spira-lc list against production size; at opt-level 0 the row
+# decode and JSON build alone take longer than the query.
+[profile.aeon.package.spira-lc]
+opt-level = 2
+[profile.aeon.package.serde_json]
+opt-level = 2
+
 # lifecycle-guard runs as a gate fence over the whole tree (gate.steps, sp-ts2qr), built in
 # this profile by the gate's tools phase. At opt-level 0 the tree-sitter bash parse of the
 # harness's ~116k lines of shell took ~22 s every gate; optimising the guard and its parser
