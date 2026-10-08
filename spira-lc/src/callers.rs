@@ -18,6 +18,7 @@ use lifecycle::bead::{BeadEventKind, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
+use spira_config::lc_state;
 
 /// Exit codes, the shell library's own: 0 applied · 1 no row · 2 cannot tell · 3 refused.
 pub const APPLIED: i32 = 0;
@@ -89,7 +90,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
     match verb {
         "hold" => {
             if !need(2) {
-                return usage("hold <bead-id> <poison|ask|wait|operator> [cause] [actor]");
+                return usage("hold <bead-id> <poison|ask|wait|operator> [cause] [actor]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"");
             }
             let actor = actor_or(args.get(3), "sentinel");
             hold(m, &a(0), &a(1), &a(2), &actor)
@@ -336,6 +337,11 @@ fn hold_cause(k: HoldKind) -> HoldCause {
 
 fn hold(m: &mut dyn Machine, id: &str, kind: &str, cause: &str, actor: &str) -> Answer {
     with_row(m, id, actor, |_| match HoldKind::from_str(kind) {
+        Some(HoldKind::Wait) if lc_state::names_directive(cause) && lc_state::snooze_until(cause).is_none() => Err(Answer {
+            code: REFUSED,
+            stderr: format!("lc: wait hold reason {cause:?} is not understood; a timed snooze is \"snooze-until:<epoch seconds>[ explanation]\"; no hold was applied\n"),
+            ..Default::default()
+        }),
         Some(k) => Ok(BeadEventKind::Hold { kind: k, cause: hold_cause(k), detail: Some(cause.to_string()) }),
         None => Err(unknown_kind(kind)),
     })
