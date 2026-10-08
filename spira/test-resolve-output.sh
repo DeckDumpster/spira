@@ -144,7 +144,7 @@ echo "CASE 4: a work bead (has a lifecycle row) is refused, naming reply; bd is 
 # ======================================================================================
 BD_MARK="$TMP/bd-called"
 BD_TRAP="$TMP/bin/bd-trap"
-printf '#!/usr/bin/env bash\ntouch "%s"\nexit 0\n' "$BD_MARK" > "$BD_TRAP"
+printf '#!/usr/bin/env bash\ncase " $* " in *" show "*) exit 0;; esac\ntouch "%s"\nexit 0\n' "$BD_MARK" > "$BD_TRAP"
 chmod +x "$BD_TRAP"
 lc_close_stub "$TMP/lc" "$BD_TRAP" "$DB"
 work_out=$(BD_BIN="$BD_TRAP" LC_STUB_ROW=1 resolve sp-test-id "close reason" 2>&1) && rc4=0 || rc4=$?
