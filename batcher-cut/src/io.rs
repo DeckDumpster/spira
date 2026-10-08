@@ -2353,7 +2353,7 @@ mod lc_withdraw_tests {
         fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
         let mut e = super::lifecycle_tests_env(&d);
         e.lc_bin = Some(lc_stub(&d, "SUBMITTED"));
-        eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[]);
+        eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[], true);
         let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
         assert!(calls.contains("event bead sp-a --expect SUBMITTED --version 4 --actor batcher --kind {\"GateRed\":{\"reason\":\"suites-failed\""), "{calls}");
         assert!(!calls.contains("Deliver"), "{calls}");
