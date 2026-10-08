@@ -38,7 +38,7 @@ fn has_ask_hold(r: &LcRow) -> bool {
 /// names it as its work bead, or it depends on an open ask bead.
 fn ask_open(snap: &Snapshot, id: &str, ask_label: &str) -> bool {
     let tag = format!("{WORK_BEAD_LABEL}{id}");
-    let open = |status: &str| status != "closed";
+    let open = |status: &str| !spira_config::nonwork::is_closed(spira_config::nonwork::Kind::Ask, status);
     let Some(b) = snap.get(id) else { return true };
     if b.has(ask_label) {
         return true;
