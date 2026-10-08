@@ -34,6 +34,17 @@ impl Closer for RealBd {
             .unwrap_or_default()
     }
 
+    fn has_lifecycle_row(&self, id: &str) -> Result<bool, String> {
+        match Command::new("timeout").args(["5", "spira-lc", "show", id]).stdin(Stdio::null()).output() {
+            Ok(o) => match o.status.code() {
+                Some(0) => Ok(true),
+                Some(1) => Ok(false),
+                code => Err(format!("spira-lc show exit {code:?}: {}", String::from_utf8_lossy(&o.stderr))),
+            },
+            Err(e) => Err(format!("running spira-lc: {e}")),
+        }
+    }
+
     fn withdraw_ask(&self, work_bead: &str) -> (i32, String) {
         let mut c = Command::new(spira_config::lc_call::lc_bin());
         c.args(["withdraw-ask", work_bead, "claude"]);

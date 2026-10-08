@@ -405,6 +405,8 @@ if [ "\$1" = reopen ]; then
     [ -n "\$sub" ] && "\$bd" \${db:+-C "\$db"} label remove "\$2" "\$sub" >/dev/null 2>&1
     exit 0
 fi
+if [ "\$1" = show ] && [ -n "\${LC_STUB_ROW:-}" ]; then echo "{}"; exit 0; fi
+if [ "\$1" = show ] && [ -n "\${LC_STUB_NOROW:-}" ]; then exit 1; fi
 if [ "\$1" != close ]; then [ -n "$real" ] && exec "$real" "\$@"; exit 7; fi
 id="\$2"; shift 2; reason=""
 while [ \$# -gt 0 ]; do
