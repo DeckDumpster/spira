@@ -61,6 +61,7 @@ members = [
     "install",
     "watchd",
     "inbox-triage",
+    "inbox-rules",
     "gh-intake",
     "sop",
     "incident",

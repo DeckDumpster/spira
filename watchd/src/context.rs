@@ -37,6 +37,7 @@ const CONFIG_VARS: &[&str] = &[
     "SPIRA_NOTIFY_AGE",
     "SPIRA_ID_PREFIX",
     "SPIRA_BD",
+    "SPIRA_CONCIERGE_INBOX",
 ];
 
 const SCRIPT: &str = r#"set -uo pipefail

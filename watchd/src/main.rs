@@ -10,6 +10,7 @@ mod health;
 mod iso8601;
 mod lock;
 mod manifest;
+mod next;
 mod notify;
 mod ops;
 mod paths;
@@ -20,7 +21,7 @@ use manifest::Row;
 use ops::Real;
 
 fn usage() -> &'static str {
-    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|tailers|restart [name]|notify|prune|health-ids <file>|health-view <program> <session>"
+    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|tailers|restart [name]|notify|prune|health-ids <file>|health-view <program> <session>"
 }
 
 fn load_context() -> context::Context {
@@ -143,6 +144,32 @@ fn main() {
                 ctx.now,
                 &tail::TailArgs { name: &name, all: args.all, takeover: args.takeover, from_start: args.from_start },
             )
+        }
+        "next" => {
+            let (name, timeout) = match rest {
+                [n] => (n, None),
+                [n, f, secs] if f == "--timeout" && secs.parse::<u64>().is_ok() => (n, Some(std::time::Duration::from_secs(secs.parse().unwrap()))),
+                _ => {
+                    eprintln!("usage: watchd next <name> [--timeout SECS]");
+                    std::process::exit(2);
+                }
+            };
+            let ctx = load_context();
+            let rows = need_rows(&ctx);
+            let dedup_window = match spira_config::process::cfg_parse::<u64>("SPIRA_CONCIERGE_INBOX_DEDUP") {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("watchd: {e}");
+                    std::process::exit(1);
+                }
+            };
+            match next::cmd_next(&rows, &ctx, &next::NextArgs { name, dedup_window, timeout, poll: std::time::Duration::from_millis(500) }) {
+                Ok(out) => {
+                    print!("{out}");
+                    0
+                }
+                Err(code) => code,
+            }
         }
         "tailers" => {
             let ctx = load_context();
