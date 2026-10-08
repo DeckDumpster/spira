@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=UNUSED since round-duty.sh asks queue round status; kept so existing configs still parse.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # UNUSED since round-duty.sh asks queue round status; kept so existing configs still parse.
+    : "${SPIRA_ROUND_MARKER_MAX_AGE:=10800}"
+SPIRA_CONF_DEFAULT_EOF
