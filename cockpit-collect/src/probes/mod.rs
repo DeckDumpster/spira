@@ -247,10 +247,10 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
             let pid = io::read_trim(&pf).and_then(|s| s.trim().parse::<i64>().ok());
             let secs = pid.and_then(io::proc_etimes).unwrap_or(0);
 
-            let meta = io::bdjson(&["show", bead]);
+            let meta = io::contentjson(&["show", bead]);
             let (pri, title, repo_name) = parse_show_meta(meta, bead);
 
-            let partition = io::bdq(&["state", bead, "fayth"])
+            let partition = io::content(&["state", bead, "fayth"])
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "?".to_string());
@@ -532,7 +532,7 @@ fn aeon_alive(pidfile: &Path) -> bool {
 
 /// `show <bead>` -> (priority, sanitized title, repo name), `?`/empty on any failure.
 fn parse_show_meta(raw: Option<String>, _bead: &str) -> (String, String, String) {
-    let Some(rows) = io::bd_rows(raw) else {
+    let Some(rows) = io::json_rows(raw) else {
         return ("?".to_string(), "?".to_string(), "?".to_string());
     };
     let Some(row) = rows.first() else {
@@ -586,7 +586,7 @@ pub fn core_counts_keys() -> Kv {
     let ask_label = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     // Asks are not work beads: bd status is their only state (spira_config::nonwork).
     let [flag, open] = nonwork::status_args(Kind::Ask, Which::Open);
-    let rows = io::bd_rows(io::bdjson(&["list", &flag, &open, "--limit", "0", "--label", &ask_label]));
+    let rows = io::json_rows(io::contentjson(&["list", &flag, &open, "--limit", "0", "--label", &ask_label]));
     match rows {
         None => push(&mut out, "SP_WAITING", "?"),
         Some(rows) => push(&mut out, "SP_WAITING", rows.len().to_string()),
@@ -666,7 +666,7 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
 
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0", "--label", &label]));
+    let rows = io::json_rows(io::contentjson(&["list", "--limit", "0", "--label", &label]));
     match rows.zip(lc_rows.as_ref()) {
         None => {
             push(&mut out, "SP_OPEN", "?");
@@ -718,7 +718,7 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0"]));
+    let rows = io::json_rows(io::contentjson(&["list", "--limit", "0"]));
     match rows {
         None => {
             push(&mut out, "SP_REPO_UNMAPPED", "?");
@@ -749,7 +749,7 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
 
 pub fn dup_refs_keys() -> Kv {
     let mut out = Kv::new();
-    let rows = io::bd_rows(io::bdjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
+    let rows = io::json_rows(io::contentjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
     // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
     let Some((rows, lc)) = rows.zip(lc::state_index()) else {
         push(&mut out, "SP_DUP_REFS", "?");
@@ -793,7 +793,7 @@ pub fn livelock_keys() -> Kv {
     let mut out = Kv::new();
     let cfg = strand_cfg();
     let ll_out = strand::detectors::detect_livelocked(&cfg);
-    if ll_out.is_empty() && io::bdjson(&["list", "--limit", "1"]).is_none() {
+    if ll_out.is_empty() && io::contentjson(&["list", "--limit", "1"]).is_none() {
         push(&mut out, "SP_LIVELOCKED", "?");
         push(&mut out, "SP_LIVELOCK_N", "?");
     } else {
@@ -821,7 +821,7 @@ pub fn livelock_keys() -> Kv {
     // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
     let ic_out = strand::detectors::detect_invalid_closed(&cfg);
     // An empty detector answer is only "none" when the store answers at all.
-    if ic_out.is_empty() && io::bdjson(&["list", "--all", "--limit", "1"]).is_none() {
+    if ic_out.is_empty() && io::contentjson(&["list", "--all", "--limit", "1"]).is_none() {
         push(&mut out, "SP_INVALID_CLOSED", "?");
         push(&mut out, "SP_INVCLSD_N", "?");
         push(&mut out, "SP_UNFILED_FOLLOW", "?");
@@ -920,7 +920,7 @@ const CZAR_CLASSES: &[(&str, &str)] = &[
 pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let label = cfg.czar_label.as_str();
-    let raw = io::bdjson(&["list", "--label", label, "--all", "--limit", "0", "--brief"]);
+    let raw = io::contentjson(&["list", "--label", label, "--all", "--limit", "0", "--brief"]);
     let rows = match &raw {
         Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s.trim()).ok().map(|v| match v {
             Value::Array(a) => a,
@@ -997,7 +997,7 @@ const SOP_LEDGER_REL: &str = "sop/applied.jsonl";
 pub fn sop_keys() -> Kv {
     let mut out = Kv::new();
     let ledger = std::env::var("SPIRA_SOP_LEDGER").unwrap_or_else(|_| io::run_dir().join(SOP_LEDGER_REL).to_string_lossy().into_owned());
-    let raw = io::bdjson(&["memories"]);
+    let raw = io::contentjson(&["memories"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         push(&mut out, "SP_SOP_NEVER_FIRED", "?");
         push(&mut out, "SP_SOP_RECURRED", "?");
@@ -1080,7 +1080,7 @@ pub fn statute_keys(cfg: &Cfg) -> Kv {
         push(&mut out, "SP_STATUTE_SKEW", "?");
         return out;
     }
-    let db_n: Option<usize> = io::bdjson(&["memories"]).filter(|s| !s.trim().is_empty()).and_then(|s| {
+    let db_n: Option<usize> = io::contentjson(&["memories"]).filter(|s| !s.trim().is_empty()).and_then(|s| {
         serde_json::from_str::<Value>(s.trim()).ok()
     }).and_then(|v| v.as_object().map(|m| m.iter().filter(|(k, v)| v.is_string() && k.starts_with("law-")).count()));
 
@@ -1426,7 +1426,7 @@ mod tests {
     fn sphere_reports_zero_not_question_mark_on_empty() {
         // sphere_keys hits bd for real; this only checks the pure classification helper
         // it shares with the other probes stays honest about refusal vs empty.
-        assert_eq!(io::bd_rows(Some("[]".to_string())), Some(vec![]));
+        assert_eq!(io::json_rows(Some("[]".to_string())), Some(vec![]));
     }
 
     #[test]

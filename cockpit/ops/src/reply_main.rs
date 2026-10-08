@@ -11,12 +11,10 @@ use cockpit_ops::reply::{run, usage_error, BdResult, Commenter, Follow, Outcome,
 struct RealBd;
 
 impl Commenter for RealBd {
-    fn comment(&self, db: &Path, id: &str, text: &str) -> BdResult {
-        let bd = db::bd_bin();
+    fn comment(&self, _db: &Path, id: &str, text: &str) -> BdResult {
+        let bd = db::lc_bin();
         let out = spira_config::bounded::bounded(&bd)
-            .arg("-C")
-            .arg(db)
-            .args(["comments", "add", id, text])
+            .args(["content", "comments", "add", id, text])
             .env("BEADS_ACTOR", "claude")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

@@ -65,7 +65,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
         // machine's READY/REWORK rows — never bd's own `ready`, whose status and assignee
         // nobody claims by any more.
         let raw = io::run_tool("spira-claim", &["ready-count", labels, &excl, "--json"], None);
-        match io::bd_rows(raw) {
+        match io::json_rows(raw) {
             None => refused = true,
             Some(part_rows) => {
                 for mut r in part_rows {
@@ -255,8 +255,8 @@ fn leading_timestamp(line: &str) -> Option<&str> {
 }
 
 fn title_map() -> HashMap<String, String> {
-    let raw = io::bdjson(&["list", "--all", "--limit", "0"]);
-    let Some(rows) = io::bd_rows(raw) else { return HashMap::new() };
+    let raw = io::contentjson(&["list", "--all", "--limit", "0"]);
+    let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
     rows.iter()
         .filter_map(|i| {
             let id = i.get("id").and_then(Value::as_str)?.to_string();
@@ -271,8 +271,8 @@ fn title_map() -> HashMap<String, String> {
 // ---------------------------------------------------------------------------------------
 
 fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
-    let raw = io::bdjson(&["list", "--all", "--limit", "0"]);
-    let Some(rows) = io::bd_rows(raw) else {
+    let raw = io::contentjson(&["list", "--all", "--limit", "0"]);
+    let Some(rows) = io::json_rows(raw) else {
         push(out, "SP_INFLOW_WIN", "?");
         push(out, "SP_INFLOW_N", "?");
         push(out, "SP_INFLOW_DEFECT", "?");
@@ -336,7 +336,7 @@ fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
 fn awaiting_ci_section(out: &mut Kv, cfg: &Cfg) {
     let ci_max: i64 = cfg.ci_park_max;
     let now = io::now();
-    let raw = io::bdq(&["gate", "list", "--json"]);
+    let raw = io::content(&["gate", "list", "--json"]);
     let rows: Option<Vec<Value>> = raw.and_then(|s| {
         let t = s.trim();
         if t.is_empty() {
@@ -412,7 +412,7 @@ fn awaiting_ci_section(out: &mut Kv, cfg: &Cfg) {
 fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let raw = io::bdjson(&["list", "--all", "--limit", "0", "--label", &label]).unwrap_or_default();
+    let raw = io::contentjson(&["list", "--all", "--limit", "0", "--label", &label]).unwrap_or_default();
     let landing_log = run.join("landing.log");
     if let Some(sparklines) = io::run_tool("cockpit-sparklines.py", &[landing_log.to_str().unwrap_or("")], Some(&raw)) {
         for line in sparklines.lines() {

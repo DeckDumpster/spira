@@ -14,7 +14,7 @@
 #   2. bd fails with a known complaint on stderr → resolve.sh surfaces that text on stderr.
 #   3. bd succeeds → resolve.sh exits 0 and emits no failure text (healthy path stays silent).
 #
-# Driven through BD_BIN and COCKPIT_DB overrides — no database build, under a second.
+# Driven through SPIRA_LC_BIN and COCKPIT_DB overrides — no database build, under a second.
 #
 # tier: T1
 # covers: cockpit/ops/src/resolve.rs UC-cockpit-observability-40

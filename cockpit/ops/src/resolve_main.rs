@@ -21,13 +21,11 @@ impl Closer for RealBd {
         }
     }
 
-    fn show_json(&self, db: &Path, id: &str) -> String {
+    fn show_json(&self, _db: &Path, id: &str) -> String {
         Command::new("timeout")
             .arg("5")
-            .arg(db::bd_bin())
-            .arg("-C")
-            .arg(db)
-            .args(["show", id, "--json"])
+            .arg(db::lc_bin())
+            .args(["content", "show", id, "--json"])
             .stdin(Stdio::null())
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())

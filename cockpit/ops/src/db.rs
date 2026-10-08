@@ -49,13 +49,9 @@ pub fn cockpit_db() -> Result<PathBuf, String> {
     resolve_db(cockpit_db.as_deref(), spira_db.as_deref(), |p| p.is_dir())
 }
 
-/// `$BD_BIN` if set and non-empty, else `"bd"` — resolved off `PATH`, never a guessed
-/// install location.
-pub fn bd_bin() -> String {
-    std::env::var("BD_BIN")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "bd".to_string())
+/// `$SPIRA_LC_BIN` if set and non-empty, else `"spira-lc"` — the one door to bead content.
+pub fn lc_bin() -> String {
+    std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".to_string())
 }
 
 #[cfg(test)]

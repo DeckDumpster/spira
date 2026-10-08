@@ -25,9 +25,9 @@
 # conf.sh has already resolved COCKPIT_DB, defaulting it to SPIRA_DB. This line is the
 # guard for a db.sh sourced with neither set.
 COCKPIT_DB="${COCKPIT_DB:-${SPIRA_DB:-}}"
-# `bd` off the configured PATH, never a guessed install location: it lives in a different
-# directory on every box, and BD_BIN stays the seam a suite drives a stub through.
-BD="${BD_BIN:-bd}"
+# Bead content is read and written through `spira-lc content`, never `bd`; SPIRA_LC_BIN stays
+# the seam a suite drives a stub through.
+LC="${SPIRA_LC_BIN:-spira-lc}"
 
 # The database, verified to be one. A missing `.beads` is a real fault to report, never a
 # reason to quietly address some other database instead.
@@ -44,12 +44,12 @@ cockpit_db() {
 #
 # One function rather than the same three lines in each of five scripts: that duplication is
 # exactly how the cockpit ended up with five copies of a database walk, four of which were
-# never corrected when the fifth was. `bd --json` can print warnings on stdout BEFORE the
+# never corrected when the fifth was. `--json` can print warnings on stdout BEFORE the
 # payload, which is what the sed strips.
 cockpit_beads() {
   local db out
   db=$(cockpit_db) || return 1
-  out=$("$BD" -C "$db" list --all --limit 0 --json 2>/dev/null | sed -n '/^[[{]/,$p')
+  out=$("$LC" content list --all --limit 0 --json 2>/dev/null | sed -n '/^[[{]/,$p')
   [ -n "$out" ] || return 1
   printf '%s' "$out"
 }
@@ -71,7 +71,7 @@ cockpit_beads() {
 cockpit_attention_beads() {
   local db out
   db=$(cockpit_db) || return 1
-  out=$("$BD" -C "$db" list --all --limit 0 \
+  out=$("$LC" content list --all --limit 0 \
         --label-any "insight,$SPIRA_ASK_LABEL,overseer" --json 2>/dev/null \
         | sed -n '/^[[{]/,$p')
   [ -n "$out" ] || return 1
