@@ -1,9 +1,6 @@
-TYPE=string
+TYPE=czar_stage
 GROUP=czar
-DOC=SPIRA_CZAR_STAGE_RECONCILER_STALE — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_CZAR_STAGE_RECONCILER_STALE — Shadow: the czar notes a stale reconciler status; it mutates nothing until an operator sets act.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_CZAR_STAGE_RECONCILER_STALE:=shadow}"
 SPIRA_CONF_DEFAULT_EOF
