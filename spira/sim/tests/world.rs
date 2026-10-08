@@ -59,7 +59,11 @@ fn up_then_down_leaves_nothing_behind() {
     let cfg = std::fs::read_to_string(dir.join("config/sim.toml")).unwrap();
     assert!(cfg.contains("repo.sim.mode=queue.local") && cfg.contains("spira.lifecycle_enforce=true"));
     assert!(cfg.contains(&format!("spira.gh={}", dir.join("bin/gh").display())));
-    assert!(std::fs::read_to_string(dir.join("config/sim.env")).unwrap().contains("SIM_GH_DIR="));
+    let env = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
+    assert!(env.contains("SIM_GH_DIR="));
+    let probe = env.lines().find_map(|l| l.strip_prefix("SIM_PROBE=")).expect("world up writes SIM_PROBE");
+    assert_eq!(probe, spira_sim::world::probe_command(&std::env::current_exe().unwrap(), &dir.canonicalize().unwrap()));
+    assert!(probe.ends_with(&format!(" probe '{}'", dir.canonicalize().unwrap().display())), "{probe}");
     down(&dir, &fake).unwrap();
     assert!(!dir.exists());
     assert_eq!(fake.downs.load(Ordering::SeqCst), 1);

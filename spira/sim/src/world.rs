@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 pub const PRODUCTION_LOCATORS: &[&str] = &["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB"];
 const MARKER: &str = ".sim-world";
+/// The world's landing ref: `repo.sim.base`, and the ref a LANDED bead's commit must reach.
+pub const LANDING_BASE: &str = "local/main";
 const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: git/tar/cp/testenv steps of building a world
 const BUILD_DEADLINE: Duration = Duration::from_secs(3600); // batch-job: release build of the tree
 
@@ -139,22 +141,7 @@ impl Steps for ProcessSteps {
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
         self.config_set(release, &toml, "SPIRA_LC_PASSWORD_FILE", &credential.display().to_string())?;
         self.config_set(release, &toml, "SPIRA_LC_SOCKET", "")?;
-        let lc = |verb: &str, arg: PathBuf| {
-            run(
-                Command::new(release.join("bin/spira-lc"))
-                    .arg(verb)
-                    .arg(arg)
-                    .env_clear()
-                    .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-                    .env("SPIRA_TOML", &toml)
-                    .env("SPIRA_LC_HOST", "127.0.0.1")
-                    .env("SPIRA_LC_PORT", port.trim())
-                    .env("SPIRA_LC_USER", "root")
-                    .env("SPIRA_LC_ADMIN_USER", "root"),
-                CALL_DEADLINE,
-            )
-            .map(|_| ())
-        };
+        let lc = |verb: &str, arg: PathBuf| run(lc_command(release, config, &port).arg(verb).arg(arg), CALL_DEADLINE).map(|_| ());
         lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
         lc("admin-migrate", lifecycle.join("migrations"))
     }
@@ -162,6 +149,24 @@ impl Steps for ProcessSteps {
     fn db_down(&self, fixture: &str) -> Result<(), String> {
         run(Command::new("testenv").args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
     }
+}
+
+/// `spira-lc` against the world's own lifecycle store and nothing else: a cleared environment,
+/// the world's `config/lc.toml`, and its private Dolt server's port.
+pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
+    let mut cmd = Command::new(release.join("bin/spira-lc"));
+    cmd.env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("SPIRA_TOML", config.join("lc.toml"))
+        .env("SPIRA_LC_HOST", "127.0.0.1")
+        .env("SPIRA_LC_PORT", port.trim())
+        .env("SPIRA_LC_USER", "root")
+        .env("SPIRA_LC_ADMIN_USER", "root");
+    cmd
+}
+
+pub fn is_world(dir: &Path) -> bool {
+    dir.join(MARKER).is_file()
 }
 
 pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<String>, steps: &dyn Steps) -> Result<(), String> {
@@ -207,7 +212,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, steps: &dyn Steps) -> Result<(), S
     git(&work, &["commit", "-q", "-m", "sim seed"])?;
     git(&work, &["remote", "add", "origin", &p(&origin)])?;
     git(&work, &["push", "-q", "origin", "main"])?;
-    git(&work, &["branch", "local/main", "main"])?;
+    git(&work, &["branch", LANDING_BASE, "main"])?;
     git(&work, &["branch", "--set-upstream-to=origin/main", "main"])?;
 
     let run_dir = dir.join("run");
@@ -231,15 +236,22 @@ fn build(dir: &Path, repo: &Path, tree: &str, steps: &dyn Steps) -> Result<(), S
     std::fs::write(
         config.join("sim.env"),
         format!(
-            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\n",
+            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n",
             run_dir.display(),
             runner.display(),
             gh_state.display(),
-            bin.display()
+            bin.display(),
+            probe_command(&std::env::current_exe().map_err(|e| e.to_string())?, dir)
         ),
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// The `SIM_PROBE` line's command: `sim probe <world>`, shell-quoted, since it runs under `sh -c`.
+pub fn probe_command(sim: &Path, world: &Path) -> String {
+    let q = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
+    format!("{} probe {}", q(sim), q(world))
 }
 
 pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
@@ -248,7 +260,7 @@ pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
         kv("spira.lifecycle_enforce", "true"),
         kv("repo.sim.path", &work.display().to_string()),
         kv("repo.sim.mode", "queue.local"),
-        kv("repo.sim.base", "local/main"),
+        kv("repo.sim.base", LANDING_BASE),
         kv("spira.gh", &gh.display().to_string()),
     ]
 }
@@ -270,7 +282,7 @@ fn set_exec(p: &Path) -> Result<(), String> {
 }
 
 pub fn down(dir: &Path, steps: &dyn Steps) -> Result<(), String> {
-    if !dir.join(MARKER).is_file() {
+    if !is_world(dir) {
         return Err(format!("{} is not a sim world", dir.display()));
     }
     if let Ok(fixture) = std::fs::read_to_string(dir.join("db.fixture")) {
