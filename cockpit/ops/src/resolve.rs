@@ -22,6 +22,8 @@ pub trait Closer {
     fn show_json(&self, db: &Path, id: &str) -> String;
     /// `spira-lc withdraw-ask <work-bead> claude` → its exit code and output.
     fn withdraw_ask(&self, work_bead: &str) -> (i32, String);
+    /// Whether the bead has a lifecycle row (`spira-lc show` exit 0). `Err` is a cannot-tell.
+    fn has_lifecycle_row(&self, id: &str) -> Result<bool, String>;
 }
 
 /// The work beads an ask names on its `work-bead:<id>` labels (written by `mail send` on
@@ -45,6 +47,16 @@ pub fn usage_error(id: &str, reason: &str) -> bool {
 pub const USAGE: &str = "usage: resolve <bead-id> \"<reason with evidence>\"   (or - to read stdin)";
 
 pub fn run(id: &str, reason: &str, db: &Path, closer: &dyn Closer) -> Outcome {
+    match closer.has_lifecycle_row(id) {
+        Ok(false) => {}
+        Ok(true) => {
+            return Outcome::Failed(format!(
+                "resolve: {id} is a work bead (it has a lifecycle row); resolve closes a standalone ask. \
+To lift an ask hold on a work bead use `reply`; nothing was changed"
+            ))
+        }
+        Err(e) => return Outcome::Failed(format!("resolve: cannot tell whether {id} is a work bead ({}); nothing was changed", e.trim())),
+    }
     let r = closer.close(db, id, reason);
     let db_name = db
         .file_name()
@@ -104,6 +116,9 @@ mod tests {
         fn withdraw_ask(&self, _w: &str) -> (i32, String) {
             panic!("no work bead, no withdraw")
         }
+        fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
     }
 
     struct AskFake {
@@ -122,6 +137,36 @@ mod tests {
             self.withdrawn.borrow_mut().push(w.to_string());
             (self.code, "cannot tell: socket".into())
         }
+        fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    struct WorkFake {
+        closed: std::cell::Cell<bool>,
+    }
+    impl Closer for WorkFake {
+        fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
+            self.closed.set(true);
+            BdResult { success: true, combined: String::new() }
+        }
+        fn show_json(&self, _db: &Path, _id: &str) -> String {
+            String::new()
+        }
+        fn withdraw_ask(&self, _w: &str) -> (i32, String) {
+            panic!("refused before any write")
+        }
+        fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn a_work_bead_is_refused_naming_reply_and_nothing_is_written() {
+        let c = WorkFake { closed: Default::default() };
+        let Outcome::Failed(s) = run("sp-w1", "moot", Path::new("/db"), &c) else { panic!("expected Failed") };
+        assert!(s.contains("`reply`"), "{s}");
+        assert!(!c.closed.get());
     }
 
     /// THE GAP THIS CLOSES (sp-v62vn follow-up): resolving an ask about a work bead —

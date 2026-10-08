@@ -55,7 +55,7 @@ run_resolve() {
   # store through the case's stub bd, whose complaint must still reach the caller.
   lc_close_stub "$TMP/lc" "$stub" "$DB"
   RESULT=$(
-    BD_BIN="$stub" \
+    LC_STUB_NOROW=1 BD_BIN="$stub" \
     resolve "$id" "$reason" 2>&1 >/dev/null
   ) || rc=$?
   return "$rc"
@@ -118,7 +118,7 @@ chmod +x "$BD_OK"
 # through spira-lc (sp-3fue0j), so its stand-in closes through this case's healthy bd.
 lc_close_stub "$TMP/lc" "$BD_OK" "$DB"
 stdout_out=$(
-  BD_BIN="$BD_OK" \
+  LC_STUB_NOROW=1 BD_BIN="$BD_OK" \
   resolve sp-test-id "close reason" 2>/dev/null
 ) && rc3=0 || rc3=$?
 
@@ -136,6 +136,22 @@ if printf '%s' "$stdout_out" | grep -qF "resolved"; then
   ok "success message is present on the healthy path"
 else
   bad "success message is present on the healthy path" "stdout: $stdout_out"
+fi
+
+# ======================================================================================
+echo
+echo "CASE 4: a work bead (has a lifecycle row) is refused, naming reply; bd is never called:"
+# ======================================================================================
+BD_MARK="$TMP/bd-called"
+BD_TRAP="$TMP/bin/bd-trap"
+printf '#!/usr/bin/env bash\ntouch "%s"\nexit 0\n' "$BD_MARK" > "$BD_TRAP"
+chmod +x "$BD_TRAP"
+lc_close_stub "$TMP/lc" "$BD_TRAP" "$DB"
+work_out=$(BD_BIN="$BD_TRAP" LC_STUB_ROW=1 resolve sp-test-id "close reason" 2>&1) && rc4=0 || rc4=$?
+if [ "$rc4" -ne 0 ] && printf '%s' "$work_out" | grep -qF "reply" && [ ! -e "$BD_MARK" ]; then
+  ok "work bead refused with reply named, nothing written"
+else
+  bad "work bead refused with reply named, nothing written" "rc=$rc4 out: $work_out"
 fi
 
 echo
