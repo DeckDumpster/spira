@@ -35,5 +35,9 @@ fence_read() {   # fence_read <file> -> BLOCK or ALLOW for the Read tool
 is "the admin credential cannot be read with the Read tool" BLOCK "$(fence_read /cfg/spira/spira-lc-admin.credential)"
 is "the admin credential cannot be catted" BLOCK "$(fence 'cat ~/.config/spira/spira-lc-admin.credential')"
 is "the service credential is not the admin credential's fence" ALLOW "$(fence_read /cfg/spira/spira-lc.credential)"
+is "the beads credentials file cannot be read with the Read tool" BLOCK "$(fence_read /home/x/.config/beads/credentials)"
+is "the beads credentials file cannot be catted" BLOCK "$(fence 'cat ~/.config/beads/credentials')"
+is "the beads credentials file cannot be reached through its env override" BLOCK "$(fence 'cat "$BEADS_CREDENTIALS_FILE"')"
+is "other beads config is not the credentials fence" ALLOW "$(fence_read /home/x/.config/beads/config.yaml)"
 
 tl_summary

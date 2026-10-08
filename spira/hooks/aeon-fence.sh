@@ -27,6 +27,14 @@ case "$payload" in
         exit 0 ;;
 esac
 
+# bd's own credentials file carries the beads database user's password.
+case "$payload" in
+    *beads/credentials*|*BEADS_CREDENTIALS_FILE*)
+        printf 'aeon-fence: BLOCKED aeon=%s bead=%s: aeons may not touch the beads credentials file\n' "${SPIRA_AEON:-?}" "${BEAD_ID:-?}" >&2
+        printf '{"decision":"block","reason":"aeons may not touch the beads database credentials (beads/credentials belongs to bd and the install path)"}\n'
+        exit 0 ;;
+esac
+
 tool="$(printf '%s' "$payload" | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin); print(d.get("tool_name",""))

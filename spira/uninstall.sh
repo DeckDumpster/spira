@@ -340,6 +340,42 @@ if [ "${#_un_bin_links[@]}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. BEADS CREDENTIAL SECTION. install wrote the [host:port] section of bd's credentials
+#     file for the beads database user; remove that section, keep any other, and remove
+#     the file when nothing is left.
+# ---------------------------------------------------------------------------
+_un_bcred="${BEADS_CREDENTIALS_FILE:-$HOME/.config/beads/credentials}"
+if [ -f "$_un_bcred" ]; then
+    _un_bport="${SPIRA_LC_PORT:-}"
+    if [ -z "$_un_bport" ] && [ -n "${SPIRA_DOLT_DATA:-}" ] && [ -f "$SPIRA_DOLT_DATA/dolt-server.yaml" ]; then
+        _un_bport="$(sed -n 's/^[[:space:]]*port:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$SPIRA_DOLT_DATA/dolt-server.yaml" | head -1)"
+    fi
+    printf '\nRemoving the beads credential section...\n'
+    _un_act "removing [${SPIRA_LC_HOST:-127.0.0.1}:${_un_bport:-3307}] from $_un_bcred" \
+        python3 -I - "$_un_bcred" "${SPIRA_LC_HOST:-127.0.0.1}:${_un_bport:-3307}" <<'PY'
+import os, sys
+path, want = sys.argv[1], "[" + sys.argv[2] + "]"
+out, skipping = [], False
+for line in open(path).read().splitlines(True):
+    t = line.strip()
+    if t.startswith("["):
+        skipping = t == want
+    if not skipping:
+        out.append(line)
+if "".join(out).strip():
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("".join(out))
+    os.rename(tmp, path)
+else:
+    os.remove(path)
+PY
+    unset _un_bport
+fi
+unset _un_bcred
+
+# ---------------------------------------------------------------------------
 # 4. SESSION HOOKS in the agent settings file.
 # ---------------------------------------------------------------------------
 if [ -n "$_un_session_settings" ]; then
