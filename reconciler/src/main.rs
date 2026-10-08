@@ -124,6 +124,9 @@ struct Config {
     scope_label: String,
     reconciler_label: String,
     incident_sh: String,
+    main_ref: String,
+    lint_bin: String,
+    guard_bin: String,
     systemctl: String,
     tmux: String,
     git: String,
@@ -243,6 +246,9 @@ impl Config {
             // overridable only as a test seam, left as direct env reads.
             incident_sh: env::var("SPIRA_INCIDENT_SH")
                 .unwrap_or_else(|_| "incident.sh".to_string()),
+            main_ref: "local/main".to_string(),
+            lint_bin: env::var("SPIRA_LINT_BIN").unwrap_or_else(|_| "spira-lint".to_string()),
+            guard_bin: env::var("SPIRA_GUARD_BIN").unwrap_or_else(|_| "lifecycle-guard".to_string()),
             systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
             tmux: env::var("SPIRA_TMUX").unwrap_or_else(|_| "tmux".to_string()),
             git: env::var("SPIRA_GIT").unwrap_or_else(|_| "git".to_string()),
@@ -325,6 +331,8 @@ enum Remedy {
     /// No deterministic fix — a gap here always escalates to the Concierge.
     Escalate,
     Command { program: String, args: Vec<String> },
+    /// File one P0 incident, deduped on `ref_key` while it is open.
+    FileP0 { subject: String, body: String, ref_key: String },
 }
 
 struct Check {
@@ -1057,6 +1065,89 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Main health: the landing ref must pass the fences every branch is judged by. A base
+// that is red turns every bead's gate red, so one P0 per fence class is filed at once.
+// ──────────────────────────────────────────────────────────────────────────────
+
+struct Fence {
+    class: &'static str,
+    program: String,
+    args: Vec<String>,
+}
+
+fn base_fences(cfg: &Config, tree: &str, sha: &str) -> Vec<Fence> {
+    vec![
+        Fence { class: "lint", program: cfg.lint_bin.clone(), args: vec!["--root".into(), tree.into(), "--base".into(), sha.into()] },
+        Fence { class: "lifecycle-guard", program: cfg.guard_bin.clone(), args: vec!["--gate".into(), tree.into()] },
+    ]
+}
+
+fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+fn observe_main_health(cfg: &Config) -> Vec<Check> {
+    let Some(repo) = repo_root("spira", &cfg.repo_map) else { return Vec::new() };
+    let repo_str = repo.to_string_lossy().to_string();
+    let unobservable = |reason: String| {
+        vec![Check { key: "main-health".into(), raw: RawStatus::Unobservable { reason }, remedy: Remedy::Escalate }]
+    };
+    let sha = run_cmd(&cfg.git, &["-C", &repo_str, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", cfg.main_ref)]);
+    let sha = sha.trim().to_string();
+    if sha.is_empty() {
+        return unobservable(format!("{} does not resolve in {}", cfg.main_ref, repo_str));
+    }
+    let tree = cfg.spira_run.join("main-health-tree");
+    let tree_str = tree.to_string_lossy().to_string();
+    let _ = run_cmd_ok(&cfg.git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
+    let _ = fs::remove_dir_all(&tree);
+    if !run_cmd_ok(&cfg.git, &["-C", &repo_str, "worktree", "add", "--detach", &tree_str, &sha]) {
+        return unobservable(format!("cannot check out {} into {}", sha, tree_str));
+    }
+    let mut checks = Vec::new();
+    for fence in base_fences(cfg, &tree_str, &sha) {
+        let out = spira_config::bounded::bounded(&fence.program)
+            .args(&fence.args)
+            .current_dir(&tree)
+            .stdin(Stdio::null())
+            .output();
+        let key = format!("main-health:{}", fence.class);
+        let raw = match &out {
+            Err(e) => RawStatus::Unobservable { reason: format!("{}: {}", fence.program, e) },
+            Ok(o) if o.status.success() => RawStatus::Satisfied,
+            Ok(o) if o.status.code() == Some(1) => RawStatus::Gap {
+                desired: format!("{} passes on {}", fence.class, cfg.main_ref),
+                observed: format!("{} red at {}", fence.class, sha),
+                since_hint: None,
+            },
+            Ok(o) => RawStatus::Unobservable {
+                reason: format!("{} exit {} on {}", fence.program, o.status.code().unwrap_or(-1), sha),
+            },
+        };
+        let remedy = match (&raw, &out) {
+            (RawStatus::Gap { .. }, Ok(o)) => {
+                let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                Remedy::FileP0 {
+                    subject: format!("MAIN RED: {} fence fails on {} ({})", fence.class, cfg.main_ref, &sha[..sha.len().min(12)]),
+                    body: format!(
+                        "The landing ref fails a fence every branch is judged by, so every bead's gate is red until it is fixed.\n\n\
+                         ref      {}\ncommit   {}\nfence    {} {}\n\n{}\n",
+                        cfg.main_ref, sha, fence.program, fence.args.join(" "), tail_lines(&text, 40)
+                    ),
+                    ref_key: format!("incident:main-health:{}", fence.class),
+                }
+            }
+            _ => Remedy::Escalate,
+        };
+        checks.push(Check { key, raw, remedy });
+    }
+    let _ = run_cmd_ok(&cfg.git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
+    let _ = fs::remove_dir_all(&tree);
+    checks
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // evaluate: run one Check through the pure engine, act on the verdict.
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1131,12 +1222,21 @@ fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, check:
 
     if verdict.is_gap {
         if verdict.remedy_failed {
-            escalate(cfg, &check.key, &verdict);
+            match &check.remedy {
+                Remedy::FileP0 { subject, body, ref_key } => {
+                    file_incident(cfg, subject, body, ref_key, &check.key, "0");
+                }
+                _ => escalate(cfg, &check.key, &verdict),
+            }
         } else {
             match &check.remedy {
                 Remedy::Escalate => escalate(cfg, &check.key, &verdict),
-                Remedy::Command { program, args } => {
-                    let desc = format!("{} {}", program, args.join(" "));
+                Remedy::FileP0 { .. } | Remedy::Command { .. } => {
+                    let desc = match &check.remedy {
+                        Remedy::Command { program, args } => format!("{} {}", program, args.join(" ")),
+                        Remedy::FileP0 { ref_key, .. } => format!("file P0 {}", ref_key),
+                        Remedy::Escalate => unreachable!(),
+                    };
                     if is_shadowed(&cfg.shadow_kinds, kind_of(&check.key)) {
                         log_print(cfg, &format!("reconciler: {} → remedy held (shadow): {}", check.key, desc));
                         write_event(cfg, "shadow", &check.key, &desc, metric_now, None);
@@ -1144,8 +1244,16 @@ fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, check:
                     } else {
                         log_print(cfg, &format!("reconciler: {} → remedy: {}", check.key, desc));
                         write_event(cfg, "remedy", &check.key, &desc, metric_now, None);
-                        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                        let _ = run_cmd_ok(program, &arg_refs);
+                        match &check.remedy {
+                            Remedy::Command { program, args } => {
+                                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                                let _ = run_cmd_ok(program, &arg_refs);
+                            }
+                            Remedy::FileP0 { subject, body, ref_key } => {
+                                file_incident(cfg, subject, body, ref_key, &check.key, "0");
+                            }
+                            Remedy::Escalate => {}
+                        }
                         record_remedy(&mut next, cfg.now_secs, &desc);
                         pending.insert(
                             check.key.clone(),
@@ -1196,6 +1304,10 @@ fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
     );
     log_print(cfg, &format!("reconciler: {} → escalate", key));
 
+    file_incident(cfg, &subj, &body, &format!("incident:reconciler:{}", key), key, "1");
+}
+
+fn file_incident(cfg: &Config, subject: &str, body: &str, ref_key: &str, cause: &str, priority: &str) {
     let mut labels = cfg.reconciler_label.clone();
     if !cfg.scope_label.is_empty() {
         labels = format!("{},{}", cfg.scope_label, labels);
@@ -1203,17 +1315,17 @@ fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
     let child = spira_config::bounded::bounded("bash")
         .arg(&cfg.incident_sh)
         .arg("file")
-        .arg(&subj)
+        .arg(subject)
         .arg("-")
         .env("SPIRA_DB", &cfg.spira_db)
         .env("SPIRA_INCIDENT_LABELS", labels)
         .env("SPIRA_INCIDENT_TYPE", "task")
-        .env("SPIRA_INCIDENT_PRIORITY", "1")
+        .env("SPIRA_INCIDENT_PRIORITY", priority)
         .env("SPIRA_INCIDENT_ACTOR", "reconciler")
         .env("SPIRA_SIN_EXEMPT", "1")
         .env("SPIRA_INCIDENT_REPO", "spira")
-        .env("SPIRA_INCIDENT_REF", format!("incident:reconciler:{}", key))
-        .env("SPIRA_INCIDENT_CAUSE", key)
+        .env("SPIRA_INCIDENT_REF", ref_key)
+        .env("SPIRA_INCIDENT_CAUSE", cause)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1263,6 +1375,7 @@ fn run_pass() -> Result<(), String> {
     let junk = observe_junk_rows(&cfg);
     state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
     checks.extend(junk);
+    checks.extend(observe_main_health(&cfg));
 
     let n = checks.len();
     for check in checks {
@@ -1538,6 +1651,61 @@ mod tests {
         assert_eq!(junk_row_ids(&rows, &store), vec!["prose key".to_string()]);
     }
 
+    #[test]
+    fn a_red_base_fence_files_one_p0_per_class_and_a_second_pass_files_the_same_ref() {
+        let dir = scratch_dir("main-health");
+        let repo = dir.join("repo");
+        let git = |args: &[&str]| {
+            let st = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
+            assert!(st.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&st.stderr));
+        };
+        fs::create_dir_all(&repo).unwrap();
+        git(&["init", "-q", "-b", "main"]);
+        fs::write(repo.join("f"), "x").unwrap();
+        git(&["add", "f"]);
+        git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "base"]);
+        git(&["update-ref", "refs/heads/local/main", "HEAD"]);
+        let map = dir.join("repos");
+        fs::write(&map, format!("spira|{}\n", repo.display())).unwrap();
+        let red = dir.join("red");
+        testkit::write_exe(&red, "#!/usr/bin/env bash\necho planted violation\nexit 1\n");
+        let green = dir.join("green");
+        testkit::write_exe(&green, "#!/usr/bin/env bash\nexit 0\n");
+        let filed = dir.join("filed");
+        let incident = dir.join("incident.sh");
+        testkit::write_exe(
+            &incident,
+            &format!("#!/usr/bin/env bash\ncat >/dev/null\necho \"$SPIRA_INCIDENT_PRIORITY $SPIRA_INCIDENT_REF\" >> {}\n", filed.display()),
+        );
+        let cfg = Config {
+            grace_secs: 0,
+            now_secs: 100,
+            spira_run: dir.to_path_buf(),
+            repo_map: Some(map),
+            lint_bin: green.to_string_lossy().to_string(),
+            guard_bin: red.to_string_lossy().to_string(),
+            incident_sh: incident.to_string_lossy().to_string(),
+            remedy_log: dir.join("remedy.jsonl"),
+            ..test_config()
+        };
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+        for check in observe_main_health(&cfg) {
+            evaluate(&cfg, &mut state, &mut pending, check);
+        }
+        assert_eq!(fs::read_to_string(&filed).unwrap(), "0 incident:main-health:lifecycle-guard\n");
+        let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg) };
+        for check in observe_main_health(&cfg2) {
+            evaluate(&cfg2, &mut state, &mut pending, check);
+        }
+        assert_eq!(
+            fs::read_to_string(&filed).unwrap(),
+            "0 incident:main-health:lifecycle-guard\n0 incident:main-health:lifecycle-guard\n",
+            "a persisting red re-files the same ref, which incident dedupes while the bead is open"
+        );
+        assert!(!dir.join("main-health-tree").exists(), "the scratch checkout is removed");
+    }
+
     fn test_config() -> Config {
         Config {
             spira_run: PathBuf::from("/tmp"),
@@ -1556,6 +1724,9 @@ mod tests {
             scope_label: String::new(),
             reconciler_label: "reconciler-gap".into(),
             incident_sh: "/bin/true".into(),
+            main_ref: "local/main".into(),
+            lint_bin: "spira-lint".into(),
+            guard_bin: "lifecycle-guard".into(),
             systemctl: "systemctl".into(),
             tmux: "tmux".into(),
             git: "git".into(),
@@ -1602,6 +1773,9 @@ mod tests {
             scope_label: base.scope_label.clone(),
             reconciler_label: base.reconciler_label.clone(),
             incident_sh: base.incident_sh.clone(),
+            main_ref: base.main_ref.clone(),
+            lint_bin: base.lint_bin.clone(),
+            guard_bin: base.guard_bin.clone(),
             systemctl: base.systemctl.clone(),
             tmux: base.tmux.clone(),
             git: base.git.clone(),
