@@ -215,4 +215,35 @@ else
 fi
 
 echo
+echo "a failed hunk session list changes nothing; an empty answer forgets dismissals"
+HD="$(mktemp -d)"
+ID=11111111-2222-3333-4444-555555555555
+printf '%s\n' '#!/bin/sh' 'case "$(cat "$0.mode")" in fail) exit 3;; empty) exit 0;; *) echo "'$ID' R1 design";; esac' >"$HD/hunk"
+chmod +x "$HD/hunk"
+_want() { env -i PATH="$PATH" HOME="$HD" HUNK="$HD/hunk" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "${1:-$CR}" status 2>&1 | sed -n 's/^want: *//p'; }
+mkdir "$HD/state"; printf '%s\n' "$ID" >"$HD/state/dismissed"
+
+echo live >"$HD/hunk.mode"
+is "a dismissed live session does not want hunk" "brain" "$(_want)"
+echo fail >"$HD/hunk.mode"
+is "a failed list says keep, not brain or hunk" "keep" "$(_want)"
+is "a failed list leaves the dismissal in place" "$ID" "$(cat "$HD/state/dismissed")"
+echo live >"$HD/hunk.mode"
+is "the session is still dismissed after the failed read" "brain" "$(_want)"
+
+# Control: the pre-fix code, on the same stub, wipes the dismissal and flips to hunk.
+git -C "$(dirname "$HERE")" show 9f6f7e976:cockpit/remote/cockpit-remote >"$HD/old-remote" 2>/dev/null
+if [ -s "$HD/old-remote" ]; then
+    echo fail >"$HD/hunk.mode"; _want "$HD/old-remote" >/dev/null
+    echo live >"$HD/hunk.mode"
+    is "positive control: the old code flips to hunk after a failed read" "hunk" "$(_want "$HD/old-remote")"
+    printf '%s\n' "$ID" >"$HD/state/dismissed"
+fi
+
+echo empty >"$HD/hunk.mode"
+is "an empty successful list reads idle" "brain" "$(_want)"
+is "and forgets the dismissal" "0" "$(grep -c . "$HD/state/dismissed")"
+rm -rf "$HD"
+
+echo
 tl_summary
