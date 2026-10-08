@@ -63,6 +63,12 @@ pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {
     findings
 }
 
+/// A match arm whose pattern is a slice (`["close", id, ..] => …`) matches a verb; it hands bd nothing.
+fn is_slice_pattern_arm(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with('[') && t.contains("=>")
+}
+
 pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
     let code = mask_rust(text);
     let lines: Vec<String> = text.lines().zip(code.lines()).map(|(o, c)| restore_short_literals(o, c)).collect();
@@ -72,6 +78,9 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
             && lines.get(idx + 1).is_some_and(|l| l.trim_start().starts_with("mod ") || l.contains(" mod "))
         {
             break;
+        }
+        if is_slice_pattern_arm(n) {
+            continue;
         }
         if close_arg().is_match(n) && !gh_close().is_match(n) {
             out.push(Finding {
@@ -114,6 +123,9 @@ fn g() { let v = vec!["close".to_string(), id.clone()]; }
 fn b() { vec!["issue".into(), "close".into(), n.into()] }
 fn c() { eprintln!("never run bd close by hand"); }
 fn d() { fs::write(spool.join("close"), ""); }
+fn h(a: &[&str]) -> R { match a {
+    ["close", id, rest @ ..] if ok(rest) => Ok(()),
+    _ => Err(()) } }
 fn e(v: View) -> &'static str { match v { View::Decisions => "close", _ => "" } }
 #[cfg(test)]
 mod tests {
