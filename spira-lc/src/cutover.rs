@@ -1003,7 +1003,7 @@ fn containment_in_repo(repo: &std::path::Path, base: &str, members: &[(String, S
         .collect();
     for (dependent, theirs) in &ranges {
         for (prereq, ours) in &ranges {
-            if dependent != prereq && !ours.is_empty() && !ours.is_disjoint(theirs) {
+            if dependent != prereq && !ours.is_empty() && ours.len() < theirs.len() && ours.is_subset(theirs) {
                 edges.insert(((*dependent).clone(), (*prereq).clone()));
             }
         }
@@ -1158,6 +1158,7 @@ mod tests {
         let dependents = stacked_dependents_from(&member_stacks, &tips, &contained, &["a".to_string()]);
         assert_eq!(dependents, vec![("b".to_string(), "a".to_string())]);
         assert!(stacked_dependents_from(&member_stacks, &tips, &contained, &["x".to_string()]).is_empty());
+        assert!(stacked_dependents_from(&member_stacks, &tips, &contained, &["b".to_string()]).is_empty());
     }
 
     #[test]
