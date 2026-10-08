@@ -4,7 +4,8 @@
 # changes nothing); safe to re-run. Prints one line per bead; non-zero if any failed.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LABEL="$(timeout 10 spira-config get spira.express_label)" || { echo "express-backfill: cannot read the express label" >&2; exit 2; }
+LABEL="$(timeout 5 spira-config get spira.express_label)" || { echo "express-backfill: cannot read the express label" >&2; exit 2; }
+# batch-job: one-time listing of every labelled bead
 ids="$(timeout 60 bdq list --label "$LABEL" --all --limit 0 --json | python3 -c 'import json,sys
 for b in json.load(sys.stdin): print(b["id"])')" || { echo "express-backfill: cannot list labelled beads" >&2; exit 2; }
 rc=0
