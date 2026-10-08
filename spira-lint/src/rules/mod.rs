@@ -31,4 +31,5 @@ pub mod testlib_migrated;
 pub mod tier_budget;
 pub mod tmp_leak;
 pub mod tmux_scope_fence;
+pub mod wall_clock_budget;
 pub mod wiki_add_fence;

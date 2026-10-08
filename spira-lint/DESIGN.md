@@ -1084,3 +1084,29 @@ Each rule has, in its own module:
 
 `lib.rs` runs all rules over one small fixture tree built with `git init`, which covers the
 walk itself.
+
+## Rule `wall-clock-budget`
+
+Mechanism for law-no-wall-clock-budgets-in-the-corpus.
+
+**Intent.** A test that asserts a measured duration against a constant measures the box, not
+the code: it fails under load and passes on an idle machine. Corpus tests assert what the
+code did (rows examined, calls made), never how long it took.
+
+**Scope.** `spira/test-*.sh` and every `*.rs` except `target/`, minus any path with a
+`perf-checks` component — the named, isolated path for a real latency check outside the round
+corpus.
+
+**Violation.** Shell: a non-comment line that either reads `took … ms … (<`, or names a time
+quantity (`elapsed`, `took`, `duration`, `latency`, `SECONDS`, `date +%s`, `*_ms`, `*_secs`)
+and bounds it from above with `-lt`/`-le`/`((… < N))` against a number. Lower bounds
+(`-ge`) are not budgets. Rust, in test code as `tmp-leak` defines it: an `assert*` statement
+comparing `elapsed*`/`took*`/`latency*`/`*_ms`/`as_millis()`-style values with `<`/`<=`
+against a literal, an UPPER_CASE constant or `Duration::…`. One finding per line.
+
+**Allow list.** `spira-lint/wall-clock-budget-allow`, exact paths, shrink-only; seeded with the
+files that held a budget when the rule landed. An entry with no finding left is itself a
+finding.
+
+**Known limits.** Line-based: an assert split so the comparison sits in a different statement
+from the `assert` is missed.
