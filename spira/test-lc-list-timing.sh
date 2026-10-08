@@ -103,6 +103,7 @@ is "the fixture holds the events" "$EVENTS" "$(root_sql --use-db spira_lifecycle
 now_ms() { date +%s%3N; }
 spira-lc list >/dev/null 2>&1   # warm the server's caches; the assertions are the runs below
 
+t0=$(now_ms); spira-lc show sp-000001 >/dev/null 2>&1; echo "# baseline show: $(( $(now_ms) - t0 )) ms (process + connect)"
 for args in "list" "list --state READY"; do
     t0=$(now_ms)
     out="$(spira-lc $args 2>"$TMP/err")"
