@@ -70,7 +70,7 @@ pub fn run(now: i64, queue_dir: &Path, run_dir: &Path, db: &str, home_repo: &str
             .reference(&format!("incident:deploy-fault:{name}:{head}"))
             .cause("deploy-fault");
         if incident::is_usable(incident_sh) {
-            incident::file(incident_sh, &f);
+            incident::alarm(incident_sh, &f);
         }
         log(&format!("watchtower: deploy-fault-check: {name} {head} — {retried}"));
     }

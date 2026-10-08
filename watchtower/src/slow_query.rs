@@ -86,7 +86,7 @@ pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_
         .priority(1)
         .reference("incident:slow-query".to_string())
         .cause("slow-query");
-    incident::file(incident_sh, &f);
+    incident::alarm(incident_sh, &f);
     log(&format!("watchtower: slow-query-check filed one incident for {} shape(s) ({hits} hit(s), max {worst}ms, contended: {contended})", shapes.len()));
     let _ = std::fs::write(&stamp, end.to_string());
 }

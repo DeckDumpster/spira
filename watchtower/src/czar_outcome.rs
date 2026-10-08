@@ -179,7 +179,7 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
                 .priority(1)
                 .reference(format!("incident:czar-unclaimed-{id}"))
                 .cause("czar-unclaimed");
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!(
                     "watchtower: czar-outcome-check filed unclaimed escalation for {id}"
                 ));
@@ -198,7 +198,7 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
                 .priority(1)
                 .reference(format!("incident:czar-not-cleared-{id}"))
                 .cause("czar-not-cleared");
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!(
                     "watchtower: czar-outcome-check filed not-cleared escalation for {id}"
                 ));

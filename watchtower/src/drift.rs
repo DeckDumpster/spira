@@ -56,7 +56,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
                     .reference(format!("incident:{cause}"))
                     .cause(cause);
                 f.sin_exempt = false;
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!("watchtower: drift-check filed {cause} escalation"));
             }
             Probe::Unreadable => log(&format!("watchtower: drift-check: {what} check could not run")),

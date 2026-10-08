@@ -83,7 +83,7 @@ pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &st
                 .reference("incident:release-skew")
                 .cause("release-skew");
             if incident::is_usable(incident_sh) {
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
             }
             log("watchtower: release-skew-check filed escalation");
         }

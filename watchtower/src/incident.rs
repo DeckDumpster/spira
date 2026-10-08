@@ -106,13 +106,23 @@ impl Finding {
 /// shape of `bash "$INC" file "..." - >/dev/null || true` at every bash call site: a failed
 /// filing is logged by the caller, never fatal to the check that found the thing.
 pub fn file(incident_sh: &str, f: &Finding) -> bool {
+    run_verb(incident_sh, "file", f)
+}
+
+/// Hands a detector's condition to the Concierge inbox as one deduplicated note
+/// (`incident.sh alarm`), never a bead. Same shape and environment as [`file`].
+pub fn alarm(incident_sh: &str, f: &Finding) -> bool {
+    run_verb(incident_sh, "alarm", f)
+}
+
+fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> bool {
     if let Some(cause) = f.cause.as_deref().filter(|c| crate::ctrl_gate::condition_suspended(c)) {
         crate::log::log(&format!("watchtower: {cause} is suspended in the control plane — not filing {}", f.title));
         return false;
     }
     let mut cmd = spira_config::bounded::bounded("bash");
-cmd.envs(spira_config::release_env::child_path_env_for_process());
-    cmd.arg(incident_sh).arg("file").arg(&f.title).arg("-");
+    cmd.envs(spira_config::release_env::child_path_env_for_process());
+    cmd.arg(incident_sh).arg(verb).arg(&f.title).arg("-");
     cmd.env("SPIRA_DB", &f.db);
     cmd.env("SPIRA_INCIDENT_TYPE", &f.incident_type);
     cmd.env("SPIRA_INCIDENT_PRIORITY", f.priority.to_string());

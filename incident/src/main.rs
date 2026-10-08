@@ -3,6 +3,7 @@
 //!
 //!   incident systemd <unit>           file an incident for a failed systemd user unit
 //!   incident file <title> [-|<file>]  file one from an arbitrary payload
+//!   incident alarm <title> [-|<file>]  note a detector's condition in the Concierge inbox, no bead
 //!   incident drain                    file everything the spool is holding
 //!   incident list                     open incidents
 //!   incident collapse <dup> --of <keep>  mark <dup> a duplicate of <keep> and label it for the meter
@@ -65,7 +66,7 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
 /// called with is NOT in `spira/conf.d` (an ad hoc override with no registry entry, same as
 /// it has always been for the bash function) and keeps the old env/registry/default chain.
 const REGISTERED: &[&str] =
-    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_BD"];
+    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_BD", "SPIRA_CONCIERGE_INBOX"];
 
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so an explicit env override still wins exactly as it did before this bead.
@@ -167,6 +168,10 @@ impl Env {
             lock_wait_s: env("SPIRA_INCIDENT_LOCK_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30),
             spira_run,
         }
+    }
+
+    fn spira_run_path(&self, name: &str) -> std::path::PathBuf {
+        std::path::Path::new(&self.spira_run).join(name)
     }
 
     fn provenance(&self) -> String {
@@ -410,6 +415,36 @@ fn cmd_file(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, titl
     }
 }
 
+fn cmd_alarm(env: &Env, title: &str) -> ExitCode {
+    let reference = env.repo_override_ref().unwrap_or_else(|| format!("incident:{title}"));
+    let Some(inbox) = self::env("SPIRA_CONCIERGE_INBOX") else {
+        eprintln!("incident: SPIRA_CONCIERGE_INBOX is not declared — refusing");
+        return ExitCode::FAILURE;
+    };
+    let state_path = env.spira_run_path("incident-alarms.tsv");
+    let noted = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
+        let state = std::fs::read_to_string(&state_path).unwrap_or_default();
+        let (due, next) = incident::alarm::decide(&state, &reference, now_epoch());
+        if !due {
+            return true;
+        }
+        if let Some(parent) = std::path::Path::new(&inbox).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let line = format!("{} {}\n", now_iso(), incident::alarm::line(title, &reference));
+        let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&inbox).and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(line.as_bytes())
+        });
+        wrote.is_ok() && std::fs::write(&state_path, next).is_ok()
+    });
+    if noted == Some(true) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> ExitCode {
     let mut n = 0;
     let mut stuck = 0;
@@ -523,6 +558,14 @@ fn main() -> ExitCode {
     if env_cfg.db.is_none() && !matches!(args.first().map(String::as_str), None) {
         // `list` handles its own missing-DB message via require_db for parity with the
         // bash's per-subcommand behaviour; every other subcommand refuses up front.
+    }
+
+    if args.first().map(String::as_str) == Some("alarm") {
+        let Some(title) = args.get(1) else {
+            eprintln!("usage: incident alarm <title> [-|<file>]");
+            return ExitCode::from(2);
+        };
+        return cmd_alarm(&env_cfg, title);
     }
 
     let bd = match RealBd::from_env() {

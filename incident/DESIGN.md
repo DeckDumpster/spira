@@ -28,6 +28,8 @@ with an identity that survives across recurrences. Three properties are load-bea
 ```
 incident systemd <unit>           file an incident for a failed systemd user unit
 incident file <title> [-|<file>]  file one from an arbitrary payload
+incident alarm <title> [-]        note a detector's condition in the Concierge inbox: one line per
+                                  reference, one reminder per day, never a bead
 incident drain                    file everything the spool is holding
 incident list                     open incidents
 ```
