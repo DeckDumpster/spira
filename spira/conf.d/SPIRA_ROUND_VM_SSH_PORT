@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=round
 DOC=SPIRA_ROUND_VM_SSH_PORT — ssh port of the round VM host.
+SCHEMA=TCP port the round VM's sshd listens on (unit: port number; default 22; range 1-65535). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_ROUND_VM_SSH_PORT:=22}"
 SPIRA_CONF_DEFAULT_EOF

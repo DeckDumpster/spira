@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=round
 DOC=SPIRA_ROUND_VM_MAX_RETRIES — attempts to acquire a round VM; 0 retries forever.
+SCHEMA=Attempts round-vm acquire retries before giving up (unit: count; default 0 = retry forever; sane range 0-20). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_ROUND_VM_MAX_RETRIES:=0}"
 SPIRA_CONF_DEFAULT_EOF

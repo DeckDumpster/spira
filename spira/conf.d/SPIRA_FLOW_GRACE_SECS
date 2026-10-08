@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=flow
 DOC=SPIRA_FLOW_GRACE_SECS — seconds a flow gap may stand before it alerts.
+SCHEMA=Seconds a flow gap must persist before the flow reconciler alerts on it (unit: seconds; integer; default 1800; sane range 300-7200). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_FLOW_GRACE_SECS:=1800}"
 SPIRA_CONF_DEFAULT_EOF

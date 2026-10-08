@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=round
 DOC=SPIRA_ROUND_VM_RETRY_INTERVAL — seconds between attempts to acquire a round VM.
+SCHEMA=Seconds round-vm waits between acquire retries (unit: seconds; integer; default 60; sane range 5-600). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_ROUND_VM_RETRY_INTERVAL:=60}"
 SPIRA_CONF_DEFAULT_EOF
