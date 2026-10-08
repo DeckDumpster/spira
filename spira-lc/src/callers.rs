@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use lifecycle::bead::{BeadEventKind, HoldKind};
+use lifecycle::bead::{BeadEventKind, BeadState, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
@@ -755,6 +755,55 @@ pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -
         }
     }
     lines.push(format!("reconcile-closed: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
+    Answer::out(code, lines.join("\n"))
+}
+
+/// `reconcile-epics [--apply] [<id>...]` — move every non-terminal epic's row off READY (and any
+/// other non-OPEN state the classifier would not give a container) to OPEN. Dry run unless
+/// `--apply`. Only rows the epic rule may correct are touched, and only the READY/OPEN rows
+/// are asked of bd, so the cost is one `issue_type` read per READY row, never a full roster.
+///
+/// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused.
+pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let apply = args.iter().any(|a| a == "--apply");
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
+        return usage(&format!("reconcile-epics [--apply] [<bead-id>...] (unknown flag {bad})"));
+    }
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let (rc, out) = m.call(&["list".into(), "--state".into(), "READY".into()]);
+    if rc != 0 {
+        return Answer { code: rc.max(CANNOT_TELL), stderr: format!("spira-lc reconcile-epics: lifecycle list failed: {}\n", out.trim()), ..Default::default() };
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return Answer { code: CANNOT_TELL, stderr: "spira-lc reconcile-epics: lifecycle list is not a JSON array\n".into(), ..Default::default() };
+    };
+    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    for r in rows.iter().filter(|r| s(r, "state") == "READY" && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))) {
+        let id = s(r, "bead_id");
+        match bd.issue_type(&id) {
+            Ok(t) if t == "epic" => {}
+            Ok(_) => continue,
+            Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-epics: bd unreadable for {id}: {}\n", e.trim()), ..Default::default() },
+        }
+        if !apply {
+            lines.push(format!("would move {id} READY -> OPEN (epic-container)"));
+            done += 1;
+            continue;
+        }
+        let kind = BeadEventKind::Reclassify { state: BeadState::Open, rule: "epic-container".into() };
+        let (version, kind_json) = (s(r, "version"), serde_json::to_string(&kind).unwrap_or_default());
+        match event(m, "bead", &id, "READY", &version, "classifier", &kind_json).0 {
+            APPLIED => {
+                lines.push(format!("moved {id} READY -> OPEN (epic-container)"));
+                done += 1;
+            }
+            rc => {
+                lines.push(format!("refused {id}: event exit {rc}"));
+                code = REFUSED;
+            }
+        }
+    }
+    lines.push(format!("reconcile-epics: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
     Answer::out(code, lines.join("\n"))
 }
 
