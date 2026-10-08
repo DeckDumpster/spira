@@ -859,7 +859,7 @@ impl World for Real {
         c.arg(timeout)
             .arg("bash")
             .arg("-c")
-            .arg(cmd)
+            .arg(crate::compose::run_all(cmd))
             .current_dir(tree)
             .env_clear();
         c.envs(spira_config::vtime::passthrough());
