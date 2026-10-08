@@ -366,7 +366,7 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
             0
         }
         Err(e) => {
-            eprintln!("round-vm template: {e}");
+            eprintln!("round-vm {}: template build failed (exit 1): {e}", if refresh { "refresh" } else { "template" });
             1
         }
     }
