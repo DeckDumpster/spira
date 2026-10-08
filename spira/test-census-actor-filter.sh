@@ -29,7 +29,7 @@
 # refuses. Skips when server testdb is not available.
 #
 # tier: T2
-# covers: census/src/* spira/lib.sh spira/census/handwritten.py spira/census/classmap.py spira/census/count.py
+# covers: census/src/* spira/lib.sh spira/census/handwritten.py spira/census/classmap.py spira/census/cluster.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

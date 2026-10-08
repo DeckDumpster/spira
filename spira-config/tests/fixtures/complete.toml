@@ -51,6 +51,7 @@ capacity_probe_interval = "3600"
 capacity_probe_model = "claude-sonnet-5-5"
 capacity_probe_timeout = "30"
 capacity_probe_window = "18000"
+census_cluster_gap_s = "300"
 census_clock_skew_tolerance_s = "120"
 certify_always_covers = "spira/lib.sh spira-config/*"
 certify_par = 3

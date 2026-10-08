@@ -1227,6 +1227,10 @@ census_deliberate_run_sql() {   # census_deliberate_run_sql [since_epoch_s] -> t
 census_events_run_sql() {
     census sql run-events "${1:-}"
 }
+# census_event_rows_run_sql [since_epoch_s] -> raw per-event rows for causal-event clustering.
+census_event_rows_run_sql() {
+    census sql run-event-rows "${1:-}"
+}
 
 # counter_label -> the historical sp-attempt-N / sp-reclaim-N / sp-requeue-N bd label a
 # bead still carries, if any, read-only. bump_counter stopped writing these at sp-lzt

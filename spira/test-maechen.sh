@@ -151,9 +151,9 @@ want "brief contains Record step"   "Record"   "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes the three-bead threshold"
+echo "maechen.md — encodes the three-causal-event threshold (sp-jcd0e)"
 # ==========================================================================================
-want "brief names the three-bead threshold" "three or more distinct beads" "$brief"
+want "brief names the three-causal-event threshold" "three or more distinct causal events" "$brief"
 want "brief explains two is a coincidence"        "coincidence"                "$brief"
 
 # ==========================================================================================

@@ -81,15 +81,16 @@ echo "sp-2lk acceptance criteria — bump_requeue and bump_recur produce census 
 # ======================================================================================
 # The exact positive control from the bead:
 #   bump_requeue "$id" merge-conflict (twice) + bump_recur "$id" suite-red (once)
-#   → census must output: 1 sp-reopen-rebase-conflict (2 detections)  and  1 sp-recur-suite-red (1 detections)
+#   → census must output: 1 sp-reopen-rebase-conflict (1 victims, 2 detections) and
+#     1 sp-recur-suite-red (1 victims, 1 detections)
 seed_bead "sp-c1"
 bump_requeue "sp-c1" merge-conflict
 bump_requeue "sp-c1" merge-conflict
 recur_event   "sp-c1" suite-red
 
 out="$(census_out)"
-want "census reports 1 distinct bead sp-reopen-rebase-conflict" "1 sp-reopen-rebase-conflict" "$out"
-want "census shows 2 detections for sp-reopen-rebase-conflict" "sp-reopen-rebase-conflict (2 detections" "$out"
+want "census reports 1 causal event for sp-reopen-rebase-conflict" "1 sp-reopen-rebase-conflict" "$out"
+want "census shows 2 detections for sp-reopen-rebase-conflict" "sp-reopen-rebase-conflict (1 victims, 2 detections" "$out"
 want "census reports 1 sp-recur-suite-red"        "1 sp-recur-suite-red"        "$out"
 
 # ======================================================================================
@@ -101,7 +102,7 @@ reclaim_event "sp-c2"
 reclaim_event "sp-c2"
 
 out="$(census_out)"
-want "census reports sp-reclaim with 2 detections (1 bead)" "sp-reclaim (2 detections" "$out"
+want "census reports sp-reclaim with 2 detections (1 victim)" "sp-reclaim (1 victims, 2 detections" "$out"
 
 # ======================================================================================
 echo
@@ -113,14 +114,17 @@ reclaim_event "sp-c3" timeout
 reclaim_event "sp-c3" timeout
 
 out="$(census_out)"
-want "census reports sp-reclaim-timeout with 3 detections (1 bead)" "sp-reclaim-timeout (3 detections" "$out"
+want "census reports sp-reclaim-timeout with 3 detections (1 victim)" "sp-reclaim-timeout (1 victims, 3 detections" "$out"
 nowant "no bare sp-reclaim" "sp-reclaim " "$out"
 
 # ======================================================================================
 echo
 echo "class isolation — separate beads contribute to the same class"
 # ======================================================================================
-# Two different beads, same requeue cause — the class count is cross-bead
+# Two different beads, same requeue cause — the class's victim count is cross-bead. All
+# three calls land inside the same test run, well under the default 5-minute clustering
+# gap, so they fold into one causal event (sp-jcd0e: the rank is causal events, not
+# victims) — the victim count still crosses the bead boundary correctly.
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-d1","title":"bead 1","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
@@ -131,9 +135,8 @@ bump_requeue "sp-d2" merge-conflict
 bump_requeue "sp-d2" merge-conflict
 
 out="$(census_out)"
-# Same-instant events on two beads are one burst: one occurrence, both beads still shown.
-want "cross-bead: one burst ranks as 1 occurrence" "1 sp-reopen-rebase-conflict" "$out"
-want "cross-bead: 3 detections and 2 beads shown" "sp-reopen-rebase-conflict (3 detections, 2 beads" "$out"
+want "cross-bead: one causal event, 2 distinct victims" "1 sp-reopen-rebase-conflict (2 victims" "$out"
+want "cross-bead: 3 total event detections shown" "sp-reopen-rebase-conflict (2 victims, 3 detections" "$out"
 
 # ======================================================================================
 echo
@@ -208,7 +211,8 @@ want "bead_reopen produces sp-reopen-gate-red in census" "sp-reopen-gate-red" "$
 want "sp-reopen-gate-red shows 1 distinct bead" "1 sp-reopen-gate-red" "$out"
 nowant "no bare sp-reopen class" "sp-reopen " "$out"
 
-# Two different beads, same cause — distinct-bead count is 2.
+# Two different beads, same cause, both reopened inside this test run (well under the
+# default clustering gap) — one causal event, victim count is 2 (sp-jcd0e).
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-g2","title":"reopen multi 1","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
@@ -218,7 +222,7 @@ bead_reopen "sp-g2" gate-red "first gate failure" >/dev/null 2>&1
 bead_reopen "sp-g3" gate-red "second gate failure" >/dev/null 2>&1
 
 out="$(census_out)"
-want "two beads with same cause in one burst: 1 occurrence, 2 beads" "1 sp-reopen-gate-red (2 detections, 2 beads" "$out"
+want "two beads with same cause: one causal event, 2 victims" "1 sp-reopen-gate-red (2 victims" "$out"
 
 # Verify the cause is recorded in the events table as event_type='reopen'.
 testdb_reset

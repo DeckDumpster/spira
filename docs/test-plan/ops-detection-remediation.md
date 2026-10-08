@@ -6,7 +6,7 @@ branch became a shared catch-all across five beads and was never merged — see
 [[sp-n1twd]] below for exactly what that bead's own work still owed and how this page
 differs from its draft.
 
-Subjects: `incident.sh`, `census.sh` (and the `count.py`/`merge.py`/`covers.py` files it
+Subjects: `incident.sh`, `census.sh` (and the `cluster.py`/`cluster_merge.py`/`covers.py` files it
 calls), `maechen-trigger.sh` + `chamber/maechen.md`, `auron.sh` + `auron-classify.py`,
 `strand.sh` + `strand-classify.py`, `watchtower.sh`, `czar-pass` → `czar-pass/src/main.rs` (on
 the reconciler-engine, sp-pu7v6), `czar-fence.sh`, `groomer`, `groom-trigger.sh`,
