@@ -2640,13 +2640,13 @@ fn overlap_world(r: &FakeRunner, w: &World) {
         if s.args.iter().any(|a| a == "in_progress") {
             return ok(r#"[{"id":"sp-busy","status":"in_progress","issue_type":"task","labels":["spira","repo:spira"]}]"#);
         }
-        // literal-ok: test fixture
-        ok(r#"[
-          {"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-          {"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-          {"id":"sp-alone","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-          {"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira","needs-operator"]}
-        ]"#)
+        let asked = "needs-operator"; // literal-ok: test fixture
+        ok(&format!(r#"[
+          {{"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]}},
+          {{"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]}},
+          {{"id":"sp-alone","status":"open","issue_type":"task","labels":["spira","repo:spira"]}},
+          {{"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira","{asked}"]}}
+        ]"#))
     });
     r.on(|s| {
         if s.prog != "git" {
