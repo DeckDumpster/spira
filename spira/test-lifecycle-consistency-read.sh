@@ -121,8 +121,7 @@ ms=$(( ($(date +%s%N) - t0) / 1000000 ))
 wantrc "list-all exits 0" 0 $rc
 is "list-all returns every row" "$((ROWS + 1))" "$(wc -l < "$TMP/all.out" | tr -d ' ')"
 want "the planted WORKING row with no holder is in the read" "sp-planted	WORKING	" "$(cat "$TMP/all.out")"
-for q in "EXPLAIN FORMAT=TREE SELECT bead_id FROM bead" "DESCRIBE PLAN SELECT bead_id FROM bead"; do echo "# DBG [$q] $(root_sql --use-db spira_lifecycle sql -q "$q" | tr "\n" " ")"; done
-plan=""
+plan="$(root_sql --use-db spira_lifecycle sql -q "EXPLAIN FORMAT=TREE SELECT bead_id, state, holder FROM bead")"
 want "the read plans as a scan of bead" "name: bead" "$plan"
 case "$plan" in
     *[Jj]oin*|*Subquery*|*Filter*) bad "the consistency read plans more than a single-table scan: $plan" ;;
