@@ -35,9 +35,9 @@ pub fn round_bins(w: &World, repo: &Path, head: &str, worktree: &Path) -> Result
     Ok(dir)
 }
 
-/// §8 D12: Ok when a gate PASS or a round GREEN certifies exactly `head`'s tree in `repo`
-/// (`gate::cert`, matched by (repo, tree) alone), naming it on stderr; Err is the refusal
-/// text, which names the tree and the gate command that would certify it.
+/// §8 D12: Ok when a round GREEN (the full corpus on a round VM) certifies exactly `head`'s
+/// tree in `repo` (`gate::cert`, matched by (repo, tree) alone), naming it on stderr. A gate
+/// PASS is a budgeted selection and never certifies a landing; Err is the refusal text.
 pub fn certified(w: &World, path: &Path, repo: &str, s: &crate::ports::Settings, head: &str, head_arg: &str) -> Result<(), String> {
     let Some(tree) = w.git.rev_parse(path, &format!("{head}^{{tree}}")) else {
         return Err(format!("cannot resolve {head}^{{tree}} — nothing can say what would land"));
@@ -46,7 +46,8 @@ pub fn certified(w: &World, path: &Path, repo: &str, s: &crate::ports::Settings,
     let found = gate::cert::path(&verdicts, repo, &tree)
         .and_then(|p| w.env.read_file(&p).ok())
         .and_then(|text| gate::cert::certifies(&text, repo, &tree));
-    match found {
+    let gate_only = found.as_ref().is_some_and(|c| c.source != gate::cert::Source::Round);
+    match found.filter(|c| c.source == gate::cert::Source::Round) {
         Some(c) => {
             w.err(format!(
                 "queue.sh land-local: tree {tree} certified by {} {} ({}, {} at {})",
@@ -59,8 +60,8 @@ pub fn certified(w: &World, path: &Path, repo: &str, s: &crate::ports::Settings,
             Ok(())
         }
         None => Err(format!(
-            "no gate PASS or round GREEN for {head}'s tree {tree} in {repo} — nothing certified what would land; run: bash {}/gate.sh {head_arg} {repo}, then retry (or SPIRA_LAND_UNGATED=<reason> to land it ungated, logged)",
-            s.home.display()
+            "no round GREEN for {head}'s tree {tree} in {repo} — {}nothing ran the full suite on it; cut a round with batcher (a gate PASS is a budgeted selection and does not certify a landing), or SPIRA_LAND_UNGATED=<reason> to land it ungated, logged",
+            if gate_only { "only a budgeted gate PASS exists, and " } else { "" }
         )),
     }
 }
@@ -158,7 +159,7 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         return FAIL;
     }
 
-    // Only a certified tree lands (§8 D12): a gate PASS or a round GREEN for exactly this
+    // Only a certified tree lands (§8 D12): a round GREEN for exactly this
     // head's tree, or the named, logged override.
     let ungated = match certified(w, &path, &name, &c.s, &head, head_arg) {
         Ok(()) => None,

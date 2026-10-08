@@ -476,6 +476,10 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         println!("batcher {}: ALARM no recorded wall time for {} — scheduled first", repo.name, ordered.unmeasured.join(","));
     }
     let suites = ordered.list;
+    if suites.is_empty() {
+        println!("batcher {}: round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing", repo.name);
+        return Ok(None);
+    }
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 
     let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?;

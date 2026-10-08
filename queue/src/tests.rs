@@ -1258,7 +1258,7 @@ const T_BRANCH: &str = "2222222222222222222222222222222222222222";
 
 fn local_repo(t: &T) {
     uncertified_local_repo(t);
-    t.certify("spira", T1, gate::cert::Source::Gate, "harness-now");
+    t.certify("spira", T1, gate::cert::Source::Round, "-");
 }
 
 /// local/main at b0, h1 fast-forwards from it with tree T1 — and no certificate anywhere.
@@ -1300,8 +1300,7 @@ fn land_local_refuses_a_tree_no_gate_or_round_certified() {
     uncertified_local_repo(&t);
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
     let e = t.err();
-    assert!(e.contains(&format!("no gate PASS or round GREEN for h1's tree {T1} in spira")), "{e}");
-    assert!(e.contains(&format!("run: bash {}/gate.sh h1 spira", t.s().home.display())), "names the exact gate command: {e}");
+    assert!(e.contains(&format!("no round GREEN for h1's tree {T1} in spira")), "{e}");
     assert!(e.contains("SPIRA_LAND_UNGATED=<reason>") && e.contains("refused, nothing changed"), "{e}");
     assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
     assert!(!t.lc.has("certify") && !t.lc.has("event"));
@@ -1310,14 +1309,15 @@ fn land_local_refuses_a_tree_no_gate_or_round_certified() {
 }
 
 #[test]
-fn land_local_accepts_a_gate_pass_for_the_head_tree() {
+fn land_local_refuses_a_budgeted_gate_pass_for_the_head_tree() {
     let t = T::new(LandMode::QueueLocal);
-    local_repo(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
-    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
-    assert!(t.err().contains(&format!("tree {T1} certified by gate PASS")), "{}", t.err());
-    assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\""));
-    assert!(!t.err().contains("UNGATED"));
+    uncertified_local_repo(&t);
+    t.certify("spira", T1, gate::cert::Source::Gate, "harness-now");
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    let e = t.err();
+    assert!(e.contains("only a budgeted gate PASS exists") && e.contains("no round GREEN"), "{e}");
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
+    assert!(!t.lib.has("land_mark"));
 }
 
 #[test]
@@ -1343,7 +1343,7 @@ fn land_local_ignores_a_pass_for_another_tree_or_repo() {
     let forged = fs::read_to_string(gate::cert::path(&t.s().run.join("verdicts"), "spira", T_BRANCH).unwrap()).unwrap();
     fs::write(&p, forged).unwrap();
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
-    assert!(t.err().contains("no gate PASS or round GREEN"), "{}", t.err());
+    assert!(t.err().contains("no round GREEN"), "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
     // A red verdict is not a certificate either.
     fs::write(&p, fs::read_to_string(&p).unwrap().replace(T_BRANCH, T1).replace("verdict=PASS", "verdict=FAIL")).unwrap();
@@ -1352,20 +1352,12 @@ fn land_local_ignores_a_pass_for_another_tree_or_repo() {
 }
 
 #[test]
-fn land_local_a_pass_from_an_older_gate_binary_still_counts() {
-    let t = T::new(LandMode::QueueLocal);
-    uncertified_local_repo(&t);
-    t.certify("spira", T1, gate::cert::Source::Gate, "a-harness-hash-from-an-older-gate");
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
-}
-
-#[test]
 fn land_local_honours_spira_verdicts_as_the_gate_does() {
     let t = T::new(LandMode::QueueLocal);
     uncertified_local_repo(&t);
     let v = t.dir.join("elsewhere");
     t.var("SPIRA_VERDICTS", &v.display().to_string());
-    let c = gate::cert::Cert { source: gate::cert::Source::Gate, tree: T1.into(), repo: "spira".into(), rev: "r".into(), branch: "b".into(), by: "x".into(), when: "w".into(), at: 1, harness: "h".into(), suites: "-".into() };
+    let c = gate::cert::Cert { source: gate::cert::Source::Round, tree: T1.into(), repo: "spira".into(), rev: "r".into(), branch: "b".into(), by: "x".into(), when: "w".into(), at: 1, harness: "-".into(), suites: "-".into() };
     gate::cert::write(&v, &c).unwrap();
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
 }
