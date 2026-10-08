@@ -266,7 +266,8 @@ al_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
 [ -n "$al_id" ] || bail "after-landing produced no new bead id"
 al_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$al_id" --json 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 nowant "after-landing: not a child of the bound bead" "\"parent\": \"$BID\"" "$al_json"
-want   "after-landing: blocked on the bound bead" "\"depends_on_id\": \"$BID\"" "$al_json"
+want   "after-landing: blocked on the bound bead" "\"id\": \"$BID\"" "$al_json"
+want   "after-landing: the edge is a blocking one" "\"dependency_type\": \"blocks\"" "$al_json"
 
 # ── split: same mechanism, its own bead ───────────────────────────────────────────────
 out="$(work_as "$BID" split "a split piece filed by the container-tier suite" 2>&1)"; rc=$?
