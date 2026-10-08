@@ -679,7 +679,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 // does not resurrect CERTIFIED — it voids the certification the same
                 // way a live tip change would, and returns to SUBMITTED instead.
                 let mut new = row.clone();
-                let certified_before = row.reason.as_deref() != Some(FROM_SUBMITTED);
+                let certified_before = row.gate_key.is_some() && row.reason.as_deref() != Some(FROM_SUBMITTED);
                 new.state = if certified_before && row.tip.as_deref() == Some(tip.as_str()) { BeadState::Certified } else { BeadState::Submitted };
                 new.reason = None;
                 new.version += 1;
@@ -892,6 +892,7 @@ mod tests {
     fn since_is_stamped_on_entry_to_landed_and_certified_only() {
         let mut r = row(BeadState::InDelivery);
         r.tip = Some("t".into());
+        r.gate_key = Some("k".into());
         let mut e = ev(BeadState::InDelivery, r.version, BeadEventKind::Requeued { tip: "t".into() });
         e.at = Some(77);
         let out = apply(&r, &e);
@@ -1065,6 +1066,9 @@ mod tests {
         for (from, back) in [(BeadState::Submitted, BeadState::Submitted), (BeadState::Certified, BeadState::Certified)] {
             let mut r = row(from);
             r.tip = Some("abc123".into());
+            if from == BeadState::Certified {
+                r.gate_key = Some("k1".into());
+            }
             let delivered = apply(&r, &ev(from, r.version, BeadEventKind::Deliver));
             assert!(delivered.applied);
             let d = delivered.row;
@@ -1073,6 +1077,16 @@ mod tests {
             assert_eq!(out.row.state, back);
             assert_eq!(out.row.reason, None);
         }
+    }
+
+    #[test]
+    fn a_requeue_without_a_gate_key_never_yields_certified() {
+        let mut r = row(BeadState::InDelivery);
+        r.tip = Some("abc123".into());
+        r.reason = Some("base_withdrawn: p t".into());
+        let out = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Requeued { tip: "abc123".into() }));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BeadState::Submitted);
     }
 
     #[test]
