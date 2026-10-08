@@ -17,7 +17,7 @@
 #   6. An unreadable (unobservable) input drives the same alert path as a gap, once past its
 #      own grace — never silently treated as satisfied, never silently skipped either.
 #   7. A remedy that did not close its gap is named as having failed in the evidence.
-#   8. When the Concierge is not running, the same alert lands in operator mail as a note
+#   8. When the Concierge is not running, the alert is still queued in its mailbox, never the operator's
 #      instead of being typed into a session nobody is reading.
 #   9. The operator path accepts exactly permissions, policy and destructive: each reaches
 #      operator mail as a question with its default. Any other class is refused by
@@ -154,20 +154,19 @@ msg="$(cat "$newest")"
 want "the failed remedy is named" "reset-failed + start spira-landing — did not close the gap" "$msg"
 
 # ==========================================================================================
-printf '\n%s\n' "8. concierge not running: the same alert lands in operator mail as a note"
+printf '\n%s\n' "8. concierge not running: the alert is queued for the concierge, never the operator"
 # ==========================================================================================
 rm -f "$CONCIERGE_RUNNING_FLAG"
 before_concierge="$(mailcount concierge)"
+before_operator="$(mailcount operator)"
 out="$(reconciler-alert gap --invariant land-rate --now 6000 --state "$STATE" \
     --status gap --desired "land rate > 0 over 30m" --observed "0 landed in 30m, work waiting" \
     --since 4200 --is-gap 2>&1)"
 want "reports concierge not running" "concierge not running" "$out"
-is   "concierge mailbox unchanged" "$before_concierge" "$(mailcount concierge)"
-is   "exactly one note reaches the operator" "1" "$(mailcount operator)"
-msg="$(cat "$(mailfile operator)")"
-want "forwarded as a note, not an alert"      "X-Spira-Kind: note" "$msg"
-want "says why it was forwarded"              "Concierge is not running" "$msg"
-want "the evidence is still inline"           "invariant: land-rate" "$msg"
+is   "the alert is queued in the concierge mailbox" "$((before_concierge + 1))" "$(mailcount concierge)"
+is   "the operator mailbox is untouched" "$before_operator" "$(mailcount operator)"
+msg="$(cat "$(ls -t "$SPIRA_RUN/mail/concierge/new"/* | head -1)")"
+want "the evidence is still inline" "invariant: land-rate" "$msg"
 
 # ==========================================================================================
 printf '\n%s\n' "9. the operator path: permissions, policy, destructive; nothing else"

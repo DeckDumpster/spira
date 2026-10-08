@@ -119,7 +119,7 @@ newest_path() {   # newest_path <mailbox> -> full path of newest message in new/
 
 send_question() {   # send_question <subject> -> leaves message in operator/new for the caller
     local subject="$1"
-    SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+    SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
         run send operator --from "Builder <builder@spira>" --subject "$subject" \
             --kind question --class policy --default "proceed with the default" \
             <<'BODY' >/dev/null 2>"$TMP/send.err"
@@ -241,7 +241,7 @@ echo
 echo "a notice with no bead is never indexed"
 
 before="$(index_lines)"
-SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
     run send operator --from "Gate <gate@spira>" --subject "FYI: nothing to see" \
         <<< "just an FYI" >/dev/null 2>&1
 after="$(index_lines)"

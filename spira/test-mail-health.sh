@@ -28,6 +28,7 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 # detect-and-alert path was silently looking at the wrong maildir the whole time).
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+export SPIRA_MAIL_OPERATOR_CONSIDERED=test-suite
 export SPIRA_HOME="$HERE"
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export SPIRA_CONF="$TMP/no-such-spira.conf"

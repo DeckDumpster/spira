@@ -174,6 +174,7 @@ BASE_ENV=(
     HOME="$TMP/home"
     PATH="$MOCK_BIN:$PATH"
     SPIRA_CONF=/nonexistent
+    SPIRA_MAIL_OPERATOR_CONSIDERED=test-suite
     SPIRA_HOME="$HERE"
     SPIRA_TOML="$SPIRA_TOML"
 )

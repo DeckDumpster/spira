@@ -56,7 +56,7 @@ tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
     SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" SPIRA_MAIL_MUTE=0 \
     SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""
-export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
+export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite" SPIRA_MAIL_OPERATOR_CONSIDERED="test-suite"
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
 export SPIRA_HOME="$HERE"

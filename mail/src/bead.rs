@@ -408,6 +408,31 @@ pub fn open_ask_ids(bd: &dyn Bd, ask_label: &str) -> Result<Vec<String>, String>
     }
 }
 
+/// The open ask a new operator ask duplicates: one about the same work bead, or carrying
+/// the same normalized subject. `Err` when the store cannot answer.
+pub fn open_duplicate_ask(bd: &dyn Bd, ask_label: &str, subject: &str, work_bead: &str) -> Result<Option<String>, String> {
+    let [flag, live] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Live);
+    let out = bd.run(&a(&["list", &flag, &live, "--label", ask_label, "--limit", "0", "--json"]), None);
+    let v: Value = serde_json::from_str(&out.stdout).map_err(|_| format!("bead store query failed {}", bd_failure_detail(&out)))?;
+    let arr = match v {
+        Value::Array(a) => a,
+        obj @ Value::Object(_) => vec![obj],
+        _ => Vec::new(),
+    };
+    let norm = crate::repeat::normalize_subject(subject);
+    let work_label = format!("{WORK_BEAD_LABEL}{work_bead}");
+    for x in &arr {
+        let Some(id) = x.get("id").and_then(Value::as_str) else { continue };
+        let title = x.get("title").and_then(Value::as_str).unwrap_or("");
+        let same_bead = !work_bead.is_empty()
+            && x.get("labels").and_then(Value::as_array).is_some_and(|ls| ls.iter().any(|l| l.as_str() == Some(work_label.as_str())));
+        if same_bead || (!norm.trim().is_empty() && crate::repeat::normalize_subject(title) == norm) {
+            return Ok(Some(id.to_string()));
+        }
+    }
+    Ok(None)
+}
+
 /// The probe an empty [`open_ask_ids`] result needs before it is trusted (an empty result
 /// from a broken query would archive every live ask). `Err` carries the failing call's exit
 /// code and stderr so the caller's refusal can name what actually went wrong.

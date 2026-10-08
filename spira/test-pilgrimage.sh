@@ -163,7 +163,7 @@ mkdir -p "$SPIRA_RUN/watchd"
 tl_config SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR" SPIRA_MAIL_INDEX="$MAILDIR/index" \
     SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_MUTE=0 \
     SPIRA_CONCIERGE_INBOX="$SPIRA_RUN/watchd/concierge-inbox.log"
-export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
+export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite" SPIRA_MAIL_OPERATOR_CONSIDERED="test-suite"
 run() { pilgrimage.sh check 2>&1; }
 
 # One seed, three epics: a finished one (announce/close), one still going (silence), and

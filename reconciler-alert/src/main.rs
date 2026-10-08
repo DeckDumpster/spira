@@ -164,16 +164,12 @@ fn run_gap(args: &Args) -> Result<(), String> {
     let subject = format!("reconciler: {} — {}", invariant, short);
     let evidence = compose_alert(invariant, now, &verdict, last_remedy);
 
+    let body = format!("## Alert\n{subject}\n\n{evidence}");
+    io::mail_send(&mail_sh(), "concierge", &from, &subject, "alert", None, None, &body)?;
     if io::concierge_is_running(&concierge_sh()) {
-        let body = format!("## Alert\n{subject}\n\n{evidence}");
-        io::mail_send(&mail_sh(), "concierge", &from, &subject, "alert", None, None, &body)?;
         println!("reconciler-alert: {} — sent to concierge", invariant);
     } else {
-        let body = format!(
-            "## Note\n{subject}\n\nThe Concierge is not running, so this alert is forwarded here as a note.\n\n{evidence}"
-        );
-        io::mail_send(&mail_sh(), "operator", &from, &subject, "note", None, None, &body)?;
-        println!("reconciler-alert: {} — concierge not running, sent to operator as a note", invariant);
+        println!("reconciler-alert: {} — concierge not running, queued in its mailbox", invariant);
     }
     Ok(())
 }
