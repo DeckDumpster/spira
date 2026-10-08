@@ -78,10 +78,13 @@ pub fn destroy_fenced(p: &dyn Provider, vmid: &str, expected: &str, t: Timing) -
             "round-vm: refusing to destroy VM {vmid}: it is named {name:?}, not {expected:?}"
         )));
     }
+    let caller = crate::schema::ProcId::current();
     if p.alive(vmid).unwrap_or(true) {
+        eprintln!("round-vm: stop VM {vmid} (caller run {caller})");
         // A stop that fails is not final: destroy below reports the real refusal.
         let _ = p.stop(vmid);
     }
+    eprintln!("round-vm: destroy VM {vmid} (caller run {caller})");
     let destroy_err = p.destroy(vmid).err();
     for i in 0..t.gone_tries.max(1) {
         if let Ok(None) = p.name_of(vmid) {

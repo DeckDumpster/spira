@@ -18,6 +18,12 @@ pub struct ProcId {
     pub start: u64,
 }
 
+impl std::fmt::Display for ProcId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.pid, self.start)
+    }
+}
+
 /// The one provision in flight: who is doing it, and the VMID once one was allocated, so a
 /// provision whose owner died can be found and destroyed (G2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

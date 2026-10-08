@@ -291,9 +291,18 @@ impl Pool {
 
     /// Destroys `handle` and verifies it is gone. It is recorded as doomed first, so a
     /// crash mid-destroy is finished by the next acquire.
-    pub fn release(&self, handle: &str, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
+    /// Refused, naming the holder, while a live process other than `caller` holds the lease.
+    pub fn release(&self, handle: &str, caller: ProcId, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
         let attempt = factory()?;
         self.with_state(|s| {
+            if let Some(l) = s.leases.iter().find(|l| l.vm.handle == handle) {
+                if let Some(h) = l.owner.filter(|o| *o != caller && o.alive()) {
+                    return Err(format!(
+                        "round-vm: refusing to release VM {handle}: leased since {} to live run {h} (caller run {caller})",
+                        l.since
+                    ));
+                }
+            }
             s.leases.retain(|l| l.vm.handle != handle);
             if s.ready.as_ref().map(|v| v.handle == handle).unwrap_or(false) {
                 s.ready = None;
@@ -301,7 +310,8 @@ impl Pool {
             if !s.doomed.iter().any(|d| d == handle) {
                 s.doomed.push(handle.to_string());
             }
-        })?;
+            Ok(())
+        })??;
         let r = destroy_verified(attempt.provider.as_ref(), handle, attempt.timing);
         match r {
             Ok(()) | Err(DestroyError::NotOurs(_)) => {
@@ -324,7 +334,7 @@ impl Pool {
         })?;
         let mut released = 0;
         for h in &handles {
-            match self.release(h, factory) {
+            match self.release(h, ProcId::current(), factory) {
                 Ok(()) => released += 1,
                 Err(e) => eprintln!("{e}"),
             }
@@ -380,7 +390,7 @@ impl Pool {
             })
             .unwrap_or_default();
         for h in handles {
-            if let Err(e) = self.release(&h, factory) {
+            if let Err(e) = self.release(&h, owner, factory) {
                 eprintln!("{e}");
             }
         }
@@ -686,10 +696,59 @@ mod tests {
         let pl = pool(&d, 1);
         let f = || Ok(attempt(&fp));
         let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
-        pl.release(&vm.handle, &f).unwrap();
+        pl.release(&vm.handle, ProcId::current(), &f).unwrap();
         assert!(fp.name(&vm.handle).is_none());
         let s = read_state(&pl.state_file()).unwrap();
         assert!(s.leases.is_empty() && s.doomed.is_empty());
+    }
+
+    #[test]
+    fn release_refuses_a_vm_leased_to_another_live_run_and_names_it() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let holder = ProcId::current();
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, Some(holder)).unwrap();
+        let stranger = ProcId { pid: holder.pid, start: holder.start + 1 };
+        let e = pl.release(&vm.handle, stranger, &f).unwrap_err();
+        assert!(e.contains("refusing") && e.contains(&holder.to_string()), "{e}");
+        assert!(fp.name(&vm.handle).is_some());
+        assert_eq!(fp.count("stop"), 0);
+        assert_eq!(fp.count("destroy"), 0);
+        assert_eq!(read_state(&pl.state_file()).unwrap().leases.len(), 1);
+        pl.release(&vm.handle, holder, &f).unwrap();
+        assert!(fp.name(&vm.handle).is_none());
+    }
+
+    #[test]
+    fn a_stale_lease_is_released_by_anyone() {
+        let d = TempDir::new();
+        let fp = FakeProvider::new();
+        fp.plant("311", "round-311");
+        let pl = pool(&d, 1);
+        pl.with_state(|s| {
+            s.leases.push(Lease { vm: Vm { handle: "311".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0 })
+        })
+        .unwrap();
+        let f = || Ok(attempt(&fp));
+        pl.release("311", ProcId::current(), &f).unwrap();
+        assert!(fp.name("311").is_none());
+    }
+
+    #[test]
+    fn a_second_acquire_never_stops_the_first_runs_vm() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+        let (first, _) = pl.acquire(&deps, Some(ProcId::current())).unwrap();
+        pl.with_state(|s| s.provisioning = None).unwrap();
+        let (second, _) = pl.acquire(&deps, Some(ProcId::current())).unwrap();
+        assert_ne!(first.handle, second.handle);
+        assert!(fp.name(&first.handle).is_some());
+        assert_eq!(fp.count("stop"), 0);
     }
 
     #[test]
@@ -699,7 +758,7 @@ mod tests {
         fp.plant("9000", "ci-template");
         let pl = pool(&d, 1);
         let f = || Ok(attempt(&fp));
-        let e = pl.release("9000", &f).unwrap_err();
+        let e = pl.release("9000", ProcId::current(), &f).unwrap_err();
         assert!(e.contains("refusing"), "{e}");
         assert!(fp.name("9000").is_some());
         assert!(read_state(&pl.state_file()).unwrap().doomed.is_empty());

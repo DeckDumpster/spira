@@ -168,7 +168,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
-        "release" => match pool.release(&rest[0], &factory) {
+        "release" => match pool.release(&rest[0], ProcId::current(), &factory) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("{e}");
