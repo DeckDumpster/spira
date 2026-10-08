@@ -47,11 +47,13 @@ pub fn usage_error(id: &str, reason: &str) -> bool {
 pub const USAGE: &str = "usage: resolve <bead-id> \"<reason with evidence>\"   (or - to read stdin)";
 
 pub fn run(id: &str, reason: &str, db: &Path, closer: &dyn Closer) -> Outcome {
+    let is_ask = !work_beads(&closer.show_json(db, id)).is_empty();
     match closer.has_lifecycle_row(id) {
         Ok(false) => {}
+        Ok(true) if is_ask => {}
         Ok(true) => {
             return Outcome::Failed(format!(
-                "resolve: {id} is a work bead (it has a lifecycle row); resolve closes a standalone ask. \
+                "resolve: {id} is a work bead (it has a lifecycle row and is no ask); resolve closes an ask bead. \
 To lift an ask hold on a work bead use `reply`; nothing was changed"
             ))
         }
@@ -159,6 +161,27 @@ mod tests {
         fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
             Ok(true)
         }
+    }
+
+    struct AskRowFake;
+    impl Closer for AskRowFake {
+        fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
+            BdResult { success: true, combined: String::new() }
+        }
+        fn show_json(&self, _db: &Path, _id: &str) -> String {
+            r#"{"labels":["work-bead:sp-w1"]}"#.into()
+        }
+        fn withdraw_ask(&self, _w: &str) -> (i32, String) {
+            (0, String::new())
+        }
+        fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn an_ask_bead_with_a_lifecycle_row_still_closes() {
+        assert!(matches!(run("sp-a1", "moot", Path::new("/db"), &AskRowFake), Outcome::Closed(_)));
     }
 
     #[test]
