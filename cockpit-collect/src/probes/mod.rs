@@ -90,7 +90,7 @@ impl Cfg {
             express_label: cfg("SPIRA_EXPRESS_LABEL")?,
             queue_batch_max: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_MAX")?,
             queue_batch_wait: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_WAIT")?,
-            cert_window_mins: cfg_parse::<i64>("SPIRA_CERT_WINDOW_MINS")?,
+            cert_window_mins: cert_window_mins(&cfg("SPIRA_CERT_WINDOW_MINS")?)?,
             prod: cfg("SPIRA_PROD")?,
             ci_label: cfg("SPIRA_CI_LABEL")?,
             queue_wait_label: cfg("SPIRA_QUEUE_WAIT_LABEL")?,
@@ -99,6 +99,30 @@ impl Cfg {
             repo_map: cfg("SPIRA_REPO_MAP")?,
             round_cap_secs: cfg_parse::<i64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
         })
+    }
+}
+
+const CERT_WINDOW_MINS_DEFAULT: i64 = 90;
+
+/// An empty value is "unset": one key read by a single probe must not fail the load for all.
+fn cert_window_mins(raw: &str) -> Result<i64, String> {
+    let v = raw.trim();
+    if v.is_empty() {
+        return Ok(CERT_WINDOW_MINS_DEFAULT);
+    }
+    v.parse::<i64>().map_err(|e| format!("SPIRA_CERT_WINDOW_MINS = {raw:?} does not parse: {e}"))
+}
+
+#[cfg(test)]
+mod cert_window_tests {
+    use super::*;
+
+    #[test]
+    fn empty_is_the_default_and_a_value_is_parsed() {
+        assert_eq!(cert_window_mins("").unwrap(), 90);
+        assert_eq!(cert_window_mins("  ").unwrap(), 90);
+        assert_eq!(cert_window_mins("45").unwrap(), 45);
+        assert!(cert_window_mins("abc").is_err());
     }
 }
 
