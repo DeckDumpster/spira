@@ -15,17 +15,28 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct TempDir(PathBuf);
 
 impl TempDir {
-    /// `<temp_dir>/<tag>-<pid>-<n>`, created empty, its path canonical. `<n>` is
-    /// process-wide, so two calls never share a directory.
+    /// `<temp_dir>/<tag>-<pid>-<n>-<nanos>`, created empty, its path canonical. The directory is
+    /// claimed with a non-recursive `mkdir` and a taken name is skipped, so two processes that
+    /// share a `/tmp` (containers each have their own pids) never share a directory or delete
+    /// each other's on drop.
     pub fn new(tag: &str) -> TempDir {
         static N: AtomicUsize = AtomicUsize::new(0);
-        let d = std::env::temp_dir().join(format!(
-            "{tag}-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&d).unwrap_or_else(|e| panic!("mkdir {}: {e}", d.display()));
-        TempDir(d.canonicalize().unwrap_or(d))
+        let root = std::env::temp_dir();
+        loop {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos());
+            let d = root.join(format!(
+                "{tag}-{}-{}-{nanos}",
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&d) {
+                Ok(()) => return TempDir(d.canonicalize().unwrap_or(d)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => panic!("mkdir {}: {e}", d.display()),
+            }
+        }
     }
 
     /// The directory. It lives exactly as long as this value.
