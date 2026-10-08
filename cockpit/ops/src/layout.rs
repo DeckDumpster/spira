@@ -319,7 +319,7 @@ mod tests {
     fn classify_argv_matches_health_by_script_suffix_never_substring() {
         assert_eq!(classify_argv("bash", "/opt/spira/cockpit/health.sh", None), Some(Role::Health));
         // The lifecycle lens is the ops pane now (sp-lpw5ol).
-        assert_eq!(classify_argv("/home/u/.local/bin/lc-view", "loop", None), Some(Role::Health));
+        assert_eq!(classify_argv("/opt/bin/lc-view", "loop", None), Some(Role::Health));
         assert_eq!(classify_argv("lc-view", "", None), Some(Role::Health));
         // A system prompt that merely mentions the path as argv text (not argv[0]/[1] of a
         // shell) must not classify — callers only ever pass exe/script, not the whole line,

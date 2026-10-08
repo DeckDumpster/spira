@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new("timeout")
-        .arg("30")
+        .arg("5")
         .arg(cmd)
         .args(args)
         .output()
