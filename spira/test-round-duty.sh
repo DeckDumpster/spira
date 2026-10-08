@@ -16,9 +16,9 @@ tip="$(git -C "$TMP/repo" rev-parse HEAD)"
 git -C "$TMP/repo" branch spira/sp-aaa
 mkdir -p "$TMP/run/rounds" "$TMP/bin"
 printf '#!/usr/bin/env bash\n[ "$1 $2" = "list-state CERTIFIED" ] && printf "sp-aaa\\t\\t\\n"\nexit 0\n' > "$TMP/bin/spira-lc"
-printf '#!/usr/bin/env bash\n[ "$1 $2" = "round status" ] || exit 2\ncase "$(cat "$TMP/qmode")" in\n open) printf "round=open\\nbatch_id=r-1\\n" ;;\n none) echo round=none ;;\n garbage) echo hello ;;\n fail) echo boom >&2; exit 1 ;;\nesac\n' > "$TMP/bin/queue"
+printf '#!/usr/bin/env bash\n[ "$1 $2" = "round status" ] || exit 2\ncase "$(cat QMODE)" in\n open) printf "round=open\\nbatch_id=r-1\\n" ;;\n none) echo round=none ;;\n garbage) echo hello ;;\n fail) echo boom >&2; exit 1 ;;\nesac\n' > "$TMP/bin/queue"
+sed -i "s|QMODE|$TMP/qmode|" "$TMP/bin/queue"
 chmod +x "$TMP/bin/spira-lc" "$TMP/bin/queue"
-export TMP
 PATH="$TMP/bin:$PATH"
 
 run() {
