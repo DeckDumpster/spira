@@ -749,14 +749,6 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
 
 pub fn dup_refs_keys() -> Kv {
     let mut out = Kv::new();
-    let lookback: i64 = std::env::var("SPIRA_INCIDENT_DEDUP_LOOKBACK").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
-    let since = io::run_tool("date", &["-u", "-d", &format!("-{lookback} days"), "+%Y-%m-%d"], None).map(|s| s.trim().to_string());
-    let Some(since) = since else {
-        push(&mut out, "SP_DUP_REFS", "?");
-        push(&mut out, "SP_DUP_BEADS", "?");
-        push(&mut out, "SP_DUP_N", "0");
-        return out;
-    };
     let rows = io::bd_rows(io::bdjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
     // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
     let Some((rows, lc)) = rows.zip(lc::state_index()) else {
@@ -765,7 +757,7 @@ pub fn dup_refs_keys() -> Kv {
         push(&mut out, "SP_DUP_N", "0");
         return out;
     };
-    let by_ref = incidents_by_ref(&rows, &lc, &since);
+    let by_ref = incidents_by_ref(&rows, &lc);
     let mut dup: Vec<(String, Vec<String>)> = by_ref.into_iter().filter(|(_, ids)| ids.len() > 1).collect();
     push(&mut out, "SP_DUP_REFS", dup.len().to_string());
     push(&mut out, "SP_DUP_BEADS", dup.iter().map(|(_, ids)| ids.len() - 1).sum::<usize>().to_string());
@@ -1252,54 +1244,27 @@ pub fn sending_keys() -> Kv {
     }
 }
 
-/// SP_DUP_*: incident bead ids grouped by `external_ref`, over the incidents that still
-/// count — read from each bead's lifecycle row, never bd status (sp-jgjvh). Unfinished or
-/// in delivery (not terminal) counts; a terminal one counts only while its `closed_at`
-/// (bd content) falls inside the dedup lookback (`since`, `YYYY-MM-DD`); a bead with no
-/// lifecycle row is not live work and is not counted. A `duplicate-of:` bead is already
-/// accounted for.
-pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &str) -> std::collections::BTreeMap<String, Vec<String>> {
-    // (id, created_at, closed_at when terminal)
-    let mut grouped: std::collections::BTreeMap<String, Vec<(String, String, Option<String>)>> = std::collections::BTreeMap::new();
+/// SP_DUP_*: incident bead ids grouped by `external_ref`, over the incidents still live —
+/// read from each bead's lifecycle row, never bd status. A terminal bead is a predecessor
+/// of a recurrence, never surplus; a bead with no lifecycle row is not live work; a
+/// `duplicate-of:` bead is already accounted for.
+pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut grouped: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     for i in rows {
         let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
         if ref_.is_empty() {
             continue;
         }
-        let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        if labels.iter().any(|l| l.starts_with("duplicate-of:")) {
+        let duplicate = i.get("labels").and_then(Value::as_array).is_some_and(|a| a.iter().filter_map(Value::as_str).any(|l| l.starts_with("duplicate-of:")));
+        if duplicate {
             continue;
         }
         let id = i.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-        let Some(row) = lc.get(&id) else { continue };
-        let text = |k: &str| i.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        let closed = if row.terminal() {
-            let closed_at = text("closed_at");
-            if closed_at.get(..10).unwrap_or("") < since {
-                continue;
-            }
-            Some(closed_at)
-        } else {
-            None
-        };
-        grouped.entry(ref_.to_string()).or_default().push((id, text("created_at"), closed));
+        if lc.get(&id).is_some_and(|r| !r.terminal()) {
+            grouped.entry(ref_.to_string()).or_default().push(id);
+        }
     }
-    // A terminal bead closed before a sibling was created is a predecessor of a recurrence
-    // (incident.sh files fresh once the predecessor is over), not a dedup failure.
     grouped
-        .into_iter()
-        .map(|(ref_, beads)| {
-            let ids = beads
-                .iter()
-                .filter(|(id, _, closed)| match closed {
-                    Some(c) if !c.is_empty() => !beads.iter().any(|(o, created, _)| o != id && created.as_str() > c.as_str()),
-                    _ => true,
-                })
-                .map(|(id, _, _)| id.clone())
-                .collect();
-            (ref_, ids)
-        })
-        .collect()
 }
 
 /// SP_POISON: work beads the machine holds for poison, not yet over (the `spira-poison`
@@ -1376,8 +1341,8 @@ mod tests {
             .collect()
     }
 
-    /// sp-jgjvh: duplicate incident refs are counted from the lifecycle row: live and in
-    /// delivery count, terminal counts only inside the lookback, rowless never.
+    /// Duplicate incident refs are counted from the lifecycle row: only non-terminal rows
+    /// count; terminal, rowless and duplicate-of: never do.
     #[test]
     fn dup_refs_count_by_lifecycle_state_not_bd_status() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -1390,9 +1355,23 @@ mod tests {
         )
         .unwrap();
         let lc = lcmap(&[("a", "WORKING", &[]), ("b", "SUBMITTED", &[]), ("c", "LANDED", &[]), ("d", "DONE", &[]), ("f", "READY", &[])]);
-        let mut got = incidents_by_ref(&rows, &lc, "2026-09-28").remove("r1").unwrap();
+        let mut got = incidents_by_ref(&rows, &lc).remove("r1").unwrap();
         got.sort();
-        assert_eq!(got, vec!["a", "b", "d"]);
+        assert_eq!(got, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn a_terminal_predecessor_and_a_recurrence_is_not_surplus_but_two_live_rows_are() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"p","status":"open","external_ref":"r"},{"id":"q","status":"open","external_ref":"r"}]"#,
+        )
+        .unwrap();
+        for dead in ["DONE", "DROPPED", "SUPERSEDED"] {
+            let got = incidents_by_ref(&rows, &lcmap(&[("p", dead, &[]), ("q", "READY", &[])]));
+            assert_eq!(got["r"].len(), 1, "{dead}");
+        }
+        let got = incidents_by_ref(&rows, &lcmap(&[("p", "READY", &[]), ("q", "READY", &[])]));
+        assert_eq!(got["r"].len(), 2);
     }
 
     /// sp-mve9i: the counts follow the lifecycle row, whatever bd's status says.
