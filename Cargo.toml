@@ -69,6 +69,7 @@ members = [
     "bead",
     "sim",
     "spira/sim",
+    "reclaim",
 ]
 resolver = "2"
 
