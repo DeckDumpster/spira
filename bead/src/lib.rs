@@ -287,6 +287,32 @@ pub fn parse_show_row(json: &str) -> Option<ShowRow> {
     })
 }
 
+/// The `priority` field of one `bd show --json` payload (object or one-element array).
+pub fn parse_priority(json: &str) -> Option<i64> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = match &v {
+        serde_json::Value::Array(a) => a.first()?,
+        other => other,
+    };
+    obj.get("priority").and_then(|p| p.as_i64())
+}
+
+/// A priority argument: 0..=4, optionally written `P1`.
+pub fn parse_priority_arg(arg: &str) -> Option<i64> {
+    let n: i64 = arg.strip_prefix('P').unwrap_or(arg).parse().ok()?;
+    (0..=4).contains(&n).then_some(n)
+}
+
+/// The note recorded on a bead whose priority was changed through `amend`.
+pub fn priority_note(actor: &str, old: Option<i64>, new: i64, reason: Option<&str>) -> String {
+    let old = old.map_or("unknown".to_string(), |o| format!("P{o}"));
+    let mut note = format!("Priority changed P{new} (was {old}) by {actor}.");
+    if let Some(r) = reason {
+        note.push_str(&format!(" Reason: {r}"));
+    }
+    note
+}
+
 /// Parses one `bd dep list <id> --type blocks --json` payload into the list of
 /// `depends_on_id`s, reading whichever key the store actually used (`depends_on_id` for a
 /// batch shape, `id` for a single-id shape — `_bead_lint`'s own comment on why both exist).
@@ -620,6 +646,22 @@ mod tests {
         let arr = format!("[{obj}]");
         let row2 = parse_show_row(&arr).unwrap();
         assert_eq!(row2.labels, row.labels);
+    }
+
+    #[test]
+    fn priority_helpers() {
+        assert_eq!(parse_priority(r#"[{"priority":2}]"#), Some(2));
+        assert_eq!(parse_priority(r#"{"priority":0}"#), Some(0));
+        assert_eq!(parse_priority("{}"), None);
+        assert_eq!(parse_priority_arg("P1"), Some(1));
+        assert_eq!(parse_priority_arg("4"), Some(4));
+        assert_eq!(parse_priority_arg("5"), None);
+        assert_eq!(parse_priority_arg("high"), None);
+        assert_eq!(
+            priority_note("ryan", Some(2), 1, Some("blocks the round")),
+            "Priority changed P1 (was P2) by ryan. Reason: blocks the round"
+        );
+        assert_eq!(priority_note("ryan", None, 1, None), "Priority changed P1 (was unknown) by ryan.");
     }
 
     #[test]

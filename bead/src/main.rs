@@ -540,6 +540,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let mut note: Option<String> = None;
     let mut body_file: Option<String> = None;
     let mut express = false;
+    let mut priority: Option<i64> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -553,6 +554,14 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                 body_file = args.get(i).cloned();
             }
             "--express" => express = true,
+            "--priority" | "-p" => {
+                i += 1;
+                let Some(p) = args.get(i).and_then(|a| bead::parse_priority_arg(a)) else {
+                    eprintln!("bead: amend: --priority takes 0..4 (or P0..P4)");
+                    return 2;
+                };
+                priority = Some(p);
+            }
             other => {
                 eprintln!("bead: amend: unknown option: {other}");
                 return 2;
@@ -560,13 +569,33 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
         i += 1;
     }
-    if note.is_none() && body_file.is_none() && !express {
-        eprintln!("bead: amend: --note, --body-file, or --express required");
+    if note.is_none() && body_file.is_none() && !express && priority.is_none() {
+        eprintln!("bead: amend: --note, --body-file, --express, or --priority required");
         return 2;
     }
 
     let mut changed = String::new();
     let mut rc = 0;
+    if let Some(new) = priority {
+        let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+        let Some(old) = bead::parse_priority(&out) else {
+            eprintln!("bead: amend: cannot read the current priority of {id}; refusing");
+            return 1;
+        };
+        let actor = std::env::var("BEADS_ACTOR")
+            .ok()
+            .filter(|a| !a.is_empty())
+            .or_else(|| std::env::var("USER").ok().filter(|a| !a.is_empty()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let upd = bdq_status(home, &s(&["update", &id, "-p", &new.to_string()]));
+        rc |= upd;
+        if upd == 0 {
+            let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
+            rc |= bdq_status(home, &s(&["note", &id, &text]));
+            changed.push_str(&text);
+            note = None;
+        }
+    }
     if express {
         let express_label = cfg_label("SPIRA_EXPRESS_LABEL");
         rc |= bdq_status(home, &s(&["label", "add", &id, &express_label]));
