@@ -13,18 +13,10 @@ pub fn check(args: &[String]) -> Result<(), String> {
     match a.as_slice() {
         ["list" | "show" | "memories" | "state", ..] => Ok(()),
         ["gate", "list", ..] => Ok(()),
-        ["close", id, rest @ ..] if !id.starts_with('-') && close_flags(rest) => Ok(()),
         ["comments", "add", id, _text] if !id.starts_with('-') => Ok(()),
         ["comments", sub, ..] if *sub != "add" => Ok(()),
         ["update", id, flags @ ..] if !id.starts_with('-') && !flags.is_empty() => labels_only(flags),
         _ => Err(format!("`{}` is not a content verb", a.join(" "))),
-    }
-}
-
-fn close_flags(rest: &[&str]) -> bool {
-    match rest {
-        ["--reason", r, "--force"] | ["--force", "--reason", r] => !r.starts_with("--"),
-        _ => false,
     }
 }
 
@@ -41,7 +33,7 @@ fn labels_only(flags: &[&str]) -> Result<(), String> {
 
 pub fn run(args: &[String], bd: &dyn Fn(&[String]) -> Result<String, String>) -> Answer {
     if args.is_empty() {
-        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|comments|gate list|memories|state|update|comments add|close --reason R --force> …\n".into(), ..Default::default() };
+        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|comments|gate list|memories|state|update|comments add> …\n".into(), ..Default::default() };
     }
     if let Err(e) = check(args) {
         return Answer { code: REFUSED, stderr: format!("spira-lc content: {e}\n"), ..Default::default() };
@@ -67,8 +59,6 @@ mod tests {
             &["show", "sp-a", "--json"],
             &["comments", "sp-a", "--json"],
             &["comments", "add", "sp-a", "text"],
-            &["close", "sp-a", "--reason", "r", "--force"],
-            &["close", "sp-a", "--force", "--reason", "r"],
             &["gate", "list", "--json"],
             &["update", "sp-a", "--add-label", "x", "--remove-label", "y"],
             &["state", "sp-a", "fayth"],
@@ -83,6 +73,7 @@ mod tests {
         for bad in [
             &["close", "sp-a"][..],
             &["close", "sp-a", "--reason", "r"],
+            &["close", "sp-a", "--reason", "r", "--force"],
             &["update", "sp-a", "--status", "open"],
             &["update", "sp-a", "--add-label"],
             &["update", "sp-a"],
