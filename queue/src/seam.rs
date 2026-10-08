@@ -156,7 +156,14 @@ fn body(op: Op) -> &'static str {
         // The body travels as a value and lands in a temp file inside the script: bd reads
         // it with --body-file, never argv (law-payloads-go-on-stdin).
         Op::CreateBug => "__f=\"$(mktemp)\" || exit 1\nprintf '%s' \"$5\" > \"$__f\"\n__id=\"$(BEADS_ACTOR=\"$1\" bdq create \"$2\" --type bug --priority \"$3\" --labels \"$4\" --body-file \"$__f\" --silent 2>/dev/null | tr -d '[:space:]')\"\nrm -f \"$__f\"\nprintf '\\036%s' \"$__id\"\nexit 0\n",
-        Op::AmendBug => "__s=\"$(BEADS_ACTOR=\"$1\" bdq show \"$2\" --json 2>/dev/null)\"\ncase \"$__s\" in *'\"status\": \"open\"'*|*'\"status\": \"in_progress\"'*|*'\"status\": \"blocked\"'*) ;; *) printf '\\036'; exit 0 ;; esac\n__f=\"$(mktemp)\" || exit 1\nprintf '%s' \"$3\" > \"$__f\"\nif BEADS_ACTOR=\"$1\" bdq note \"$2\" --file \"$__f\" >/dev/null 2>&1; then printf '\\036amended'; else printf '\\036'; fi\nrm -f \"$__f\"\nexit 0\n",
+        Op::AmendBug => r#"__r="$(lc_bead_row "$2" 2>/dev/null)" || { printf '\036'; exit 0; }
+case "${__r%%$'\t'*}" in ""|LANDED|SUPERSEDED|DROPPED|DONE) printf '\036'; exit 0 ;; esac
+__f="$(mktemp)" || exit 1
+printf '%s' "$3" > "$__f"
+if BEADS_ACTOR="$1" bdq note "$2" --file "$__f" >/dev/null 2>&1; then printf '\036amended'; else printf '\036'; fi
+rm -f "$__f"
+exit 0
+"#,
     }
 }
 
@@ -228,6 +235,27 @@ mod tests {
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success());
         assert_eq!(String::from_utf8_lossy(&out.stdout), "[sp-a][RED][][line one\nline $(two) `x`]");
+    }
+
+    #[test]
+    fn amend_bug_decides_on_the_lifecycle_row_not_bd_status() {
+        let _serial = crate::testutil::serial();
+        let dir = crate::testutil::tmpdir("amend");
+        std::fs::write(
+            dir.join("lib.sh"),
+            "lc_bead_row() { case \"$1\" in sp-live) printf 'WORKING\\t3\\t\\t' ;; sp-done) printf 'LANDED\\t3\\t\\t' ;; *) return 1 ;; esac; }\nbdq() { return 0; }\n",
+        )
+        .unwrap();
+        let home = dir.to_str().unwrap();
+        let run = |id: &str| {
+            let mut child = Command::new("bash").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+            child.stdin.take().unwrap().write_all(&stdin_bytes(Op::AmendBug, &[home, "actor", id, "note"])).unwrap();
+            let out = child.wait_with_output().unwrap();
+            split_answer(&String::from_utf8_lossy(&out.stdout)).1.to_string()
+        };
+        assert_eq!(run("sp-live"), "amended");
+        assert_eq!(run("sp-done"), "");
+        assert_eq!(run("sp-rowless"), "");
     }
 
     #[test]

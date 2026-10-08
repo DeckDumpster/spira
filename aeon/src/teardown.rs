@@ -152,8 +152,6 @@ impl Run<'_> {
             i.operator_wait = true;
         } else if self.sv("lc_bead_verified", &s(&[&id])).success() {
             i.submitted = true;
-        } else if bd::show(self.d.bd, &id).is_some_and(|r| r.has_label(&self.conf.submitted_label())) {
-            i.submitted = true;
         } else if ledger::trace_segment(self.s.logf.as_deref(), 50_000, &self.conf.trace_mark()).is_some_and(|seg| decide::session_yield_headless(&seg)) {
             i.yield_headless = true;
         } else if !self.s.session_started {
