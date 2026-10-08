@@ -757,7 +757,7 @@ lack "a real bead's row is untouched" "sp-real" "$(cat "$LC_CALLS")"
 
 reset_state; : > "$LC_CALLS"; touch "$BD_JSON.fail"
 reconciler.sh --pass >/dev/null 2>&1
-[ ! -s "$LC_CALLS" ] && ok "an unreadable store drops nothing" || bad "dropped on an unreadable store: $(cat "$LC_CALLS")"
+lack "an unreadable store drops nothing" "drop" "$(cat "$LC_CALLS")"
 rm -f "$BD_JSON.fail"
 
 tl_summary
