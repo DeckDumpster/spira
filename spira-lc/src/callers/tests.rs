@@ -661,6 +661,33 @@ fn reconcile_closed_reports_an_ask_hold_as_refused() {
     assert_eq!(f.state("sp-h"), "READY");
 }
 
+// ---- reconcile-epics --------------------------------------------------------------------
+
+#[test]
+fn reconcile_epics_moves_only_ready_epic_rows_to_open() {
+    let mut f = Fake::default();
+    f.bead("sp-e", BeadState::Ready);
+    f.bead("sp-t", BeadState::Ready);
+    let mut b = FakeBd::default();
+    b.rows.insert("sp-e".into(), ("epic".into(), None));
+    b.rows.insert("sp-t".into(), ("task".into(), None));
+
+    let dry = reconcile_epics(&[], &mut f, &mut b);
+    assert_eq!(dry.code, APPLIED, "{}", dry.stderr);
+    assert!(dry.stdout.contains("would move sp-e READY -> OPEN"), "{}", dry.stdout);
+    assert!(f.events.is_empty(), "a dry run writes nothing");
+
+    let ans = reconcile_epics(&v(&["--apply"]), &mut f, &mut b);
+    assert_eq!(ans.code, APPLIED, "{}", ans.stdout);
+    assert_eq!((f.state("sp-e"), f.state("sp-t")), ("OPEN", "READY"));
+    assert_eq!(reconcile_epics(&v(&["--apply"]), &mut f, &mut b).stdout, "reconcile-epics: 0 moved");
+
+    b.down = true;
+    f.bead("sp-e2", BeadState::Ready);
+    assert_eq!(reconcile_epics(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL);
+    assert_eq!(reconcile_epics(&v(&["--bogus"]), &mut f, &mut b).code, 2);
+}
+
 // ---- drop-orphans (sp-b411iv) ------------------------------------------------------------
 
 #[test]

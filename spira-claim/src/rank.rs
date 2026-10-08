@@ -269,13 +269,15 @@ pub fn index_rows(rows: Vec<ReadyRow>) -> HashMap<String, ReadyRow> {
     rows.into_iter().map(|r| (r.id.clone(), r)).collect()
 }
 
-/// The `blocks` targets of a candidate.
+/// The `blocks` targets of a candidate. A `blocks` edge onto the candidate's own parent is read as
+/// parent-child: a container closes only when its children do, so it could never clear.
 pub fn blockers(r: &ReadyRow) -> Vec<String> {
     r.dependencies
         .iter()
         .filter(|d| d.dep_type.as_deref() == Some("blocks"))
         .filter(|d| d.issue_id.as_deref().map_or(true, |i| i == r.id))
         .filter_map(|d| d.depends_on_id.clone())
+        .filter(|b| r.parent.as_deref() != Some(b.as_str()))
         .collect()
 }
 
@@ -634,6 +636,15 @@ mod tests {
         // Even an epic with a lifecycle row certified does not stack.
         let lc2: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("E", BeadState::Certified, &[], 0)].into();
         assert_eq!(claimable(&blocked_on("B", "E"), &lc2, &open, 4), Verdict::Blocked("E".into()));
+    }
+
+    #[test]
+    fn a_blocks_edge_onto_the_candidates_own_open_epic_does_not_block() {
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
+        let open: HashMap<_, _> = [bdrec("E", "open", "epic", "spira")].into();
+        let mut child = blocked_on("B", "E");
+        child.parent = Some("E".into());
+        assert_eq!(claimable(&child, &lc, &open, 4), Verdict::Claimable { depth: 0 });
     }
 
     #[test]
