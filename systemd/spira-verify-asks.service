@@ -17,6 +17,8 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
+CPUQuota=25%
+Nice=10
 ExecStart=@SPIRA_PROD_COCK@/verify-asks.sh --apply
 # 120s per verify command (script default). 600s covers up to five parallel checks
 # plus the mislabelled-epic scan on a queue with some depth.
