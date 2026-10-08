@@ -2679,7 +2679,7 @@ fn overlap_run(w: &World, r: &FakeRunner, sink: &FakeSink, clock: &FakeClock, mo
         sink,
         clock,
         mode,
-        &[("SPIRA_SKIP_CLOSED_CHECK", "1"), ("SPIRA_OVERLAP_DEFER_LABEL", OVERLAP_LABEL)],
+        &[("SPIRA_OVERLAP_DEFER_LABEL", OVERLAP_LABEL)],
         Some(&["spira\t/src/spira\torigin/main\t0"]),
     );
 }
