@@ -47,7 +47,7 @@ testdb_up rebase-escalation || { echo "test-rebase-escalation: could not build a
 
 RUN="$TMP/run"; mkdir -p "$RUN"
 export SPIRA_HOME="$HERE"
-export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
+export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite" SPIRA_MAIL_OPERATOR_CONSIDERED="test-suite"
 tl_config SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
     SPIRA_ASK_LABEL="needs-operator" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_MUTE=0 \
     SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"

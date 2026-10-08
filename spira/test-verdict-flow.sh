@@ -140,7 +140,7 @@ send_question() {
         --kind question --class policy --default "proceed with option A")
     [ -n "$work_bead" ] && args+=(--bead "$work_bead")
     if [ "${3:-}" = "allow-blocking" ]; then
-        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_ALLOW_BLOCKING=1 \
+        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" SPIRA_MAIL_ALLOW_BLOCKING=1 \
             run "${args[@]}" <<'BODY' >/dev/null 2>"$TMP/send.err"
 ## Question
 
@@ -155,7 +155,7 @@ proceed with option A
 needs a policy ruling
 BODY
     else
-        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" run "${args[@]}" \
+        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" run "${args[@]}" \
             <<'BODY' >/dev/null 2>"$TMP/send.err"
 ## Question
 
@@ -310,7 +310,7 @@ echo "UC-16: accept-default closes the decision bead with the message's default"
 
 BEAD_ACC="sp-vf-accept"
 seed_bead "$BEAD_ACC"
-SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
     run send operator --from "Gate <gate@spira>" --subject "Accept test" \
     --kind decision --class policy --default "take the accept-test default" --bead "$BEAD_ACC" <<< "$(printf 'body\n\n## Class basis\nneeds a policy ruling\n')" >/dev/null 2>&1
 accept_msg_name="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
@@ -344,7 +344,7 @@ echo "UC-18: one real close — uphold closes the suit bead with reason 'upheld'
 
 SUIT1="sp-vf-suit1"
 seed_bead "$SUIT1"
-SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
     run send operator --from "Gate <gate@spira>" --subject "Suit test" --bead "$SUIT1" --kind suit <<< "body" >/dev/null 2>&1
 MSGID_S1="$(msgid_of operator)"
 is "SEEN RED: suit bead is open before reply" "open" "$(bead_status "$SUIT1")"

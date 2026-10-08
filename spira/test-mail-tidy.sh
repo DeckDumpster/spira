@@ -88,7 +88,7 @@ send_msg() {   # send_msg <mailbox> <subject> <bead-id|-> [--urgent]
     local extra=()
     [ "$bid" != "-" ] && extra+=(--bead "$bid")
     [ "${1:-}" = "--urgent" ] && extra+=(--urgent)
-    echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="fixture" \
+    echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="fixture" SPIRA_MAIL_OPERATOR_CONSIDERED="fixture" \
         "$MAIL" send "$mbox" \
             --from "Bot <bot@spira>" \
             --subject "$subj" \
