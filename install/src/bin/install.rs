@@ -518,6 +518,26 @@ fn tool_output(name: &str, args: &[&str], extra_env: &[(&str, &str)]) -> (i32, S
     }
 }
 
+/// `spira.instance` from the config alone — `SPIRA_INSTANCE` removed from the environment it is
+/// resolved against, since the override would otherwise answer for the file. `None` while no
+/// config file exists yet.
+fn configured_instance() -> Option<String> {
+    let spec = spira_config::process::spec().ok()?;
+    if !spec.split(':').any(|p| Path::new(p).is_file()) {
+        return None;
+    }
+    let mut env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    env.remove("SPIRA_INSTANCE");
+    let home = spira_config::resolve::locate_home_for_process().ok()?;
+    spira_config::resolve::resolve_instance(&env, &home).ok()
+}
+
+fn refuse_instance(c: &install::guards::Conflict) -> ExitCode {
+    eprintln!("install: {}", c.message);
+    eprintln!("install:   remedy: {}", c.remedy);
+    ExitCode::from(2)
+}
+
 fn main() -> ExitCode {
     let opts = match parse_args() {
         Ok(o) => o,
@@ -526,16 +546,20 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Some(i) = &opts.instance {
-        std::env::set_var("SPIRA_INSTANCE", i);
-    }
-    if opts.ephemeral && nonempty_env("SPIRA_INSTANCE").is_none() {
-        std::env::set_var("SPIRA_INSTANCE", format!("eph-{}", std::process::id()));
-    }
+    let requested = opts.instance.clone().or_else(|| nonempty_env("SPIRA_INSTANCE"));
+    let ephemeral = opts.ephemeral && requested.is_none();
     if let Some(p) = nonempty_env("CONFIGURE_PROD") {
         std::env::set_var("SPIRA_PROD", p);
     }
-    let instance = nonempty_env("SPIRA_INSTANCE").unwrap_or_else(|| "prod".into());
+    let mut instance = if ephemeral {
+        format!("eph-{}", std::process::id())
+    } else {
+        match install::guards::settle_instance(requested.as_deref(), configured_instance().as_deref()) {
+            Ok(i) => i,
+            Err(c) => return refuse_instance(&c),
+        }
+    };
+    std::env::set_var("SPIRA_INSTANCE", &instance);
 
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
@@ -622,6 +646,16 @@ fn main() -> ExitCode {
                 eprintln!("install: phase config failed — {e}");
                 return ExitCode::from(2);
             }
+        }
+    }
+
+    if !ephemeral {
+        match install::guards::settle_instance(requested.as_deref(), configured_instance().as_deref()) {
+            Ok(i) => {
+                instance = i;
+                std::env::set_var("SPIRA_INSTANCE", &instance);
+            }
+            Err(c) => return refuse_instance(&c),
         }
     }
 
