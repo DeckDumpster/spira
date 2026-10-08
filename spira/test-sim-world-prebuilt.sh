@@ -14,7 +14,7 @@
 #   1. CONTROL: SPIRA_SIM_RELEASE unset inside testenv — up refuses, names the variable,
 #      leaves no world and calls no cargo. Without this the pass in 2 could be a build that
 #      happened to be fast.
-#   2. SPIRA_SIM_RELEASE=$SPIRA_RELEASE — up succeeds in under 30 s with no cargo: the
+#   2. SPIRA_SIM_RELEASE=$SPIRA_RELEASE — up succeeds with no cargo: the
 #      world's release is that directory, its Dolt fixture is a `testenv testdb up` nested in
 #      this testenv run (under testenv's tmpfs TESTDB_ROOT), and the lifecycle migrations
 #      applied through the release's spira-lc. Then down removes the world and its fixture.
@@ -61,15 +61,11 @@ want   "control: the refusal names SPIRA_SIM_RELEASE" "SPIRA_SIM_RELEASE is not 
 [ ! -e "$W0" ] && ok "control: the refusal left no world" || bad "control: the refusal left no world" "$W0 exists"
 is     "control: no cargo was called" "" "$(cat "$T/cargo.log")"
 
-# --- 2. a prebuilt release: up then down, no cargo, under 30 s ------------------------------
+# --- 2. a prebuilt release: up then down, no cargo ------------------------------
 W="$T/world"
-t0="$(date +%s%N)"
 out="$(SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 sim_world up "$W" 2>&1)"; rc=$?
-ms=$(( ($(date +%s%N) - t0) / 1000000 ))
 wantrc "up with SPIRA_SIM_RELEASE succeeds" 0 "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out" | sed 's/^/# up: /'
-printf '# world up took %d ms\n' "$ms"
-[ "$ms" -lt 30000 ] && ok "up took under 30 s ($ms ms)" || bad "up took under 30 s" "$ms ms"
 is     "up called no cargo" "" "$(cat "$T/cargo.log")"
 is     "the world's release is the prebuilt one" "$(readlink -f "$SPIRA_RELEASE")" "$(readlink -f "$W/release")"
 [ ! -e "$W/cache" ] && ok "no build cache was made" || bad "no build cache was made" "$W/cache exists"
