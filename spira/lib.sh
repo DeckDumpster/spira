@@ -21,7 +21,10 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
         "$_spira_lib_dir" >&2
     return 1 2>/dev/null || exit 1
 }
-. "$_spira_lib_dir/conf.sh"
+. "$_spira_lib_dir/conf.sh" || {
+    printf 'spira: conf.sh could not resolve configuration (see above) — refusing to load lib.sh on unset keys\n' >&2
+    return 1 2>/dev/null || exit 1
+}
 # suite-covers.sh is NOT sourced here (wave 4.36, sp-bobsp): nothing in lib.sh calls its
 # accessors, and the five scripts that do (plan-lint.sh, suite-coverage-json.sh,
 # escape-classify.sh, testenv-guard.sh, testlib.sh) now call `suite-select header ...`
