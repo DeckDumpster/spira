@@ -138,6 +138,33 @@ pub fn rows(lc_list: &str, landstate: &dyn Fn(&str) -> Option<String>, git: &Git
 /// Refuses unless `world` is a sim world and every production locator set in `env` points
 /// inside it: the world's own `sim.env` sets `SPIRA_RUN` to `<world>/run`, which is fine,
 /// and anything else is production (or some other store) and is refused.
+fn resolve(p: &Path) -> PathBuf {
+    let mut lexical = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                lexical.pop();
+            }
+            std::path::Component::CurDir => {}
+            c => lexical.push(c),
+        }
+    }
+    let mut tail = Vec::new();
+    let mut head = lexical.as_path();
+    loop {
+        if let Ok(real) = head.canonicalize() {
+            return tail.iter().rev().fold(real, |acc, c| acc.join(c));
+        }
+        match (head.parent(), head.file_name()) {
+            (Some(parent), Some(name)) => {
+                tail.push(name.to_owned());
+                head = parent;
+            }
+            _ => return lexical,
+        }
+    }
+}
+
 pub fn refuse_foreign(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<PathBuf, String> {
     if !is_world(world) {
         return Err(format!("{} is not a sim world", world.display()));
@@ -147,8 +174,7 @@ pub fn refuse_foreign(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Res
         .iter()
         .filter_map(|k| env(k).filter(|v| !v.is_empty()).map(|v| (k, v)))
         .filter(|(_, v)| {
-            let p = Path::new(v);
-            !p.canonicalize().unwrap_or_else(|_| p.to_path_buf()).starts_with(&world)
+            !resolve(Path::new(v)).starts_with(&world)
         })
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
