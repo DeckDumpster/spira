@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod lc_call;
 pub mod admission;
 pub mod bounded;
 pub mod build;

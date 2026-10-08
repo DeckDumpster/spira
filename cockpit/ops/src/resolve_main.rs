@@ -35,11 +35,9 @@ impl Closer for RealBd {
     }
 
     fn withdraw_ask(&self, work_bead: &str) -> (i32, String) {
-        // spira-lc by name on the launcher's PATH (sp-gypjk).
-        match Command::new("timeout").args(["5", "spira-lc", "withdraw-ask", work_bead, "claude"]).stdin(Stdio::null()).output() {
-            Ok(o) => (o.status.code().unwrap_or(2), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
-            Err(e) => (2, format!("running spira-lc: {e}")),
-        }
+        let mut c = Command::new(spira_config::lc_call::lc_bin());
+        c.args(["withdraw-ask", work_bead, "claude"]);
+        spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
     }
 }
 
