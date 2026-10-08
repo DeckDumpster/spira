@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=verify
+DOC=STORE CHECK TIMEOUT: seconds pre-activate.sh waits for `bd migrate status` before reporting
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # STORE CHECK TIMEOUT: seconds pre-activate.sh waits for `bd migrate status` on each of its
+    # two attempts. Sized for a loaded store: a slow answer is not a bad schema.
+    : "${SPIRA_STORE_CHECK_TIMEOUT:=30}"
+SPIRA_CONF_DEFAULT_EOF

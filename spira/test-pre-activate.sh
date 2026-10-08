@@ -171,6 +171,30 @@ want "store: bd migrate status ok: reports ok" "ok   store" "$out"
 mkbd 1; run "$REL"
 is   "store: bd migrate status fails: exit 1" 1 "$rc"
 want "store: bd migrate status fails: FAILs"  "FAIL store" "$out"
+# A slow-but-passing bd outlives the old 5 s kill; a mismatch names itself; a silent bd is "store slow".
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "✓ Version matches"
+sleep 7
+STUB
+chmod +x "$TMP/binstub/bd"
+SPIRA_STORE_CHECK_TIMEOUT=20 run "$REL"
+is   "store: passing lines then sleeping past 5 s: exit 0" 0 "$rc"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "schema drift: column x missing"
+exit 1
+STUB
+run "$REL"
+want "store: mismatch reported as schema mismatch" "schema mismatch: schema drift: column x missing" "$out"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+sleep 30
+STUB
+SPIRA_STORE_CHECK_TIMEOUT=1 run "$REL"
+is   "store: bd never answers: exit 1" 1 "$rc"
+want "store: bd never answers: store slow" "store slow: no answer in 1 s" "$out"
+nowant "store: bd never answers: not a mismatch" "schema mismatch" "$out"
 mkbd 0
 
 # ── units: units-install --render must exit 0 with no placeholder left unfilled ─────────
