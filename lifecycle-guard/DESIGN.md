@@ -66,3 +66,12 @@ exception that is not named in a design and in `ROWLESS_CONTROLS` is a finding.
 findings — spira-claim's select, epic and holder paths (sp-mve9i, after sp-860zj/sp-7g5q6
 moved ready and claim) and the incident family's dedup (sp-jgjvh). A Rust decision on a work
 bead's bd status is now a red at the gate (`gate_mode_refuses_a_rust_bd_status_read`).
+
+## bd-read-rust
+
+`ready` or `events` handed to bd as a Rust argument vector (`src/bd_read.rs`). bd's ready set
+is its status and assignee, and a bead's events are the old attempt ledger; both are the
+lifecycle row's. It is reported by a plain run and counted on the gate's summary line, and is
+not in `GATE_CLASSES` yet: the sentinel's ready snapshot (`sentinel/src/store.rs`) and
+spira-claim's `READY_ARGS_BASE` still ask bd for the set the open-children and queue-wait
+label decisions read. It joins the list in the commit that moves those onto `lc_state`.
