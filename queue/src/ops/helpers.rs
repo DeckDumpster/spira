@@ -288,7 +288,7 @@ pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path
 }
 
 /// `spira_git_push <repo> [push-args...]`: push with the GitHub App identity when
-/// `SPIRA_GH_APP_ID`/`SPIRA_GH_APP_INSTALLATION_ID` are set, routing the push over HTTPS
+/// `SPIRA_GH_APP_ID`/`SPIRA_GH_APP_INSTALLATION_ID` are declared in config, routing the push over HTTPS
 /// using the App installation token as the credential, so pushes are attributed to the
 /// App rather than to the operator's SSH key. Returns the built (not yet run) `Command` so
 /// callers can choose stdio: queue's own in-process push (R12) discards stderr as the old
@@ -296,7 +296,17 @@ pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path
 /// separate seam) inherits it, since `spira_git_push` itself never redirected anything —
 /// that was always the call site's choice.
 pub fn git_push_cmd(repo: &Path, args: &[String]) -> Command {
-    let app_configured = std::env::var("SPIRA_GH_APP_ID").ok().filter(|s| !s.is_empty()).is_some() && std::env::var("SPIRA_GH_APP_INSTALLATION_ID").ok().filter(|s| !s.is_empty()).is_some();
+    let declared = |key: &str| match spira_config::process::cfg(key) {
+        Ok(v) => !v.is_empty(),
+        Err(e) => {
+            eprintln!("queue: {e}");
+            false
+        }
+    };
+    push_command(repo, args, declared("SPIRA_GH_APP_ID") && declared("SPIRA_GH_APP_INSTALLATION_ID"))
+}
+
+pub(crate) fn push_command(repo: &Path, args: &[String], app_configured: bool) -> Command {
     let mut c = Command::new("git");
     c.arg("-C").arg(repo);
     if app_configured {

@@ -32,7 +32,7 @@ pub fn lib_sh_sources(home: &Path) -> bool {
 
 // Registered config keys (spira/conf.d) this crate's generic `env()` seam also serves —
 // $SPIRA_TOML only, never the raw environment, never a fallback (per Ryan 2026-10-05).
-const RESOLVED_KEYS: &[&str] = &["SPIRA_RELEASES", "SPIRA_RELEASE_REPO", "SPIRA_GH_INTAKE_REPO", "SPIRA_GH", "SPIRA_RUN"];
+const RESOLVED_KEYS: &[&str] = &["SPIRA_RELEASES", "SPIRA_RELEASE_REPO", "SPIRA_GH_INTAKE_REPO", "SPIRA_GH", "SPIRA_RUN", "SPIRA_QUEUE_DIR"];
 
 pub struct Real {
     pub home: PathBuf,
@@ -381,12 +381,13 @@ impl World for Real {
 
     fn queue_lock_held(&self, repo_name: &str) -> bool {
         use std::os::unix::io::AsRawFd;
-        let dir = match std::env::var("SPIRA_QUEUE_DIR") {
-            Ok(d) if !d.is_empty() => PathBuf::from(d),
-            _ => match std::env::var("SPIRA_RUN") {
-                Ok(r) => PathBuf::from(r).join("queue"),
-                Err(_) => return false,
-            },
+        let dir = match self.env("SPIRA_QUEUE_DIR") {
+            Ok(Some(d)) if !d.is_empty() => PathBuf::from(d),
+            Ok(_) => return false,
+            Err(e) => {
+                eprintln!("skew: {e}");
+                return false;
+            }
         };
         let Ok(f) = std::fs::OpenOptions::new().read(true).open(dir.join(repo_name).join("lock")) else { return false };
         // SAFETY: flock on a descriptor we own; released when `f` drops.

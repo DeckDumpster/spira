@@ -4,6 +4,7 @@ pub mod call_deadline;
 pub mod chmod_exec_leak;
 pub mod env_set_var_leak;
 pub mod conf_key_registry;
+pub mod config_env_read;
 pub mod config_fence;
 pub mod config_literal_fallback;
 pub mod covers_entries;

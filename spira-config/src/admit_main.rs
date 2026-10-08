@@ -16,13 +16,16 @@ fn var(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.trim().is_empty())
 }
 
-/// `$SPIRA_RUN`, else spira.toml's `run`.
+/// `spira.run`, resolved through config; a resolution failure is named, not read as unset.
 fn run_dir() -> Option<PathBuf> {
-    var("SPIRA_RUN").map(PathBuf::from).or_else(|| {
-        let p = spira_config::discover(None)?;
-        let doc = spira_config::load(&p).ok()?;
-        spira_config::get_path(&doc, "spira.run").filter(|r| !r.is_empty()).map(PathBuf::from)
-    })
+    match spira_config::process::cfg("SPIRA_RUN") {
+        Ok(r) if !r.is_empty() => Some(PathBuf::from(r)),
+        Ok(_) => None,
+        Err(e) => {
+            say(&e);
+            None
+        }
+    }
 }
 
 fn who() -> String {

@@ -141,6 +141,23 @@ pub struct ConfigAllow(BTreeSet<String>);   // entry == Finding.path
   no shell. A persona that tells an agent to write the config names it, and `name` catches
   that.
 
+## Rule `config-env-read`
+
+**Intent.** A binary that reads a registered key from the environment while its peers
+resolve it through config diverges silently (law-a-binary-resolves-the-config-it-reads).
+
+**Scope.** Every `*.rs` outside `target/`; test code exempt (same classifier as
+`config-literal-fallback`). The registered keys are the file names under `spira/conf.d/`.
+
+**Violation.** `env::var`/`env::var_os`/`nonempty_env` called with a string literal naming a
+registered key.
+
+**Exception table.** `spira-lint/config-env-read-exceptions`: `<path> <reason>` per line,
+shrink-only; a line without a reason or whose file no longer offends is refused.
+
+**Known limits.** Lexical: a key reached through a constant, a `get` closure or a computed name is
+not seen.
+
 ## Rule `config-literal-fallback`
 
 New (sp-ivfu3); no bash fence precedes it.
