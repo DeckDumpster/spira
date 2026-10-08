@@ -24,7 +24,7 @@ it existed).
 
 | verb | replaces | exit |
 |---|---|---|
-| `hold <id> <poison\|ask\|wait\|operator> [cause] [actor=sentinel]` | `lc_hold` | 0 applied · 1 no row · 2 cannot tell · 3 refused |
+| `hold <id> <poison\|ask\|wait\|manual> [cause] [actor=sentinel]` | `lc_hold` | 0 applied · 1 no row · 2 cannot tell · 3 refused |
 | `unhold <id> <kind> [actor]`, `release <id> [actor]`, `holder-dead <id> [actor]` | `lc_unhold`, `lc_release`, `lc_holderdead`/`lc_holder_dead` | same |
 | `drop <id> <reason> [actor]`, `returned <id> <reason> [actor]` | `lc_drop`, `lc_returned` | same; the typed reason is `unwanted` / `batch-ejected`, the prose stays the caller's |
 | `content-on-base <id> <proof> [actor=sending]` | `lc_content_on_base` | same |

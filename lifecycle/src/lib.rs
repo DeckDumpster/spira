@@ -46,6 +46,9 @@ pub enum Refusal {
     /// A holder-only event (`renew`) sent by an actor that does not hold the row: a reaped
     /// aeon's late renewal must never extend the lease its successor now holds.
     NotHolder { actor: String, holder: Option<String> },
+    /// A `manual` hold with no reason, a bare bead id (that is a dependency edge), or a
+    /// snooze (that is a `wait` hold). `exit` names the mechanism that does the job.
+    ManualHoldReason { reason: String, exit: String },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

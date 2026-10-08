@@ -57,7 +57,7 @@ wantrc "schema applies cleanly" 0 $?
 seed() { root_sql --use-db spira_lifecycle sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,0)" >/dev/null 2>&1; }
 request() {   # request <bead> <successor>: the event `work superseded-by` applies
     spira-lc event bead "$1" --expect READY --version 0 --actor aeon \
-        --kind "{\"Hold\":{\"kind\":\"Operator\",\"cause\":\"supersede-request\",\"detail\":\"$2\"}}" >/dev/null 2>&1
+        --kind "{\"Hold\":{\"kind\":\"Manual\",\"cause\":\"supersede-request\",\"detail\":\"$2\"}}" >/dev/null 2>&1
 }
 state_of() { spira-lc state "$1" 2>/dev/null; }
 
@@ -77,7 +77,7 @@ request sp-ready sp-ready-succ
 request sp-norow sp-absent
 request sp-done sp-landed-succ
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='SUPERSEDED' WHERE bead_id='sp-done'" >/dev/null 2>&1
-spira-lc hold sp-manual operator "operator parked it" tester >/dev/null 2>&1
+spira-lc hold sp-manual manual "operator parked it" tester >/dev/null 2>&1
 
 run() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_BD="$TMP/bin/bd" SPIRA_CONCIERGE_INBOX="$TMP/inbox.log"
@@ -88,7 +88,7 @@ run() {
 }
 
 # Positive control: the matcher sees a request when one is there.
-is "the planted request is held by the operator hold" operator "$(spira-lc holds sp-land)"
+is "the planted request is held by the manual hold" manual "$(spira-lc holds sp-land)"
 
 out="$(run pass)"
 is "successor LANDED: the bead ends SUPERSEDED" SUPERSEDED "$(state_of sp-land)"
@@ -97,13 +97,13 @@ want "the bd side is superseded too" "bd -C $TMP/db supersede sp-land --with sp-
 want "the decision is noted with the evidence" "bdq note sp-land supersede-request confirmed: sp-landed-succ is LANDED" "$(cat "$TMP/calls.log")"
 
 is "successor READY: the bead is not superseded" READY "$(state_of sp-ready)"
-is "successor READY: the operator hold is lifted" "" "$(spira-lc holds sp-ready)"
+is "successor READY: the manual hold is lifted" "" "$(spira-lc holds sp-ready)"
 want "the refusal is noted with the successor's state" "bdq note sp-ready supersede-request by sp-ready-succ refused: sp-ready-succ is READY" "$(cat "$TMP/calls.log")"
 
 is "successor without a row: the bead is unheld" "" "$(spira-lc holds sp-norow)"
 is "successor without a row: the bead is not superseded" READY "$(state_of sp-norow)"
 
-is "a manual operator hold is left alone" operator "$(spira-lc holds sp-manual)"
+is "a manual hold is left alone" manual "$(spira-lc holds sp-manual)"
 nowant "a manual hold is never adjudicated" "sp-manual" "$out"
 want "each request is surfaced in the log" "SUPERSEDE REQUEST sp-ready: successor sp-ready-succ" "$out"
 want "each request is surfaced to the Concierge" "[watch:supersede-duty] SUPERSEDE REQUEST sp-land" "$(cat "$TMP/inbox.log")"

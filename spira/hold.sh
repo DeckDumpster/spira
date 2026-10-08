@@ -21,7 +21,7 @@
 # — a landing that the loop cannot perform, a fix applied at the keyboard. If the loop
 # can do it, let the loop do it.
 #
-# THE CLAIM IS AN OPERATOR HOLD ON SPIRA-LC (sp-rlyl0), not a bd claim: HoldKind::Operator
+# THE CLAIM IS AN MANUAL HOLD ON SPIRA-LC (sp-rlyl0), not a bd claim: HoldKind::Operator
 # suspends dispatch without pretending this is a genuine Working-state claim, which nothing
 # here actually is — the pidfile and heartbeat below are what stop the reaper regardless of
 # whether the row is classified yet, so the lifecycle write is best-effort by the same
@@ -72,7 +72,7 @@ fi
 # Hold the bead on spira-lc — best-effort, like every other spira-lc caller-verb call (CANNOT_TELL until
 # the bead is classified; a refusal here is logged and does not block the hold, since the
 # pidfile below is what actually keeps the reaper off it).
-spira-lc hold "$ID" operator "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" >/dev/null 2>&1 || true
+spira-lc hold "$ID" manual "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" >/dev/null 2>&1 || true
 
 # Write the pidfile.
 echo "$HOLD_PID" > "$PIDFILE"

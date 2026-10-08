@@ -90,7 +90,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
     match verb {
         "hold" => {
             if !need(2) {
-                return usage("hold <bead-id> <poison|ask|wait|operator> [cause] [actor]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"");
+                return usage("hold <bead-id> <poison|ask|wait|manual> [cause] [actor]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"");
             }
             let actor = actor_or(args.get(3), "sentinel");
             hold(m, &a(0), &a(1), &a(2), &actor)
@@ -305,7 +305,8 @@ fn with_row(
         Ok(k) => k,
         Err(a) => return a,
     };
-    Answer::code(event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0)
+    let (code, text) = event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default());
+    Answer { code, stderr: if code == 0 { String::new() } else { text }, ..Default::default() }
 }
 
 fn event(m: &mut dyn Machine, machine: &str, id: &str, expect: &str, version: &str, actor: &str, kind: &str) -> (i32, String) {
@@ -331,7 +332,7 @@ fn hold_cause(k: HoldKind) -> HoldCause {
         HoldKind::Poison => HoldCause::AttemptsExhausted,
         HoldKind::Ask => HoldCause::OperatorQuestion,
         HoldKind::Wait => HoldCause::UnlandedBlocker,
-        HoldKind::Operator => HoldCause::ManualHold,
+        HoldKind::Manual => HoldCause::ManualHold,
     }
 }
 

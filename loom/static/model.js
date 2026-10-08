@@ -110,6 +110,7 @@ function normalise(raw, c, now) {
         nr: has(labels, c.askLabel),
         ci: has(labels, c.ciLabel),
         poi: has(labels, c.poisonLabel),
+        holds: Array.isArray(raw.holds) ? raw.holds : [],
         att: maxSuffix(labels, c.attemptPrefix),
         rec: maxSuffix(labels, c.reclaimPrefix),
         up: [],   /* blocked by */
@@ -368,7 +369,7 @@ function derive(rawBeads, opts) {
     var comp = components(chained, edges, beads);
 
     var moving = 0, deferred = 0, cold = 0, blocked = 0, poison = 0, rejected = 0, churning = 0,
-        waiting = 0, parked = 0;
+        waiting = 0, parked = 0, holds = { wait: 0, manual: 0, ask: 0, poison: 0 };
     for (i = 0; i < ids.length; i++) {
         var b = beads[ids[i]];
         if (b.s === 'in_progress') moving++;
@@ -380,6 +381,7 @@ function derive(rawBeads, opts) {
         if (b.rec > 0) churning++;
         if (b.nr) waiting++;
         if (b.ci) parked++;
+        for (var h = 0; h < b.holds.length; h++) if (b.holds[h] in holds) holds[b.holds[h]]++;
     }
     var fl = inFlight(beads, ids, now);
 
@@ -398,7 +400,7 @@ function derive(rawBeads, opts) {
         stats: {
             live: ids.length, moving: moving, deferred: deferred, blocked: blocked,
             cold: cold, poison: poison, rejected: rejected, churning: churning,
-            waiting: waiting, parked: parked,
+            waiting: waiting, parked: parked, holds: holds,
             chained: chained.length, edges: edges.length, components: comp.components.length,
             p50flight: fl.p50, threshold: c.threshold
         }

@@ -582,7 +582,7 @@ pub fn parse_lc_show(text: &str) -> Result<LcRow, String> {
         .as_array()
         .into_iter()
         .flatten()
-        .map(|h| HoldKind::from_str(h.as_str().unwrap_or("")).unwrap_or(HoldKind::Operator))
+        .map(|h| HoldKind::from_str(h.as_str().unwrap_or("")).unwrap_or(HoldKind::Manual))
         .collect();
     Ok(LcRow { state, version, holds, holder: s_field(b, "holder").filter(|h| !h.is_empty()) })
 }

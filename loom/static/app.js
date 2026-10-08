@@ -860,6 +860,7 @@ function drawInsp(){
       <dt>layer</dt><dd class="mono">${b.lay} · ${C.up.size} upstream, ${C.dn.size} downstream</dd>
       <dt>rejected</dt><dd class="mono" style="color:${b.att>=THRESH?'var(--verm)':'var(--ink2)'}">${b.att} / ${THRESH}</dd>
       <dt>reclaimed</dt><dd class="mono" style="color:${b.rec?'var(--brass)':'var(--ink2)'}">${b.rec}</dd>
+      <dt>holds</dt><dd class="mono">${b.holds.length?b.holds.join(' · '):'—'}</dd>
     </dl>
     ${stuckNote}
     ${b.d?`<div class="lab" style="margin-bottom:5px">Description</div><div class="desc">${esc(b.d)}</div>`:''}
