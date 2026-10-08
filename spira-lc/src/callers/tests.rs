@@ -189,6 +189,20 @@ fn hold_refusals_and_absences_keep_the_shell_exit_codes() {
     assert_eq!(go(&mut down, "list-all", &[]), Answer::code(0), "an unreachable machine lists nothing, rc 0");
 }
 
+#[test]
+fn a_snooze_with_an_explanation_holds_and_a_malformed_one_is_refused_unheld() {
+    let mut f = Fake::default();
+    f.bead("sp-s", BeadState::Ready);
+    let bad = go(&mut f, "hold", &["sp-s", "wait", "snooze-until:tomorrow because", "t"]);
+    assert_eq!(bad.code, REFUSED);
+    assert!(bad.stderr.contains("snooze-until:<epoch seconds>"), "{}", bad.stderr);
+    let late = go(&mut f, "hold", &["sp-s", "wait", "wait for snooze-until:5", "t"]);
+    assert_eq!(late.code, REFUSED);
+    assert_eq!(go(&mut f, "holds", &["sp-s"]).stdout, "");
+    assert_eq!(go(&mut f, "hold", &["sp-s", "wait", "snooze-until:9 because upstream lands", "t"]).code, APPLIED);
+    assert_eq!(go(&mut f, "holds", &["sp-s"]).stdout, "wait");
+}
+
 // ---- releases, drops, returns, content-on-base -----------------------------------------
 
 #[test]

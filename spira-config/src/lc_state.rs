@@ -38,7 +38,13 @@ pub fn is_checkpoint(reason: &str) -> bool {
 }
 
 pub fn snooze_until(reason: &str) -> Option<i64> {
-    reason.strip_prefix(SNOOZE_PREFIX).or_else(|| reason.strip_prefix(CHECKPOINT_PREFIX))?.trim().parse().ok()
+    let rest = reason.strip_prefix(SNOOZE_PREFIX).or_else(|| reason.strip_prefix(CHECKPOINT_PREFIX))?;
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+/// Whether a wait hold's reason names a timed directive anywhere, so a malformed one can be refused.
+pub fn names_directive(reason: &str) -> bool {
+    reason.contains(SNOOZE_PREFIX) || reason.contains(CHECKPOINT_PREFIX)
 }
 
 /// One `spira_lifecycle.bead` row, as `spira-lc list` / `show` print it.
@@ -205,6 +211,9 @@ mod tests {
         assert_eq!(snooze_until(&r), Some(1_900_000_000));
         assert!(is_checkpoint(&r) && !is_checkpoint(&snooze_reason(5)));
         assert_eq!(snooze_until(&snooze_reason(5)), Some(5));
+        assert_eq!(snooze_until("snooze-until:7 because the upstream lands"), Some(7));
+        assert_eq!(snooze_until("snooze-until:soon"), None);
+        assert!(names_directive("see snooze-until:7") && !names_directive("blocker unlanded"));
     }
 
     #[test]
