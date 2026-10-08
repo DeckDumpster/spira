@@ -95,7 +95,7 @@ EVENTS=100000
     echo ";"
     awk -v n=$EVENTS -v b=$BEADS 'BEGIN{srand(7); for(c=0;c<n;c+=5000){ printf "INSERT INTO event (machine,lc_key,event,expect,from_state,to_state,applied,evidence,actor,at) VALUES"; for(i=0;i<5000;i++) printf "%s('"'"'bead'"'"','"'"'sp-%06d'"'"','"'"'e'"'"','"'"'X'"'"','"'"'A'"'"','"'"'%s'"'"',%d,'"'"'{}'"'"','"'"'a'"'"',%d)", (i?",":""), int(rand()*b), (rand()<.5?"LANDED":"READY"), (rand()<.9), c+i; print ";"}}'
 } > "$TMP/seed.sql"
-root_sql --use-db spira_lifecycle sql < "$TMP/seed.sql" >/dev/null 2>&1
+timeout 120 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db spira_lifecycle sql < "$TMP/seed.sql" >/dev/null 2>&1
 wantrc "production-size store seeds" 0 $?
 is "the fixture holds the beads" "$BEADS" "$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM bead" -r csv 2>/dev/null | tail -1)"
 is "the fixture holds the events" "$EVENTS" "$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event" -r csv 2>/dev/null | tail -1)"
