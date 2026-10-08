@@ -1180,7 +1180,11 @@ impl<'w, W: World> Trial<'w, W> {
             }
             Attribution::BaseRed(s) => {
                 let s = if s == "-" && matches!(comp, Composition::Unit { .. }) {
-                    parse::failed_tests(&base_out).into_iter().next().unwrap_or(s)
+                    parse::failed_tests(&base_out)
+                        .into_iter()
+                        .next()
+                        .or_else(|| parse::fence_refusal(&base_out))
+                        .unwrap_or(s)
                 } else {
                     s
                 };

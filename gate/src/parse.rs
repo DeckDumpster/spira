@@ -41,6 +41,16 @@ pub fn failed_tests(out: &str) -> Vec<String> {
     seen
 }
 
+/// The fence named by the first `<fence>: REFUSED` line, e.g. `lifecycle-guard`.
+pub fn fence_refusal(out: &str) -> Option<String> {
+    out.lines().find_map(|l| {
+        let name = l.trim().split_once(": REFUSED")?.0;
+        let ok = !name.is_empty()
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        ok.then(|| name.to_string())
+    })
+}
+
 /// `ran_suites`: every suite the runner reported any status for.
 pub fn ran_suites(out: &str) -> Vec<String> {
     suites_where(
@@ -236,6 +246,14 @@ mod tests {
         let out = "test a::ok ... ok\ntest a::bad ... FAILED\ntest a::bad ... FAILED\ntest result: FAILED. 1 passed\n";
         assert_eq!(failed_tests(out), vec!["a::bad".to_string()]);
         assert!(failed_tests("test result: FAILED\n").is_empty());
+    }
+
+    #[test]
+    fn fence_refusal_names_the_fence() {
+        let out = "x\nlifecycle-guard: REFUSED ... bead/src/main.rs:717\n";
+        assert_eq!(fence_refusal(out), Some("lifecycle-guard".to_string()));
+        assert_eq!(fence_refusal("some text: REFUSED\n"), None);
+        assert_eq!(fence_refusal("all green"), None);
     }
 
     #[test]
