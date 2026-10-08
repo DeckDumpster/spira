@@ -92,10 +92,11 @@ lcfix_env() {
 # not take says so on stderr and returns non-zero.
 lcfix_seed() {
     local id="$1" state="$2" tip="${3:-}" since="${4:-}"
-    local tipv="NULL" sincev="NULL" out
+    local tipv="NULL" sincev="NULL" gkv="NULL" out
     [ -n "$tip" ] && tipv="'$tip'"
+    [ "$state" = CERTIFIED ] && gkv="'fixture-gate-key'"
     [ -n "$since" ] && sincev="$since"
-    out="$(lcfix_sql -q "INSERT INTO bead (bead_id, state, tip, holds, version, since, updated_at) VALUES ('$id','$state',$tipv,'[]',1,$sincev,0) ON DUPLICATE KEY UPDATE state=VALUES(state), tip=VALUES(tip), holds=VALUES(holds), version=version+1, since=VALUES(since), updated_at=VALUES(updated_at)" 2>&1)" \
+    out="$(lcfix_sql -q "INSERT INTO bead (bead_id, state, tip, gate_key, holds, version, since, updated_at) VALUES ('$id','$state',$tipv,$gkv,'[]',1,$sincev,0) ON DUPLICATE KEY UPDATE state=VALUES(state), tip=VALUES(tip), gate_key=VALUES(gate_key), holds=VALUES(holds), version=version+1, since=VALUES(since), updated_at=VALUES(updated_at)" 2>&1)" \
         || { echo "lc-fixture: seeding $id $state failed: $out" >&2; return 1; }
 }
 
