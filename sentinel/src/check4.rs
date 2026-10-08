@@ -243,6 +243,15 @@ impl<'a> Sentinel<'a> {
         (!was.is_empty() && was != now).then_some((was, now))
     }
 
+    fn live_lease(&self, id: &str) -> bool {
+        let now = self.h.now();
+        self.lc_rows().is_some_and(|rows| {
+            rows.iter().any(|r| {
+                r.bead_id == id && r.state == "WORKING" && r.lease_until.is_some_and(|lu| lu > now)
+            })
+        })
+    }
+
     fn poison_write(&self, id: &str, n: u32) {
         let ev = hold_event(
             "poison",
@@ -363,6 +372,10 @@ impl<'a> Sentinel<'a> {
                 // bd's status, sp-mve9i).
                 if !snap.lc_past_builder(id) && self.lc_live_state(id).is_some_and(|st| lc_state::past_builder(&st)) {
                     self.log(&format!("CHECK4 {id}: {n} attempts, but it closed while this pass ran — not poisoned, not asked"));
+                    continue;
+                }
+                if tok.contains("poison") && self.live_lease(id) {
+                    self.log(&format!("CHECK4 {id}: {n} attempts, but a WORKING row holds a live lease — not poisoned"));
                     continue;
                 }
                 let Some(shown) = self.still("CHECK4", id, was.as_deref(), live.as_ref()).cloned() else {
