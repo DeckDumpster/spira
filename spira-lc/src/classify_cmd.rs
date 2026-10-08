@@ -360,6 +360,7 @@ fn classify_one(
         batch_open_member,
         branch_ahead,
         landing_commit,
+        is_epic: bd.is_epic,
     };
 
     let outcome = classify::classify(&facts);
@@ -407,6 +408,9 @@ fn classify_one(
 /// overwrite what the machine has since decided.
 fn correctable(row: &lifecycle::bead::BeadRow, outcome: &classify::Classification) -> bool {
     use lifecycle::bead::BeadState::*;
+    if outcome.rule.starts_with("epic-") {
+        return !row.state.is_terminal() && row.state != Working && row.state != outcome.state;
+    }
     if !matches!(outcome.rule, "terminal-landing-line") {
         return false;
     }
@@ -414,7 +418,7 @@ fn correctable(row: &lifecycle::bead::BeadRow, outcome: &classify::Classificatio
         Working | InDelivery => false,
         Landed | Superseded | Done => false,
         Dropped => row.reason.as_deref() == Some(lifecycle::bead::RESIDUE_RULE) && row.state != outcome.state,
-        Ready | Submitted | Certified | Rework => row.state != outcome.state,
+        Open | Ready | Submitted | Certified | Rework => row.state != outcome.state,
     }
 }
 

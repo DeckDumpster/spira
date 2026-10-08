@@ -52,6 +52,8 @@ pub struct BeadFacts {
     /// A commit on base whose message carries a `spira: land <id>` line naming this bead —
     /// a batch landing, whose branch is gone. Found by the caller from base's own log.
     pub landing_commit: Option<String>,
+    /// bd's `issue_type` is `epic`: a container, never claimed.
+    pub is_epic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +84,13 @@ pub fn classify(f: &BeadFacts) -> Classification {
     }
     if f.has_ask_hold {
         holds.insert(HoldKind::Ask);
+    }
+
+    if f.is_epic {
+        return match f.bd_status {
+            BdStatus::Closed => finish(f, BeadState::Done, None, None, "epic-closed", holds),
+            _ => finish(f, BeadState::Open, None, None, "epic-container", holds),
+        };
     }
 
     if f.supersedes.is_some() {
@@ -207,7 +216,23 @@ mod tests {
             batch_open_member: false,
             branch_ahead: false,
             landing_commit: None,
+            is_epic: false,
         }
+    }
+
+    #[test]
+    fn an_epic_is_open_never_ready_and_done_once_closed() {
+        let mut f = base_facts();
+        f.is_epic = true;
+        let c = classify(&f);
+        assert_eq!((c.state, c.rule), (BeadState::Open, "epic-container"));
+        f.bd_status = BdStatus::InProgress;
+        assert_eq!(classify(&f).state, BeadState::Open);
+        f.bd_status = BdStatus::Closed;
+        assert_eq!(classify(&f).state, BeadState::Done);
+        f.is_epic = false;
+        f.bd_status = BdStatus::Open;
+        assert_eq!(classify(&f).state, BeadState::Ready, "the same facts on a task are READY");
     }
 
     #[test]

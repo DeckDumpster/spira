@@ -55,6 +55,7 @@ fn default_facts() -> BeadFacts {
         batch_open_member: false,
         branch_ahead: false,
         landing_commit: None,
+        is_epic: false,
     }
 }
 

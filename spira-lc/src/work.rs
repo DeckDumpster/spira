@@ -1026,7 +1026,7 @@ mod tests {
             vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, bd_args: v(&["--label", "plan"]), json: true, limit: None }]
         );
         assert!(plan("list", "-", &call(&["--db", "/x"], "warden")).is_err());
-        assert!(plan("list", "-", &call(&["--state", "open"], "warden")).is_err(), "a bd status word is not a lifecycle state");
+        assert!(plan("list", "-", &call(&["--state", "closed"], "warden")).is_err(), "a bd status word is not a lifecycle state");
         assert!(plan("list", "-", &call(&["--limit", "many"], "warden")).is_err());
     }
 
