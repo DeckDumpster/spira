@@ -285,6 +285,18 @@ impl Registry {
         Registry::new(map_text.as_deref(), &env, home)
     }
 
+    /// [`Registry::from_env`] for a caller that needs the home repo as a git checkout. A
+    /// release directory is not one: when neither `home` nor `env`'s `SPIRA_REPO` has a
+    /// `.git`, the `SPIRA_REPO` is dropped so the home repo resolves to the map's own row (the
+    /// harness checkout) instead of being overridden by the release.
+    pub fn from_env_checkout(mut env: BTreeMap<String, String>, home: &Path) -> Registry {
+        let repo_is_checkout = env.get("SPIRA_REPO").filter(|r| !r.is_empty()).is_some_and(|r| Path::new(r).join(".git").exists());
+        if !home.join(".git").exists() && !repo_is_checkout {
+            env.remove("SPIRA_REPO");
+        }
+        Registry::from_env(env, home)
+    }
+
     /// Whether `SPIRA_REPO_MAP` existed — `repo_field`-based lookups ([`Registry::field`],
     /// [`Registry::root`], [`Registry::gate`], [`Registry::format`], [`Registry::base`])
     /// refuse (bash: `return 1`) when it did not, even though a missing map and an empty map
@@ -822,6 +834,29 @@ mod tests {
         );
     }
 
+
+    /// A release directory has no `.git`: forwarded as `SPIRA_REPO` for a home that is itself the
+    /// release, it must not override the map row naming the real harness checkout.
+    #[test]
+    fn registry_for_a_release_dir_home_resolves_the_mapped_checkout() {
+        let t = testkit::TempDir::new("repos-from-env-checkout");
+        let checkout = t.path().join("checkouts/spira");
+        std::fs::create_dir_all(checkout.join(".git")).unwrap();
+        let map = t.path().join("repo-map");
+        std::fs::write(&map, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
+        let release = t.path().join("spira-releases/deadbeef");
+        std::fs::create_dir_all(&release).unwrap();
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), release.join("conf.d")).unwrap();
+        let toml = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("HOME".to_string(), t.path().join("userhome").display().to_string());
+        env.insert("SPIRA_REPO".to_string(), release.display().to_string());
+        env.insert("SPIRA_TOML".to_string(), toml.display().to_string());
+        let plain = Registry::from_env(env.clone(), &release);
+        assert_eq!(plain.root("spira"), Some(release.display().to_string()), "positive control: the plain door lets the release override");
+        let reg = Registry::from_env_checkout(env, &release);
+        assert_eq!(reg.root("spira"), Some(checkout.display().to_string()));
+    }
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
