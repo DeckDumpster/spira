@@ -376,8 +376,8 @@ export SPIRA_SUMMON="$T/bin/mock-summon-noop"   # already an absolute path; crea
 sentinel_path="$(PATH="$T/bin:$PATH" command -v sentinel)"
 argv="$(PATH="$T/bin:$PATH" summon_argv racer | tr '\n' ' ')"
 case "$argv" in
-    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $sentinel_path --summon-only"*)
-        ok "summon_argv: ExecStopPost refills via --summon-only, not a full pass" ;;
+    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet "*"--setenv=SPIRA_TOML="*" $sentinel_path --summon-only"*)
+        ok "summon_argv: ExecStopPost refills via --summon-only, not a full pass, with SPIRA_TOML" ;;
     *) bad "summon_argv: ExecStopPost refills via --summon-only" "got: $argv (sentinel resolved to $sentinel_path)" ;;
 esac
 unset SPIRA_SUMMON 2>/dev/null || true

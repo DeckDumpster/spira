@@ -307,7 +307,7 @@ directory with a `lib.sh` among these:
 
 If none has one, the binary prints
 `FATAL sentinel: cannot find lib.sh (set SPIRA_HOME)` on stderr and exits 1. That is what
-lets the refill ExecStopPost, which has no environment, still work.
+lets the refill ExecStopPost, is handed SPIRA_TOML, SPIRA_RELEASE and PATH by its own --setenv flags, still work.
 
 ### 2.8 Guarantees
 

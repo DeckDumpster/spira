@@ -480,7 +480,11 @@ impl<'a> Sentinel<'a> {
         let path = self.current_path();
         let summon_bin = pass::on_path(&self.cfg.summon, &path);
         let sentinel_bin = pass::on_path("sentinel", &path);
-        format!("--property=ExecStopPost={summon_bin} --user --collect --quiet {sentinel_bin} --summon-only")
+        let release = self.current_release();
+        let toml = self.cfg.raw("SPIRA_TOML");
+        format!(
+            "--property=ExecStopPost={summon_bin} --user --collect --quiet --setenv=SPIRA_RELEASE={release} --setenv=SPIRA_TOML={toml} --setenv=PATH={path} {sentinel_bin} --summon-only"
+        )
     }
 
     /// summon_argv <fayth> -> the systemd-run property/setenv flags shared by every summon
