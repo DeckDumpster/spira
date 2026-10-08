@@ -63,6 +63,7 @@ struct Config {
     alerted_path: PathBuf,
     status_log: PathBuf,
     tsd_bin: String,
+    export_bin: String,
     duckdb_bin: String,
     bd_bin: String,
     spira_db: String,
@@ -128,6 +129,9 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
             tsd_bin: "tsd-write".to_string(), // by name, on the launcher's PATH (sp-gypjk)
+            // Not a registered config key — left as env, like the other binaries below.
+            export_bin: env::var("SPIRA_TSD_LIFECYCLE_EXPORT_BIN")
+                .unwrap_or_else(|_| "tsd-lifecycle-export".to_string()),
             // SPIRA_DUCKDB_BIN is not a registered config key — left as env.
             duckdb_bin: env::var("SPIRA_DUCKDB_BIN").unwrap_or_else(|_| "duckdb".to_string()),
             bd_bin: cfg("SPIRA_BD")?,
@@ -199,6 +203,15 @@ fn evaluate(cfg: &Config, state: &mut StateMap, key: &str, raw: RawStatus) -> Ve
     verdict
 }
 
+/// An invariant read from `bead-stage` is only as fresh as the last export: when the exporter
+/// failed, the file is stale and a verdict from it would be a guess.
+fn fresh(export: &Result<(), String>, raw: RawStatus) -> RawStatus {
+    match export {
+        Ok(()) => raw,
+        Err(e) => unobservable(format!("bead-stage export failed: {e}")),
+    }
+}
+
 fn status_word(v: &Verdict) -> &'static str {
     match &v.status {
         RawStatus::Satisfied => "satisfied",
@@ -234,6 +247,25 @@ fn maybe_alert(cfg: &Config, alerted: &mut AlertedSinceMap, key: &str, verdict: 
     }
 }
 
+/// Brings `bead-stage` up to date before anything reads it: nothing else schedules the
+/// exporter, so a pass that did not run it would evaluate whatever the file last held.
+fn run_export(cfg: &Config) -> Result<(), String> {
+    let out = spira_config::bounded::bounded(&cfg.export_bin)
+        .arg("lifecycle")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{}: {e}", cfg.export_bin))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} lifecycle: exit {}: {}",
+        cfg.export_bin,
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
 fn run_pass() -> Result<(), String> {
     let cfg = Config::from_env()?;
 
@@ -263,6 +295,11 @@ fn run_pass() -> Result<(), String> {
     let mut alerted = load_alerted(&cfg.alerted_path);
     let (velocity_floor, dwell_limit) = flow_floors(&cfg.desired_dir);
 
+    let export = run_export(&cfg);
+    if let Err(e) = &export {
+        eprintln!("reconciler-flow: {e}");
+    }
+
     // ── backlog trend ────────────────────────────────────────────────────────────────────
     let baseline = backlog_baseline(&cfg.duckdb_bin, &cfg.spira_run, cfg.baseline_hours);
     let current = backlog_count(&cfg.bd_bin, &cfg.spira_db, &cfg.scope_label);
@@ -289,7 +326,7 @@ fn run_pass() -> Result<(), String> {
         (Err(e), _) => unobservable(e.clone()),
         (_, Err(e)) => unobservable(e.clone()),
     };
-    let v = evaluate(&cfg, &mut state, "flow:velocity:queue", velocity_raw_status);
+    let v = evaluate(&cfg, &mut state, "flow:velocity:queue", fresh(&export, velocity_raw_status));
     maybe_alert(&cfg, &mut alerted, "flow:velocity:queue", &v);
     log_print(&format!("reconciler-flow: flow:velocity:queue → {}", status_word(&v)));
 
@@ -303,7 +340,7 @@ fn run_pass() -> Result<(), String> {
         ),
         Err(e) => unobservable(e),
     };
-    let v = evaluate(&cfg, &mut state, "flow:dwell:review", dwell_raw_status);
+    let v = evaluate(&cfg, &mut state, "flow:dwell:review", fresh(&export, dwell_raw_status));
     maybe_alert(&cfg, &mut alerted, "flow:dwell:review", &v);
     log_print(&format!("reconciler-flow: flow:dwell:review → {}", status_word(&v)));
 
@@ -316,7 +353,7 @@ fn run_pass() -> Result<(), String> {
         }
         Err(e) => unobservable(e),
     };
-    let v = evaluate(&cfg, &mut state, "flow:round-health", round_health_raw_status);
+    let v = evaluate(&cfg, &mut state, "flow:round-health", fresh(&export, round_health_raw_status));
     maybe_alert(&cfg, &mut alerted, "flow:round-health", &v);
     log_print(&format!("reconciler-flow: flow:round-health → {}", status_word(&v)));
 
@@ -345,7 +382,7 @@ fn run_pass() -> Result<(), String> {
     // history counts as enough" answer.
     match rework_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.rework_window_hours) {
         Ok((reopens, landed, history_hours)) => {
-            let raw = rework_raw(&ReworkObserved { reopens, landed });
+            let raw = fresh(&export, rework_raw(&ReworkObserved { reopens, landed }));
             let v = evaluate(&cfg, &mut state, "flow:rework", raw);
             if history_hours >= cfg.baseline_hours {
                 maybe_alert(&cfg, &mut alerted, "flow:rework", &v);
@@ -383,7 +420,7 @@ fn run_pass() -> Result<(), String> {
                         baseline_n: 0,
                     }),
                 };
-                let v = evaluate(&cfg, &mut state, &key, raw);
+                let v = evaluate(&cfg, &mut state, &key, fresh(&export, raw));
                 maybe_alert(&cfg, &mut alerted, &key, &v);
                 log_print(&format!("reconciler-flow: {key} → {}", status_word(&v)));
             }
