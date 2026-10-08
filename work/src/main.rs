@@ -19,7 +19,8 @@ use std::time::Duration;
 
 const CANNOT_TELL: i32 = work::CANNOT_TELL;
 const REFUSED: i32 = work::REFUSED;
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(30);
+const READ_SLICE: Duration = Duration::from_secs(2);
 // batch-job: a lane verb's broker-run tool is bounded at 300 s by the broker; wait just past it.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 
@@ -106,7 +107,7 @@ fn read_tip(bead: &str) -> Option<String> {
 fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
     let socket_path = spira_config::process::cfg("SPIRA_LC_SOCKET")?;
     let stream = UnixStream::connect(&socket_path).map_err(|e| format!("connecting to {socket_path}: {e}"))?;
-    stream.set_read_timeout(Some(wait)).map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(READ_SLICE.min(wait))).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
 
     let request = serde_json::to_string(argv).map_err(|e| e.to_string())?;
@@ -115,8 +116,20 @@ fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    if reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-        return Err("spira-lc closed the connection with no reply".to_string());
+    // The request is already sent and may mutate, so only the read is retried: a slow socket
+    // under load answers late (EAGAIN on the slice), it must not be resent.
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match reader.read_line(&mut line) {
+            Ok(0) => return Err("spira-lc closed the connection with no reply".to_string()),
+            Ok(_) => break,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!("no reply from spira-lc within {}s: {e}", wait.as_secs()));
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
     }
     let resp: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| format!("malformed reply: {e}"))?;
     let code = resp.get("exit_code").and_then(|v| v.as_i64()).ok_or("reply had no exit_code")? as i32;

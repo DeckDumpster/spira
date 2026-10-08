@@ -66,3 +66,22 @@ fn an_unreachable_socket_is_cannot_tell() {
     assert_eq!(o.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&o.stderr).contains("cannot tell"));
 }
+
+#[test]
+fn a_reply_slower_than_one_read_slice_is_waited_for() {
+    let d = scratch("slow");
+    let sock = d.join("sock");
+    let l = UnixListener::bind(&sock).unwrap();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Write};
+        for s in l.incoming().flatten() {
+            let mut line = String::new();
+            let _ = BufReader::new(s.try_clone().unwrap()).read_line(&mut line);
+            std::thread::sleep(std::time::Duration::from_millis(3000));
+            let _ = writeln!(&s, r#"{{"exit_code":0,"stdout":"late"}}"#);
+        }
+    });
+    let o = work(&sock, &d, "show");
+    assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "late");
+}
