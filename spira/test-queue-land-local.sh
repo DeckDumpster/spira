@@ -116,7 +116,7 @@ mk_bins "$HEAD1" round-1-bin
 # queue/DESIGN.md §8 D12: no round GREEN for this tree, no override -> refused.
 out="$(LAND_UNGATED='' run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
 [ "$rc" -ne 0 ] && ok "1: an uncertified tree is refused" || bad "1: an uncertified tree is refused" "rc=$rc out=$out"
-want "1: the refusal names the gate command" "gate.sh $HEAD1 fixq" "$out"
+want "1: the refusal says no round GREEN certifies it" "no round GREEN for $HEAD1" "$out"
 is "1: the refusal moved nothing" "$(git -C "$REPO" rev-parse trunk)" "$(localmain)"
 
 out="$(run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
