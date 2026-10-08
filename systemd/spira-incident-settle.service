@@ -11,7 +11,6 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/b
 Type=oneshot
 ExecCondition=/usr/bin/test -x @SPIRA_PROD_ROOT@/bin/incident
 ExecStart=@SPIRA_PROD_ROOT@/bin/incident settle
-CPUQuota=20%
 TimeoutStartSec=300
 StandardOutput=append:@SPIRA_RUN@/incident.log
 StandardError=append:@SPIRA_RUN@/incident.log
