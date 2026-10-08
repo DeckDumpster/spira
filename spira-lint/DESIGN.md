@@ -716,6 +716,18 @@ name it as a word. One finding per bump, path `Cargo.lock`.
 a lock that does not parse or locks nothing. **Positive control:** `fence: lockfile-lint
 checked <n> packages`.
 
+## Rule `config-delta`
+
+**Intent.** The release applies a registry change to the config in force only from
+`spira/config-delta.toml`; a key added or dropped without an entry passes every fixture (they
+carry the key) and fails at activation. The keys are the file names in `spira/conf.d` and
+`spira/conf.toml.d`, as `spira.<lowercased name without SPIRA_>`. Against the base's listing,
+an added key must be an `[added]` entry and a dropped one listed under `removed`. One finding
+per key, path `spira/config-delta.toml`.
+
+**Refuses:** no base, no registry keys here or at the base, an unparseable delta.
+**Positive control:** `fence: config-delta checked <n> registry keys`.
+
 ## Rules `tier-budget-allowlist`, `tier-budget-area-allowlist`
 
 Ported from `tier-budget.sh lint-allowlist [--area]` (sp-5m133; sp-ufbkh). The bash
