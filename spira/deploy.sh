@@ -410,6 +410,16 @@ _pre_deploy_unit_state="$SPIRA_RUN/pre-deploy-unit-state.$$"
 # A fatal here means the box has a pre-existing problem; fix it and re-run deploy.
 log "deploy: pre-deploy health check"
 _pre_deploy_fails="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1 | grep '^  FAIL  ')" || true
+# A unit failed on a config key the incoming release fills in (config-delta.toml) cannot be
+# cured before activation, which is what applies the delta: it is named here, then re-run and
+# judged under the incoming release below, where a unit it still fails keeps the deploy red.
+_pre_deploy_failed_units="$(printf '%s\n' "$_pre_deploy_fails" | grep ' is a failed systemd unit$')" || true
+if [ -n "$_pre_deploy_failed_units" ]; then
+    log "deploy: WARNING: units already failed before this deploy — re-run under $release_stem after activation:"
+    printf '%s\n' "$_pre_deploy_failed_units" >&2
+    _pre_deploy_fails="$(printf '%s\n' "$_pre_deploy_fails" | grep -v ' is a failed systemd unit$')" || true
+fi
+unset _pre_deploy_failed_units
 if [ -n "$_pre_deploy_fails" ]; then
     printf 'deploy: pre-deploy health check has failures — fix before deploying:\n' >&2
     printf '%s\n' "$_pre_deploy_fails" >&2

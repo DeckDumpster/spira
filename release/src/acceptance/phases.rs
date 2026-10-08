@@ -63,10 +63,16 @@ impl Run<'_> {
         }
     }
 
+    /// `deploy.sh` re-renders units, so it needs the `SPIRA_HOME_REPO` the install had: without
+    /// it the cert-sweep and round-template units resolve out of the manifest and are pruned.
+    fn deploy_sh(&self) -> Cmd {
+        self.forge(self.tool("deploy.sh")).env("SPIRA_HOME_REPO", self.o.scratch_name())
+    }
+
     /// `deploy.sh` of the release under test: always `--allow-draft` (acceptance runs before
     /// the draft is published), and the local tarball when this run was handed one.
     fn deploy_tag(&self) -> Cmd {
-        let mut c = self.forge(self.tool("deploy.sh")).arg("--allow-draft");
+        let mut c = self.deploy_sh().arg("--allow-draft");
         if let Some(t) = &self.o.a.tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
@@ -75,7 +81,7 @@ impl Run<'_> {
 
     /// `deploy.sh` of the predecessor (a rollback), with its local tarball when handed one.
     fn deploy_prev(&self, prev: &str) -> Cmd {
-        let mut c = self.forge(self.tool("deploy.sh"));
+        let mut c = self.deploy_sh();
         if let Some(t) = &self.o.a.prev_tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }

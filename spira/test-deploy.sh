@@ -202,6 +202,7 @@ _do_fail=0
 # DOCTOR_FAILED_UNIT_FROM_CALL on (2 = only after activation, as a unit the new release breaks).
 [ -n "\${DOCTOR_FAILED_UNIT_FILE:-}" ] && [ -e "\$DOCTOR_FAILED_UNIT_FILE" ] \\
     && [ "\$_cnt" -ge "\${DOCTOR_FAILED_UNIT_FROM_CALL:-1}" ] && _do_fail=1
+[ -n "\${DOCTOR_FAIL_ONLY_CALL:-}" ] && [ "\$_cnt" = "\$DOCTOR_FAIL_ONLY_CALL" ] && _do_fail=1
 if [ "\$_do_fail" = 1 ]; then
     printf '  FAIL  %s\n' "\${DOCTOR_FAIL_MSG:-injected failure}"
     exit 1
@@ -1491,6 +1492,25 @@ want   "p21: output names the failure"                     "hooks-path-missing" 
 nowant "p21: drain not called before pre-deploy check"    "world drain" "$(cat "$CALL_LOG")"
 nowant "p21: activate not called"                         "activate"    "$(cat "$CALL_LOG")"
 islink "p21: current unchanged after refusal"              "$RELEASES/current" "$PRIOR_RELEASE"
+
+# A unit already failed before the deploy is named, not refused: the incoming release's config
+# delta can be what cures it, and the post-activation doctor still judges it.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$DOCTOR_CNT"
+_out="$(run_deploy "DOCTOR_FAIL_ONLY_CALL=1" "DOCTOR_FAIL_MSG=spira-x-prod.service is a failed systemd unit" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "p21: a unit failed before the deploy does not refuse it" "$_rc"
+want   "p21: the pre-failed unit is named in a warning"          "WARNING: units already failed before this deploy" "$_out"
+want   "p21: the pre-failed unit's line is shown"                "spira-x-prod.service is a failed systemd unit" "$_out"
+islink "p21: current moved past a pre-failed unit"               "$RELEASES/current" "$NEW_RELEASE"
+> "$DOCTOR_CNT"
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "DOCTOR_FAIL_ONLY_CALL=1" "DOCTOR_FAIL_MSG=spira-x-prod.service is a failed systemd unit"$'\n''  FAIL  hooks-path-missing' -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "p21: a unit failure beside another fatal still refuses"   "$_rc"
+want   "p21: the other fatal is what refuses"                     "hooks-path-missing" "$_out"
 
 # ==========================================================================
 echo
