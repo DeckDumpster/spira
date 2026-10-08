@@ -264,7 +264,7 @@ fn content_on_base_lands_any_non_terminal_state_with_its_proof() {
 #[test]
 fn supersede_retires_a_non_terminal_bead_by_its_successor_and_refuses_a_terminal_one() {
     let mut f = Fake::default();
-    f.bead("sp-s", BeadState::Ready).holds.insert(HoldKind::Operator);
+    f.bead("sp-s", BeadState::Ready).holds.insert(HoldKind::Manual);
     assert_eq!(go(&mut f, "supersede", &["sp-s", "sp-succ"]).code, APPLIED);
     assert_eq!(f.state("sp-s"), "SUPERSEDED");
     assert_eq!(f.beads["sp-s"].reason.as_deref(), Some("sp-succ"));
