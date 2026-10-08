@@ -541,7 +541,7 @@ lc_event_bead() {
 #
 # An applied claim appends the `claimed` fact the attempt counters fold.
 lc_claim_bead() {
-    local id="$1" holder="$2" lease_until="$3" stack="${4:-}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
+    local id="$1" holder="$2" lease_until="$3" stack="${4:-}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version cur_holder rc
     [ -n "$stack" ] || stack='{}'
     # A bead filed by any path that skips row creation (a raw create in the beads CLI — acceptance, and at
     # least four actors in production; sp-tb4yk) has no lifecycle row, and `spira-lc show`
@@ -551,11 +551,18 @@ lc_claim_bead() {
         timeout 5 spira-lc create-bead "$id" >/dev/null 2>&1 || return 2
         row="$(lc_bead_row "$id")" || return 2
     fi
-    IFS=$'\t' read -r state version _ _ <<< "$row"
+    IFS=$'\t' read -r state version cur_holder _ <<< "$row"
     [ -n "$state" ] || return 2
+    [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
     lc_event_bead "$id" "$state" "$version" "$holder" \
         "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth}}"
     rc=$?
+    if [ "$rc" -eq 3 ]; then
+        # A refusal is not "not mine" until the row says so: a double-sent claim applies once.
+        row="$(lc_bead_row "$id")" || return 2
+        IFS=$'\t' read -r state _ cur_holder _ <<< "$row"
+        [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
+    fi
     [ "$rc" -eq 0 ] || return "$rc"
     _bump_write_event "$id" claimed "$holder"
 }

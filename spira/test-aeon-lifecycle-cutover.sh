@@ -204,6 +204,17 @@ _held="$(row_json sp-lcheld)"
 want "claim over a live holder: the holder keeps it" '"holder":"aeon-live"' "$_held"
 want "claim over a live holder: no transition applied" '"version":"0"' "$_held"
 
+seed_bead "sp-lcrpt" READY
+lc_claim_bead "sp-lcrpt" "aeon-t2" 999999999
+is "repeat claim: first applies (exit 0)" "0" "$?"
+lc_claim_bead "sp-lcrpt" "aeon-t2" 999999999
+is "repeat claim by the holder: already yours (exit 0)" "0" "$?"
+_rpt="$(row_json sp-lcrpt)"
+want "repeat claim: still held by the claimant" '"holder":"aeon-t2"' "$_rpt"
+want "repeat claim: applied once" '"version":"1"' "$_rpt"
+lc_claim_bead "sp-lcrpt" "aeon-other" 999999999
+is "claim by another holder after a repeat: refused (exit 3)" "3" "$?"
+
 # ===========================================================================
 echo
 echo "lc_release_bead: WORKING returns to READY; past WORKING is a harmless no-op:"
