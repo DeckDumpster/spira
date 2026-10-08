@@ -1,17 +1,16 @@
 //! This host's own address, resolved when a consumer runs and never configured: the source
-//! address the kernel would use toward a target (`ip route get`). A DHCP lease that moves
+//! address the kernel would use toward a target (a connected UDP socket sends nothing). A DHCP lease that moves
 //! the box changes the answer; no config key holds a stale copy of it.
 
-use crate::bounded::bounded;
-use std::process::Stdio;
+use std::net::UdpSocket;
 
 pub const AUTO: &str = "auto";
 
 /// A documentation-range address nothing owns: the route toward it is the default route, so
-/// its source is the host's LAN address. `ip route get` sends nothing.
+/// its source is the host's LAN address.
 pub const PROBE: &str = "192.0.2.1";
 
-/// The `src` of `ip -o route get` output.
+/// The `src` field of a route description.
 pub fn parse_route_src(out: &str) -> Option<String> {
     let mut it = out.split_whitespace();
     while let Some(t) = it.next() {
@@ -24,20 +23,14 @@ pub fn parse_route_src(out: &str) -> Option<String> {
 
 pub fn source_toward_with(target: &str, ip: &dyn Fn(&str) -> Result<String, String>) -> Result<String, String> {
     let out = ip(target)?;
-    parse_route_src(&out).ok_or_else(|| format!("no source address in `ip route get {target}`: {}", out.trim()))
+    parse_route_src(&out).ok_or_else(|| format!("no source address toward {target}: {}", out.trim()))
 }
 
 fn run_ip(target: &str) -> Result<String, String> {
-    let o = bounded("ip")
-        .args(["-o", "route", "get", target])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("ip route get {target}: {e}"))?;
-    if o.status.success() {
-        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
-    } else {
-        Err(format!("ip route get {target}: {}", String::from_utf8_lossy(&o.stderr).trim()))
-    }
+    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("route toward {target}: {e}"))?;
+    sock.connect((target, 9)).map_err(|e| format!("route toward {target}: {e}"))?;
+    let local = sock.local_addr().map_err(|e| format!("route toward {target}: {e}"))?;
+    Ok(format!("{target} src {}", local.ip()))
 }
 
 /// The address this host presents toward `target` right now.
@@ -106,6 +99,11 @@ mod tests {
         assert!(!asked.get());
         let now = resolve_with("auto", PROBE, &route("192.168.15.174")).unwrap();
         assert_ne!(now, "192.168.1.56", "the pinned key no longer names this host");
+    }
+
+    #[test]
+    fn the_kernel_route_toward_loopback_is_loopback() {
+        assert_eq!(source_toward("127.0.0.1").unwrap(), "127.0.0.1");
     }
 
     #[test]
