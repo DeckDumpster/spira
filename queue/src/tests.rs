@@ -390,6 +390,7 @@ struct FLc {
     bead_rows: RefCell<std::collections::HashMap<String, (String, String)>>,
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
     certify_refused: Cell<bool>,
+    land_refused: Cell<Option<&'static str>>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
     calls: RefCell<Vec<String>>,
@@ -397,7 +398,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), row_fails: Cell::new(false), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), row_fails: Cell::new(false), calls: RefCell::default() }
     }
 }
 
@@ -449,7 +450,10 @@ impl Lc for FLc {
     }
     fn land_batch(&self, id: &str, v: &str, _: &str, sha: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("land {id} {v} {sha}"));
-        Ok(())
+        match self.land_refused.get() {
+            Some(why) => Err((3, why.into())),
+            None => Ok(()),
+        }
     }
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
         self.calls.borrow_mut().push(format!("list {}", state.unwrap_or("")));
