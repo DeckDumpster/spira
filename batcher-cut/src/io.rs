@@ -2500,8 +2500,8 @@ mod land_exit_tests {
     fn a_collateral_eject_names_no_suites_and_never_rebuilds() {
         let d = testkit::TempDir::new("batcher-cut-round-eject");
         let e = argv_stub(&d, "");
-        round_eject(&e, "b1", "sp-a", &["test-a.sh".into()], &[], false).unwrap();
-        round_eject(&e, "b1", "sp-b", &["test-a.sh".into()], &[], true).unwrap();
+        round_eject(&e, &repo_at(&d), "b1", "sp-a", &["test-a.sh".into()], &[], false).unwrap();
+        round_eject(&e, &repo_at(&d), "b1", "sp-b", &["test-a.sh".into()], &[], true).unwrap();
         let argv = fs::read_to_string(d.join("argv")).unwrap();
         let lines: Vec<&str> = argv.lines().collect();
         assert!(lines[0].contains("--no-rebuild") && !lines[0].contains("--suites"), "{argv}");
