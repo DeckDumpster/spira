@@ -519,9 +519,6 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
                 continue;
             }
         }
-        if bead_superseded(&r.id) {
-            continue;
-        }
         let queued = gate_queued(run, &r.id);
         anomaly += 1;
         let ts = parse_iso8601(&r.closed_at);
@@ -549,14 +546,6 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
 /// made a commit of its own. A failed cherry is not evidence of anything.
 fn branch_has_no_own_commit(repo: &Path, land_ref: &str, branch: &str) -> bool {
     io::git(repo, &["cherry", land_ref, branch]).map(|o| !o.lines().any(|l| l.starts_with('+'))).unwrap_or(false)
-}
-
-fn bead_superseded(id: &str) -> bool {
-    let rows = io::bd_rows(io::bdjson(&["show", id]));
-    rows.and_then(|r| r.into_iter().next())
-        .and_then(|r| r.get("dependencies").and_then(Value::as_array).cloned())
-        .map(|deps| deps.iter().any(|d| d.get("dependency_type").or_else(|| d.get("type")).and_then(Value::as_str) == Some("supersedes")))
-        .unwrap_or(false)
 }
 
 /// Whether the gate-worker holds a job for this bead's branch, in the inbox or claimed by any slot.
