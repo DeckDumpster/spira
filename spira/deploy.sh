@@ -463,13 +463,9 @@ fi
 # captured before conf.sh had a chance to derive anything — plus only the release's identity.
 # The release's own conf.sh then derives everything else from ITS bin/ and reads spira.conf
 # for itself, so a value the operator actually set there is not lost.
-# SPIRA_REPO is the mapped home checkout when there is one: a render under the release
-# directory, which has no .git, drops the cert-sweep and round-template units.
 _render_release_units() {
-    local _render_repo; _render_repo="$(repo_root 2>/dev/null)"
-    [ -e "$_render_repo/.git" ] || _render_repo="$SPIRA_RELEASES/current"
     env -i "${_spira_orig_env[@]}" \
-        SPIRA_REPO="$_render_repo" \
+        SPIRA_REPO="$SPIRA_RELEASES/current" \
         SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
         SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
         "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/bin/units-install}"
