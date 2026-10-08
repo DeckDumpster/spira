@@ -159,7 +159,7 @@ fn run_gap(args: &Args) -> Result<(), String> {
     let short = match &verdict.status {
         RawStatus::Satisfied => "satisfied".to_string(),
         RawStatus::Gap { observed, .. } => observed.clone(),
-        RawStatus::Unobservable { reason } => reason.clone(),
+        RawStatus::Unobservable { reason } | RawStatus::Deliberate { reason } => reason.clone(),
     };
     let subject = format!("reconciler: {} — {}", invariant, short);
     let evidence = compose_alert(invariant, now, &verdict, last_remedy);

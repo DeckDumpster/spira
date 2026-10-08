@@ -68,6 +68,25 @@ pub fn suspend(data: &mut CtrlData, subject: &str, reason: &str, owner: &str, wh
     ops.insert("suspend".to_string(), fields);
 }
 
+/// True for a plain `YYYY-MM-DD` date.
+pub fn is_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b.iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() })
+}
+
+/// Declares when a suspension is due for review: a `YYYY-MM-DD` date. The suspension must
+/// exist; returns false otherwise.
+pub fn set_until(data: &mut CtrlData, subject: &str, until: &str) -> bool {
+    match data.get_mut(subject).and_then(|o| o.get_mut("suspend")) {
+        Some(f) => {
+            f.insert("until".to_string(), until.to_string());
+            true
+        }
+        None => false,
+    }
+}
+
 /// resume <subject> -> true if a suspension was removed. Drops the subject entirely when
 /// it carries no other ops, matching `do_resume`'s python (`del data[subject]` when empty).
 pub fn resume(data: &mut CtrlData, subject: &str) -> bool {
@@ -86,6 +105,12 @@ pub fn resume(data: &mut CtrlData, subject: &str) -> bool {
 /// reason <subject> -> the suspension reason, if suspended.
 pub fn reason<'a>(data: &'a CtrlData, subject: &str) -> Option<&'a str> {
     data.get(subject)?.get("suspend")?.get("reason").map(String::as_str)
+}
+
+/// The suspension's owner (a bead id) and its optional `until` date.
+pub fn declared<'a>(data: &'a CtrlData, subject: &str) -> Option<(&'a str, Option<&'a str>)> {
+    let f = data.get(subject)?.get("suspend")?;
+    Some((f.get("owner").map(String::as_str).unwrap_or(""), f.get("until").map(String::as_str)))
 }
 
 /// is_suspended <subject> -> true if a "suspend" op is recorded.
@@ -229,6 +254,16 @@ mod tests {
         assert!(is_consultable("slow-query", &units, "prod"));
         assert!(is_consultable("spira-groom", &units, "prod"));
         assert!(!is_consultable("nonsense", &units, "prod"));
+    }
+
+    #[test]
+    fn until_is_declared_on_an_existing_suspension_only() {
+        let mut d = CtrlData::new();
+        assert!(!set_until(&mut d, "a", "2026-10-09"));
+        suspend(&mut d, "a", "r", "sp-1", "w", "b");
+        assert!(set_until(&mut d, "a", "2026-10-09"));
+        assert_eq!(declared(&d, "a"), Some(("sp-1", Some("2026-10-09"))));
+        assert!(is_date("2026-10-09") && !is_date("tomorrow") && !is_date("2026-1-9"));
     }
 
     #[test]

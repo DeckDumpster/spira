@@ -32,7 +32,7 @@ pub fn should_alert(verdict: &Verdict, prev_alerted_since: Option<u64>) -> (bool
 /// desired vs observed, how long it has been true, and the last remedy tried (if any).
 pub fn compose_alert(invariant: &str, now: u64, verdict: &Verdict, last_remedy: Option<&str>) -> String {
     let (desired, observed) = match &verdict.status {
-        RawStatus::Satisfied => ("satisfied".to_string(), "satisfied".to_string()),
+        RawStatus::Satisfied | RawStatus::Deliberate { .. } => ("satisfied".to_string(), "satisfied".to_string()),
         RawStatus::Gap { desired, observed, .. } => (desired.clone(), observed.clone()),
         RawStatus::Unobservable { reason } => ("(unobservable)".to_string(), reason.clone()),
     };
