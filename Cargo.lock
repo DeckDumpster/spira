@@ -975,6 +975,7 @@ dependencies = [
  "reconciler-engine",
  "serde_json",
  "spira-config",
+ "spira-ctrl",
  "spira-desired-state",
  "testkit",
 ]
@@ -1839,6 +1840,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-ctrl",
  "testkit",
 ]
 

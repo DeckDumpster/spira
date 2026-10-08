@@ -526,6 +526,7 @@ impl<'a> Session<'a> {
                 reason,
                 "--owner",
                 "sp-fud1",
+                "--force",
             ],
             env,
         )

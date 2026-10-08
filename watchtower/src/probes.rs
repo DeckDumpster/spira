@@ -157,6 +157,7 @@ pub fn failing_units(cfg: &Cfg, run_dir: &Path) -> Reading {
             units.push(u.clone());
         }
     }
+    let units = crate::ctrl_gate::without_suspended(units);
     let mut next = BTreeMap::new();
     let mut standing = Vec::new();
     for unit in units {

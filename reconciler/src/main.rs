@@ -435,6 +435,14 @@ fn desired_unit_state(cfg: &Config, unit: &str) -> (bool, bool) {
     }
 }
 
+/// The control plane's data and the instance, or `None` when either is unreadable — then
+/// nothing is declined and every unit is checked.
+fn declined_units() -> Option<(spira_ctrl::CtrlData, String)> {
+    let path = spira_config::process::cfg("SPIRA_CTRL").ok()?;
+    let inst = spira_config::process::cfg("SPIRA_INSTANCE").ok()?;
+    Some((spira_ctrl::read(std::path::Path::new(&path)).ok()?, inst))
+}
+
 fn observe_units(cfg: &Config) -> Vec<Check> {
     // The Composite's UnitsSpec.units is the declared unit set (sp-8c3ib); an install that
     // has not materialised one yet falls back to units-manifest.sh's own walk of
@@ -448,7 +456,11 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
         }
     };
     let mut checks = Vec::new();
+    let declined = declined_units();
     for unit in unit_names {
+        if declined.as_ref().is_some_and(|(data, inst)| spira_ctrl::unit_suspended(data, unit, inst)) {
+            continue;
+        }
         let enabled = systemctl_state(cfg, "is-enabled", unit);
         let active = systemctl_state(cfg, "is-active", unit);
         let (enabled, active) = match (enabled, active) {

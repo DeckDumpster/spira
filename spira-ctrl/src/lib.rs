@@ -143,6 +143,54 @@ pub fn unit_forms(subject: &str, inst: &str) -> [String; 4] {
     ]
 }
 
+/// The standing-condition names watchtower consults [`is_suspended`] for before it files:
+/// each is the `cause` its findings carry (the probe name for the conditions framework).
+pub const WATCHTOWER_CONDITIONS: &[&str] = &[
+    "batched-stranded",
+    "batched-too-long",
+    "closed-stranded",
+    "czar-not-cleared",
+    "czar-unclaimed",
+    "dedup-meter",
+    "deploy-fault",
+    "disabled-timer",
+    "dolt-client-drop",
+    "failed-unit",
+    "failing-units",
+    "gate-silent",
+    "gate-slow",
+    "hotfix-standing",
+    "idle-while-ready",
+    "oldest-unsent",
+    "pr-stall-auto-merge-off",
+    "pr-stall-checks-red",
+    "pressure",
+    "queue-lock-holders",
+    "release-currency",
+    "release-skew",
+    "release-store",
+    "rowless-beads",
+    "sccache-wedge",
+    "slow-query",
+    "throttle-engaged",
+    "throttle-lifted",
+    "throttle-stall",
+    "unadopted-refs",
+];
+
+/// A subject is consultable when something reads it: a watchtower condition, or a subject
+/// one of `unit_files` (systemd unit-file names) resolves to.
+pub fn is_consultable(subject: &str, unit_files: &[String], inst: &str) -> bool {
+    WATCHTOWER_CONDITIONS.contains(&subject)
+        || unit_files.iter().any(|u| subject_of_masked_unit(u, inst) == subject)
+}
+
+/// True when the control plane declines `unit` (a `.service`/`.timer` file name): its
+/// subject is the unit name minus extension and instance suffix.
+pub fn unit_suspended(data: &CtrlData, unit: &str, inst: &str) -> bool {
+    is_suspended(data, &subject_of_masked_unit(unit, inst))
+}
+
 /// A masked unit file's subject: strip the extension, then the instance suffix if the base
 /// carries it — matching `do_divergence`'s direction-2 derivation
 /// (`base="${unit_name%.*}"`, `subject="${base%-${inst}}"`).
@@ -164,6 +212,23 @@ mod tests {
         assert!(resume(&mut d, "spira-groom"));
         assert!(!is_suspended(&d, "spira-groom"));
         assert!(d.is_empty(), "the subject is dropped once it carries no ops");
+    }
+
+    #[test]
+    fn unit_suspended_resolves_instance_and_extension() {
+        let mut d = CtrlData::new();
+        suspend(&mut d, "spira-groom", "r", "o", "w", "b");
+        assert!(unit_suspended(&d, "spira-groom-prod.timer", "prod"));
+        assert!(unit_suspended(&d, "spira-groom-prod.service", "prod"));
+        assert!(!unit_suspended(&d, "spira-other-prod.service", "prod"));
+    }
+
+    #[test]
+    fn consultable_is_a_condition_or_a_unit_subject() {
+        let units = vec!["spira-groom-prod.timer".to_string()];
+        assert!(is_consultable("slow-query", &units, "prod"));
+        assert!(is_consultable("spira-groom", &units, "prod"));
+        assert!(!is_consultable("nonsense", &units, "prod"));
     }
 
     #[test]

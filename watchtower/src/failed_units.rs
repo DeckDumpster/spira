@@ -50,7 +50,7 @@ pub fn gather(systemctl: &str) -> Option<Vec<String>> {
             units.push(u);
         }
     }
-    Some(units)
+    Some(crate::ctrl_gate::without_suspended(units))
 }
 
 /// `sed -E 's/^[^[:alnum:]]+ //; s/ .*//'` — drop the leading run of non-alphanumeric
