@@ -140,8 +140,26 @@ fn terminal(bd: &dyn Bd, id: &str) -> bool {
     bd.lifecycle_terminal(id).unwrap_or(false)
 }
 
+/// Refuses when `id` carries the gate label: a placeholder gate has no work of its own to
+/// land, so only the dependent it blocks can say it is done. Fails closed when the label
+/// cannot be read.
+pub fn gate_label(seam: &dyn Seam) -> Result<String, (i32, String)> {
+    seam.conf("SPIRA_GROOM_GATE_LABEL").map_err(|e| (2, format!("cannot read SPIRA_GROOM_GATE_LABEL: {e}")))
+}
+
+pub fn refuse_if_gate(bd: &dyn Bd, gate: &str, id: &str) -> Result<(), (i32, String)> {
+    if gate.is_empty() {
+        return Err((2, "SPIRA_GROOM_GATE_LABEL is empty; cannot tell a placeholder gate from other beads".into()));
+    }
+    let labels = bd.label_list(id).map_err(|e| (2, format!("cannot read labels of {id}: {e}")))?;
+    if labels.lines().any(|l| l.trim().trim_start_matches("- ").trim() == gate) {
+        return Err((2, format!("{id} carries {gate}: a placeholder gate blocks a dependent and is never closed or merged by groom")));
+    }
+    Ok(())
+}
+
 /// `supersede <id> --with <successor>`.
-pub fn supersede(bd: &dyn Bd, id: &str, with: &str) -> CmdResult {
+pub fn supersede(bd: &dyn Bd, gate: &str, id: &str, with: &str) -> CmdResult {
     if id.is_empty() {
         return usage_err("supersede: bead id required");
     }
@@ -151,13 +169,14 @@ pub fn supersede(bd: &dyn Bd, id: &str, with: &str) -> CmdResult {
     if terminal(bd, id) {
         return Ok(String::new());
     }
+    refuse_if_gate(bd, gate, id)?;
     bd.supersede(id, with).map_err(|e| (1, e))?;
     Ok(String::new())
 }
 
 /// `close <id> --evidence <text>`. Evidence is REQUIRED: a close without evidence is
 /// indistinguishable from an unwanted-close, which this refuses outright.
-pub fn close(bd: &dyn Bd, id: &str, evidence: &str) -> CmdResult {
+pub fn close(bd: &dyn Bd, gate: &str, id: &str, evidence: &str) -> CmdResult {
     if id.is_empty() {
         return usage_err("close: bead id required");
     }
@@ -169,6 +188,7 @@ pub fn close(bd: &dyn Bd, id: &str, evidence: &str) -> CmdResult {
     if terminal(bd, id) {
         return Ok(String::new());
     }
+    refuse_if_gate(bd, gate, id)?;
     bd.close(id, evidence).map_err(|e| (1, e))?;
     Ok(String::new())
 }
@@ -226,6 +246,7 @@ pub fn triage_poison(bd: &dyn Bd, seam: &dyn Seam, id: &str, verdict: &str, evid
         if terminal(bd, id) {
             return Ok(format!("DROPPED {id}\n"));
         }
+        refuse_if_gate(bd, &gate_label(seam)?, id)?;
         // The close records DROPPED on the row (sp-3fue0j); no label stands in for it.
         bd.close(id, &format!("GROOM: Poison triage — DROP. {evidence}")).map_err(|e| (1, e))?;
         return Ok(format!("DROPPED {id}\n"));
@@ -340,16 +361,16 @@ mod cmds_tests {
     #[test]
     fn supersede_requires_both_arguments() {
         let bd = FakeBd::new();
-        assert_eq!(supersede(&bd, "", "sp-2").unwrap_err().0, 1);
-        assert_eq!(supersede(&bd, "sp-1", "").unwrap_err().0, 1);
-        supersede(&bd, "sp-1", "sp-2").unwrap();
-        assert_eq!(bd.log(), vec!["supersede sp-1 --with sp-2"]);
+        assert_eq!(supersede(&bd, "", "", "sp-2").unwrap_err().0, 1);
+        assert_eq!(supersede(&bd, "", "sp-1", "").unwrap_err().0, 1);
+        supersede(&bd, "held-gate", "sp-1", "sp-2").unwrap();
+        assert!(bd.log().contains(&"supersede sp-1 --with sp-2".to_string()));
     }
 
     #[test]
     fn close_refuses_without_evidence() {
         let bd = FakeBd::new();
-        let err = close(&bd, "sp-1", "").unwrap_err();
+        let err = close(&bd, "", "sp-1", "").unwrap_err();
         assert_eq!(err.0, 1);
         assert!(err.1.contains("--evidence"));
         assert!(bd.log().is_empty());
@@ -371,8 +392,8 @@ mod cmds_tests {
     #[test]
     fn close_with_evidence_calls_bd_close() {
         let bd = FakeBd::new();
-        close(&bd, "sp-1", "premise gone").unwrap();
-        assert_eq!(bd.log(), vec!["close sp-1 premise gone"]);
+        close(&bd, "held-gate", "sp-1", "premise gone").unwrap();
+        assert!(bd.log().contains(&"close sp-1 premise gone".to_string()));
     }
 
     #[test]
@@ -424,11 +445,11 @@ mod cmds_tests {
     #[test]
     fn triage_poison_drop_closes_with_no_state_label() {
         let bd = FakeBd::new();
-        let seam = FakeSeam::new();
+        let seam = gate_seam();
         let out = triage_poison(&bd, &seam, "sp-1", "drop", "not worth it").unwrap();
         assert_eq!(out, "DROPPED sp-1\n");
-        assert!(bd.log()[0].starts_with("close sp-1 GROOM: Poison triage — DROP."));
-        assert!(!bd.log().iter().any(|c| c.starts_with("label")), "{:?}", bd.log());
+        assert!(bd.log().iter().any(|c| c.starts_with("close sp-1 GROOM: Poison triage — DROP.")));
+        assert!(!bd.log().iter().any(|c| c.starts_with("label add") || c.starts_with("label remove")), "{:?}", bd.log());
     }
 
     #[test]
@@ -451,7 +472,7 @@ mod cmds_tests {
         assert_eq!(out, "TRIAGED sp-1 verdict=work-fault\n");
         assert!(seam.log().contains(&"bump_poison_cleared sp-1 work-fault-triage".to_string()));
         assert!(seam.log().contains(&"lc_unhold sp-1 poison".to_string()));
-        assert!(!bd.log().iter().any(|c| c.starts_with("label")), "{:?}", bd.log());
+        assert!(!bd.log().iter().any(|c| c.starts_with("label add") || c.starts_with("label remove")), "{:?}", bd.log());
         assert!(bd.log().iter().any(|c| c.contains("WORK'S FAULT")));
     }
 
@@ -460,5 +481,30 @@ mod cmds_tests {
         let err = unwanted().unwrap_err();
         assert_eq!(err.0, 2);
         assert!(err.1.contains("REFUSED"));
+    }
+
+    fn gate_seam() -> FakeSeam {
+        let seam = FakeSeam::new();
+        seam.confs.borrow_mut().insert("SPIRA_GROOM_GATE_LABEL".into(), "held-gate".into());
+        seam
+    }
+
+    #[test]
+    fn close_and_supersede_refuse_a_gate_labelled_bead_but_close_the_unlabelled_control() {
+        let bd = FakeBd::new();
+        bd.set_labels("sp-gate", &["plan", "held-gate"]);
+        bd.set_labels("sp-plain", &["plan"]);
+        assert_eq!(close(&bd, "held-gate", "sp-gate", "premise gone").unwrap_err().0, 2);
+        assert_eq!(supersede(&bd, "held-gate", "sp-gate", "sp-2").unwrap_err().0, 2);
+        assert_eq!(triage_poison(&bd, &gate_seam(), "sp-gate", "drop", "x").unwrap_err().0, 2);
+        assert!(!bd.log().iter().any(|c| c.starts_with("close sp-gate") || c.starts_with("supersede sp-gate")), "{:?}", bd.log());
+        close(&bd, "held-gate", "sp-plain", "premise gone").unwrap();
+        assert!(bd.log().iter().any(|c| c.starts_with("close sp-plain")));
+    }
+
+    #[test]
+    fn close_fails_closed_when_the_gate_label_is_unset() {
+        let bd = FakeBd::new();
+        assert_eq!(close(&bd, "", "sp-1", "x").unwrap_err().0, 2);
     }
 }
