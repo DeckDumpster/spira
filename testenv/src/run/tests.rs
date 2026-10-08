@@ -1963,6 +1963,51 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
 }
 
 #[test]
+fn landref_falls_back_to_local_main_for_an_unmapped_checkout() {
+    let w = World::new("landref-fallback");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let dir = w.root.join("ab12cd34ef56");
+    fs::create_dir_all(&dir).unwrap();
+    let sh = |args: &[&str]| {
+        let st = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(st.success(), "{args:?}");
+    };
+    sh(&["init", "-q"]);
+    sh(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    sh(&["checkout", "-q", "--detach"]);
+    let env = |_: &str| None;
+    let read_stdin = || String::new();
+    let out = |_: &str| {};
+    let deps = Deps {
+        rt: &rt,
+        builder: &b,
+        harness: Harness { root: w.harness.clone() },
+        env: &env,
+        config: None,
+        settings: unused_settings(),
+        stdin: &read_stdin,
+        out: &out,
+        owner_dir: w.owner.clone(),
+        cwd: w.root.to_path_buf(),
+        runner_identity: b"runner-v1".to_vec(),
+        warm_refill: &|_, _| {},
+        spawn_sweep: &|_| {},
+        runner_exe: w.runner_exe(),
+    };
+    let r = resolve_repo(Some(dir.to_str().unwrap()), &deps).unwrap();
+    assert_eq!(landref(&r, &deps), None);
+    sh(&["update-ref", "refs/heads/local/main", "HEAD"]);
+    assert_eq!(landref(&r, &deps).as_deref(), Some("local/main"));
+}
+
+#[test]
 fn a_green_run_records_a_full_suite_pass_only_when_it_selected_every_suite() {
     use spira_config::local_pass::{check, Kind, Verdict};
     let t = testkit::TempDir::new("full-pass");
