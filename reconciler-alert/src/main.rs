@@ -19,28 +19,23 @@ use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// SPIRA_REPO is this copy's checkout — an identity fact, never a config key (resolve()
-/// deliberately never returns it): derived from the located home, as every crate does.
-fn spira_repo() -> String {
-    let home = spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
-        eprintln!("reconciler-alert: {e}");
-        std::process::exit(1)
-    });
-    let env: std::collections::BTreeMap<String, String> = env::vars().collect();
-    spira_config::resolve::derive_home_repo(&home, &env).to_string_lossy().into_owned()
+/// Every program the alert path runs, by name on the launcher's PATH; a test injects its own.
+struct Seams {
+    mail: String,
+    tmux: String,
 }
 
-/// mail by name on the launcher's PATH (sp-gypjk).
-fn mail_sh() -> String {
-    "mail".to_string()
+impl Seams {
+    fn production() -> Seams {
+        Seams { mail: "mail".into(), tmux: "tmux".into() }
+    }
 }
 
-fn concierge_sh() -> String {
-    format!("{}/concierge.sh", spira_repo())
-}
+/// The Concierge's tmux session carries its mailbox name.
+const CONCIERGE_SESSION: &str = "concierge";
 
 fn default_from() -> String {
-    "Reconciler <reconciler@spira>".to_string()
+    reconciler_engine::mail::FROM.to_string()
 }
 
 struct Args(std::collections::HashMap<String, String>, std::collections::HashSet<String>);
@@ -90,9 +85,10 @@ fn main() -> ExitCode {
     let argv: Vec<String> = env::args().skip(1).collect();
     let sub = argv.first().map(String::as_str);
     let rest: Vec<String> = argv.iter().skip(1).cloned().collect();
+    let seams = Seams::production();
     let result = match sub {
-        Some("gap") => run_gap(&Args::parse(&rest)),
-        Some("escalate") => run_escalate(&Args::parse(&rest)),
+        Some("gap") => run_gap(&seams, &Args::parse(&rest)),
+        Some("escalate") => run_escalate(&seams, &Args::parse(&rest)),
         _ => Err("usage: reconciler-alert gap|escalate ...".to_string()),
     };
     match result {
@@ -121,7 +117,7 @@ fn parse_status(args: &Args) -> Result<RawStatus, String> {
     }
 }
 
-fn run_gap(args: &Args) -> Result<(), String> {
+fn run_gap(seams: &Seams, args: &Args) -> Result<(), String> {
     let invariant = args.get("invariant").ok_or("missing --invariant")?;
     let now: u64 = args
         .get("now")
@@ -165,8 +161,8 @@ fn run_gap(args: &Args) -> Result<(), String> {
     let evidence = compose_alert(invariant, now, &verdict, last_remedy);
 
     let body = format!("## Alert\n{subject}\n\n{evidence}");
-    io::mail_send(&mail_sh(), "concierge", &from, &subject, "alert", None, None, &body)?;
-    if io::concierge_is_running(&concierge_sh()) {
+    io::mail_send(&seams.mail, "concierge", &from, &subject, "alert", None, None, &body)?;
+    if io::session_is_running(&seams.tmux, CONCIERGE_SESSION) {
         println!("reconciler-alert: {} — sent to concierge", invariant);
     } else {
         println!("reconciler-alert: {} — concierge not running, queued in its mailbox", invariant);
@@ -174,7 +170,7 @@ fn run_gap(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-fn run_escalate(args: &Args) -> Result<(), String> {
+fn run_escalate(seams: &Seams, args: &Args) -> Result<(), String> {
     let class = args.get("class").ok_or("missing --class")?;
     let subject = args.get("subject").ok_or("missing --subject")?;
     let from = args.get("from").map(str::to_string).unwrap_or_else(default_from);
@@ -187,7 +183,7 @@ fn run_escalate(args: &Args) -> Result<(), String> {
                 "escalating to the operator requires --default (law-escalate-decisions-not-problems: every ask carries a default)",
             )?;
             let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n## Class basis\nEscalated as {class}.\n\n{body}");
-            io::mail_send(&mail_sh(), "operator", &from, subject, "question", Some(default), Some(class), &full_body)?;
+            io::mail_send(&seams.mail, "operator", &from, subject, "question", Some(default), Some(class), &full_body)?;
             println!("reconciler-alert: escalation ({}) sent to operator", class);
         }
         None => {
@@ -200,7 +196,7 @@ fn run_escalate(args: &Args) -> Result<(), String> {
                  operator path accepts (permissions, policy, destructive-or-irreversible-on-production-data). \
                  Refused by construction and routed back for your judgement.\n\n{body}"
             );
-            io::mail_send(&mail_sh(), "concierge", &from, &refused_subject, "alert", None, None, &full_body)?;
+            io::mail_send(&seams.mail, "concierge", &from, &refused_subject, "alert", None, None, &full_body)?;
             println!("reconciler-alert: escalation class '{}' refused, routed to concierge", class);
         }
     }

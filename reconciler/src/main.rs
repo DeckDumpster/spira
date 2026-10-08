@@ -13,13 +13,15 @@
 // already watched there — reconciling it a second time here would file a second incident
 // for the same fault).
 
-use reconciler_engine::core::{record_remedy, step, HysteresisState, RawStatus, Verdict};
+use reconciler_engine::alert::{compose_alert, should_alert};
+use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
+use reconciler_engine::io::{append_status, load_alerted, load_state, save_alerted, save_state, AlertedSinceMap, StateMap};
+use reconciler_engine::{clock, mail, paths};
 use reconciler_engine::effect::{
     append_event, compose_no_effect, is_shadowed, kind_of, load_pending, measure, save_pending, Outcome,
     PendingEffect, PendingMap, RemedyEvent,
 };
 use reconciler_engine::holds::{self, Outcome as HoldOutcome};
-use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use spira_desired_state::compose::Composite;
 use spira_desired_state::resource::{parse_resource, CockpitSpec, DiskSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
 use spira_desired_state::store::FsStore;
@@ -31,7 +33,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Desired state (sp-8c3ib): the typed Composite this host last materialised via `spira
@@ -106,51 +108,90 @@ fn main() -> ExitCode {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Configuration — every path and binary is a test seam, mirroring czar-pass's Config.
+// Configuration — every program is a field of one injected Seams struct; every path is
+// derived from a registered key.
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// Every program the pass runs, by name on the launcher's PATH, and the one unit it will
+/// never remedy. A test injects its own; nothing here is read from the environment.
+#[derive(Clone)]
+struct Seams {
+    systemctl: String,
+    tmux: String,
+    git: String,
+    mail: String,
+    units_install: String,
+    spira_config: String,
+    spira_claim: String,
+    strand: String,
+    queue_helpers: String,
+    queue: String,
+    spira_lc: String,
+    target_reap: String,
+    podman: String,
+    df: String,
+    rebuild: String,
+    layout: String,
+    date: String,
+    store_unit: String,
+    lint: String,
+    guard: String,
+}
+
+impl Seams {
+    fn production() -> Seams {
+        let name = |n: &str| n.to_string();
+        Seams {
+            systemctl: name("systemctl"),
+            tmux: name("tmux"),
+            git: name("git"),
+            mail: name("mail"),
+            units_install: name("units-install"),
+            spira_config: name("spira-config"),
+            spira_claim: name("spira-claim"),
+            strand: name("strand"),
+            queue_helpers: name("queue-helpers"),
+            queue: name("queue"),
+            spira_lc: name("spira-lc"),
+            target_reap: name("target-reap"),
+            podman: name("podman"),
+            df: name("df"),
+            rebuild: name("rebuild"),
+            layout: name("layout"),
+            date: name("date"),
+            store_unit: name("dolt-beads.service"),
+            lint: name("spira-lint"),
+            guard: name("lifecycle-guard"),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct Config {
+    seams: Seams,
     spira_run: PathBuf,
     spira_home: String,
     log: PathBuf,
     state_path: PathBuf,
+    alerted_path: PathBuf,
     status_log: PathBuf,
     remedy_log: PathBuf,
     effect_state: PathBuf,
-    mail_sh: String,
     mail_root: PathBuf,
     release: String,
     shadow_kinds: Vec<String>,
     effect_passes: u32,
     lock_path: PathBuf,
     spira_db: String,
-    scope_label: String,
-    reconciler_label: String,
-    incident_sh: String,
-    main_ref: String,
-    lint_bin: String,
-    guard_bin: String,
-    systemctl: String,
-    ctrl_path: PathBuf,
-    instance: String,
-    reminders_path: PathBuf,
-    tmux: String,
-    git: String,
-    units_manifest_sh: String,
-    fleet_status_sh: String,
-    queue_certified_list_sh: String,
-    cockpit_sh: String,
-    queue_bin: String,
-    lc_bin: String,
     bd_bin: String,
     queue_dir: PathBuf,
     repo_map: Option<PathBuf>,
     releases_dir: PathBuf,
-    store_unit: String,
     cockpit_sessions: Vec<String>,
     cockpit_mail: String,
-    disk_usage_sh: String,
-    disk_remedy_sh: String,
+    dolt_data: String,
+    max_live_aeons: String,
+    max_aeons: String,
     disk_floor_pct: u32,
     grace_secs: u64,
     preflight_wall_secs: u64,
@@ -158,29 +199,12 @@ struct Config {
     now_iso: String,
     desired_dir: PathBuf,
     desired: DesiredState,
+    ctrl_path: PathBuf,
+    instance: String,
+    reminders_path: PathBuf,
 }
 
-/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
-/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
-/// `harness_home` already use, and the same one `reconciler-flow`'s own copy of this
-/// function uses. `resolve_run_dir` needs a REAL `home/conf.d` to resolve `SPIRA_RUN`
-/// (sp-ivfu3) — an empty `home` makes it refuse outright ("no config registry at
-/// conf.d"), exactly what a bare shell with no `$SPIRA_HOME` exported would otherwise hit.
-fn harness_home() -> PathBuf {
-    if let Ok(h) = env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return PathBuf::from(h);
-        }
-    }
-    let Ok(exe) = env::current_exe() else { return PathBuf::new() };
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors()
-        .skip(1)
-        .take(4)
-        .map(|a| a.join("spira"))
-        .find(|p| p.join("lib.sh").is_file())
-        .unwrap_or_default()
-}
+const MAIN_REF: &str = "local/main";
 
 /// The release the running harness copy is: the directory name above its `spira/` dir, or
 /// `unknown` when the home cannot be located.
@@ -192,109 +216,51 @@ fn release_name(home: &Path) -> String {
 }
 
 impl Config {
-    fn from_env() -> Result<Config, String> {
+    fn from_process(seams: Seams) -> Result<Config, String> {
         use spira_config::process::{cfg, cfg_parse};
 
-        // SPIRA_RUN is a PROCEDURAL registry key (spira/conf.d/SPIRA_RUN carries no
-        // generated default — spira/conf.sh's spira_conf_defaults() still sets it inline),
-        // so it is resolved through `resolve_run_dir` rather than a bare `cfg("SPIRA_RUN")`
-        // — same as reconciler-flow's own copy of this read. A `spira.toml` that fails to
-        // resolve, or resolves SPIRA_RUN empty, is a named refusal (sp-ivfu3), never the
-        // literal `/tmp/spira` a bare shell used to get.
-        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-        let spira_run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home())?;
-        // SPIRA_HOME is not a registered config key (spira/conf.d) — a per-copy fact, read
-        // from the raw environment same as always.
-        let spira_home = env::var("SPIRA_HOME").unwrap_or_default();
+        // SPIRA_RUN is a PROCEDURAL registry key, so it is resolved through the run-dir
+        // resolver rather than a bare `cfg("SPIRA_RUN")`. A `spira.toml` that fails to
+        // resolve is a named refusal, never a literal `/tmp/spira`.
+        let spira_run = spira_config::resolve::run_dir_for_process()?;
+        let spira_home = spira_config::resolve::locate_home_for_process()?.to_string_lossy().into_owned();
         let sessions = cfg("COCKPIT_SESSIONS")?.split_whitespace().map(String::from).collect();
         Ok(Config {
-            // SPIRA_RECONCILER_LOG/_STATE/_STATUS_LOG are not registered config keys —
-            // per-invocation paths under spira_run, left as direct env reads.
-            log: env::var("SPIRA_RECONCILER_LOG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler.log")),
-            state_path: env::var("SPIRA_RECONCILER_STATE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-state.json")),
-            // Under run/tsd/ (design reconciler-time-series-2026-09-27 §2): the reconciler's
-            // per-resource status is one of the families that live there, moved from
-            // $SPIRA_RUN directly.
-            status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
-            remedy_log: env::var("SPIRA_RECONCILER_REMEDY_LOG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-remedy.jsonl")),
-            effect_state: env::var("SPIRA_RECONCILER_EFFECT_STATE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-effects.json")),
-            // SPIRA_MAIL_SH / SPIRA_RECONCILER_SHADOW_KINDS / SPIRA_RECONCILER_EFFECT_PASSES
-            // are not registered config keys — left as direct env reads.
-            mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string()),
+            log: spira_run.join("reconciler.log"),
+            state_path: paths::state(&spira_run),
+            alerted_path: paths::alerted(&spira_run),
+            status_log: paths::status_log(&spira_run),
+            remedy_log: paths::remedy_log(&spira_run),
+            effect_state: paths::effect_state(&spira_run),
             mail_root: PathBuf::from(cfg("SPIRA_MAIL")?),
-            release: release_name(&harness_home()),
-            shadow_kinds: env::var("SPIRA_RECONCILER_SHADOW_KINDS")
-                .unwrap_or_default()
-                .split_whitespace()
-                .map(String::from)
-                .collect(),
-            effect_passes: env::var("SPIRA_RECONCILER_EFFECT_PASSES")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .filter(|n| *n > 0)
-                .unwrap_or(2),
+            release: release_name(Path::new(&spira_home)),
+            shadow_kinds: cfg("SPIRA_RECONCILER_SHADOW_KINDS")?.split_whitespace().map(String::from).collect(),
+            effect_passes: match cfg_parse::<u32>("SPIRA_RECONCILER_EFFECT_PASSES")? {
+                0 => 2,
+                n => n,
+            },
             lock_path: spira_run.join("reconciler.lock"),
             spira_db: cfg("SPIRA_DB")?,
-            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
-            reconciler_label: cfg("SPIRA_RECONCILER_LABEL")?,
-            // SPIRA_INCIDENT_SH / SPIRA_SYSTEMCTL / SPIRA_TMUX / SPIRA_GIT /
-            // SPIRA_UNITS_MANIFEST_SH / SPIRA_FLEET_STATUS_SH / SPIRA_QUEUE_CERTIFIED_LIST_SH
-            // / SPIRA_COCKPIT_SH are not registered config keys — script/binary names,
-            // overridable only as a test seam, left as direct env reads.
-            incident_sh: env::var("SPIRA_INCIDENT_SH")
-                .unwrap_or_else(|_| "incident.sh".to_string()),
-            main_ref: "local/main".to_string(),
-            lint_bin: env::var("SPIRA_LINT_BIN").unwrap_or_else(|_| "spira-lint".to_string()),
-            guard_bin: env::var("SPIRA_GUARD_BIN").unwrap_or_else(|_| "lifecycle-guard".to_string()),
-            systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
-            ctrl_path: PathBuf::from(cfg("SPIRA_CTRL")?),
-            instance: cfg("SPIRA_INSTANCE")?,
-            reminders_path: spira_run.join("reconciler-reminders.json"),
-            tmux: env::var("SPIRA_TMUX").unwrap_or_else(|_| "tmux".to_string()),
-            git: env::var("SPIRA_GIT").unwrap_or_else(|_| "git".to_string()),
-            units_manifest_sh: env::var("SPIRA_UNITS_MANIFEST_SH")
-                .unwrap_or_else(|_| "units-manifest.sh".to_string()),
-            fleet_status_sh: env::var("SPIRA_FLEET_STATUS_SH")
-                .unwrap_or_else(|_| "fleet-status.sh".to_string()),
-            queue_certified_list_sh: env::var("SPIRA_QUEUE_CERTIFIED_LIST_SH")
-                .unwrap_or_else(|_| "queue-certified-list.sh".to_string()),
-            cockpit_sh: env::var("SPIRA_COCKPIT_SH")
-                .unwrap_or_else(|_| "cockpit.sh".to_string()),
-            // The queue binary, by name on the launcher's PATH (sp-gypjk).
-            queue_bin: "queue".into(),
-            lc_bin: spira_config::lifecycle_row::lc_bin(),
             bd_bin: cfg("SPIRA_BD")?,
             queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
             repo_map: Some(PathBuf::from(cfg("SPIRA_REPO_MAP")?)),
             releases_dir: PathBuf::from(cfg("SPIRA_RELEASES")?),
-            // SPIRA_STORE_UNIT is not a registered config key — left as a direct env read.
-            store_unit: env::var("SPIRA_STORE_UNIT")
-                .unwrap_or_else(|_| "dolt-beads.service".to_string()),
             cockpit_sessions: sessions,
             cockpit_mail: cfg("COCKPIT_MAIL")?,
-            // SPIRA_DISK_USAGE_SH / SPIRA_DISK_REMEDY_SH are not registered config keys —
-            // left as direct env reads.
-            disk_usage_sh: env::var("SPIRA_DISK_USAGE_SH")
-                .unwrap_or_else(|_| "disk-usage.sh".to_string()),
-            disk_remedy_sh: env::var("SPIRA_DISK_REMEDY_SH")
-                .unwrap_or_else(|_| "disk-remedy.sh".to_string()),
+            dolt_data: cfg("SPIRA_DOLT_DATA")?,
+            max_live_aeons: cfg("SPIRA_MAX_LIVE_AEONS")?,
+            max_aeons: cfg("SPIRA_MAX_AEONS")?,
             disk_floor_pct: cfg_parse::<u32>("SPIRA_DISK_FLOOR_PCT")?,
             grace_secs: cfg_parse::<u64>("SPIRA_RECONCILER_GRACE_SECS")?,
             preflight_wall_secs: cfg_parse::<u64>("SPIRA_PREFLIGHT_WALL_SECS")?,
-            now_secs: unix_now(),
-            now_iso: compute_now_iso(),
-            desired_dir: spira_desired_state::store::default_dir(),
+            now_secs: clock::now_secs(&seams.date),
+            now_iso: clock::now_iso(&seams.date),
+            desired_dir: spira_desired_state::store::default_dir()?,
             desired: DesiredState::default(),
+            ctrl_path: PathBuf::from(cfg("SPIRA_CTRL")?),
+            instance: cfg("SPIRA_INSTANCE")?,
+            reminders_path: paths::reminders(&spira_run),
+            seams,
             spira_run,
             spira_home,
         })
@@ -306,23 +272,6 @@ impl Config {
         self.desired = DesiredState::load(|msg| eprintln!("{}", msg), &self.desired_dir);
         self
     }
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn compute_now_iso() -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
 }
 
 fn log_print(cfg: &Config, msg: &str) {
@@ -341,8 +290,25 @@ enum Remedy {
     /// No deterministic fix — a gap here always escalates to the Concierge.
     Escalate,
     Command { program: String, args: Vec<String> },
-    /// File one P0 incident, deduped on `ref_key` while it is open.
-    FileP0 { subject: String, body: String, ref_key: String },
+    /// Every step runs, in order, whether or not an earlier one succeeded.
+    Sequence(Vec<(String, Vec<String>)>),
+}
+
+impl Remedy {
+    fn steps(&self) -> Vec<(&str, Vec<&str>)> {
+        match self {
+            Remedy::Escalate => Vec::new(),
+            Remedy::Command { program, args } => vec![(program.as_str(), args.iter().map(String::as_str).collect())],
+            Remedy::Sequence(steps) => steps
+                .iter()
+                .map(|(p, a)| (p.as_str(), a.iter().map(String::as_str).collect()))
+                .collect(),
+        }
+    }
+
+    fn describe(&self) -> String {
+        self.steps().iter().map(|(p, a)| format!("{} {}", p, a.join(" "))).collect::<Vec<_>>().join(" ; ")
+    }
 }
 
 struct Check {
@@ -424,7 +390,7 @@ fn queue_repo_names(queue_dir: &Path) -> Vec<String> {
 // of a small set of known state words on stdout even on a non-zero exit; anything else
 // (empty output, an error message, a missing binary) is genuinely unreadable.
 fn systemctl_state(cfg: &Config, verb: &str, unit: &str) -> Option<String> {
-    let out = spira_config::bounded::bounded(&cfg.systemctl)
+    let out = spira_config::bounded::bounded(&cfg.seams.systemctl)
         .args(["--user", verb, unit])
         .stderr(Stdio::null())
         .output()
@@ -443,9 +409,9 @@ fn systemctl_state(cfg: &Config, verb: &str, unit: &str) -> Option<String> {
 
 /// A unit's desired (enabled, active) — from the Composite's UnitsSpec when it names the
 /// unit, else the legacy assumption every name in the manifest carries: it should be both
-/// (sp-8c3ib: units-manifest.sh's ENABLE array only ever lists what should be enabled, never
-/// what should not be, so a unit the Composite has not caught up to yet keeps the old default
-/// rather than being treated as having no desired state at all).
+/// (the ENABLE set only ever lists what should be enabled, never what should not be, so a
+/// unit the Composite has not caught up to yet keeps the old default rather than being
+/// treated as having no desired state at all).
 fn desired_unit_state(cfg: &Config, unit: &str) -> (bool, bool) {
     match &cfg.desired.units {
         Some(spec) => match spec.units.iter().find(|u| u.name == unit) {
@@ -477,9 +443,7 @@ fn suspension_of(ctrl: &spira_ctrl::CtrlData, instance: &str, unit: &str) -> Opt
         unit.rsplit_once('.').map(|(b, _)| b.to_string()).unwrap_or_else(|| unit.to_string()),
         spira_ctrl::subject_of_masked_unit(unit, instance),
     ];
-    subjects.into_iter().find_map(|s| {
-        spira_ctrl::reason(ctrl, &s).map(|r| (s, r.to_string()))
-    })
+    subjects.into_iter().find_map(|s| spira_ctrl::reason(ctrl, &s).map(|r| (s, r.to_string())))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -501,10 +465,10 @@ fn reminder_due(owner: &str, until: Option<&str>, today: &str, owner_landed: boo
 }
 
 fn owner_landed(cfg: &Config, owner: &str) -> bool {
-    if owner.is_empty() || cfg.lc_bin.is_empty() {
+    if owner.is_empty() {
         return false;
     }
-    matches!(spira_config::lc_state::row_with(&cfg.lc_bin, owner), Ok(Some(r)) if r.state == "LANDED")
+    matches!(spira_config::lc_state::row_with(&cfg.seams.spira_lc, owner), Ok(Some(r)) if r.state == "LANDED")
 }
 
 /// Mails the Concierge once per (subject, owner, until) declaration when it falls due. The
@@ -540,7 +504,7 @@ fn remind_due_suspensions(cfg: &Config, ctrl: &spira_ctrl::CtrlData) {
              The reconciler has not lifted it and will not. Lift it with `ctrl resume {subject}`, or \
              extend it by suspending again with a new owner or --until.\n"
         );
-        match mail_concierge(&cfg.mail_sh, &subj, &body) {
+        match mail::note_concierge(&cfg.seams.mail, &subj, &body) {
             Ok(()) => {
                 log_print(cfg, &format!("reconciler: reminded — {}: {}", subject, why));
                 sent.insert(marker);
@@ -556,7 +520,7 @@ fn remind_due_suspensions(cfg: &Config, ctrl: &spira_ctrl::CtrlData) {
 }
 
 fn unit_key(cfg: &Config, unit: &str) -> String {
-    if unit == cfg.store_unit {
+    if unit == cfg.seams.store_unit {
         format!("store:{}", unit)
     } else if unit.ends_with(".timer") {
         format!("units-timer:{}", unit)
@@ -566,14 +530,13 @@ fn unit_key(cfg: &Config, unit: &str) -> String {
 }
 
 fn observe_units(cfg: &Config) -> Vec<Check> {
-    // The Composite's UnitsSpec.units is the declared unit set (sp-8c3ib); an install that
-    // has not materialised one yet falls back to units-manifest.sh's own walk of
-    // systemd/units.sh's ENABLE array, exactly as before.
+    // The Composite's UnitsSpec.units is the declared unit set; an install that has not
+    // materialised one yet falls back to the installer's own ENABLE set.
     let manifest_names;
     let unit_names: Vec<&str> = match &cfg.desired.units {
         Some(spec) if !spec.units.is_empty() => spec.units.iter().map(|u| u.name.as_str()).collect(),
         _ => {
-            manifest_names = run_cmd("bash", &[&cfg.units_manifest_sh]);
+            manifest_names = run_cmd(&cfg.seams.units_install, &["--list-enable"]);
             manifest_names.lines().map(str::trim).filter(|l| !l.is_empty()).collect()
         }
     };
@@ -606,7 +569,7 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
         let is_enabled = enabled == "enabled";
         let is_active = active == "active";
 
-        if unit == cfg.store_unit {
+        if unit == cfg.seams.store_unit {
             // Never restart the store (sp-ocmes evidence, 2026-09-25): a gap here always
             // escalates, whatever it is — including "just not enabled", since even `enable`
             // with no restart risks nothing but is still a decision left to a person for the
@@ -633,11 +596,11 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
                 }
             };
             // No deterministic remedy exists here for anything but "should be enabled and
-            // active" — the only shape units-manifest.sh (or the Composite's own
+            // active" — the only shape the ENABLE set (or the Composite's own
             // examples/default.toml) has ever declared.
             let remedy = if want_enabled && want_active {
                 Remedy::Command {
-                    program: cfg.systemctl.clone(),
+                    program: cfg.seams.systemctl.clone(),
                     args: vec!["--user".into(), "enable".into(), "--now".into(), unit.to_string()],
                 }
             } else {
@@ -663,12 +626,12 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
         };
         let remedy = if want_active && !is_active {
             Remedy::Command {
-                program: cfg.systemctl.clone(),
+                program: cfg.seams.systemctl.clone(),
                 args: vec!["--user".into(), "restart".into(), unit.to_string()],
             }
         } else if want_enabled && !is_enabled {
             Remedy::Command {
-                program: cfg.systemctl.clone(),
+                program: cfg.seams.systemctl.clone(),
                 args: vec!["--user".into(), "enable".into(), unit.to_string()],
             }
         } else {
@@ -683,40 +646,55 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
 // Fleet: ready work per builder partition vs live builders under it.
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn observe_fleet(cfg: &Config) -> Vec<Check> {
-    let out = run_cmd("bash", &[&cfg.fleet_status_sh]);
-    let mut max_live: Option<i64> = None;
-    let mut live_lanes: i64 = 0;
-    let mut pool: Option<i64> = None;
-    let mut rows: Vec<(String, i64, i64, bool)> = Vec::new();
+struct FleetReadings {
+    /// `(labels, ready, live, is_task)` per builder partition.
+    rows: Vec<(String, i64, i64, bool)>,
+    live_lanes: i64,
+    max_live: Option<i64>,
+    pool: Option<i64>,
+}
 
-    for line in out.lines() {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.is_empty() {
+fn count_of(out: &str) -> i64 {
+    out.trim().parse().unwrap_or(0)
+}
+
+/// Observed fleet occupancy from the same tools the sentinel decides summons with: the chamber
+/// supplies the partitions, `spira-claim` the claimable work under each, `strand` the aeons live.
+fn fleet_readings(cfg: &Config) -> FleetReadings {
+    let sc = &cfg.seams.spira_config;
+    let words = |out: String| out.split_whitespace().map(String::from).collect::<Vec<_>>();
+    let task_fayths = words(run_cmd(sc, &["fayth", "task"]));
+    let live_of = |fayth: &str| count_of(&run_cmd(&cfg.seams.strand, &["aeon-count", fayth]));
+
+    let live_lanes = words(run_cmd(sc, &["fayth", "lane"])).iter().filter(|f| !task_fayths.contains(f)).map(|f| live_of(f)).sum();
+
+    let mut rows = Vec::new();
+    for line in run_cmd(sc, &["fayth", "partitions"]).lines() {
+        let (labels, exclude) = line.split_once('\t').unwrap_or((line, ""));
+        if labels.is_empty() {
             continue;
         }
-        if parts[0] == "TOTAL" {
-            max_live = parts.get(1).and_then(|s| s.trim().parse().ok());
-            live_lanes = parts.get(2).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
-            pool = parts.get(3).and_then(|s| s.trim().parse().ok());
-            continue;
-        }
-        if parts.len() < 3 {
-            continue;
-        }
-        let ready: i64 = parts[1].trim().parse().unwrap_or(0);
-        let live: i64 = parts[2].trim().parse().unwrap_or(0);
-        // A 4th column names whether this partition is drawn from SPIRA_MAX_AEONS (the
-        // task pool) or is a lane's own (ops/qa/groomer, which draw outside it). Its
-        // absence — every fixture and install before this bead — means "task", the only
-        // shape fleet-status.sh ever emitted.
-        let is_task = parts.get(3).map(|s| s.trim() == "1").unwrap_or(true);
-        rows.push((parts[0].to_string(), ready, live, is_task));
+        let ready = count_of(&run_cmd(&cfg.seams.spira_claim, &["ready-count", labels, exclude]));
+        let fayths = run_cmd(sc, &["fayth", "for-labels", labels]);
+        let fayths: Vec<&str> = fayths.split_whitespace().collect();
+        let live = fayths.iter().map(|f| live_of(f)).sum();
+        let is_task = fayths.iter().any(|f| task_fayths.iter().any(|t| t == f));
+        rows.push((labels.to_string(), ready, live, is_task));
     }
 
-    // The Composite's FleetSpec.ceiling is the declared desired state (sp-8c3ib); an install
-    // that has not materialised one yet falls back to fleet-status.sh's own reading of
-    // SPIRA_MAX_LIVE_AEONS, exactly as before.
+    FleetReadings {
+        rows,
+        live_lanes,
+        max_live: cfg.max_live_aeons.trim().parse().ok(),
+        pool: cfg.max_aeons.trim().parse().ok(),
+    }
+}
+
+fn observe_fleet(cfg: &Config) -> Vec<Check> {
+    let FleetReadings { rows, live_lanes, max_live, pool } = fleet_readings(cfg);
+
+    // The Composite's FleetSpec.ceiling is the declared desired state; an install that has
+    // not materialised one yet falls back to SPIRA_MAX_LIVE_AEONS.
     let max_live = cfg.desired.fleet.as_ref().map(|f| f.ceiling as i64).or(max_live);
 
     let mut checks = Vec::new();
@@ -762,23 +740,23 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cockpit: the operator's tmux server has its sessions and both dashboards, unless the
-// absence of every @cockpit pane says `layout.sh down` was run on purpose.
+// absence of every @cockpit pane says `layout down` was run on purpose.
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn observe_cockpit(cfg: &Config) -> Check {
-    // `layout.sh down` records this (sp-ocmes): the operator dismissed the dashboards on
-    // purpose, and a deliberate state is not a fault (law-a-deliberate-state-is-not-a-fault).
-    // `layout.sh up` clears it the moment it rebuilds anything, so this is stale for no
-    // longer than the next time the operator — or this very remedy — asks for the cockpit.
+    // `layout down` records this: the operator dismissed the dashboards on purpose, and a
+    // deliberate state is not a fault (law-a-deliberate-state-is-not-a-fault). `layout up`
+    // clears it the moment it rebuilds anything, so this is stale for no longer than the next
+    // time the operator — or this very remedy — asks for the cockpit.
     if cfg.spira_run.join("cockpit.down").exists() {
         return Check { key: "cockpit".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate };
     }
 
-    if !run_cmd_ok(&cfg.tmux, &["list-sessions"]) {
+    if !run_cmd_ok(&cfg.seams.tmux, &["list-sessions"]) {
         return Check {
             key: "cockpit".into(),
             raw: RawStatus::Gap { desired: "tmux server up".into(), observed: "no server".into(), since_hint: None },
-            remedy: cockpit_remedy(cfg),
+            remedy: rebuild_remedy(cfg),
         };
     }
 
@@ -789,7 +767,7 @@ fn observe_cockpit(cfg: &Config) -> Check {
     let mut sessions = cfg.cockpit_sessions.clone();
     sessions.push("cockpit".to_string());
     for s in &sessions {
-        if !run_cmd_ok(&cfg.tmux, &["has-session", "-t", &format!("={}", s)]) {
+        if !run_cmd_ok(&cfg.seams.tmux, &["has-session", "-t", &format!("={}", s)]) {
             return Check {
                 key: "cockpit".into(),
                 raw: RawStatus::Gap {
@@ -797,12 +775,12 @@ fn observe_cockpit(cfg: &Config) -> Check {
                     observed: format!("session {} missing", s),
                     since_hint: None,
                 },
-                remedy: cockpit_remedy(cfg),
+                remedy: rebuild_remedy(cfg),
             };
         }
     }
 
-    let tags_out = run_cmd(&cfg.tmux, &["list-panes", "-t", &format!("{}:0", dash_session), "-F", "#{@cockpit}"]);
+    let tags_out = run_cmd(&cfg.seams.tmux, &["list-panes", "-t", &format!("{}:0", dash_session), "-F", "#{@cockpit}"]);
     let tags: Vec<&str> = tags_out.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
 
     // The Composite's CockpitSpec.dashboards is the declared set (sp-8c3ib); an install that
@@ -828,15 +806,22 @@ fn observe_cockpit(cfg: &Config) -> Check {
                 observed: tags.join(","),
                 since_hint: None,
             },
-            remedy: cockpit_remedy(cfg),
+            remedy: ensure_remedy(cfg),
         };
     }
 
     Check { key: "cockpit".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate }
 }
 
-fn cockpit_remedy(cfg: &Config) -> Remedy {
-    Remedy::Command { program: "bash".into(), args: vec![cfg.cockpit_sh.clone(), "--no-attach".into()] }
+/// No server, or a session gone: only `rebuild` can make a cockpit from nothing.
+fn rebuild_remedy(cfg: &Config) -> Remedy {
+    Remedy::Command { program: cfg.seams.rebuild.clone(), args: Vec::new() }
+}
+
+/// Sessions up and a dashboard missing: `layout ensure` heals in place and respawns nothing
+/// that is fine.
+fn ensure_remedy(cfg: &Config) -> Remedy {
+    Remedy::Command { program: cfg.seams.layout.clone(), args: vec!["ensure".into()] }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -845,7 +830,7 @@ fn cockpit_remedy(cfg: &Config) -> Remedy {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn on_main_branch(cfg: &Config) -> Option<bool> {
-    let out = spira_config::bounded::bounded(&cfg.git)
+    let out = spira_config::bounded::bounded(&cfg.seams.git)
         .args(["-C", &cfg.spira_home, "rev-parse", "--abbrev-ref", "HEAD"])
         .stderr(Stdio::null())
         .output()
@@ -912,47 +897,76 @@ fn observe_release(cfg: &Config) -> Check {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Disk: a free-space floor on every path configured, observed via disk-usage.sh (df, plus
-// podman's own idea of its storage root — never a guessed path). sp-lkfto.3: the root
-// filesystem held 2.6 GB free of 62 GB mid-round with every suite running 2x slower, and
-// nothing noticed until it hit 100% and crashed the store. The remedy (disk-remedy.sh)
-// reaps closed-bead worktrees and prunes dangling podman images/volumes; if that still
-// does not clear the floor, the streak escalates to the Concierge exactly like any other
-// remedy that did not hold.
+// Disk: a free-space floor on every path configured, observed with df (plus podman's own
+// idea of its storage root — never a guessed path). The root filesystem once held 2.6 GB free
+// of 62 GB mid-round with every suite running 2x slower, and nothing noticed until it hit 100%
+// and crashed the store. The remedy reaps the build output of landed worktrees (target-reap)
+// and prunes dangling podman images and unattached volumes; if that still does not clear the
+// floor, the streak escalates to the Concierge exactly like any other remedy that did not hold.
 // ──────────────────────────────────────────────────────────────────────────────
+
+/// Free percentage from `df -kP <path>` output: the last row's total and available columns.
+fn parse_df_free_pct(out: &str) -> Option<i64> {
+    let row = out.lines().filter(|l| !l.trim().is_empty()).last()?;
+    let cols: Vec<&str> = row.split_whitespace().collect();
+    let total: i64 = cols.get(1)?.parse().ok()?;
+    let avail: i64 = cols.get(3)?.parse().ok()?;
+    (total > 0).then(|| avail * 100 / total)
+}
+
+fn free_pct(cfg: &Config, path: &str) -> Option<i64> {
+    parse_df_free_pct(&run_cmd(&cfg.seams.df, &["-kP", path]))
+}
+
+/// Without a Composite DiskSpec: the root filesystem, the store's data directory, and
+/// podman's storage root. A default-set path that cannot be read (podman not installed, the
+/// store in server mode elsewhere) is simply omitted — there is no declared expectation it exist.
+fn default_disk_paths(cfg: &Config) -> Vec<String> {
+    let mut paths = vec!["/".to_string()];
+    if !cfg.dolt_data.is_empty() {
+        paths.push(cfg.dolt_data.clone());
+    }
+    let graph_root = run_cmd(&cfg.seams.podman, &["info", "--format", "{{.Store.GraphRoot}}"]);
+    if !graph_root.trim().is_empty() {
+        paths.push(graph_root.trim().to_string());
+    }
+    paths
+}
+
+fn disk_remedy(cfg: &Config) -> Remedy {
+    let podman = |args: &[&str]| (cfg.seams.podman.clone(), args.iter().map(|a| a.to_string()).collect());
+    Remedy::Sequence(vec![
+        (cfg.seams.target_reap.clone(), Vec::new()),
+        podman(&["image", "prune", "-f"]),
+        podman(&["volume", "prune", "-f"]),
+    ])
+}
 
 fn observe_disk(cfg: &Config) -> Vec<Check> {
     let (floor_pct, declared_paths): (u32, &[String]) = match &cfg.desired.disk {
         Some(d) => (d.floor_pct, d.paths.as_slice()),
         None => (cfg.disk_floor_pct, &[]),
     };
-    let mut args: Vec<&str> = vec![&cfg.disk_usage_sh];
-    args.extend(declared_paths.iter().map(String::as_str));
-    let out = run_cmd("bash", &args);
+    let explicit = !declared_paths.is_empty();
+    let paths: Vec<String> = if explicit { declared_paths.to_vec() } else { default_disk_paths(cfg) };
 
     let mut checks = Vec::new();
-    for line in out.lines() {
-        let parts: Vec<&str> = line.splitn(2, '\t').collect();
-        if parts.len() != 2 {
-            continue;
-        }
-        let path = parts[0].to_string();
-        let raw = match parts[1].trim() {
-            "ERR" => RawStatus::Unobservable { reason: format!("could not read free space for {}", path) },
-            v => match v.parse::<i64>() {
-                Ok(free_pct) if free_pct >= floor_pct as i64 => RawStatus::Satisfied,
-                Ok(free_pct) => RawStatus::Gap {
-                    desired: format!(">= {}% free", floor_pct),
-                    observed: format!("{}% free", free_pct),
-                    since_hint: None,
-                },
-                Err(_) => continue,
+    for path in paths {
+        let raw = match free_pct(cfg, &path) {
+            // A path the Composite names that cannot be read still gets a row (unobservable,
+            // never silently dropped) so a typo cannot vanish from the check set
+            // (law-a-control-that-cannot-check-must-refuse).
+            None if explicit => RawStatus::Unobservable { reason: format!("could not read free space for {}", path) },
+            None => continue,
+            Some(free) if free >= floor_pct as i64 => RawStatus::Satisfied,
+            Some(free) => RawStatus::Gap {
+                desired: format!(">= {}% free", floor_pct),
+                observed: format!("{}% free", free),
+                since_hint: None,
             },
         };
         let remedy = match raw {
-            RawStatus::Gap { .. } => {
-                Remedy::Command { program: "bash".into(), args: vec![cfg.disk_remedy_sh.clone()] }
-            }
+            RawStatus::Gap { .. } => disk_remedy(cfg),
             _ => Remedy::Escalate,
         };
         checks.push(Check { key: format!("disk:{}", path), raw, remedy });
@@ -961,6 +975,7 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
 // Queue: two structural checks czar-pass's own detectors do not already cover. The base
 // gate itself is base-red, already watched by czar-pass — reconciling it here too would
 // file a second incident for the same fault, so it is deliberately not repeated.
@@ -968,7 +983,7 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
 
 fn branch_mergeable(cfg: &Config, repo: &Path, base: &str, branch: &str) -> Option<bool> {
     let repo_str = repo.to_string_lossy().to_string();
-    let mb_out = spira_config::bounded::bounded(&cfg.git)
+    let mb_out = spira_config::bounded::bounded(&cfg.seams.git)
         .args(["-C", &repo_str, "merge-base", base, branch])
         .stderr(Stdio::null())
         .output()
@@ -980,7 +995,7 @@ fn branch_mergeable(cfg: &Config, repo: &Path, base: &str, branch: &str) -> Opti
     if merge_base.is_empty() {
         return None;
     }
-    let mt_out = spira_config::bounded::bounded(&cfg.git)
+    let mt_out = spira_config::bounded::bounded(&cfg.seams.git)
         .args(["-C", &repo_str, "merge-tree", &merge_base, base, branch])
         .stderr(Stdio::null())
         .output()
@@ -996,13 +1011,16 @@ fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
             Some(p) => p,
             None => continue,
         };
-        let out = run_cmd("bash", &[&cfg.queue_certified_list_sh, &repo_name]);
+        let base = run_cmd(&cfg.seams.spira_config, &["repo", "landref", &repo_name]);
+        let base = base.trim();
+        if base.is_empty() {
+            continue;
+        }
+        let out = run_cmd(&cfg.seams.queue_helpers, &["certified-list", &repo_path.to_string_lossy()]);
         for line in out.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() != 3 {
-                continue;
-            }
-            let (id, branch, base) = (parts[0], parts[1], parts[2]);
+            let Some(id) = line.split_whitespace().next() else { continue };
+            let branch = format!("spira/{id}");
+            let branch = branch.as_str();
             let key = format!("queue-mergeable:{}:{}", repo_name, id);
             let raw = match branch_mergeable(cfg, &repo_path, base, branch) {
                 None => RawStatus::Unobservable { reason: format!("cannot read {} in {}", branch, repo_name) },
@@ -1017,7 +1035,7 @@ fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
                 key,
                 raw,
                 remedy: Remedy::Command {
-                    program: cfg.queue_bin.clone(),
+                    program: cfg.seams.queue.clone(),
                     args: vec![
                         "eject".into(),
                         id.to_string(),
@@ -1048,11 +1066,11 @@ fn orphan_reading(out: &str) -> RawStatus {
 
 fn observe_lc_orphans(cfg: &Config) -> Check {
     let actor = "reconciler";
-    let raw = orphan_reading(&run_cmd(&cfg.lc_bin, &["requeue-orphans", "--actor", actor]));
+    let raw = orphan_reading(&run_cmd(&cfg.seams.spira_lc, &["requeue-orphans", "--actor", actor]));
     Check {
         key: "lc-orphan-in-delivery".into(),
         raw,
-        remedy: Remedy::Command { program: cfg.lc_bin.clone(), args: vec!["requeue-orphans".into(), "--actor".into(), actor.into(), "--apply".into()] },
+        remedy: Remedy::Command { program: cfg.seams.spira_lc.clone(), args: vec!["requeue-orphans".into(), "--actor".into(), actor.into(), "--apply".into()] },
     }
 }
 
@@ -1154,7 +1172,7 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
         Ok(ids) => ids,
         Err(e) => return unobservable(e),
     };
-    let rows = match spira_config::lc_state::list_with(&cfg.lc_bin) {
+    let rows = match spira_config::lc_state::list_with(&cfg.seams.spira_lc) {
         Ok(rows) => rows,
         Err(e) => return unobservable(e),
     };
@@ -1168,7 +1186,7 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
                 since_hint: None,
             },
             remedy: Remedy::Command {
-                program: cfg.lc_bin.clone(),
+                program: cfg.seams.spira_lc.clone(),
                 args: vec![
                     "drop".into(),
                     id,
@@ -1182,7 +1200,7 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Main health: the landing ref must pass the fences every branch is judged by. A base
-// that is red turns every bead's gate red, so one P0 per fence class is filed at once.
+// that is red turns every bead's gate red, so a red fence escalates at once.
 // ──────────────────────────────────────────────────────────────────────────────
 
 struct Fence {
@@ -1193,72 +1211,58 @@ struct Fence {
 
 fn base_fences(cfg: &Config, tree: &str, sha: &str) -> Vec<Fence> {
     vec![
-        Fence { class: "lint", program: cfg.lint_bin.clone(), args: vec!["--root".into(), tree.into(), "--base".into(), sha.into()] },
-        Fence { class: "lifecycle-guard", program: cfg.guard_bin.clone(), args: vec!["--gate".into(), tree.into()] },
+        Fence { class: "lint", program: cfg.seams.lint.clone(), args: vec!["--root".into(), tree.into(), "--base".into(), sha.into()] },
+        Fence { class: "lifecycle-guard", program: cfg.seams.guard.clone(), args: vec!["--gate".into(), tree.into()] },
     ]
-}
-
-fn tail_lines(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
 fn observe_main_health(cfg: &Config) -> Vec<Check> {
     let Some(repo) = repo_root("spira", &cfg.repo_map) else { return Vec::new() };
     let repo_str = repo.to_string_lossy().to_string();
+    let git = &cfg.seams.git;
     let unobservable = |reason: String| {
         vec![Check { key: "main-health".into(), raw: RawStatus::Unobservable { reason }, remedy: Remedy::Escalate }]
     };
-    let sha = run_cmd(&cfg.git, &["-C", &repo_str, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", cfg.main_ref)]);
+    let sha = run_cmd(git, &["-C", &repo_str, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", MAIN_REF)]);
     let sha = sha.trim().to_string();
     if sha.is_empty() {
-        return unobservable(format!("{} does not resolve in {}", cfg.main_ref, repo_str));
+        return unobservable(format!("{} does not resolve in {}", MAIN_REF, repo_str));
     }
-    let tree = cfg.spira_run.join("main-health-tree");
+    let tree = paths::main_health_tree(&cfg.spira_run);
     let tree_str = tree.to_string_lossy().to_string();
-    let _ = run_cmd_ok(&cfg.git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
+    let _ = run_cmd_ok(git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
     let _ = fs::remove_dir_all(&tree);
-    if !run_cmd_ok(&cfg.git, &["-C", &repo_str, "worktree", "add", "--detach", &tree_str, &sha]) {
+    if !run_cmd_ok(git, &["-C", &repo_str, "worktree", "add", "--detach", &tree_str, &sha]) {
         return unobservable(format!("cannot check out {} into {}", sha, tree_str));
     }
     let mut checks = Vec::new();
     for fence in base_fences(cfg, &tree_str, &sha) {
+        // batch-job: a fence over a whole checkout of the landing ref runs as long as the lint does
         let out = spira_config::bounded::bounded(&fence.program)
             .args(&fence.args)
             .current_dir(&tree)
             .stdin(Stdio::null())
             .output();
-        let key = format!("main-health:{}", fence.class);
+        let log = paths::main_health_log(&cfg.spira_run, fence.class);
         let raw = match &out {
             Err(e) => RawStatus::Unobservable { reason: format!("{}: {}", fence.program, e) },
             Ok(o) if o.status.success() => RawStatus::Satisfied,
-            Ok(o) if o.status.code() == Some(1) => RawStatus::Gap {
-                desired: format!("{} passes on {}", fence.class, cfg.main_ref),
-                observed: format!("{} red at {}", fence.class, sha),
-                since_hint: None,
-            },
+            Ok(o) if o.status.code() == Some(1) => {
+                let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                let _ = fs::write(&log, text);
+                RawStatus::Gap {
+                    desired: format!("{} passes on {}", fence.class, MAIN_REF),
+                    observed: format!("{} red at {} (output in {})", fence.class, sha, log.display()),
+                    since_hint: None,
+                }
+            }
             Ok(o) => RawStatus::Unobservable {
                 reason: format!("{} exit {} on {}", fence.program, o.status.code().unwrap_or(-1), sha),
             },
         };
-        let remedy = match (&raw, &out) {
-            (RawStatus::Gap { .. }, Ok(o)) => {
-                let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
-                Remedy::FileP0 {
-                    subject: format!("MAIN RED: {} fence fails on {} ({})", fence.class, cfg.main_ref, &sha[..sha.len().min(12)]),
-                    body: format!(
-                        "The landing ref fails a fence every branch is judged by, so every bead's gate is red until it is fixed.\n\n\
-                         ref      {}\ncommit   {}\nfence    {} {}\n\n{}\n",
-                        cfg.main_ref, sha, fence.program, fence.args.join(" "), tail_lines(&text, 40)
-                    ),
-                    ref_key: format!("incident:main-health:{}", fence.class),
-                }
-            }
-            _ => Remedy::Escalate,
-        };
-        checks.push(Check { key, raw, remedy });
+        checks.push(Check { key: format!("main-health:{}", fence.class), raw, remedy: Remedy::Escalate });
     }
-    let _ = run_cmd_ok(&cfg.git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
+    let _ = run_cmd_ok(git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
     let _ = fs::remove_dir_all(&tree);
     checks
 }
@@ -1304,33 +1308,16 @@ fn judge_pending(cfg: &Config, pending: &mut PendingMap, key: &str, after: f64) 
             log_print(cfg, &format!("reconciler: {} → remedy had no effect", key));
             let subject = format!("RECONCILER: remedy for {} had no effect", key);
             let body = compose_no_effect(key, &prior, after, cfg.now_secs, cfg.effect_passes);
-            if let Err(e) = mail_concierge(&cfg.mail_sh, &subject, &body) {
+            if let Err(e) = mail::note_concierge(&cfg.seams.mail, &subject, &body) {
                 log_print(cfg, &format!("reconciler: {} → no-effect mail failed: {}", key, e));
             }
         }
     }
 }
 
-fn mail_concierge(mail_sh: &str, subject: &str, body: &str) -> Result<(), String> {
-    let mut child = spira_config::bounded::bounded(mail_sh)
-        .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "note"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("{mail_sh}: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    let out = child.wait_with_output().map_err(|e| format!("{mail_sh}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("{mail_sh} send concierge: exit {}", out.status.code().unwrap_or(-1)));
-    }
-    Ok(())
-}
-
-fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, check: Check) {
+fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, alerted: &mut AlertedSinceMap, check: Check) {
     let prev = state.remove(&check.key).unwrap_or_default();
+    let prev_remedy = last_remedy(&prev).map(str::to_string);
     let metric_now = gap_metric(&check.raw);
     let (verdict, mut next) = step(cfg.now_secs, check.raw, cfg.grace_secs, prev);
     append_status(&cfg.status_log, &cfg.now_iso, &check.key, &verdict);
@@ -1338,37 +1325,21 @@ fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, check:
 
     if verdict.is_gap {
         if verdict.remedy_failed {
-            match &check.remedy {
-                Remedy::FileP0 { subject, body, ref_key } => {
-                    file_incident(cfg, subject, body, ref_key, &check.key, "0");
-                }
-                _ => escalate(cfg, &check.key, &verdict),
-            }
+            escalate(cfg, alerted, &check.key, &verdict, prev_remedy.as_deref());
         } else {
             match &check.remedy {
-                Remedy::Escalate => escalate(cfg, &check.key, &verdict),
-                Remedy::FileP0 { .. } | Remedy::Command { .. } => {
-                    let desc = match &check.remedy {
-                        Remedy::Command { program, args } => format!("{} {}", program, args.join(" ")),
-                        Remedy::FileP0 { ref_key, .. } => format!("file P0 {}", ref_key),
-                        Remedy::Escalate => unreachable!(),
-                    };
+                Remedy::Escalate => escalate(cfg, alerted, &check.key, &verdict, None),
+                remedy => {
+                    let desc = remedy.describe();
                     if is_shadowed(&cfg.shadow_kinds, kind_of(&check.key)) {
                         log_print(cfg, &format!("reconciler: {} → remedy held (shadow): {}", check.key, desc));
                         write_event(cfg, "shadow", &check.key, &desc, metric_now, None);
-                        escalate(cfg, &check.key, &verdict);
+                        escalate(cfg, alerted, &check.key, &verdict, None);
                     } else {
                         log_print(cfg, &format!("reconciler: {} → remedy: {}", check.key, desc));
                         write_event(cfg, "remedy", &check.key, &desc, metric_now, None);
-                        match &check.remedy {
-                            Remedy::Command { program, args } => {
-                                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                                let _ = run_cmd_ok(program, &arg_refs);
-                            }
-                            Remedy::FileP0 { subject, body, ref_key } => {
-                                file_incident(cfg, subject, body, ref_key, &check.key, "0");
-                            }
-                            Remedy::Escalate => {}
+                        for (program, args) in remedy.steps() {
+                            let _ = run_cmd_ok(program, &args);
                         }
                         record_remedy(&mut next, cfg.now_secs, &desc);
                         pending.insert(
@@ -1385,6 +1356,8 @@ fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, check:
                 }
             }
         }
+    } else {
+        alerted.remove(&check.key);
     }
 
     if next != HysteresisState::default() {
@@ -1401,57 +1374,25 @@ fn describe(verdict: &Verdict) -> String {
     }
 }
 
-// FILES A BEAD, NOT reconciler_engine::alert'S LIVE WAKE — a decision, not an oversight.
-// Structural gaps reach here only after a remedy already failed or none exists, which makes
-// them trackable Ops work, not a judgement call; incident.sh's own dedup (one bead per ref,
-// a recurrence count bumped every pass, an operator page only past its threshold) already
-// absorbs a persisting gap without repeat noise, the same job should_alert's per-streak dedup
-// does for a medium — live mail — that cannot absorb a repeat itself. Two dedup mechanisms
-// because there are two destinations with different absorption, not one duplicated by mistake.
-fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
-    let subj = format!("RECONCILER: {} — {}", key, describe(verdict));
-    let age = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
-    let body = format!(
-        "The reconciler found a structural gap that has outlasted its grace period.\n\n\
-         key      {}\n\
-         age      {}s\n\
-         status   {}\n\
-         remedy attempted and did not close it: {}\n",
-        key, age, describe(verdict), verdict.remedy_failed
-    );
-    log_print(cfg, &format!("reconciler: {} → escalate", key));
-
-    file_incident(cfg, &subj, &body, &format!("incident:reconciler:{}", key), key, "1");
-}
-
-fn file_incident(cfg: &Config, subject: &str, body: &str, ref_key: &str, cause: &str, priority: &str) {
-    let mut labels = cfg.reconciler_label.clone();
-    if !cfg.scope_label.is_empty() {
-        labels = format!("{},{}", cfg.scope_label, labels);
+// A structural gap reaches here only after a remedy already failed or none exists: judgement,
+// not a bead. It goes to the Concierge inbox as one note per gap streak — `should_alert` keys
+// the streak by when it began, so a gap that persists is not re-sent every pass.
+fn escalate(cfg: &Config, alerted: &mut AlertedSinceMap, key: &str, verdict: &Verdict, last_remedy: Option<&str>) {
+    let (fire, next) = should_alert(verdict, alerted.get(key).copied());
+    match next {
+        Some(since) => alerted.insert(key.to_string(), since),
+        None => alerted.remove(key),
+    };
+    if !fire {
+        return;
     }
-    let child = spira_config::bounded::bounded("bash")
-        .arg(&cfg.incident_sh)
-        .arg("file")
-        .arg(subject)
-        .arg("-")
-        .env("SPIRA_DB", &cfg.spira_db)
-        .env("SPIRA_INCIDENT_LABELS", labels)
-        .env("SPIRA_INCIDENT_TYPE", "task")
-        .env("SPIRA_INCIDENT_PRIORITY", priority)
-        .env("SPIRA_INCIDENT_ACTOR", "reconciler")
-        .env("SPIRA_SIN_EXEMPT", "1")
-        .env("SPIRA_INCIDENT_REPO", "spira")
-        .env("SPIRA_INCIDENT_REF", ref_key)
-        .env("SPIRA_INCIDENT_CAUSE", cause)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    if let Ok(mut child) = child {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(body.as_bytes());
-        }
-        let _ = child.wait();
+    let subject = format!("RECONCILER: {} — {}", key, describe(verdict));
+    let evidence = compose_alert(key, cfg.now_secs, verdict, last_remedy);
+    log_print(cfg, &format!("reconciler: {} → escalate", key));
+    let body = format!("## Alert\n{subject}\n\nThe reconciler found a structural gap that has outlasted its grace period.\n\n{evidence}");
+    if let Err(e) = mail::send(&cfg.seams.mail, "concierge", mail::FROM, &subject, "alert", None, None, &body) {
+        log_print(cfg, &format!("reconciler: {} → escalation mail failed: {}", key, e));
+        alerted.remove(key);
     }
 }
 
@@ -1470,8 +1411,8 @@ fn run_hold_sweep(cfg: &Config, pending: &mut PendingMap) {
         return;
     }
     let mut live = hold_sweep::Live {
-        lc_bin: cfg.lc_bin.clone(),
-        mail_sh: cfg.mail_sh.clone(),
+        lc_bin: cfg.seams.spira_lc.clone(),
+        mail_sh: cfg.seams.mail.clone(),
         mail_root: cfg.mail_root.clone(),
         actor: "reconciler".to_string(),
         now: cfg.now_secs,
@@ -1519,7 +1460,7 @@ fn run_hold_sweep(cfg: &Config, pending: &mut PendingMap) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_env()?.with_desired_state();
+    let cfg = Config::from_process(Seams::production())?.with_desired_state();
 
     if cfg.spira_run.join("world.halted").exists() {
         log_print(&cfg, "reconciler: skipped — world is halted");
@@ -1538,6 +1479,7 @@ fn run_pass() -> Result<(), String> {
 
     let mut state = load_state(&cfg.state_path);
     let mut pending = load_pending(&cfg.effect_state);
+    let mut alerted = load_alerted(&cfg.alerted_path);
 
     let mut checks = Vec::new();
     checks.extend(observe_units(&cfg));
@@ -1557,15 +1499,16 @@ fn run_pass() -> Result<(), String> {
 
     let n = checks.len();
     for check in checks {
-        evaluate(&cfg, &mut state, &mut pending, check);
+        evaluate(&cfg, &mut state, &mut pending, &mut alerted, check);
     }
 
     run_hold_sweep(&cfg, &mut pending);
 
     let _ = save_state(&cfg.state_path, &state);
     let _ = save_pending(&cfg.effect_state, &pending);
+    let _ = save_alerted(&cfg.alerted_path, &alerted);
 
-    let elapsed = unix_now().saturating_sub(cfg.now_secs);
+    let elapsed = clock::now_secs(&cfg.seams.date).saturating_sub(cfg.now_secs);
     log_print(&cfg, &format!("reconciler: complete ({} checks, {}s)", n, elapsed));
 
     drop(lock_file);
@@ -1575,6 +1518,7 @@ fn run_pass() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
 
     fn scratch_dir(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("reconciler-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
@@ -1627,6 +1571,291 @@ mod tests {
         assert_eq!(describe(&verdict), "desired=d observed=o");
     }
 
+    #[test]
+    fn evaluate_inside_grace_raises_nothing() {
+        let dir = scratch_dir("evaluate-inside-grace");
+        let marker = dir.join("remedy-ran");
+        let cfg = Config { grace_secs: 300, now_secs: 100, ..test_config() };
+        let mut state = StateMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), &mut alerted, Check {
+            key: "k".into(),
+            raw: RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
+            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
+        });
+        assert!(!marker.exists(), "a gap inside its grace period must not run a remedy");
+        let (_, expect_next) = step(
+            100,
+            RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
+            300,
+            HysteresisState::default(),
+        );
+        assert_eq!(state.get("k"), Some(&expect_next), "the streak's `since` must still be recorded");
+    }
+
+    #[test]
+    fn evaluate_runs_a_command_remedy_once_the_gap_outlasts_grace() {
+        let dir = scratch_dir("evaluate-runs-remedy");
+        let marker = dir.join("remedy-ran");
+        let cfg = Config { grace_secs: 0, now_secs: 100, ..test_config() };
+        let mut state = StateMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), &mut alerted, Check {
+            key: "k".into(),
+            raw: RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
+            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
+        });
+        assert!(marker.exists(), "a gap past grace with a command remedy must run it");
+    }
+
+    #[test]
+    fn evaluate_remedy_failure_escalates_instead_of_retrying_blind() {
+        let dir = scratch_dir("evaluate-remedy-failure");
+        let marker = dir.join("remedy-ran");
+        let escalated = dir.join("escalated");
+        let stub_incident = dir.join("stub-mail");
+        testkit::write_exe(&stub_incident, &format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display()));
+
+        let cfg1 = Config { grace_secs: 0, now_secs: 100, seams: stub_mail_seams(&stub_incident), ..test_config() };
+        let mut state = StateMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        let raw = || RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None };
+
+        // Pass 1: past grace, command remedy attempted and recorded.
+        evaluate(&cfg1, &mut state, &mut PendingMap::new(), &mut alerted, Check {
+            key: "k".into(),
+            raw: raw(),
+            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
+        });
+        assert!(marker.exists());
+        fs::remove_file(&marker).unwrap();
+
+        // Pass 2: still a gap — the engine reports remedy_failed, so evaluate must escalate
+        // rather than run the command a second time.
+        let cfg2 = Config { now_secs: 200, ..cfg1.clone() };
+        evaluate(&cfg2, &mut state, &mut PendingMap::new(), &mut alerted, Check {
+            key: "k".into(),
+            raw: raw(),
+            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
+        });
+        assert!(!marker.exists(), "a remedy that did not close its gap must not be retried blind");
+        assert!(escalated.exists(), "a remedy that did not close its gap must escalate on the next pass");
+    }
+
+    #[test]
+    fn evaluate_unobservable_inside_grace_raises_nothing() {
+        let dir = scratch_dir("evaluate-unobservable-grace");
+        let escalated = dir.join("escalated");
+        let stub_incident = dir.join("stub-mail");
+        testkit::write_exe(&stub_incident, &format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display()));
+
+        let cfg = Config { grace_secs: 300, now_secs: 100, seams: stub_mail_seams(&stub_incident), ..test_config() };
+        let mut state = StateMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), &mut alerted, Check {
+            key: "k".into(),
+            raw: RawStatus::Unobservable { reason: "cannot read it".into() },
+            remedy: Remedy::Escalate,
+        });
+        assert!(!escalated.exists(), "an unobservable reading inside its grace period must not escalate");
+    }
+
+    #[test]
+    fn evaluate_unobservable_past_grace_escalates_but_status_is_never_satisfied() {
+        let dir = scratch_dir("evaluate-unobservable-escalate");
+        let escalated = dir.join("escalated");
+        let stub_incident = dir.join("stub-mail");
+        testkit::write_exe(&stub_incident, &format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display()));
+
+        let cfg = Config { grace_secs: 0, now_secs: 100, seams: stub_mail_seams(&stub_incident), ..test_config() };
+        let mut state = StateMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), &mut alerted, Check {
+            key: "k".into(),
+            raw: RawStatus::Unobservable { reason: "cannot read it".into() },
+            remedy: Remedy::Escalate,
+        });
+        assert!(escalated.exists(), "unobservable sustained past grace must still escalate (law-a-control-that-cannot-check-must-refuse)");
+    }
+
+    fn gap_raw() -> RawStatus {
+        RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None }
+    }
+
+    fn touch_remedy(path: &Path) -> Remedy {
+        Remedy::Command { program: "touch".into(), args: vec![path.to_string_lossy().to_string()] }
+    }
+
+    fn effect_cfg(dir: &Path, mail: &Path) -> Config {
+        Config {
+            grace_secs: 0,
+            remedy_log: dir.join("remedy.jsonl"),
+            seams: stub_mail_seams(mail),
+            release: "r-fixture".into(),
+            effect_passes: 2,
+            ..test_config()
+        }
+    }
+
+    fn stub_mail(dir: &Path) -> PathBuf {
+        let mail = dir.join("stub-mail.sh");
+        testkit::write_exe(&mail, &format!("#!/usr/bin/env bash\nbody=$(cat)\ncase \"$*\" in *\"had no effect\"*) printf '%s' \"$body\" >> {} ;; esac\n", dir.join("mailed").display()));
+        mail
+    }
+
+    #[test]
+    fn a_remedy_writes_one_event_and_an_effective_one_reads_effect() {
+        let dir = scratch_dir("effect-remedy-event");
+        let mail = stub_mail(&dir);
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+        let mut alerted = AlertedSinceMap::new();
+
+        let cfg1 = Config { now_secs: 100, ..effect_cfg(&dir, &mail) };
+        evaluate(&cfg1, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&dir.join("ran")) });
+        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
+        assert_eq!(log.lines().count(), 1, "one remedy writes exactly one event");
+        for field in ["\"event\":\"remedy\"", "\"kind\":\"disk\"", "\"key\":\"disk:/v\"", "\"action\":\"touch ", "\"before\":1.0", "\"release\":\"r-fixture\"", "\"ts\":"] {
+            assert!(log.contains(field), "event lacks {field}: {log}");
+        }
+
+        let cfg2 = Config { now_secs: 200, ..cfg1.clone() };
+        evaluate(&cfg2, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: RawStatus::Satisfied, remedy: touch_remedy(&dir.join("ran")) });
+        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
+        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0.0"), "{log}");
+        assert!(!log.contains("no-effect"));
+        assert!(!dir.join("mailed").exists(), "an effective remedy mails nothing");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn a_planted_no_op_remedy_is_flagged_no_effect_and_mailed_with_both_readings() {
+        let dir = scratch_dir("effect-no-op");
+        let mail = stub_mail(&dir);
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        let noop = || Remedy::Command { program: "true".into(), args: vec![] };
+
+        let cfg1 = Config { now_secs: 100, ..effect_cfg(&dir, &mail) };
+        evaluate(&cfg1, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
+        let cfg2 = Config { now_secs: 200, ..cfg1.clone() };
+        evaluate(&cfg2, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
+        assert!(!dir.join("mailed").exists(), "one pass of no movement is still inside the pass budget");
+        let cfg3 = Config { now_secs: 300, ..cfg1.clone() };
+        evaluate(&cfg3, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
+
+        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
+        assert!(log.contains("\"event\":\"no-effect\"") && log.contains("\"before\":1.0") && log.contains("\"after\":1.0"), "{log}");
+        let mailed = fs::read_to_string(dir.join("mailed")).unwrap();
+        assert!(mailed.contains("before: 1") && mailed.contains("after: 1") && mailed.contains("disk:/v"), "{mailed}");
+    }
+
+    #[test]
+    fn a_shadowed_kind_records_the_remedy_it_would_have_run_and_does_not_run_it() {
+        let dir = scratch_dir("effect-shadow");
+        let mail = stub_mail(&dir);
+        let ran = dir.join("ran");
+        let cfg = Config { now_secs: 100, shadow_kinds: vec!["disk".into()], ..effect_cfg(&dir, &mail) };
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        evaluate(&cfg, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
+        assert!(!ran.exists(), "the kill switch holds the remedy back");
+        assert!(fs::read_to_string(dir.join("remedy.jsonl")).unwrap().contains("\"event\":\"shadow\""));
+        assert!(pending.is_empty(), "a remedy that did not act has no effect to measure");
+
+        let other = Config { shadow_kinds: vec!["units-timer".into()], ..cfg.clone() };
+        evaluate(&other, &mut state, &mut pending, &mut alerted, Check { key: "disk:/w".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
+        assert!(ran.exists(), "a kind the switch does not name still acts");
+    }
+
+    #[test]
+    fn junk_rows_are_ready_rows_without_a_bead() {
+        let row = |id: &str, state: &str| spira_config::lc_state::Row {
+            bead_id: id.into(),
+            state: state.into(),
+            ..Default::default()
+        };
+        let store: HashSet<String> = ["sp-real".to_string()].into();
+        let rows = vec![row("sp-real", "READY"), row("prose key", "READY"), row("gone", "LANDED")];
+        assert_eq!(junk_row_ids(&rows, &store), vec!["prose key".to_string()]);
+    }
+
+    #[test]
+    fn a_persisting_gap_is_mailed_once_per_streak() {
+        let dir = scratch_dir("escalate-once");
+        let calls = dir.join("calls");
+        let stub = dir.join("stub-mail");
+        testkit::write_exe(&stub, &format!("#!/usr/bin/env bash\ncat >/dev/null\necho x >> {}\n", calls.display()));
+        let cfg = Config { grace_secs: 0, now_secs: 100, seams: stub_mail_seams(&stub), ..test_config() };
+        let mut state = StateMap::new();
+        let mut alerted = AlertedSinceMap::new();
+        for _ in 0..3 {
+            evaluate(&cfg, &mut state, &mut PendingMap::new(), &mut alerted, Check {
+                key: "k".into(),
+                raw: RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
+                remedy: Remedy::Escalate,
+            });
+        }
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 1, "one note per gap streak, not one per pass");
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), &mut alerted, Check { key: "k".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate });
+        assert!(alerted.is_empty(), "a closed streak forgets it was alerted, so a new one alerts again");
+    }
+
+    fn fleet_seams(dir: &Path) -> Seams {
+        let sc = dir.join("spira-config");
+        testkit::write_exe(
+            &sc,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'fayth partitions') printf 'a\\t\\nb\\t\\nc\\t\\n' ;;\n  'fayth task') echo 'p-a p-b' ;;\n  'fayth lane') echo 'p-c' ;;\n  'fayth for-labels') echo \"p-$3\" ;;\nesac\n",
+        );
+        let claim = dir.join("spira-claim");
+        testkit::write_exe(&claim, "#!/bin/sh\necho 5\n");
+        let strand = dir.join("strand");
+        testkit::write_exe(&strand, "#!/bin/sh\necho 0\n");
+        Seams {
+            spira_config: sc.to_string_lossy().to_string(),
+            spira_claim: claim.to_string_lossy().to_string(),
+            strand: strand.to_string_lossy().to_string(),
+            ..Seams::production()
+        }
+    }
+
+    #[test]
+    fn a_fleet_with_no_ceiling_is_one_unobservable_check_however_many_partitions_report() {
+        let dir = scratch_dir("fleet-no-ceiling");
+        let cfg = Config { seams: fleet_seams(&dir), max_live_aeons: String::new(), max_aeons: "6".into(), ..test_config() };
+        let checks = observe_fleet(&cfg);
+        assert_eq!(checks.len(), 1, "an undeclared ceiling is one cause, not one per partition");
+        assert_eq!(checks[0].key, "fleet");
+        assert!(matches!(checks[0].raw, RawStatus::Unobservable { .. }));
+    }
+
+    #[test]
+    fn a_declared_ceiling_bounds_the_desired_live_count_per_partition() {
+        let dir = scratch_dir("fleet-ceiling");
+        let cfg = Config { seams: fleet_seams(&dir), max_live_aeons: "3".into(), max_aeons: "6".into(), ..test_config() };
+        let checks = observe_fleet(&cfg);
+        assert_eq!(checks.len(), 3);
+        for c in &checks {
+            assert!(
+                matches!(&c.raw, RawStatus::Gap { desired, observed, .. } if desired == "3" && observed == "0"),
+                "5 ready under a ceiling of 3 with 0 live desires 3: {}",
+                c.key
+            );
+        }
+    }
+
+    #[test]
+    fn a_paused_task_pool_satisfies_task_partitions_but_not_a_lane() {
+        let dir = scratch_dir("fleet-pool-zero");
+        let cfg = Config { seams: fleet_seams(&dir), max_live_aeons: "3".into(), max_aeons: "0".into(), ..test_config() };
+        let by_key: std::collections::BTreeMap<String, RawStatus> = observe_fleet(&cfg).into_iter().map(|c| (c.key, c.raw)).collect();
+        assert_eq!(by_key["fleet:a"], RawStatus::Satisfied);
+        assert_eq!(by_key["fleet:b"], RawStatus::Satisfied);
+        assert!(matches!(by_key["fleet:c"], RawStatus::Gap { .. }), "a lane draws outside the pool");
+    }
+
     fn suspension_fixture(tag: &str, owner: &str, until: Option<&str>) -> (testkit::TempDir, Config) {
         let dir = scratch_dir(tag);
         let bin = |name: &str, body: &str| {
@@ -1641,8 +1870,8 @@ mod tests {
                 calls.display()
             ),
         );
-        let manifest = bin("manifest", "#!/bin/sh\necho spira-round-template-prod.timer\n");
-        let lc = bin("lc", "#!/bin/sh\necho '{\"bead\":{\"bead_id\":\"sp-xn3nou\",\"state\":\"LANDED\"}}'\n");
+        let units_install = bin("units-install", "#!/bin/sh\necho spira-round-template-prod.timer\n");
+        let spira_lc = bin("lc", "#!/bin/sh\necho '{\"bead\":{\"bead_id\":\"sp-xn3nou\",\"state\":\"LANDED\"}}'\n");
         let mail = bin("mail", &format!("#!/bin/sh\ncat >> {}\necho --- >> {}\n", dir.join("mail-body").display(), dir.join("mail-body").display()));
         let ctrl_path = dir.join("control");
         let mut data = spira_ctrl::CtrlData::new();
@@ -1652,10 +1881,7 @@ mod tests {
         }
         spira_ctrl::write_atomic(&ctrl_path, &data).unwrap();
         let cfg = Config {
-            systemctl,
-            units_manifest_sh: manifest,
-            lc_bin: lc,
-            mail_sh: mail,
+            seams: Seams { systemctl, units_install, spira_lc, mail, ..Seams::production() },
             ctrl_path,
             reminders_path: dir.join("reminders.json"),
             status_log: dir.join("status.jsonl"),
@@ -1673,7 +1899,7 @@ mod tests {
         let checks = observe_units(&cfg);
         assert_eq!(checks.len(), 1);
         for c in checks {
-            evaluate(&cfg, &mut state, &mut Default::default(), c);
+            evaluate(&cfg, &mut state, &mut Default::default(), &mut Default::default(), c);
         }
         let calls = fs::read_to_string(dir.join("systemctl-calls")).unwrap_or_default();
         assert!(!calls.contains("enable") && !calls.contains("restart"), "a remedy ran against a suspended unit: {calls}");
@@ -1688,7 +1914,7 @@ mod tests {
         fs::remove_file(&cfg.ctrl_path).unwrap();
         let mut state = StateMap::new();
         for c in observe_units(&cfg) {
-            evaluate(&cfg, &mut state, &mut Default::default(), c);
+            evaluate(&cfg, &mut state, &mut Default::default(), &mut Default::default(), c);
         }
         let calls = fs::read_to_string(dir.join("systemctl-calls")).unwrap();
         assert!(calls.contains("enable --now spira-round-template-prod.timer"), "{calls}");
@@ -1709,10 +1935,10 @@ mod tests {
     #[test]
     fn a_reminder_is_sent_when_until_has_come_and_not_before() {
         let (dir, cfg) = suspension_fixture("reminder-until", "sp-never", Some("2026-10-09"));
-        let cfg_lc = Config { lc_bin: "/bin/false".into(), ..test_config_from(&cfg) };
-        remind_due_suspensions(&cfg_lc, &load_ctrl(&cfg_lc));
+        let cfg = Config { seams: Seams { spira_lc: "/bin/false".into(), ..cfg.seams.clone() }, ..cfg };
+        remind_due_suspensions(&cfg, &load_ctrl(&cfg));
         assert!(!dir.join("mail-body").exists(), "reminded before until");
-        let later = Config { now_iso: "2026-10-09T00:00:00Z".into(), ..test_config_from(&cfg_lc) };
+        let later = Config { now_iso: "2026-10-09T00:00:00Z".into(), ..cfg.clone() };
         remind_due_suspensions(&later, &load_ctrl(&later));
         assert!(fs::read_to_string(dir.join("mail-body")).unwrap().contains("2026-10-09"));
     }
@@ -1720,7 +1946,7 @@ mod tests {
     #[test]
     fn a_failed_send_is_retried_not_recorded() {
         let (dir, cfg) = suspension_fixture("reminder-retry", "sp-xn3nou", None);
-        let broken = Config { mail_sh: "/bin/false".into(), ..test_config_from(&cfg) };
+        let broken = Config { seams: Seams { mail: "/bin/false".into(), ..cfg.seams.clone() }, ..cfg.clone() };
         remind_due_suspensions(&broken, &load_ctrl(&broken));
         remind_due_suspensions(&cfg, &load_ctrl(&cfg));
         assert!(dir.join("mail-body").exists());
@@ -1743,211 +1969,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_inside_grace_raises_nothing() {
-        let dir = scratch_dir("evaluate-inside-grace");
-        let marker = dir.join("remedy-ran");
-        let cfg = Config { grace_secs: 300, now_secs: 100, ..test_config() };
-        let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
-            key: "k".into(),
-            raw: RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
-            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
-        });
-        assert!(!marker.exists(), "a gap inside its grace period must not run a remedy");
-        let (_, expect_next) = step(
-            100,
-            RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
-            300,
-            HysteresisState::default(),
-        );
-        assert_eq!(state.get("k"), Some(&expect_next), "the streak's `since` must still be recorded");
-    }
-
-    #[test]
-    fn evaluate_runs_a_command_remedy_once_the_gap_outlasts_grace() {
-        let dir = scratch_dir("evaluate-runs-remedy");
-        let marker = dir.join("remedy-ran");
-        let cfg = Config { grace_secs: 0, now_secs: 100, ..test_config() };
-        let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
-            key: "k".into(),
-            raw: RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
-            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
-        });
-        assert!(marker.exists(), "a gap past grace with a command remedy must run it");
-    }
-
-    #[test]
-    fn evaluate_remedy_failure_escalates_instead_of_retrying_blind() {
-        let dir = scratch_dir("evaluate-remedy-failure");
-        let marker = dir.join("remedy-ran");
-        let escalated = dir.join("escalated");
-        let stub_incident = dir.join("stub-incident.sh");
-        testkit::write_exe(&stub_incident, &format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display()));
-
-        let cfg1 = Config { grace_secs: 0, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
-        let mut state = StateMap::new();
-        let raw = || RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None };
-
-        // Pass 1: past grace, command remedy attempted and recorded.
-        evaluate(&cfg1, &mut state, &mut PendingMap::new(), Check {
-            key: "k".into(),
-            raw: raw(),
-            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
-        });
-        assert!(marker.exists());
-        fs::remove_file(&marker).unwrap();
-
-        // Pass 2: still a gap — the engine reports remedy_failed, so evaluate must escalate
-        // rather than run the command a second time.
-        let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg1) };
-        evaluate(&cfg2, &mut state, &mut PendingMap::new(), Check {
-            key: "k".into(),
-            raw: raw(),
-            remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
-        });
-        assert!(!marker.exists(), "a remedy that did not close its gap must not be retried blind");
-        assert!(escalated.exists(), "a remedy that did not close its gap must escalate on the next pass");
-    }
-
-    #[test]
-    fn evaluate_unobservable_inside_grace_raises_nothing() {
-        let dir = scratch_dir("evaluate-unobservable-grace");
-        let escalated = dir.join("escalated");
-        let stub_incident = dir.join("stub-incident.sh");
-        testkit::write_exe(&stub_incident, &format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display()));
-
-        let cfg = Config { grace_secs: 300, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
-        let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
-            key: "k".into(),
-            raw: RawStatus::Unobservable { reason: "cannot read it".into() },
-            remedy: Remedy::Escalate,
-        });
-        assert!(!escalated.exists(), "an unobservable reading inside its grace period must not escalate");
-    }
-
-    #[test]
-    fn evaluate_unobservable_past_grace_escalates_but_status_is_never_satisfied() {
-        let dir = scratch_dir("evaluate-unobservable-escalate");
-        let escalated = dir.join("escalated");
-        let stub_incident = dir.join("stub-incident.sh");
-        testkit::write_exe(&stub_incident, &format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display()));
-
-        let cfg = Config { grace_secs: 0, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
-        let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
-            key: "k".into(),
-            raw: RawStatus::Unobservable { reason: "cannot read it".into() },
-            remedy: Remedy::Escalate,
-        });
-        assert!(escalated.exists(), "unobservable sustained past grace must still escalate (law-a-control-that-cannot-check-must-refuse)");
-    }
-
-    fn gap_raw() -> RawStatus {
-        RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None }
-    }
-
-    fn touch_remedy(path: &Path) -> Remedy {
-        Remedy::Command { program: "touch".into(), args: vec![path.to_string_lossy().to_string()] }
-    }
-
-    fn effect_cfg(dir: &Path, mail: &Path) -> Config {
-        Config {
-            grace_secs: 0,
-            remedy_log: dir.join("remedy.jsonl"),
-            mail_sh: mail.to_string_lossy().to_string(),
-            incident_sh: "/bin/true".into(),
-            release: "r-fixture".into(),
-            effect_passes: 2,
-            ..test_config()
-        }
-    }
-
-    fn stub_mail(dir: &Path) -> PathBuf {
-        let mail = dir.join("stub-mail.sh");
-        testkit::write_exe(&mail, &format!("#!/usr/bin/env bash\ncat >> {}\n", dir.join("mailed").display()));
-        mail
-    }
-
-    #[test]
-    fn a_remedy_writes_one_event_and_an_effective_one_reads_effect() {
-        let dir = scratch_dir("effect-remedy-event");
-        let mail = stub_mail(&dir);
-        let mut state = StateMap::new();
-        let mut pending = PendingMap::new();
-
-        let cfg1 = Config { now_secs: 100, ..effect_cfg(&dir, &mail) };
-        evaluate(&cfg1, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&dir.join("ran")) });
-        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
-        assert_eq!(log.lines().count(), 1, "one remedy writes exactly one event");
-        for field in ["\"event\":\"remedy\"", "\"kind\":\"disk\"", "\"key\":\"disk:/v\"", "\"action\":\"touch ", "\"before\":1.0", "\"release\":\"r-fixture\"", "\"ts\":"] {
-            assert!(log.contains(field), "event lacks {field}: {log}");
-        }
-
-        let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg1) };
-        evaluate(&cfg2, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: RawStatus::Satisfied, remedy: touch_remedy(&dir.join("ran")) });
-        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
-        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0.0"), "{log}");
-        assert!(!log.contains("no-effect"));
-        assert!(!dir.join("mailed").exists(), "an effective remedy mails nothing");
-        assert!(pending.is_empty());
-    }
-
-    #[test]
-    fn a_planted_no_op_remedy_is_flagged_no_effect_and_mailed_with_both_readings() {
-        let dir = scratch_dir("effect-no-op");
-        let mail = stub_mail(&dir);
-        let mut state = StateMap::new();
-        let mut pending = PendingMap::new();
-        let noop = || Remedy::Command { program: "true".into(), args: vec![] };
-
-        let cfg1 = Config { now_secs: 100, ..effect_cfg(&dir, &mail) };
-        evaluate(&cfg1, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
-        let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg1) };
-        evaluate(&cfg2, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
-        assert!(!dir.join("mailed").exists(), "one pass of no movement is still inside the pass budget");
-        let cfg3 = Config { now_secs: 300, ..test_config_from(&cfg1) };
-        evaluate(&cfg3, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
-
-        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
-        assert!(log.contains("\"event\":\"no-effect\"") && log.contains("\"before\":1.0") && log.contains("\"after\":1.0"), "{log}");
-        let mailed = fs::read_to_string(dir.join("mailed")).unwrap();
-        assert!(mailed.contains("before: 1") && mailed.contains("after: 1") && mailed.contains("disk:/v"), "{mailed}");
-    }
-
-    #[test]
-    fn a_shadowed_kind_records_the_remedy_it_would_have_run_and_does_not_run_it() {
-        let dir = scratch_dir("effect-shadow");
-        let mail = stub_mail(&dir);
-        let ran = dir.join("ran");
-        let cfg = Config { now_secs: 100, shadow_kinds: vec!["disk".into()], ..effect_cfg(&dir, &mail) };
-        let mut state = StateMap::new();
-        let mut pending = PendingMap::new();
-        evaluate(&cfg, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
-        assert!(!ran.exists(), "the kill switch holds the remedy back");
-        assert!(fs::read_to_string(dir.join("remedy.jsonl")).unwrap().contains("\"event\":\"shadow\""));
-        assert!(pending.is_empty(), "a remedy that did not act has no effect to measure");
-
-        let other = Config { shadow_kinds: vec!["units-timer".into()], ..test_config_from(&cfg) };
-        evaluate(&other, &mut state, &mut pending, Check { key: "disk:/w".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
-        assert!(ran.exists(), "a kind the switch does not name still acts");
-    }
-
-    #[test]
-    fn junk_rows_are_ready_rows_without_a_bead() {
-        let row = |id: &str, state: &str| spira_config::lc_state::Row {
-            bead_id: id.into(),
-            state: state.into(),
-            ..Default::default()
-        };
-        let store: HashSet<String> = ["sp-real".to_string()].into();
-        let rows = vec![row("sp-real", "READY"), row("prose key", "READY"), row("gone", "LANDED")];
-        assert_eq!(junk_row_ids(&rows, &store), vec!["prose key".to_string()]);
-    }
-
-    #[test]
-    fn a_red_base_fence_files_one_p0_per_class_and_a_second_pass_files_the_same_ref() {
+    fn a_red_base_fence_is_a_gap_whose_output_lands_in_a_file_and_a_green_one_is_satisfied() {
         let dir = scratch_dir("main-health");
         let repo = dir.join("repo");
         let git = |args: &[&str]| {
@@ -1966,84 +1988,54 @@ mod tests {
         testkit::write_exe(&red, "#!/usr/bin/env bash\necho planted violation\nexit 1\n");
         let green = dir.join("green");
         testkit::write_exe(&green, "#!/usr/bin/env bash\nexit 0\n");
-        let filed = dir.join("filed");
-        let incident = dir.join("incident.sh");
-        testkit::write_exe(
-            &incident,
-            &format!("#!/usr/bin/env bash\ncat >/dev/null\necho \"$SPIRA_INCIDENT_PRIORITY $SPIRA_INCIDENT_REF\" >> {}\n", filed.display()),
-        );
         let cfg = Config {
-            grace_secs: 0,
-            now_secs: 100,
             spira_run: dir.to_path_buf(),
             repo_map: Some(map),
-            lint_bin: green.to_string_lossy().to_string(),
-            guard_bin: red.to_string_lossy().to_string(),
-            incident_sh: incident.to_string_lossy().to_string(),
-            remedy_log: dir.join("remedy.jsonl"),
+            seams: Seams {
+                lint: green.to_string_lossy().to_string(),
+                guard: red.to_string_lossy().to_string(),
+                ..Seams::production()
+            },
             ..test_config()
         };
-        let mut state = StateMap::new();
-        let mut pending = PendingMap::new();
-        for check in observe_main_health(&cfg) {
-            evaluate(&cfg, &mut state, &mut pending, check);
-        }
-        assert_eq!(fs::read_to_string(&filed).unwrap(), "0 incident:main-health:lifecycle-guard\n");
-        let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg) };
-        for check in observe_main_health(&cfg2) {
-            evaluate(&cfg2, &mut state, &mut pending, check);
-        }
-        assert_eq!(
-            fs::read_to_string(&filed).unwrap(),
-            "0 incident:main-health:lifecycle-guard\n0 incident:main-health:lifecycle-guard\n",
-            "a persisting red re-files the same ref, which incident dedupes while the bead is open"
-        );
+        let by_key: std::collections::BTreeMap<String, RawStatus> =
+            observe_main_health(&cfg).into_iter().map(|c| (c.key, c.raw)).collect();
+        assert_eq!(by_key["main-health:lint"], RawStatus::Satisfied);
+        assert!(matches!(&by_key["main-health:lifecycle-guard"], RawStatus::Gap { observed, .. } if observed.contains("main-health-lifecycle-guard.log")));
+        assert!(fs::read_to_string(dir.join("main-health-lifecycle-guard.log")).unwrap().contains("planted violation"));
         assert!(!dir.join("main-health-tree").exists(), "the scratch checkout is removed");
+    }
+
+    fn stub_mail_seams(mail: &Path) -> Seams {
+        Seams { mail: mail.to_string_lossy().to_string(), ..Seams::production() }
     }
 
     fn test_config() -> Config {
         Config {
+            seams: Seams::production(),
             spira_run: PathBuf::from("/tmp"),
             spira_home: String::new(),
             log: PathBuf::from("/dev/null"),
             state_path: PathBuf::from("/dev/null"),
+            alerted_path: PathBuf::from("/dev/null"),
             status_log: PathBuf::from("/dev/null"),
             remedy_log: PathBuf::from("/dev/null"),
             effect_state: PathBuf::from("/dev/null"),
-            mail_sh: "/bin/true".into(),
             mail_root: PathBuf::new(),
             release: "r-test".into(),
             shadow_kinds: Vec::new(),
             effect_passes: 2,
             lock_path: PathBuf::from("/dev/null"),
             spira_db: String::new(),
-            scope_label: String::new(),
-            reconciler_label: "reconciler-gap".into(),
-            incident_sh: "/bin/true".into(),
-            main_ref: "local/main".into(),
-            lint_bin: "spira-lint".into(),
-            guard_bin: "lifecycle-guard".into(),
-            systemctl: "systemctl".into(),
-            ctrl_path: PathBuf::from("/dev/null"),
-            instance: "prod".into(),
-            reminders_path: PathBuf::from("/dev/null"),
-            tmux: "tmux".into(),
-            git: "git".into(),
-            units_manifest_sh: String::new(),
-            fleet_status_sh: String::new(),
-            queue_certified_list_sh: String::new(),
-            cockpit_sh: String::new(),
-            queue_bin: String::new(),
-            lc_bin: String::new(),
             bd_bin: String::new(),
             queue_dir: PathBuf::from("/dev/null"),
             repo_map: None,
             releases_dir: PathBuf::new(),
-            store_unit: "dolt-beads.service".into(),
             cockpit_sessions: vec!["brain".into(), "hunk".into(), "chat".into()],
             cockpit_mail: String::new(),
-            disk_usage_sh: String::new(),
-            disk_remedy_sh: String::new(),
+            dolt_data: String::new(),
+            max_live_aeons: String::new(),
+            max_aeons: String::new(),
             disk_floor_pct: 15,
             grace_secs: 300,
             preflight_wall_secs: 240,
@@ -2051,59 +2043,29 @@ mod tests {
             now_iso: "2026-09-25T00:00:00Z".into(),
             desired_dir: PathBuf::from("/dev/null"),
             desired: DesiredState::default(),
+            ctrl_path: PathBuf::from("/dev/null"),
+            instance: "prod".into(),
+            reminders_path: PathBuf::from("/dev/null"),
         }
     }
 
-    fn test_config_from(base: &Config) -> Config {
-        Config {
-            spira_run: base.spira_run.clone(),
-            spira_home: base.spira_home.clone(),
-            log: base.log.clone(),
-            state_path: base.state_path.clone(),
-            status_log: base.status_log.clone(),
-            remedy_log: base.remedy_log.clone(),
-            effect_state: base.effect_state.clone(),
-            mail_sh: base.mail_sh.clone(),
-            mail_root: base.mail_root.clone(),
-            release: base.release.clone(),
-            shadow_kinds: base.shadow_kinds.clone(),
-            effect_passes: base.effect_passes,
-            lock_path: base.lock_path.clone(),
-            spira_db: base.spira_db.clone(),
-            scope_label: base.scope_label.clone(),
-            reconciler_label: base.reconciler_label.clone(),
-            incident_sh: base.incident_sh.clone(),
-            main_ref: base.main_ref.clone(),
-            lint_bin: base.lint_bin.clone(),
-            guard_bin: base.guard_bin.clone(),
-            systemctl: base.systemctl.clone(),
-            ctrl_path: base.ctrl_path.clone(),
-            instance: base.instance.clone(),
-            reminders_path: base.reminders_path.clone(),
-            tmux: base.tmux.clone(),
-            git: base.git.clone(),
-            units_manifest_sh: base.units_manifest_sh.clone(),
-            fleet_status_sh: base.fleet_status_sh.clone(),
-            queue_certified_list_sh: base.queue_certified_list_sh.clone(),
-            cockpit_sh: base.cockpit_sh.clone(),
-            queue_bin: base.queue_bin.clone(),
-            lc_bin: base.lc_bin.clone(),
-            bd_bin: base.bd_bin.clone(),
-            queue_dir: base.queue_dir.clone(),
-            repo_map: base.repo_map.clone(),
-            releases_dir: base.releases_dir.clone(),
-            store_unit: base.store_unit.clone(),
-            cockpit_sessions: base.cockpit_sessions.clone(),
-            cockpit_mail: base.cockpit_mail.clone(),
-            disk_usage_sh: base.disk_usage_sh.clone(),
-            disk_remedy_sh: base.disk_remedy_sh.clone(),
-            disk_floor_pct: base.disk_floor_pct,
-            grace_secs: base.grace_secs,
-            preflight_wall_secs: base.preflight_wall_secs,
-            now_secs: base.now_secs,
-            now_iso: base.now_iso.clone(),
-            desired_dir: base.desired_dir.clone(),
-            desired: base.desired.clone(),
-        }
+    #[test]
+    fn parse_df_free_pct_reads_the_last_rows_total_and_available() {
+        let out = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 1000 800 200 80% /\n";
+        assert_eq!(parse_df_free_pct(out), Some(20));
+    }
+
+    #[test]
+    fn parse_df_free_pct_refuses_what_it_cannot_read() {
+        assert_eq!(parse_df_free_pct(""), None);
+        assert_eq!(parse_df_free_pct("Filesystem 1024-blocks\n/dev/x 0 0 0 0% /\n"), None);
+        assert_eq!(parse_df_free_pct("df: no such file\n"), None);
+    }
+
+    #[test]
+    fn a_sequence_remedy_describes_and_runs_every_step() {
+        let r = Remedy::Sequence(vec![("a".into(), vec!["1".into()]), ("b".into(), vec![])]);
+        assert_eq!(r.describe(), "a 1 ; b ");
+        assert_eq!(r.steps().len(), 2);
     }
 }

@@ -24,7 +24,6 @@ landing-pass/src/signals.rs
 loom/src/lib.rs
 maechen-trigger/src/real.rs
 mail/src/env.rs
-reconciler-alert/src/main.rs
 round-vm/src/cli.rs
 sop/src/main.rs
 spira-ctrl/src/main.rs

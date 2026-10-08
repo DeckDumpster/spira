@@ -72,9 +72,9 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # wiki/projects/spira/remaining-bash-inventory.md (operator surface, install/units, persona
 # passes), not on anything left to port here. About twenty of THEIR scripts still `.
 # "$HERE/lib.sh"` for a name this file shims — acceptance-local.sh, branch-guard.sh,
-# branch-sweep.sh, cadence.sh, citations.sh, deploy.sh, disk-remedy.sh, escape-classify.sh,
-# fleet-status.sh, gate-locks.sh, groom-trigger.sh, held.sh, hold.sh, holds.sh,
-# pr-notify.sh, publish-backlog.sh, queue-certified-list.sh, released-defects.sh,
+# branch-sweep.sh, cadence.sh, citations.sh, deploy.sh, escape-classify.sh,
+# gate-locks.sh, groom-trigger.sh, held.sh, hold.sh, holds.sh,
+# pr-notify.sh, publish-backlog.sh, released-defects.sh,
 # release.sh, review.sh, tokens.sh, unhold.sh — plus roughly fifty of this directory's own
 # `test-*.sh` suites that exercise a shim (or one of the allow-listed functions) directly
 # as bash, rather than through the crate's own unit tests. Wave 4 does not own any of
@@ -213,8 +213,8 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # -> strand, the owning crate; collapses the bead/cockpit-collect copies of aeon_alive onto
 # this same implementation). The logic — including the exclude-unit threading through
 # aeon_count and the FAYTH_NAME resolution in aeons_live_lanes — lives in
-# strand/src/probe.rs now; this file keeps the names so bash sourcers (fleet-status.sh,
-# hold.sh) need no change.
+# strand/src/probe.rs now; this file keeps the names so bash sourcers (hold.sh)
+# need no change.
 #
 # aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_FAYTHS through explicitly: conf.sh
 # deliberately never exports either (a fact about this one copy of the harness, not
@@ -2277,7 +2277,7 @@ _tsd_escape() {
 # Ported to Rust, queue's own crate (sp-hwjsq, "wave 4.32" — queue decomposition row AA):
 # queue/src/ops/helpers.rs `certified_list`, same selection any cutter (the batcher,
 # the reconciler's mergeability check, cockpit-collect's "next up" pane) draws from. Kept
-# as a shim: queue-certified-list.sh and cockpit-collect still call this by name.
+# as a shim: cockpit-collect still calls this by name.
 #
 # EXECS `queue-helpers`, NOT `queue` — a SEPARATE binary, on purpose (same crate, a second
 # [[bin]]). The first cut named this subcommand on `queue` itself; that broke production

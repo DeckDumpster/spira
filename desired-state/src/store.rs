@@ -52,23 +52,11 @@ struct FoundDocument {
     doc: StoredDocument,
 }
 
-/// Where a host's composite and version history live absent `$SPIRA_DESIRED_DIR` —
-/// `${XDG_CONFIG_HOME:-$HOME/.config}/spira/desired`. The one place this path is computed, so
-/// `spira compose`/`spira apply` and every reader of the materialised composite agree on it.
-///
-/// `SPIRA_DESIRED_DIR` is a registered key (`spira/conf.d/SPIRA_DESIRED_DIR`) with no
-/// registry default of its own ("resolves empty unless set ... via the config file") — read
-/// through `spira_config::process::cfg`, never the raw environment (per Ryan 2026-10-05).
-/// A config file that cannot be resolved at all is treated the same as the key resolving
-/// empty: this tool's own XDG fallback, not a second config source.
-pub fn default_dir() -> PathBuf {
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"));
-    match spira_config::process::cfg("SPIRA_DESIRED_DIR") {
-        Ok(v) if !v.is_empty() => PathBuf::from(v),
-        _ => config_home.join("spira").join("desired"),
-    }
+/// Where a host's composite and version history live: the registered key `SPIRA_DESIRED_DIR`,
+/// the one place this path is computed so `spira compose`/`spira apply` and every reader of
+/// the materialised composite agree on it. A config that cannot be resolved is a refusal.
+pub fn default_dir() -> Result<PathBuf, String> {
+    spira_config::process::cfg("SPIRA_DESIRED_DIR").map(PathBuf::from)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
