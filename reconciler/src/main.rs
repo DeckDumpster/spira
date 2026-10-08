@@ -987,7 +987,6 @@ fn observe_queue_lock_age(cfg: &Config) -> Vec<Check> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-<<<<<<< HEAD
 // Junk rows: a READY lifecycle row whose id is no bead in the store (prose and fixture
 // keys). Unreadable store or machine is unobservable, never an empty store — an empty
 // reading must not drop every row.
@@ -1063,7 +1062,9 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
             },
         })
         .collect()
-=======
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Main health: the landing ref must pass the fences every branch is judged by. A base
 // that is red turns every bead's gate red, so one P0 per fence class is filed at once.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1144,7 +1145,6 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
     let _ = run_cmd_ok(&cfg.git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
     let _ = fs::remove_dir_all(&tree);
     checks
->>>>>>> f99f89a27 (sp-q9wev1: reconciler main-health invariant — local/main must pass spira-lint and lifecycle-guard)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1372,13 +1372,10 @@ fn run_pass() -> Result<(), String> {
     checks.extend(observe_queue_mergeable(&cfg));
     checks.extend(observe_queue_lock_age(&cfg));
     checks.push(observe_lc_orphans(&cfg));
-<<<<<<< HEAD
     let junk = observe_junk_rows(&cfg);
     state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
     checks.extend(junk);
-=======
     checks.extend(observe_main_health(&cfg));
->>>>>>> f99f89a27 (sp-q9wev1: reconciler main-health invariant — local/main must pass spira-lint and lifecycle-guard)
 
     let n = checks.len();
     for check in checks {
@@ -1643,7 +1640,6 @@ mod tests {
     }
 
     #[test]
-<<<<<<< HEAD
     fn junk_rows_are_ready_rows_without_a_bead() {
         let row = |id: &str, state: &str| spira_config::lc_state::Row {
             bead_id: id.into(),
@@ -1653,7 +1649,9 @@ mod tests {
         let store: HashSet<String> = ["sp-real".to_string()].into();
         let rows = vec![row("sp-real", "READY"), row("prose key", "READY"), row("gone", "LANDED")];
         assert_eq!(junk_row_ids(&rows, &store), vec!["prose key".to_string()]);
-=======
+    }
+
+    #[test]
     fn a_red_base_fence_files_one_p0_per_class_and_a_second_pass_files_the_same_ref() {
         let dir = scratch_dir("main-health");
         let repo = dir.join("repo");
@@ -1706,7 +1704,6 @@ mod tests {
             "a persisting red re-files the same ref, which incident dedupes while the bead is open"
         );
         assert!(!dir.join("main-health-tree").exists(), "the scratch checkout is removed");
->>>>>>> f99f89a27 (sp-q9wev1: reconciler main-health invariant — local/main must pass spira-lint and lifecycle-guard)
     }
 
     fn test_config() -> Config {
