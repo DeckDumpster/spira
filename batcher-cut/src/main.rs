@@ -320,7 +320,7 @@ impl drive::RoundOps for LiveOps<'_> {
             .collect();
         match self.batch {
             Some(batch) => {
-                if let Err(e) = io::round_eject(self.env, batch, &member.id, suites, &fails, owner) {
+                if let Err(e) = io::round_eject(self.env, self.repo, batch, &member.id, suites, &fails, owner) {
                     println!("batcher {}: could not eject {} from round {batch}: {e}", self.repo.name, member.id);
                 }
             }
@@ -609,7 +609,7 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
 
     // The batcher's own full-corpus run on `stable.head` is the round's certification
     // (queue/DESIGN.md §8 D12); the verb refuses any head but the round worktree's own.
-    match io::round_certify(env_, batch, &stable.head) {
+    match io::round_certify(env_, repo, batch, &stable.head) {
         Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
         Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
     }

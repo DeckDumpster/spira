@@ -1423,7 +1423,7 @@ pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Resu
 
 /// `queue round eject`: `owner` is a member whose own tip reddened `suites`; a collateral
 /// member leaves uncharged. The batcher rebuilds the round tree itself, so the verb does not.
-pub fn round_eject(env: &Env, batch: &str, id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool) -> Result<(), String> {
+pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool) -> Result<(), String> {
     let reason = format!(
         "Ejected by the merge queue's local attribution (pre-PR): spira/{id} {} red on: {}.{}",
         if owner { "turned" } else { "is stacked on a member that turned" },
@@ -1431,7 +1431,7 @@ pub fn round_eject(env: &Env, batch: &str, id: &str, suites: &[String], first_fa
         first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
     let csv = if owner { suites.join(",") } else { String::new() };
-    let mut args = vec!["eject", batch, id, "--reason-file", "-", "--no-rebuild"];
+    let mut args = vec!["eject", batch, id, &repo.name, "--reason-file", "-", "--no-rebuild"];
     if owner {
         args.extend(["--suites", &csv]);
     }
@@ -1445,8 +1445,8 @@ pub fn round_eject(env: &Env, batch: &str, id: &str, suites: &[String], first_fa
 
 /// `queue round certify --attest <head>`: the batcher's own corpus ran green on `head`, the
 /// round worktree's head, so the verb records the round's GREEN for that tree and no other.
-pub fn round_certify(env: &Env, batch: &str, head: &str) -> Result<(), String> {
-    let run = round_verb(env, &["certify", batch, "--attest", head], "")?;
+pub fn round_certify(env: &Env, repo: &Repo, batch: &str, head: &str) -> Result<(), String> {
+    let run = round_verb(env, &["certify", batch, &repo.name, "--attest", head], "")?;
     if run.code == Some(0) {
         Ok(())
     } else {
