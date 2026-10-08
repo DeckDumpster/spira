@@ -8,6 +8,7 @@ use crate::git::Git;
 use crate::systemctl::Systemctl;
 use crate::units;
 use crate::verify;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -198,6 +199,10 @@ pub struct Switched {
     pub retired: Vec<String>,
 }
 
+fn unit_files(dir: &Path) -> BTreeSet<String> {
+    fs::read_dir(dir).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default()
+}
+
 fn is_up(active: &str) -> bool {
     matches!(active, "active" | "activating" | "reloading")
 }
@@ -205,7 +210,7 @@ fn is_up(active: &str) -> bool {
 /// Switch the running system onto release `sha`: render and install units, swap
 /// `current`, daemon-reload, restart what changed, check it came up, and undo all of it
 /// when something did not.
-pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
+pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, String> {
     let cfg = ctx.cfg;
     let rel = verify::release_dir(cfg, sha)?;
     let problems = verify::check_files(&rel, sha);
@@ -277,6 +282,16 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
     if let Err(e) = ctx.sc.daemon_reload() {
         let undo = undo(ctx, &changes, prev.as_deref(), &[]);
         return Err(format!("daemon-reload failed: {e}; rolled back{undo}"));
+    }
+
+    if install_new {
+        let before = unit_files(&cfg.unit_dir);
+        if let Err(e) = ensure_new_units(cfg, sha) {
+            let added: Vec<String> = unit_files(&cfg.unit_dir).difference(&before).cloned().collect();
+            let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+            let shipped = if added.is_empty() { String::new() } else { format!(" (units new in {sha}: {})", added.join(", ")) };
+            return Err(format!("{e}{shipped}; nothing was restarted; rolled back{undo}"));
+        }
     }
 
     let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), retired, ..Default::default() };
@@ -406,11 +421,11 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
 /// `spira-config` before anything changes, added keys written before the flip, dropped keys
 /// removed after it, and the config put back when the switch fails. `Ok` carries the undo
 /// record and any problem dropping keys hit after the flip (the switch itself stood).
-fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>) -> Result<(Switched, Option<String>), String> {
+fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool) -> Result<(Switched, Option<String>), String> {
     if let Some(t) = txn {
         t.apply_pre()?;
     }
-    let out = match switch(ctx, sha) {
+    let out = match switch(ctx, sha, install_new) {
         Ok(o) => o,
         Err(e) => {
             let undo = txn.map(Txn::restore).unwrap_or_default();
@@ -444,7 +459,7 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
     if out.status.success() {
         return Ok(());
     }
-    Err(format!("{sha} is active but unit-ensure could not install its new units ({})", out.status))
+    Err(format!("{sha}: unit-ensure could not install its new units ({})", out.status))
 }
 
 /// `release activate <sha> [--hotfix <reason>]`.
@@ -457,7 +472,7 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     let mut history = read_history(&state)?;
     let delta = config_delta::load(&rel)?;
     let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d)).transpose()?;
-    let (out, late) = switch_with_config(ctx, sha, txn.as_ref())?;
+    let (out, late) = switch_with_config(ctx, sha, txn.as_ref(), true)?;
     if let Some(t) = &txn {
         config_delta::save_undo(&state, sha, &t.undo)?;
     }
@@ -480,7 +495,6 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     if let Some(e) = late {
         return Err(e);
     }
-    ensure_new_units(ctx.cfg, sha)?;
     Ok(out)
 }
 
@@ -511,7 +525,7 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
         }
         None => None,
     };
-    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref())?;
+    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false)?;
     config_delta::clear_undo(&state, &top.sha);
     history.pop();
     write_history(&state, &history)?;

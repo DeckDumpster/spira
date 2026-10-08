@@ -300,6 +300,13 @@ impl Systemctl for FakeSystemctl {
             return Err(format!("{unit}: simulated restart failure"));
         }
         let text = fs::read_to_string(self.unit_dir.join(unit)).unwrap_or_default();
+        for l in text.lines() {
+            if let Some(dep) = l.strip_prefix("Requires=") {
+                if !self.unit_dir.join(dep).exists() {
+                    return Err(format!("Unit {dep} not found"));
+                }
+            }
+        }
         let bad = self.poison.as_ref().map(|p| units::exec_lines(&text).iter().any(|l| l.contains(p.as_str()))).unwrap_or(false);
         let mut s = self.states.borrow_mut();
         let e = s.entry(unit.into()).or_default();
@@ -1824,13 +1831,57 @@ fn activate_runs_the_new_releases_unit_ensure_so_units_it_adds_get_installed() {
 }
 
 #[test]
-fn a_failing_unit_ensure_is_a_loud_activation_error_and_the_release_stays_active() {
+fn a_failing_unit_ensure_is_a_loud_activation_error_and_rolls_back_before_any_restart() {
     let w = World::with_git(FakeGit { unit_ensure: true, ..Default::default() });
     build_with_unit_ensure(&w, B, "#!/bin/sh\necho 'cannot render spira-new-prod.timer' >&2\nexit 1\n".into());
     let sc = FakeSystemctl::new(w.units());
     let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
     assert!(e.contains("unit-ensure could not install its new units"), "{e}");
+    assert!(e.contains("nothing was restarted"), "{e}");
+    assert!(sc.restarts.borrow().is_empty());
+    assert_eq!(w.current(), None, "rolled back to no current release");
+}
+
+const SOCKET_REQUIRING_SVC: &str = "[Unit]\nRequires=foo.socket\n[Service]\nType=simple\nExecStart=@SPIRA_TOOL_BIN@ --serve\n";
+
+fn socket_world() -> World {
+    let git = FakeGit {
+        unit_ensure: true,
+        extra: vec![("systemd/spira-tool.service".into(), SOCKET_REQUIRING_SVC.into(), false)],
+        ..Default::default()
+    };
+    World::with_git(git)
+}
+
+#[test]
+fn a_release_adding_a_socket_its_service_requires_activates_over_a_predecessor_without_it() {
+    let w = socket_world();
+    let body = format!("#!/bin/sh\necho '[Socket]' > {}/foo.socket\n", w.units().display());
+    build_with_unit_ensure(&w, A, body.clone());
+    build_with_unit_ensure(&w, B, body);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    fs::remove_file(w.units().join("foo.socket")).ok();
+    let s = activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(s.restarted.contains(&"spira-tool-prod.service".to_string()), "{:?}", s.restarted);
     assert_eq!(w.current().as_deref(), Some(B));
+}
+
+#[test]
+fn a_failed_restart_over_a_new_socket_still_rolls_back_and_names_the_shipped_unit() {
+    let w = socket_world();
+    let body = format!("#!/bin/sh\necho '[Socket]' > {}/foo.socket\n", w.units().display());
+    build_with_unit_ensure(&w, A, body.clone());
+    build_with_unit_ensure(&w, B, body);
+    let mut sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    fs::remove_file(w.units().join("foo.socket")).ok();
+    sc.poison = Some(format!("{B}/bin/tool"));
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains(&format!("rolled back to {A}")), "{e}");
+    assert_eq!(w.current().as_deref(), Some(A));
 }
 
 #[test]
