@@ -36,6 +36,9 @@ pub const FAMILY: &str = "admission";
 /// (0 disables). Set well above the sccache wedge bound.
 pub const STALL_ENV: &str = "SPIRA_COMPILE_STALL_MINS";
 pub const STALL_DEFAULT_MINS: u64 = 30;
+/// Seconds a fresh compile or test admission waits after the pool's previous one began, while
+/// other leases are held (0 or unset: no stagger). Admission only; an admitted job is unlimited.
+pub const STAGGER_ENV: &str = "SPIRA_ADMIT_STAGGER_SECS";
 /// How often a waiter repeats its waiting line.
 pub const SAY_EVERY: u64 = 30;
 
@@ -433,6 +436,20 @@ fn stall_secs() -> u64 {
     mins.saturating_mul(60)
 }
 
+fn stagger_secs() -> u64 {
+    std::env::var(STAGGER_ENV).ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0)
+}
+
+/// Whether a fresh lease must still wait out the stagger: others are held and the pool's last
+/// fresh admission (`last-start`, an epoch) began under `stagger` seconds ago.
+fn staggered(dir: &Path, held: bool, now: u64, stagger: u64) -> bool {
+    if !held || stagger == 0 {
+        return false;
+    }
+    let last = fs::read_to_string(dir.join("last-start")).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0);
+    now.saturating_sub(last) < stagger
+}
+
 /// Remove dead leases and dead waiters; return the live leases, the ended ones (for
 /// telemetry) and the live waiters, oldest first.
 fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs, now: u64, stall: u64) -> (Vec<Lease>, Vec<Ended>, Vec<Waiter>) {
@@ -509,6 +526,22 @@ pub fn try_take(
     now: u64,
     procs: &dyn Procs,
 ) -> std::io::Result<(Take, Vec<Ended>)> {
+    try_take_staggered(run, pool, size, me, waited, now, procs, stagger_secs())
+}
+
+/// [`try_take`] with the stagger given: a fresh lease is held back until `stagger` seconds
+/// after the pool's last one, whenever other leases are held.
+#[allow(clippy::too_many_arguments)]
+pub fn try_take_staggered(
+    run: &Path,
+    pool: Pool,
+    size: u64,
+    me: &Holder,
+    waited: u64,
+    now: u64,
+    procs: &dyn Procs,
+    stagger: u64,
+) -> std::io::Result<(Take, Vec<Ended>)> {
     let dir = pool.dir(run);
     let _m = Mutex::lock(&dir)?;
     let (live, ended, waiters) = reap(&dir, pool, size, procs, now, stall_secs());
@@ -527,7 +560,8 @@ pub fn try_take(
     let used: u64 = live.iter().map(|l| l.weight.max(1)).sum();
     let first = waiters.first().map_or(true, |w| w.pid == me.pid);
     let fits = used == 0 || used + me.weight.max(1) <= size.max(1);
-    if first && fits {
+    if first && fits && !staggered(&dir, used > 0, now, stagger) {
+        let _ = write_atomic(&dir.join("last-start"), &format!("{now}\n"));
         let n = (1..).find(|n| !live.iter().any(|l| l.slot == *n)).unwrap_or(1);
         let l = Lease { slot: n, pid: me.pid, start: me.start, who: me.who.clone(), since: now, waited, last: now, weight: me.weight.max(1) };
         write_atomic(&dir.join(format!("slot.{n}")), &l.render())?;
