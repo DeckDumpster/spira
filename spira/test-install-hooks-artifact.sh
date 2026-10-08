@@ -42,7 +42,7 @@ SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
 mkdir -p "$SPIRA_DIR" "$COCKPIT_DIR" "$SYSTEMD_DIR"
 
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.socket "$HERE/../systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$SYSTEMD_DIR/$(basename "$f")" 2>/dev/null || true
 done
