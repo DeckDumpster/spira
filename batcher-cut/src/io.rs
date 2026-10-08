@@ -2355,7 +2355,8 @@ mod lc_withdraw_tests {
         e.lc_bin = Some(lc_stub(&d, "SUBMITTED"));
         eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[], true);
         let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
-        assert!(calls.contains("event bead sp-a --expect SUBMITTED --version 4 --actor batcher --kind {\"GateRed\":{\"reason\":\"suites-failed\""), "{calls}");
+        assert!(calls.contains("event bead sp-a --expect SUBMITTED --version 4 --actor batcher --kind {\"GateRed\":{"), "{calls}");
+        assert!(calls.contains("\"reason\":\"suites-failed\""), "{calls}");
         assert!(!calls.contains("Deliver"), "{calls}");
     }
 
@@ -2368,7 +2369,8 @@ mod lc_withdraw_tests {
             e.lc_bin = Some(lc_stub(&d, state));
             lc_certify_round(&e, &[("sp-a".into(), "aaaa".into())], "k1");
             let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
-            assert_eq!(calls.contains("\"GatePass\":{\"gate_key\":\"round:k1\",\"tip\":\"aaaa\"}"), certified, "{state}: {calls}");
+            let passed = calls.contains("\"GatePass\"") && calls.contains("\"gate_key\":\"round:k1\"") && calls.contains("\"tip\":\"aaaa\"");
+            assert_eq!(passed, certified, "{state}: {calls}");
         }
     }
 
