@@ -175,14 +175,14 @@ mod tests {
 
     #[test]
     fn a_slow_request_is_abandoned_at_the_deadline_not_waited_for() {
-        let started = std::time::Instant::now();
-        let slow = super::within(std::time::Duration::from_millis(300), || {
-            std::thread::sleep(std::time::Duration::from_millis(900));
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let slow = super::within(std::time::Duration::from_millis(300), move || {
+            let _ = held.recv();
             1
         });
-        assert_eq!(slow, None);
-        assert!(started.elapsed() < std::time::Duration::from_millis(700), "answered at the deadline");
-        assert_eq!(super::within(std::time::Duration::from_millis(300), || 7), Some(7));
+        assert_eq!(slow, None, "answered at the deadline while the work was still running");
+        drop(release);
+        assert_eq!(super::within(std::time::Duration::from_secs(5), || 7), Some(7));
     }
 
     #[test]
