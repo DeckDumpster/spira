@@ -1,4 +1,4 @@
-//! Failed spira-* systemd units (sp-niqjl). `systemctl --user list-units --state=failed`
+//! Failed spira-* and shared systemd units (sp-niqjl). `systemctl --user list-units --state=failed`
 //! gives the CURRENT list; a state file persists the pass each unit was FIRST seen failing,
 //! because a unit crash-looping every 30s re-enters `activating` then `failed` on every
 //! restart and systemd's own timestamps never age past one restart interval. One escalation
@@ -8,13 +8,30 @@
 
 use std::path::Path;
 
-/// `systemctl --user list-units --state=failed --no-legend 'spira-*'`, one unit name per
+/// Units no instance owns, so `spira-*` never matches them.
+pub const SHARED_UNITS: &[&str] = &[
+    "beads-push.service",
+    "cockpit-ensure.service",
+    "concierge.service",
+    "dolt-beads.service",
+    "dolt-tmp-prune.service",
+    "lc-serve.service",
+    "sccache-dav.service",
+];
+
+fn list_args() -> Vec<&'static str> {
+    let mut a = vec!["--user", "list-units", "--state=failed", "--no-legend", "spira-*"];
+    a.extend_from_slice(SHARED_UNITS);
+    a
+}
+
+/// `systemctl --user list-units --state=failed --no-legend 'spira-*' <shared units>`, one unit name per
 /// line with the leading bullet and trailing columns stripped. `None` means the probe
 /// itself failed — rendered `?`, never an empty (all-clear) list.
 pub fn gather(systemctl: &str) -> Option<Vec<String>> {
     let out = crate::deadline::output(
         "failed units",
-        std::process::Command::new(systemctl).args(["--user", "list-units", "--state=failed", "--no-legend", "spira-*"]),
+        std::process::Command::new(systemctl).args(list_args()),
     )
     .ok()?;
     if !out.status.success() {
@@ -123,6 +140,15 @@ pub fn write_state_file(path: &Path, rows: &[StateRow]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_probe_covers_shared_units_as_well_as_spira_prefixed_ones() {
+        let a = list_args();
+        assert!(a.contains(&"spira-*"));
+        for u in ["beads-push.service", "dolt-beads.service", "cockpit-ensure.service", "concierge.service"] {
+            assert!(a.contains(&u), "{u}");
+        }
+    }
 
     #[test]
     fn extract_unit_name_strips_the_bullet_and_trailing_columns() {
