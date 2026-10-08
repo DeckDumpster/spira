@@ -178,7 +178,7 @@ pub fn run(now: i64, cfg: &Cfg, ctx: &Ctx) {
                 .priority(2)
                 .reference("incident:queue-throttle-engaged")
                 .cause("throttle-engaged");
-                incident::file(inc, &f);
+                incident::alarm(inc, &f);
             }
             log("watchtower: throttle-engage escalation filed");
         }
@@ -213,7 +213,7 @@ pub fn run(now: i64, cfg: &Cfg, ctx: &Ctx) {
                     .priority(1)
                     .reference("incident:queue-throttle-stall")
                     .cause("throttle-stall");
-                    incident::file(ctx.incident_sh, &f);
+                    incident::alarm(ctx.incident_sh, &f);
                 }
             }
         }
@@ -237,7 +237,7 @@ pub fn run(now: i64, cfg: &Cfg, ctx: &Ctx) {
                 .priority(2)
                 .reference("incident:queue-throttle-lifted")
                 .cause("throttle-lifted");
-                incident::file(ctx.incident_sh, &f);
+                incident::alarm(ctx.incident_sh, &f);
             }
             log("watchtower: throttle-lift escalation filed");
         }

@@ -2265,7 +2265,7 @@ fn refuse_repeat(
             ("SPIRA_INCIDENT_DELIVERS", "action".into()),
         ];
         let title = format!("repeat attempt: no change — {br}");
-        let _ = helper(&incident, &["file", &title, "-"], &env, Some(&body));
+        let _ = helper(&incident, &["alarm", &title, "-"], &env, Some(&body));
     }
 }
 

@@ -113,7 +113,7 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
                     continue;
                 }
                 let f = Finding::new(ctx.db, ctx.home_repo, &c.title, &c.body).priority(c.priority).reference(&c.reference).cause(probe);
-                if incident::file(ctx.incident_sh, &f) {
+                if incident::alarm(ctx.incident_sh, &f) {
                     let _ = std::fs::write(filed_dir.join(&k), &c.reference);
                     log(&format!("watchtower: conditions: filed {} ({probe})", c.reference));
                 }

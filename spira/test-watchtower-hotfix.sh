@@ -98,14 +98,14 @@ fresh
 mock_release "$(printf 'current abc\nRUNNING UNLANDED %s: emergency fix (since 2026-09-30T00:00:00Z)\nALERT hotfix %s standing 5h >= threshold 4h' "$SHA" "$SHA")"
 wt_file
 out="$(captured)"
-want "past threshold: an escalation is filed"        "ARGS: file"                   "$out"
+want "past threshold: an alarm is sent"        "ARGS: alarm"                   "$out"
 want "past threshold: titled HOTFIX"                  "HOTFIX: RUNNING UNLANDED"     "$out"
 want "past threshold: deduped by the standing sha"    "REF: incident:hotfix-$SHA"    "$out"
 want "past threshold: cause names hotfix-standing"    "CAUSE: hotfix-standing"       "$out"
 want "past threshold: body carries the RUNNING UNLANDED line" "RUNNING UNLANDED $SHA" "$out"
 want "past threshold: body carries the ALERT line"    "ALERT hotfix $SHA"            "$out"
-n_filed="$(printf '%s\n' "$out" | grep -c '^ARGS: file')"
-is "past threshold: exactly one escalation, not a duplicate" 1 "$n_filed"
+n_filed="$(printf '%s\n' "$out" | grep -c '^ARGS: alarm')"
+is "past threshold: exactly one alarm, not a duplicate" 1 "$n_filed"
 
 # ======================================================================================
 echo
@@ -114,7 +114,7 @@ echo "a hotfix under threshold — RUNNING UNLANDED with no ALERT — files noth
 fresh
 mock_release "$(printf 'current abc\nRUNNING UNLANDED %s: emergency fix (since 2026-09-30T00:00:00Z)' "$SHA")"
 wt_file
-nowant "under threshold: no escalation filed" "ARGS: file" "$(captured)"
+nowant "under threshold: no alarm sent" "ARGS: alarm" "$(captured)"
 
 # ======================================================================================
 echo
@@ -123,7 +123,7 @@ echo "no hotfix standing files nothing:"
 fresh
 mock_release "current abc"
 wt_file
-nowant "no hotfix: no escalation filed" "ARGS: file" "$(captured)"
+nowant "no hotfix: no alarm sent" "ARGS: alarm" "$(captured)"
 
 # ======================================================================================
 echo

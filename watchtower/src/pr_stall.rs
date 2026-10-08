@@ -181,7 +181,7 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
                 .priority(1)
                 .reference(format!("incident:pr-stall-checks-red:{}:{}", s.repo, s.id))
                 .cause("pr-stall-checks-red");
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!(
                     "watchtower: pr-stall-check: {} in {} has a failing check (age {}s) — escalated",
                     s.id, s.repo, s.age_secs
@@ -201,7 +201,7 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
                 .priority(1)
                 .reference(format!("incident:pr-stall-auto-merge-off:{}", s.repo))
                 .cause("pr-stall-auto-merge-off");
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!(
                     "watchtower: pr-stall-check: {} allow_auto_merge=false (bead {}, age {}s) — escalated",
                     s.repo, s.id, s.age_secs

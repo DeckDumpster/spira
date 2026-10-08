@@ -50,7 +50,7 @@ pub fn run(log_path: &Path, db: &str, home_repo: &str, incident_sh: &str, window
         .priority(2)
         .reference("incident:dolt-client-drop-burst".to_string())
         .cause("dolt-client-drop");
-    incident::file(incident_sh, &f);
+    incident::alarm(incident_sh, &f);
     log(&format!("watchtower: dolt-drop-check filed incident (peak {n}/min)"));
 }
 

@@ -87,7 +87,7 @@ pub fn run(spira_home: &str, db: &str, home_repo: &str, incident_sh: &str, cfg: 
         .priority(1)
         .reference(format!("incident:disabled-timer-{base}"))
         .cause("disabled-timer");
-        incident::file(incident_sh, &f);
+        incident::alarm(incident_sh, &f);
         log(&format!(
             "watchtower: disabled-timer-check filed escalation for {timer}"
         ));

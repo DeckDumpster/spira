@@ -91,7 +91,7 @@ fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
                 .priority(1)
                 .reference(format!("incident:failed-unit-{unit}"))
                 .cause("failed-unit");
-                incident::file(inc, &f);
+                incident::alarm(inc, &f);
                 log(&format!("watchtower: failed-unit escalation filed ({unit}, {age_mins}m)"));
             } else {
                 log(&format!("watchtower: {} is missing — failed-unit escalation not filed", cfg.incident_sh));
@@ -118,7 +118,7 @@ fn drain_escalation(d: &SweepData, cfg: &Cfg) {
         "DRAINING for {mins}m — summons gated since {since}\n\nNew aeons cannot be summoned while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
     );
     let f = Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh summons gated", &body).priority(1);
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: drain escalation filed ({mins}m >= {}m threshold)", cfg.drain_warn_mins));
 }
 
@@ -139,7 +139,7 @@ fn sending_oldest_unsent(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:sending-oldest-unsent")
         .cause("oldest-unsent");
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: sending escalation filed (oldest unsent {oldest}h >= {}h threshold)", cfg.unsent_warn_h));
 }
 
@@ -162,7 +162,7 @@ fn unadopted_refs(d: &SweepData, cfg: &Cfg) {
         .reference("incident:sending-unadopted-refs")
         .cause("unadopted-refs")
         .delivers_action();
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: unadopted escalation filed ({n} unadopted refs)"));
 }
 
@@ -200,7 +200,7 @@ fn hotfix(d: &SweepData, cfg: &Cfg) {
     .priority(1)
     .reference(format!("incident:hotfix-{sha}"))
     .cause("hotfix-standing");
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: hotfix escalation filed ({sha} past threshold)"));
 }
 
@@ -221,7 +221,7 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:sending-batched-stranded")
         .cause("batched-stranded");
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: batched-stranded escalation filed ({n} stranded)"));
 }
 
@@ -242,7 +242,7 @@ fn batched_too_long(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:queue-batched-too-long")
         .cause("batched-too-long");
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: batched-too-long escalation filed ({n} branches)"));
 }
 
@@ -264,7 +264,7 @@ fn closed_stranded(d: &SweepData, cfg: &Cfg) {
         .reference("incident:sending-closed-stranded")
         .cause("closed-stranded")
         .delivers_action();
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: closed-stranded escalation filed (oldest {oldest}h >= {}h)", cfg.closed_stranded_warn_h));
 }
 
@@ -297,7 +297,7 @@ fn dedup_meter(d: &SweepData, cfg: &Cfg) {
     .priority(1)
     .reference("incident:dedup-meter-nonzero")
     .cause("dedup-meter");
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: dedup escalation filed ({refs} dup refs, {beads} surplus beads)"));
 }
 
@@ -318,7 +318,7 @@ fn gate_silent(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:gate-silent")
         .cause("gate-silent");
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: gate-silent escalation filed (last gate {last})"));
 }
 
@@ -336,7 +336,7 @@ fn gate_slow(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:gate-slow")
         .cause("gate-slow");
-    incident::file(inc, &f);
+    incident::alarm(inc, &f);
     log(&format!("watchtower: gate-slow escalation filed (p90 {}s)", s.p90));
 }
 
@@ -362,7 +362,7 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference(format!("incident:idle-while-ready:{fayth}"))
         .cause("idle-while-ready");
-        incident::file(inc, &f);
+        incident::alarm(inc, &f);
         log(&format!(
             "watchtower: idle-while-ready escalation filed for {fayth} (ready={ready}, last {} summons idle)",
             cfg.idle_while_ready_n
