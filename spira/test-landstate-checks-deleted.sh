@@ -18,7 +18,7 @@
 #
 # defect: sp-pswer.1 sp-jnwbn
 # tier: T1
-# covers: sentinel/src/pass.rs sentinel/src/cfg.rs sentinel/src/lifecycle.rs groomer/src/sweep.rs groomer/src/seam.rs spira/lib.sh
+# covers: sentinel/src/pass.rs sentinel/src/cfg.rs sentinel/src/lifecycle.rs groomer/src/seam.rs spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -29,7 +29,6 @@ ROOT="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 audit_body()      { awk '/^    fn audit\(/{f=1} f{print} f && /^    }$/{exit}' "$1"; }
-rust_sweep_body() { awk '/^pub fn sweep\(/{f=1} f{print} f && /^}$/{exit}' "$1"; }
 
 # ---------------------------------------------------------------------------------------
 # SENTINEL: no check5.rs, audit() calls no landstate check5, no skip switch anywhere.
@@ -59,8 +58,7 @@ want "SEEN RED: a restored check5 call is caught" "self.check5(" "$(audit_body "
 # ---------------------------------------------------------------------------------------
 # GROOMER: sweep() and the seam no longer reach the three landstate detectors.
 # ---------------------------------------------------------------------------------------
-sbody="$(rust_sweep_body "$ROOT/groomer/src/sweep.rs")"
-want "sweep() was extracted" "pub fn sweep(" "$sbody"
+is "groomer/src/sweep.rs is gone" no "$([ -e "$ROOT/groomer/src/sweep.rs" ] && echo yes || echo no)"
 for fn in detect_landed_but_open detect_closed_unlanded_states detect_false_blockers; do
     nowant "groomer/src does not reach $fn" "$fn" "$(cat "$ROOT"/groomer/src/*.rs)"
     # sp-mve9i: strand's subcommands are gone, so lib.sh keeps no shim onto them either.
@@ -73,11 +71,10 @@ for kind in landed-but-open closed-never-landed closed-no-branch blocked-by-unla
     nowant "groomer/src names no $kind remedy" "$kind" "$(cat "$ROOT"/groomer/src/*.rs)"
 done
 
-# SEEN RED for the groomer side.
-restored_groomer="$TMP/sweep.rs"
-sed 's/^    let inc = seam\.detect_incident_needs_builder()?;$/    let lbo = seam.detect_landed_but_open()?;\n&/' \
-    "$ROOT/groomer/src/sweep.rs" > "$restored_groomer"
+# SEEN RED for the groomer side: the same match over seam.rs with a detector call restored.
+restored_groomer="$TMP/seam.rs"
+{ cat "$ROOT/groomer/src/seam.rs"; echo 'fn restored() { let _ = detect_landed_but_open(); }'; } > "$restored_groomer"
 want "SEEN RED: a restored landed-but-open sweep is caught" \
-    "detect_landed_but_open" "$(rust_sweep_body "$restored_groomer")"
+    "detect_landed_but_open" "$(cat "$restored_groomer")"
 
 tl_summary
