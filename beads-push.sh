@@ -23,9 +23,11 @@
 # six hours on a box that was never opted in is a false alert.
 set -uo pipefail
 
+trap 'rc=$?; [ "$rc" -eq 0 ] || echo "beads-push: $(date -u +%Y-%m-%dT%H:%M:%SZ) exited $rc at line ${LINENO}" >&2' EXIT
+
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)/conf.sh"
 export BEADS_NO_AUTO_IMPORT=1
-spira_require bd || exit 1
+spira_require bd || { echo "beads-push: required dependency check failed (bd)" >&2; exit 1; }
 
 DB="$SPIRA_DB"
 stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
