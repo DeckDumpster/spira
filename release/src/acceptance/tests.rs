@@ -172,6 +172,7 @@ struct Fake {
     rollback: (i32, &'static str),
     never_lands: bool,
     history_gap: bool,
+    seed_no_rows: bool,
     lc_create_fails: bool,
     history_late: Cell<u32>,
     rows: RefCell<Vec<String>>,
@@ -198,6 +199,7 @@ impl Fake {
             rollback: (0, ""),
             never_lands: false,
             history_gap: false,
+            seed_no_rows: false,
             lc_create_fails: false,
             history_late: Cell::new(0),
             rows: RefCell::new(Vec::new()),
@@ -294,6 +296,7 @@ impl Fake {
                 self.rows.borrow_mut().push(id.to_string());
                 ok("{}\n")
             }
+            ("spira-lc", ["history", id]) if self.seed_no_rows && id.starts_with("sp-s") => ok("[]"),
             ("spira-lc", ["history", _]) => {
                 if self.history_late.get() > 0 {
                     self.history_late.set(self.history_late.get() - 1);
@@ -833,4 +836,56 @@ fn a_fast_tier_check_that_cannot_fail_is_itself_a_failure() {
     f.bare_lint_rc = 0;
     assert_eq!(phases::run(&f, b.opts(&[])), 1);
     assert!(b.fails().iter().any(|x| x.starts_with("phase A: positive control: spira-lint with no base refuses")), "{:#?}", b.fails());
+}
+
+fn aged(b: &Box_) -> Vec<String> {
+    let tb = b.root.join("spira-20260101T000000Z.tar.gz");
+    fs::write(&tb, "ancient").unwrap();
+    s(&["--aged-tag", "spira-release-spira-20260101T000000Z", "--aged-tarball", &tb.display().to_string()])
+}
+
+#[test]
+fn phase_d_installs_the_aged_tag_not_the_predecessor_and_still_passes() {
+    let b = Box_::new();
+    let f = b.fake();
+    let mut v = b.prev();
+    v.extend(aged(&b));
+    let rc = phases::run(&f, b.opts(&v.iter().map(String::as_str).collect::<Vec<_>>()));
+    assert_eq!(rc, 0, "{:#?}", b.fails());
+    let log = f.log.borrow().iter().map(Cmd::line).collect::<Vec<_>>().join("\n");
+    assert!(log.contains("spira-20260101T000000Z.tar.gz"), "the aged tarball is installed:\n{log}");
+    assert!(log.contains("deploy.sh --tarball") && log.contains("spira-release-spira-20260101T000000Z"), "the aged rollback target is the aged tag");
+}
+
+#[test]
+fn a_missing_aged_tarball_fails_phase_d() {
+    let b = Box_::new();
+    let f = b.fake();
+    let mut v = b.prev();
+    v.extend(s(&["--aged-tag", "spira-release-spira-20260101T000000Z", "--aged-tarball", "/nonexistent/aged.tar.gz"]));
+    assert_eq!(phases::run(&f, b.opts(&v.iter().map(String::as_str).collect::<Vec<_>>())), 1);
+    assert!(b.fails().iter().any(|x| x.starts_with("phase D: aged base tarball present")), "{:#?}", b.fails());
+}
+
+#[test]
+fn an_aged_flag_without_its_anchor_is_a_usage_error() {
+    let base = s(&["t", "--scratch-repo", "r"]);
+    let mut a = base.clone();
+    a.extend(s(&["--aged-tag", "x"]));
+    assert!(parse_args(&a).is_err(), "--aged-tag alone");
+    let mut a = base.clone();
+    a.extend(s(&["--prev-tag", "p", "--aged-tarball", "x"]));
+    assert!(parse_args(&a).is_err(), "--aged-tarball alone");
+    let mut a = base;
+    a.extend(s(&["--prev-tag", "p", "--aged-tag", "x", "--waive-upgrade"]));
+    assert_eq!(parse_args(&a).unwrap().aged_tag, None, "the waiver clears the aged base too");
+}
+
+#[test]
+fn a_bead_that_predates_the_upgrade_without_lifecycle_rows_fails_phase_d() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.seed_no_rows = true;
+    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
+    assert!(b.fails().iter().any(|x| x.contains("has lifecycle rows after the aged upgrade")), "{:#?}", b.fails());
 }
