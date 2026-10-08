@@ -72,36 +72,31 @@ pub struct Config {
     pub systemctl: String,
 }
 
-fn refuse(why: &str) -> ! {
-    eprintln!("loom: {why}");
-    std::process::exit(1)
-}
-
 impl Config {
-    pub fn from_env() -> Config {
+    pub fn from_env() -> Result<Config, String> {
         use spira_config::process::{cfg, cfg_parse};
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let home = spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| refuse(&e));
-        Config {
-            db: cfg("SPIRA_DB").unwrap_or_else(|e| refuse(&e)),
+        let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("loom: {e}"))?;
+        Ok(Config {
+            db: cfg("SPIRA_DB").map_err(|e| format!("loom: {e}"))?,
             extra_path: cfg("SPIRA_PATH")
-                .unwrap_or_else(|e| refuse(&e))
+                .map_err(|e| format!("loom: {e}"))?
                 .split(':')
                 .filter(|d| !d.is_empty())
                 .map(str::to_string)
                 .collect(),
-            budget: Duration::from_millis(cfg_parse::<u64>("SPIRA_LOOM_BUDGET_MS").unwrap_or_else(|e| refuse(&e))),
-            cache: Duration::from_secs(cfg_parse::<u64>("SPIRA_LOOM_CACHE_S").unwrap_or_else(|e| refuse(&e))),
-            addr: cfg("SPIRA_LOOM_ADDR").unwrap_or_else(|e| refuse(&e)),
-            bd: cfg("SPIRA_BD").unwrap_or_else(|e| refuse(&e)),
-            run: cfg("SPIRA_RUN").unwrap_or_else(|e| refuse(&e)),
-            instance: spira_config::resolve::resolve_instance(&env, &home).unwrap_or_else(|e| refuse(&e)),
+            budget: Duration::from_millis(cfg_parse::<u64>("SPIRA_LOOM_BUDGET_MS").map_err(|e| format!("loom: {e}"))?),
+            cache: Duration::from_secs(cfg_parse::<u64>("SPIRA_LOOM_CACHE_S").map_err(|e| format!("loom: {e}"))?),
+            addr: cfg("SPIRA_LOOM_ADDR").map_err(|e| format!("loom: {e}"))?,
+            bd: cfg("SPIRA_BD").map_err(|e| format!("loom: {e}"))?,
+            run: cfg("SPIRA_RUN").map_err(|e| format!("loom: {e}"))?,
+            instance: spira_config::resolve::resolve_instance(&env, &home).map_err(|e| format!("loom: {e}"))?,
             // SPIRA_SYSTEMCTL is not a registered config key — test-only override, left as env.
             systemctl: std::env::var("SPIRA_SYSTEMCTL")
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
-        }
+        })
     }
 }
 

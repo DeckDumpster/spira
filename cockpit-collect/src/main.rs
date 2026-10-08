@@ -55,6 +55,10 @@ fn run(args: &[String]) -> i32 {
     // own top level before dispatching to any subcommand; see io::bootstrap_config for why
     // this binary must do the same instead of reading unresolved env vars.
     io::bootstrap_config();
+    if let Err(e) = io::try_run_dir() {
+        eprintln!("{e}");
+        return 1;
+    }
     match args.first().map(String::as_str) {
         None | Some("once") => cmd_once(),
         Some("history") => cmd_history(),

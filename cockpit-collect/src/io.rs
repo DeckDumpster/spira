@@ -178,15 +178,15 @@ pub fn max_aeons() -> String {
     spira_config::process::cfg("SPIRA_MAX_AEONS").unwrap_or_default()
 }
 
-pub fn run_dir() -> PathBuf {
+pub fn try_run_dir() -> Result<PathBuf, String> {
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env, &home_dir()).unwrap_or_else(|e| {
-        eprintln!("cockpit-collect: {e}");
-        #[cfg(test)]
-        panic!("run_dir: {e} SPIRA_RUN={:?} SPIRA_HOME={:?}", std::env::var("SPIRA_RUN"), std::env::var("SPIRA_HOME"));
-        #[cfg(not(test))]
-        std::process::exit(1)
-    })
+    spira_config::resolve::resolve_run_dir(&env, &home_dir()).map_err(|e| format!("cockpit-collect: {e}"))
+}
+
+/// Panics when [`try_run_dir`] fails; `main` calls `try_run_dir` first and refuses, so only
+/// a caller that skipped that check reaches the panic.
+pub fn run_dir() -> PathBuf {
+    try_run_dir().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn env_or(key: &str, default: &str) -> String {
