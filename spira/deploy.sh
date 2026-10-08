@@ -731,4 +731,6 @@ if [ -n "${prev_release:-}" ] && [ -n "${SPIRA_REPO:-}" ] \
    && git -C "$SPIRA_REPO" rev-parse -q --verify "${release_stem}^{commit}" >/dev/null 2>&1; then
     "$SPIRA_HOME/verify-landed.sh" --range "${prev_release}..${release_stem}" --repo "$SPIRA_REPO" \
         || log "deploy: post-deploy verification reported a problem (deploy stands)"
+    "$SPIRA_HOME/first-run.sh" --range "${prev_release}..${release_stem}" --repo "$SPIRA_REPO" \
+        || log "deploy: first-run reported a problem (deploy stands)"
 fi
