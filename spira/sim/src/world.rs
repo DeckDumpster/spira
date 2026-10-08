@@ -9,6 +9,55 @@ const MARKER: &str = ".sim-world";
 pub const LANDING_BASE: &str = "local/main";
 const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: git/tar/cp/testenv steps of building a world
 const BUILD_DEADLINE: Duration = Duration::from_secs(3600); // batch-job: release build of the tree
+/// A prebuilt release directory (shaped like `spira-releases/<sha>`: `bin/` and `spira/`) the
+/// world runs instead of building one (sp-o4s4t4).
+pub const RELEASE_ENV: &str = "SPIRA_SIM_RELEASE";
+/// testenv's mark on every suite it runs (testenv/src/fixture.rs). It only ever widens the
+/// refusal below, so a forged value can stop a build but never start one.
+pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
+/// The release binaries the world itself calls; a prebuilt release without them is refused.
+const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
+
+/// Where a world's release comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseSource {
+    /// `SPIRA_SIM_RELEASE`'s directory, canonical, used as is: no build.
+    Prebuilt(PathBuf),
+    /// A `release build` of the tree, cached by tree hash (the host only).
+    Build,
+}
+
+/// Resolve the world's release before anything is built. Inside testenv an unset
+/// `SPIRA_SIM_RELEASE` is refused: a cold workspace build alone outlasts the suite cap and is
+/// an uncapped build on the shared host, so it is never done silently.
+pub fn release_source(env: &dyn Fn(&str) -> Option<String>) -> Result<ReleaseSource, String> {
+    let set = |k: &str| env(k).filter(|v| !v.is_empty());
+    match set(RELEASE_ENV) {
+        Some(dir) => prebuilt_release(Path::new(&dir)).map(ReleaseSource::Prebuilt),
+        None if set(TESTENV_ENV).is_some() => Err(format!(
+            "{RELEASE_ENV} is not set: inside testenv ({TESTENV_ENV} is set) a sim world runs a prebuilt release and never builds one; set {RELEASE_ENV}=<release dir with bin/ and spira/>, e.g. {RELEASE_ENV}=\"$SPIRA_RELEASE\""
+        )),
+        None => Ok(ReleaseSource::Build),
+    }
+}
+
+/// Check that `dir` is a release (`bin/`, `spira/`, and the binaries a world calls) and return
+/// it canonical, so the world's `release` link never depends on the caller's cwd.
+pub fn prebuilt_release(dir: &Path) -> Result<PathBuf, String> {
+    let shown = dir.display();
+    let dir = dir.canonicalize().map_err(|e| format!("{RELEASE_ENV}={shown}: {e}"))?;
+    for sub in ["bin", "spira"] {
+        if !dir.join(sub).is_dir() {
+            return Err(format!("{RELEASE_ENV}={shown} is not a release: it has no {sub}/"));
+        }
+    }
+    for exe in RELEASE_BINS {
+        if !dir.join(exe).is_file() {
+            return Err(format!("{RELEASE_ENV}={shown} is not a release: it has no {exe}"));
+        }
+    }
+    Ok(dir)
+}
 
 pub fn refuse_production(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     let seen: Vec<&str> = PRODUCTION_LOCATORS
@@ -121,7 +170,7 @@ impl Steps for ProcessSteps {
     }
     fn db_up(&self, world: &Path) -> Result<String, String> {
         let out = run(
-            Command::new("testenv").args(["testdb", "up", "--tag", "simworld", "--bd", "bd", "--dolt", "dolt", "--root"]).arg(world.join("db")),
+            Command::new("testenv").args(["testdb", "up", "--tag", "simworld", "--bd", "bd", "--dolt", "dolt", "--root"]).arg(db_root(world, &|k| std::env::var(k).ok())),
             CALL_DEADLINE,
         )?;
         out.lines()
@@ -139,8 +188,8 @@ impl Steps for ProcessSteps {
         let toml = config.join("lc.toml");
         let credential = config.join("lc-credential");
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
-        self.config_set(release, &toml, "SPIRA_LC_PASSWORD_FILE", &credential.display().to_string())?;
-        self.config_set(release, &toml, "SPIRA_LC_SOCKET", "")?;
+        self.config_set(release, &toml, "spira.lc_password_file", &credential.display().to_string())?;
+        self.config_set(release, &toml, "spira.lc_socket", "")?;
         let lc = |verb: &str, arg: PathBuf| run(lc_command(release, config, &port).arg(verb).arg(arg), CALL_DEADLINE).map(|_| ());
         lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
         lc("admin-migrate", lifecycle.join("migrations"))
@@ -171,6 +220,7 @@ pub fn is_world(dir: &Path) -> bool {
 
 pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<String>, steps: &dyn Steps) -> Result<(), String> {
     refuse_production(env)?;
+    let source = release_source(env)?;
     if dir.exists() && std::fs::read_dir(dir).map_err(|e| e.to_string())?.next().is_some() {
         return Err(format!("{} is not empty", dir.display()));
     }
@@ -178,7 +228,7 @@ pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<Stri
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let dir = dir.canonicalize().map_err(|e| e.to_string())?;
     std::fs::write(dir.join(MARKER), "").map_err(|e| e.to_string())?;
-    match build(&dir, &repo, tree, steps) {
+    match build(&dir, &repo, tree, &source, steps) {
         Ok(()) => Ok(()),
         Err(e) => {
             let _ = down(&dir, steps);
@@ -187,10 +237,15 @@ pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<Stri
     }
 }
 
-fn build(dir: &Path, repo: &Path, tree: &str, steps: &dyn Steps) -> Result<(), String> {
-    let cache = cache_dir(dir);
-    std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
-    let release = steps.release(repo, tree, &cache)?;
+fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dyn Steps) -> Result<(), String> {
+    let release = match source {
+        ReleaseSource::Prebuilt(p) => p.clone(),
+        ReleaseSource::Build => {
+            let cache = cache_dir(dir);
+            std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+            steps.release(repo, tree, &cache)?
+        }
+    };
     link(&release, &dir.join("release"))?;
 
     let fixture = steps.db_up(dir)?;
@@ -254,15 +309,24 @@ pub fn probe_command(sim: &Path, world: &Path) -> String {
     format!("{} probe {}", q(sim), q(world))
 }
 
+/// The world's config settings, as `spira-config set` pairs. `spira-config set`
+/// validates the whole document after every write, so the repository section goes in as
+/// one JSON table: set field by field, `repo.sim.path` alone is refused (no `mode` yet).
+/// `spira.lifecycle_enforce` is retired (sp-v62vn) and no longer set.
 pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
-    let kv = |k: &str, v: &str| (k.to_string(), v.to_string());
-    vec![
-        kv("spira.lifecycle_enforce", "true"),
-        kv("repo.sim.path", &work.display().to_string()),
-        kv("repo.sim.mode", "queue.local"),
-        kv("repo.sim.base", LANDING_BASE),
-        kv("spira.gh", &gh.display().to_string()),
-    ]
+    let repo = serde_json::json!({ "path": work.display().to_string(), "mode": "queue.local", "base": LANDING_BASE });
+    vec![("repo.sim".to_string(), repo.to_string()), ("spira.gh".to_string(), gh.display().to_string())]
+}
+
+/// Where the world's Dolt fixture lives. Nested inside testenv, `TESTDB_ROOT` is the
+/// container's tmpfs root holding the template setup already built, and `testenv testdb`
+/// there refuses (TESTDB_REQUIRE_TMPFS=1) any root not on a tmpfs; so a world uses that root
+/// and a fixture costs a copy, not a fresh `bd init`. Elsewhere the world keeps its own.
+pub fn db_root(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> PathBuf {
+    match env("TESTDB_ROOT").filter(|v| !v.is_empty()) {
+        Some(root) => PathBuf::from(root),
+        None => world.join("db"),
+    }
 }
 
 fn cache_dir(dir: &Path) -> PathBuf {
