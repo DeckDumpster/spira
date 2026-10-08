@@ -3,6 +3,7 @@ Description=Reap stale worktrees every hour
 
 [Timer]
 OnBootSec=10min
+OnActiveSec=10min
 OnUnitActiveSec=1h
 AccuracySec=5min
 Unit=spira-worktree-reaper.service
