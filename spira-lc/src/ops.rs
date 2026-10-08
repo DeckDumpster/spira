@@ -1,5 +1,5 @@
-//! The ops read model (`lifecycle/migrations/0007-ops-read-model.sql`): `ops-view <view>`
-//! returns one of the three views as a JSON array, and `backfill-titles` fills the mirrored
+//! The ops read model (`lifecycle/migrations/0007-ops-read-model.sql`, `0009-where-stuck.sql`):
+//! `ops-view <view>` returns one view as a JSON array, `ops-graph` the machine's legal edges, and `backfill-titles` fills the mirrored
 //! title and priority of rows filed before the mirror existed. Both ride `dispatch`, so a
 //! refresh through `spira-lc serve` is one query on the held connection.
 
@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::db::Conn;
 
 /// The only views `ops-view` will name; the argument is matched, never interpolated.
-pub const VIEWS: [&str; 3] = ["ops_live", "ops_round", "ops_recent"];
+pub const VIEWS: [&str; 5] = ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell"];
 
 const LIVE_STATES: &str = "'OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK'";
 
@@ -20,6 +20,17 @@ pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(rows) => (0, Value::Array(rows).to_string()),
         Err(e) => (2, format!("cannot tell: {e:?}")),
     }
+}
+
+/// The bead machine's legal moves, read from its own transition table.
+pub fn cmd_ops_graph(_args: &[String], _conn: &Conn) -> (i32, String) {
+    (0, graph_json())
+}
+
+/// States spelled as the `bead.state` column holds them, so a pane joins edges to view rows.
+fn graph_json() -> String {
+    let edges: Vec<Value> = lifecycle::bead::legal_edges().iter().map(|e| serde_json::json!({"from": e.from.as_str(), "event": e.event, "to": e.to.as_str()})).collect();
+    Value::Array(edges).to_string()
 }
 
 pub fn title_priority(bd_show_json: &str) -> Option<(String, i64)> {
@@ -70,6 +81,13 @@ mod tests {
         assert_eq!(title_priority(r#"{"title":"t","priority":0}"#), Some(("t".into(), 0)));
         assert_eq!(title_priority(r#"{"title":"t"}"#), None);
         assert_eq!(title_priority("not json"), None);
+    }
+
+    #[test]
+    fn the_graph_is_json_edges_with_state_names_and_events() {
+        let out = graph_json();
+        let edges: Vec<Value> = serde_json::from_str(&out).unwrap();
+        assert!(edges.iter().any(|e| e["from"] == "READY" && e["event"] == "Claim" && e["to"] == "WORKING"), "{out}");
     }
 
     #[test]

@@ -47,3 +47,11 @@ GRANT SELECT ON spira_lifecycle.ops_recent TO 'spira_lc'@'%';
 GRANT SELECT ON spira_lifecycle.ops_live TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.ops_round TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.ops_recent TO 'spira_lc_ro'@'%';
+
+-- The where-stuck read model (migrations/0009-where-stuck.sql).
+GRANT SELECT ON spira_lifecycle.ops_edges TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.ops_edges TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.ops_dwell_p95 TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.ops_dwell_p95 TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.ops_dwell TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.ops_dwell TO 'spira_lc_ro'@'%';

@@ -887,6 +887,115 @@ pub fn wait_hold_reapplies_for_work_blocker(blocker_state: BeadState) -> bool {
     matches!(blocker_state, BeadState::Rework | BeadState::Submitted)
 }
 
+/// One legal move of the bead machine: `event` takes a row in `from` to `to`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct LegalEdge {
+    pub from: BeadState,
+    pub event: &'static str,
+    pub to: BeadState,
+}
+
+/// The event's name as `event.event` logs it (the serde variant tag). Exhaustive, so a new
+/// variant does not compile until it is named here and its probes added to [`edge_probes`].
+fn kind_name(kind: &BeadEventKind) -> &'static str {
+    match kind {
+        BeadEventKind::Claim { .. } => "Claim",
+        BeadEventKind::Release => "Release",
+        BeadEventKind::HolderDead => "HolderDead",
+        BeadEventKind::Submit { .. } => "Submit",
+        BeadEventKind::Done { .. } => "Done",
+        BeadEventKind::GatePass { .. } => "GatePass",
+        BeadEventKind::GateRed { .. } => "GateRed",
+        BeadEventKind::GateInfra { .. } => "GateInfra",
+        BeadEventKind::Deliver => "Deliver",
+        BeadEventKind::Delivered { .. } => "Delivered",
+        BeadEventKind::Returned { .. } => "Returned",
+        BeadEventKind::Requeued { .. } => "Requeued",
+        BeadEventKind::ContentOnBase { .. } => "ContentOnBase",
+        BeadEventKind::Supersede { .. } => "Supersede",
+        BeadEventKind::Drop { .. } => "Drop",
+        BeadEventKind::Hold { .. } => "Hold",
+        BeadEventKind::Unhold { .. } => "Unhold",
+        BeadEventKind::BaseWithdrawn { .. } => "BaseWithdrawn",
+        BeadEventKind::PrereqLanded { .. } => "PrereqLanded",
+        BeadEventKind::Reply { .. } => "Reply",
+        BeadEventKind::AskWithdrawn => "AskWithdrawn",
+        BeadEventKind::Reclassify { .. } => "Reclassify",
+        BeadEventKind::Renew { .. } => "Renew",
+    }
+}
+
+/// The probe events: one per variant, plus the variants whose target depends on the evidence
+/// (`Requeued` with the row's tip or another). `Reclassify` is the classifier's own correction
+/// of a finished row, not a move of the flow, and is left out.
+fn edge_probes() -> Vec<BeadEventKind> {
+    vec![
+        BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 },
+        BeadEventKind::Release,
+        BeadEventKind::HolderDead,
+        BeadEventKind::Submit { tip: "t1".into() },
+        BeadEventKind::Submit { tip: "other".into() },
+        BeadEventKind::Done { delivers: "d".into() },
+        BeadEventKind::GatePass { tip: "t1".into(), gate_key: "k".into() },
+        BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed },
+        BeadEventKind::GateInfra { tip: "t1".into() },
+        BeadEventKind::Deliver,
+        BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
+        BeadEventKind::Returned { reason: ReturnedReason::PushRejected },
+        BeadEventKind::Requeued { tip: "t1".into() },
+        BeadEventKind::Requeued { tip: "other".into() },
+        BeadEventKind::ContentOnBase { proof: "p".into() },
+        BeadEventKind::Supersede { by: "sp-2".into() },
+        BeadEventKind::Drop { reason: DropReason::Unwanted },
+        BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
+        BeadEventKind::Unhold { kind: HoldKind::Poison },
+        BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
+        BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
+        BeadEventKind::Renew { lease_until: 2 },
+    ]
+}
+
+/// Every `(state, event, to)` the machine accepts that moves a row to a different state,
+/// read by applying each probe to each state through [`apply`] — so a drawn graph is the code's
+/// own table. A move whose target depends on the row's holds, stack or reason is found only
+/// for the row shapes probed.
+pub fn legal_edges() -> Vec<LegalEdge> {
+    let states = [
+        BeadState::Open,
+        BeadState::Ready,
+        BeadState::Working,
+        BeadState::Submitted,
+        BeadState::Certified,
+        BeadState::InDelivery,
+        BeadState::Rework,
+        BeadState::Landed,
+        BeadState::Superseded,
+        BeadState::Dropped,
+        BeadState::Done,
+    ];
+    let mut edges = BTreeSet::new();
+    for state in states {
+        for from_submitted in [false, true] {
+            let mut row = BeadRow::filed("sp-edge");
+            row.state = state;
+            row.tip = Some("t1".into());
+            row.gate_key = Some("k".into());
+            row.holder = Some("h".into());
+            row.lease_until = Some(1);
+            row.reason = from_submitted.then(|| FROM_SUBMITTED.to_string());
+            row.stack.insert("sp-prereq".into(), "t1".into());
+            for kind in edge_probes() {
+                let ev = BeadEvent { expect: state, version: row.version, kind, actor: "h".into(), at: Some(0) };
+                let out = apply(&row, &ev);
+                if out.applied && out.row.state != state {
+                    edges.insert(LegalEdge { from: state, event: kind_name(&ev.kind), to: out.row.state });
+                }
+            }
+        }
+    }
+    edges.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -962,6 +1071,29 @@ mod tests {
         e.at = Some(99);
         let out = apply(&r, &e);
         assert_eq!((out.row.state, out.row.since), (BeadState::Submitted, None));
+    }
+
+    #[test]
+    fn legal_edges_are_the_machines_own_moves() {
+        let edges = legal_edges();
+        let has = |f: BeadState, e: &str, t: BeadState| edges.iter().any(|x| x.from == f && x.event == e && x.to == t);
+        assert!(has(BeadState::Ready, "Claim", BeadState::Working));
+        assert!(has(BeadState::Submitted, "GatePass", BeadState::Certified));
+        assert!(has(BeadState::InDelivery, "Requeued", BeadState::Certified));
+        assert!(has(BeadState::InDelivery, "Requeued", BeadState::Submitted));
+        assert!(has(BeadState::InDelivery, "Returned", BeadState::Rework));
+        assert!(!has(BeadState::Ready, "Renew", BeadState::Ready), "a move that stays put is not an edge");
+        assert!(edges.iter().all(|e| !e.from.is_terminal()), "terminal states have no exits");
+        assert!(edges.iter().all(|e| e.from != e.to));
+    }
+
+    #[test]
+    fn every_probe_is_named_as_its_serde_tag() {
+        for kind in edge_probes() {
+            let tag = serde_json::to_value(&kind).unwrap();
+            let tag = tag.as_str().map(str::to_string).or_else(|| tag.as_object().and_then(|o| o.keys().next().cloned())).unwrap();
+            assert_eq!(kind_name(&kind), tag);
+        }
     }
 
     #[test]
