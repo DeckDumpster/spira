@@ -6,7 +6,7 @@
 #   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--submitted] [--json] [--parent <id>]
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
-#   bead.sh amend <id> [--note "<text>"] [--body-file F] [--express]
+#   bead.sh amend <id> [--note "<text>"] [--body-file F] [--express] [--priority N]
 #   bead.sh dep add <id> <depends-on-id> [--type <type>]
 #                                     wrap `bd dep add`, refusing a blocks edge onto an
 #                                     incident-labelled bead (use `bd dep relate` for those)
