@@ -158,14 +158,11 @@ echo "a red the branch did not cause — the same command fails on the base:"
 map_gate "$ALWAYS"
 gate_fixture_branch spira/sp-innocent innocent.txt x
 rungate spira/sp-innocent > "$TMP/innocent.out" 2>&1; rc=$?
-is "the gate refuses it as BASE_FAIL, not FAIL" 76 "$rc"
-# AND THE VERDICT LINE CARRIES THE SUITE, because the landing pass keys an incident on it.
-# A BASE_FAIL holds every branch of the repository and is filed as one bead against it,
-# deduped on repository-plus-suite; read from the prose instead, that key would change the
-# day somebody rewords a message and one broken base would file a fresh bead every pass.
-want "and its verdict line names the suite, not only its prose" \
-     "VERDICT=BASE_FAIL reason=base-red branch=spira/sp-innocent repo=repo suite=test-boxreader.sh" \
-     "$(cat "$TMP/innocent.out")"
+is "a red shared with the base passes the branch" 0 "$rc"
+want "and the verdict line names the suite" "test-boxreader.sh" "$(cat "$TMP/innocent.out")"
+want "marked inherited, not judged" "inherited, not judged" "$(cat "$TMP/innocent.out")"
+# A named shared red no longer yields BASE_FAIL; the record still files one the gate cannot judge.
+yield record repo spira/sp-innocent 76 base-red - test-boxreader.sh >/dev/null 2>&1
 
 R="$(yield report)"
 is "it lands as a GATE FAULT on arrival" 1 "$(f "$R" YIELD_FAULT)"
