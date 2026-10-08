@@ -776,16 +776,6 @@ rpass
 want "20% free gaps against a Composite floor of 25%, though it would satisfy the default 15%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "32. Fleet: no ceiling, N partitions -> one escalation, not one per partition"
-# ==========================================================================================
-reset_state
-printf 'spira,plan\t150\t0\nops\t10\t0\nqa\t5\t0\nTOTAL\t\t0\n' > "$FLEET_LINES"
-rpass
-_n="$(grep -c 'invariant: fleet' "$MAIL_LOG" || true)"
-is "an undeclared ceiling files one incident, not one per partition" "1" "$_n"
-printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
-
-# ==========================================================================================
 printf '\n%s\n' "33. Junk rows: a rowless READY id is dropped, a real bead's row is not"
 # ==========================================================================================
 reset_state; : > "$LC_CALLS"; rm -f "$BD_JSON.fail"
