@@ -1203,6 +1203,40 @@ fn prune_keeps_a_release_a_worktree_git_hook_still_names() {
 }
 
 #[test]
+fn prune_ignores_a_stale_worktrees_git_hook() {
+    let w = World::new(); // keep = 2
+    let shas: Vec<String> = (0..4).map(|i| format!("{i}").repeat(40)).collect();
+    for s in &shas {
+        w.build(s).unwrap();
+    }
+    for (i, s) in shas.iter().enumerate() {
+        let rel = w.rel(s);
+        fsutil::make_writable(&rel);
+        let mut m = Manifest::load(&rel).unwrap();
+        m.built = Some(format!("2026-09-2{i}T00:00:00Z"));
+        fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+        fsutil::set_readonly(&rel).unwrap();
+    }
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, &shas[3], None).unwrap();
+    let run = w.cfg.run.clone().unwrap();
+    let wt = run.join("worktree/a");
+    let gitdir = run.join("gitdirs/a");
+    fs::create_dir_all(gitdir.join("hooks")).unwrap();
+    fs::create_dir_all(&wt).unwrap();
+    fs::write(wt.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+    fs::write(gitdir.join("hooks/pre-commit"), format!("bash \"{}/{}/spira/hooks/pre-commit\"\n", w.cfg.releases.display(), shas[0])).unwrap();
+
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
+    fs::File::open(&wt).unwrap().set_modified(old).unwrap();
+
+    let p = crate::prune::prune(&w.cfg).unwrap();
+    assert!(p.removed.contains(&shas[0]), "{p:?}");
+    assert!(p.removed.contains(&shas[1]), "{p:?}");
+}
+
+#[test]
 fn prune_after_activate_keeps_current_and_previous_and_removes_the_rest() {
     let w = World::new(); // keep = 2
     let shas: Vec<String> = (0..6).map(|i| format!("{i}").repeat(40)).collect();
