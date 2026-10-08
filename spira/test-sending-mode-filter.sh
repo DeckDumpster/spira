@@ -105,7 +105,7 @@ out1="$(sending --skip-queue)"
 want "push-mode repo's branch is SENT under --skip-queue" "SENT sp-skip-p" "$out1"
 is   "push-mode branch is gone" 1 "$(branch_exists "$PREPO" spira/sp-skip-p; echo $?)"
 
-nowant "queue-mode repo's branch is not mentioned under --skip-queue" "sp-skip-q" "$out1"
+nowant "queue-mode repo's branch is not mentioned under --skip-queue" "sp-skip-q " "$out1"
 is   "queue-mode branch still exists after --skip-queue" 0 \
     "$(branch_exists "$QREPO" spira/sp-skip-q; echo $?)"
 
@@ -117,7 +117,7 @@ is   "queue.local branch is gone after --skip-queue" 1 \
 # a one-time exemption but a standing partition of the repository set.
 out1b="$(sending --skip-queue)"
 nowant "a second --skip-queue pass still never mentions the queue-mode repo's branch" \
-    "sp-skip-q" "$out1b"
+    "sp-skip-q " "$out1b"
 is   "queue-mode branch still exists after a second --skip-queue pass" 0 \
     "$(branch_exists "$QREPO" spira/sp-skip-q; echo $?)"
 
@@ -132,7 +132,7 @@ git -C "$QLREPO" branch spira/sp-only-ql main
 out2="$(sending --queue-only)"
 
 want "sp-skip-q (left standing by --skip-queue) is SENT under --queue-only" \
-    "SENT sp-skip-q" "$out2"
+    "SENT sp-skip-q " "$out2"
 want "sp-only-q is SENT under --queue-only" "SENT sp-only-q" "$out2"
 is   "sp-skip-q is now gone"  1 "$(branch_exists "$QREPO" spira/sp-skip-q; echo $?)"
 is   "sp-only-q is now gone"  1 "$(branch_exists "$QREPO" spira/sp-only-q; echo $?)"
