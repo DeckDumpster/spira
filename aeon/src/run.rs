@@ -430,7 +430,7 @@ impl<'a> Run<'a> {
             let p = self.stack_proposal(id, who);
             let rc = self.sdo(
                 "lc_claim_bead",
-                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string()]),
+                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.fayth.name]),
             );
             stacks.insert(id.to_string(), p.stack);
             rc

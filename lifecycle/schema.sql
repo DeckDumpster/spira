@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS bead (
     tip         VARCHAR(64) NULL,
     gate_key    VARCHAR(128) NULL,
     holder      VARCHAR(128) NULL,
+    -- The claiming persona (fayth); migrations/0005-persona.sql for an existing database.
+    persona     VARCHAR(64) NULL,
     lease_until BIGINT NULL,
     holds       JSON NOT NULL,
     reason      TEXT NULL,

@@ -157,7 +157,7 @@ seed_bead() {   # seed_bead <bead-id> <state> [holder] [lease_until]
         "REPLACE INTO bead (bead_id, state, holds, version, updated_at, holder, lease_until) VALUES ('$1','$2','[]',0,0,$holder_sql,$lease_sql)" >/dev/null 2>&1
 }
 row_json() {   # row_json <bead-id> -> the row's JSON, for want/nowant substring checks
-    root_sql --use-db spira_lifecycle sql -q "SELECT state, holder, version FROM bead WHERE bead_id='$1'" -r json 2>/dev/null
+    root_sql --use-db spira_lifecycle sql -q "SELECT state, holder, persona, version FROM bead WHERE bead_id='$1'" -r json 2>/dev/null
 }
 
 # shellcheck disable=SC1090
@@ -171,6 +171,18 @@ seed_bead "sp-lcrdy1" READY
 lc_claim_bead "sp-lcrdy1" "aeon-t1" 999999999
 is "claim from READY: applied (exit 0)" "0" "$?"
 want "claim from READY: row is now WORKING" '"state":"WORKING"' "$(row_json sp-lcrdy1)"
+
+# The claiming persona rides beside the holder: one aeon name, two personas, each row its own;
+# a claim that names none (a row from before the column) reports NULL, not a guess.
+seed_bead "sp-lcper1" READY
+seed_bead "sp-lcper2" READY
+seed_bead "sp-lcper3" READY
+lc_claim_bead "sp-lcper1" "aeon-mindy" 999999999 '{}' 0 4 builder
+lc_claim_bead "sp-lcper2" "aeon-mindy" 999999999 '{}' 0 4 ops
+lc_claim_bead "sp-lcper3" "aeon-mindy" 999999999
+want "persona: the builder claim records builder" '"persona":"builder"' "$(row_json sp-lcper1)"
+want "persona: the ops claim under the same name records ops" '"persona":"ops"' "$(row_json sp-lcper2)"
+nowant "persona: a claim naming none is not guessed" '"persona":"' "$(row_json sp-lcper3)"
 
 # sp-zw9ot: batched at 16:59; an aeon claims at 17:00 -> refused.
 seed_bead "sp-zw9ot" IN_DELIVERY

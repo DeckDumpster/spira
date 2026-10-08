@@ -9,7 +9,7 @@ fn tip() -> impl Strategy<Value = String> {
 
 fn kind() -> impl Strategy<Value = BeadEventKind> {
     prop_oneof![
-        Just(BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 }),
+        Just(BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }),
         Just(BeadEventKind::Release),
         Just(BeadEventKind::HolderDead),
         tip().prop_map(|tip| BeadEventKind::Submit { tip }),
@@ -39,7 +39,7 @@ fn event_for(row: &BeadRow, kind: BeadEventKind) -> BeadEvent {
 fn forward(row: &BeadRow) -> BeadEventKind {
     let tip = row.tip.clone().unwrap_or_else(|| "t1".into());
     match row.state {
-        BeadState::Ready => BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 },
+        BeadState::Ready => BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
         BeadState::Working | BeadState::Rework => BeadEventKind::Submit { tip },
         BeadState::Submitted => BeadEventKind::GatePass { tip, gate_key: "k".into() },
         BeadState::Certified => BeadEventKind::Deliver,
