@@ -83,6 +83,20 @@ chmod +x "$STUB_BD"
 # bd is called. SPIRA_DB is a temp path (bd never runs, so the value does not need to exist).
 # A close goes through spira-lc (sp-3fue0j); with no lifecycle store here, it closes the store.
 lc_close_stub "$T/lc" "$STUB_BD" "$T/fixture.db"
+# The depends-on-fix refusal reads the fix's lifecycle row: a fix whose id starts "closed-" is
+# LANDED, any other is WORKING.
+mkdir -p "$T/lcshow"
+cat > "$T/lcshow/spira-lc" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = show ]; then
+    st=WORKING; case "\$2" in closed-*) st=LANDED ;; esac
+    printf '{"bead":{"bead_id":"%s","state":"%s","version":1,"holder":null,"lease_until":null,"holds":[]}}\n' "\$2" "\$st"
+    exit 0
+fi
+exec "$T/lc/spira-lc" "\$@"
+STUB
+chmod +x "$T/lcshow/spira-lc"
+SPIRA_LC_BIN="$T/lcshow/spira-lc"; export SPIRA_LC_BIN
 run_groomer() {
     tl_config SPIRA_BD="$STUB_BD"
     env -i SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
