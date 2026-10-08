@@ -14,6 +14,10 @@
 // for the same fault).
 
 use reconciler_engine::core::{record_remedy, step, HysteresisState, RawStatus, Verdict};
+use reconciler_engine::effect::{
+    append_event, compose_no_effect, is_shadowed, kind_of, load_pending, measure, save_pending, Outcome,
+    PendingEffect, PendingMap, RemedyEvent,
+};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use spira_desired_state::compose::Composite;
 use spira_desired_state::resource::{parse_resource, CockpitSpec, DiskSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
@@ -108,6 +112,12 @@ struct Config {
     log: PathBuf,
     state_path: PathBuf,
     status_log: PathBuf,
+    remedy_log: PathBuf,
+    effect_state: PathBuf,
+    mail_sh: String,
+    release: String,
+    shadow_kinds: Vec<String>,
+    effect_passes: u32,
     lock_path: PathBuf,
     spira_db: String,
     scope_label: String,
@@ -161,6 +171,15 @@ fn harness_home() -> PathBuf {
         .unwrap_or_default()
 }
 
+/// The release the running harness copy is: the directory name above its `spira/` dir, or
+/// `unknown` when the home cannot be located.
+fn release_name(home: &Path) -> String {
+    home.parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 impl Config {
     fn from_env() -> Result<Config, String> {
         use spira_config::process::{cfg, cfg_parse};
@@ -192,6 +211,26 @@ impl Config {
             status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
+            remedy_log: env::var("SPIRA_RECONCILER_REMEDY_LOG")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-remedy.jsonl")),
+            effect_state: env::var("SPIRA_RECONCILER_EFFECT_STATE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| spira_run.join("reconciler-effects.json")),
+            // SPIRA_MAIL_SH / SPIRA_RECONCILER_SHADOW_KINDS / SPIRA_RECONCILER_EFFECT_PASSES
+            // are not registered config keys — left as direct env reads.
+            mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string()),
+            release: release_name(&harness_home()),
+            shadow_kinds: env::var("SPIRA_RECONCILER_SHADOW_KINDS")
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(String::from)
+                .collect(),
+            effect_passes: env::var("SPIRA_RECONCILER_EFFECT_PASSES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(2),
             lock_path: spira_run.join("reconciler.lock"),
             spira_db: cfg("SPIRA_DB")?,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
@@ -928,10 +967,74 @@ fn observe_queue_lock_age(cfg: &Config) -> Vec<Check> {
 // evaluate: run one Check through the pure engine, act on the verdict.
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn evaluate(cfg: &Config, state: &mut StateMap, check: Check) {
+/// The invariant metric every remedy here should lower: 0 when satisfied, 1 while it is
+/// not (a gap or an unreadable input).
+fn gap_metric(raw: &RawStatus) -> f64 {
+    if matches!(raw, RawStatus::Satisfied) { 0.0 } else { 1.0 }
+}
+
+fn write_event(cfg: &Config, event: &str, key: &str, action: &str, before: f64, after: Option<f64>) {
+    append_event(
+        &cfg.remedy_log,
+        &RemedyEvent {
+            ts: &cfg.now_iso,
+            event,
+            kind: kind_of(key),
+            key,
+            action,
+            metric: "gap",
+            before,
+            after,
+            release: &cfg.release,
+        },
+    );
+}
+
+fn judge_pending(cfg: &Config, pending: &mut PendingMap, key: &str, after: f64) {
+    let Some(prior) = pending.remove(key) else { return };
+    match measure(prior.clone(), after, cfg.effect_passes) {
+        Outcome::Pending(p) => {
+            pending.insert(key.to_string(), p);
+        }
+        Outcome::Effect { before, after } => {
+            write_event(cfg, "effect", key, &prior.action, before, Some(after));
+        }
+        Outcome::NoEffect { before, after } => {
+            write_event(cfg, "no-effect", key, &prior.action, before, Some(after));
+            log_print(cfg, &format!("reconciler: {} → remedy had no effect", key));
+            let subject = format!("RECONCILER: remedy for {} had no effect", key);
+            let body = compose_no_effect(key, &prior, after, cfg.now_secs, cfg.effect_passes);
+            if let Err(e) = mail_concierge(&cfg.mail_sh, &subject, &body) {
+                log_print(cfg, &format!("reconciler: {} → no-effect mail failed: {}", key, e));
+            }
+        }
+    }
+}
+
+fn mail_concierge(mail_sh: &str, subject: &str, body: &str) -> Result<(), String> {
+    let mut child = spira_config::bounded::bounded(mail_sh)
+        .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "note"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{mail_sh}: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(body.as_bytes());
+    }
+    let out = child.wait_with_output().map_err(|e| format!("{mail_sh}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{mail_sh} send concierge: exit {}", out.status.code().unwrap_or(-1)));
+    }
+    Ok(())
+}
+
+fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, check: Check) {
     let prev = state.remove(&check.key).unwrap_or_default();
+    let metric_now = gap_metric(&check.raw);
     let (verdict, mut next) = step(cfg.now_secs, check.raw, cfg.grace_secs, prev);
     append_status(&cfg.status_log, &cfg.now_iso, &check.key, &verdict);
+    judge_pending(cfg, pending, &check.key, metric_now);
 
     if verdict.is_gap {
         if verdict.remedy_failed {
@@ -941,10 +1044,27 @@ fn evaluate(cfg: &Config, state: &mut StateMap, check: Check) {
                 Remedy::Escalate => escalate(cfg, &check.key, &verdict),
                 Remedy::Command { program, args } => {
                     let desc = format!("{} {}", program, args.join(" "));
-                    log_print(cfg, &format!("reconciler: {} → remedy: {}", check.key, desc));
-                    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                    let _ = run_cmd_ok(program, &arg_refs);
-                    record_remedy(&mut next, cfg.now_secs, &desc);
+                    if is_shadowed(&cfg.shadow_kinds, kind_of(&check.key)) {
+                        log_print(cfg, &format!("reconciler: {} → remedy held (shadow): {}", check.key, desc));
+                        write_event(cfg, "shadow", &check.key, &desc, metric_now, None);
+                        escalate(cfg, &check.key, &verdict);
+                    } else {
+                        log_print(cfg, &format!("reconciler: {} → remedy: {}", check.key, desc));
+                        write_event(cfg, "remedy", &check.key, &desc, metric_now, None);
+                        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                        let _ = run_cmd_ok(program, &arg_refs);
+                        record_remedy(&mut next, cfg.now_secs, &desc);
+                        pending.insert(
+                            check.key.clone(),
+                            PendingEffect {
+                                action: desc,
+                                metric: "gap".into(),
+                                before: metric_now,
+                                acted_at: cfg.now_secs,
+                                passes_seen: 0,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -1036,6 +1156,7 @@ fn run_pass() -> Result<(), String> {
     }
 
     let mut state = load_state(&cfg.state_path);
+    let mut pending = load_pending(&cfg.effect_state);
 
     let mut checks = Vec::new();
     checks.extend(observe_units(&cfg));
@@ -1049,10 +1170,11 @@ fn run_pass() -> Result<(), String> {
 
     let n = checks.len();
     for check in checks {
-        evaluate(&cfg, &mut state, check);
+        evaluate(&cfg, &mut state, &mut pending, check);
     }
 
     let _ = save_state(&cfg.state_path, &state);
+    let _ = save_pending(&cfg.effect_state, &pending);
 
     let elapsed = unix_now().saturating_sub(cfg.now_secs);
     log_print(&cfg, &format!("reconciler: complete ({} checks, {}s)", n, elapsed));
@@ -1122,7 +1244,7 @@ mod tests {
         let marker = dir.join("remedy-ran");
         let cfg = Config { grace_secs: 300, now_secs: 100, ..test_config() };
         let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, Check {
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
             key: "k".into(),
             raw: RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
             remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
@@ -1143,7 +1265,7 @@ mod tests {
         let marker = dir.join("remedy-ran");
         let cfg = Config { grace_secs: 0, now_secs: 100, ..test_config() };
         let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, Check {
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
             key: "k".into(),
             raw: RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None },
             remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
@@ -1164,7 +1286,7 @@ mod tests {
         let raw = || RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None };
 
         // Pass 1: past grace, command remedy attempted and recorded.
-        evaluate(&cfg1, &mut state, Check {
+        evaluate(&cfg1, &mut state, &mut PendingMap::new(), Check {
             key: "k".into(),
             raw: raw(),
             remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
@@ -1175,7 +1297,7 @@ mod tests {
         // Pass 2: still a gap — the engine reports remedy_failed, so evaluate must escalate
         // rather than run the command a second time.
         let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg1) };
-        evaluate(&cfg2, &mut state, Check {
+        evaluate(&cfg2, &mut state, &mut PendingMap::new(), Check {
             key: "k".into(),
             raw: raw(),
             remedy: Remedy::Command { program: "touch".into(), args: vec![marker.to_string_lossy().to_string()] },
@@ -1193,7 +1315,7 @@ mod tests {
 
         let cfg = Config { grace_secs: 300, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
         let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, Check {
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
             key: "k".into(),
             raw: RawStatus::Unobservable { reason: "cannot read it".into() },
             remedy: Remedy::Escalate,
@@ -1210,12 +1332,102 @@ mod tests {
 
         let cfg = Config { grace_secs: 0, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
         let mut state = StateMap::new();
-        evaluate(&cfg, &mut state, Check {
+        evaluate(&cfg, &mut state, &mut PendingMap::new(), Check {
             key: "k".into(),
             raw: RawStatus::Unobservable { reason: "cannot read it".into() },
             remedy: Remedy::Escalate,
         });
         assert!(escalated.exists(), "unobservable sustained past grace must still escalate (law-a-control-that-cannot-check-must-refuse)");
+    }
+
+    fn gap_raw() -> RawStatus {
+        RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None }
+    }
+
+    fn touch_remedy(path: &Path) -> Remedy {
+        Remedy::Command { program: "touch".into(), args: vec![path.to_string_lossy().to_string()] }
+    }
+
+    fn effect_cfg(dir: &Path, mail: &Path) -> Config {
+        Config {
+            grace_secs: 0,
+            remedy_log: dir.join("remedy.jsonl"),
+            mail_sh: mail.to_string_lossy().to_string(),
+            incident_sh: "/bin/true".into(),
+            release: "r-fixture".into(),
+            effect_passes: 2,
+            ..test_config()
+        }
+    }
+
+    fn stub_mail(dir: &Path) -> PathBuf {
+        let mail = dir.join("stub-mail.sh");
+        testkit::write_exe(&mail, &format!("#!/usr/bin/env bash\ncat >> {}\n", dir.join("mailed").display()));
+        mail
+    }
+
+    #[test]
+    fn a_remedy_writes_one_event_and_an_effective_one_reads_effect() {
+        let dir = scratch_dir("effect-remedy-event");
+        let mail = stub_mail(&dir);
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+
+        let cfg1 = Config { now_secs: 100, ..effect_cfg(&dir, &mail) };
+        evaluate(&cfg1, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&dir.join("ran")) });
+        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
+        assert_eq!(log.lines().count(), 1, "one remedy writes exactly one event");
+        for field in ["\"event\":\"remedy\"", "\"kind\":\"disk\"", "\"key\":\"disk:/v\"", "\"action\":\"touch ", "\"before\":1.0", "\"release\":\"r-fixture\"", "\"ts\":"] {
+            assert!(log.contains(field), "event lacks {field}: {log}");
+        }
+
+        let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg1) };
+        evaluate(&cfg2, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: RawStatus::Satisfied, remedy: touch_remedy(&dir.join("ran")) });
+        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
+        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0.0"), "{log}");
+        assert!(!log.contains("no-effect"));
+        assert!(!dir.join("mailed").exists(), "an effective remedy mails nothing");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn a_planted_no_op_remedy_is_flagged_no_effect_and_mailed_with_both_readings() {
+        let dir = scratch_dir("effect-no-op");
+        let mail = stub_mail(&dir);
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+        let noop = || Remedy::Command { program: "true".into(), args: vec![] };
+
+        let cfg1 = Config { now_secs: 100, ..effect_cfg(&dir, &mail) };
+        evaluate(&cfg1, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
+        let cfg2 = Config { now_secs: 200, ..test_config_from(&cfg1) };
+        evaluate(&cfg2, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
+        assert!(!dir.join("mailed").exists(), "one pass of no movement is still inside the pass budget");
+        let cfg3 = Config { now_secs: 300, ..test_config_from(&cfg1) };
+        evaluate(&cfg3, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
+
+        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
+        assert!(log.contains("\"event\":\"no-effect\"") && log.contains("\"before\":1.0") && log.contains("\"after\":1.0"), "{log}");
+        let mailed = fs::read_to_string(dir.join("mailed")).unwrap();
+        assert!(mailed.contains("before: 1") && mailed.contains("after: 1") && mailed.contains("disk:/v"), "{mailed}");
+    }
+
+    #[test]
+    fn a_shadowed_kind_records_the_remedy_it_would_have_run_and_does_not_run_it() {
+        let dir = scratch_dir("effect-shadow");
+        let mail = stub_mail(&dir);
+        let ran = dir.join("ran");
+        let cfg = Config { now_secs: 100, shadow_kinds: vec!["disk".into()], ..effect_cfg(&dir, &mail) };
+        let mut state = StateMap::new();
+        let mut pending = PendingMap::new();
+        evaluate(&cfg, &mut state, &mut pending, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
+        assert!(!ran.exists(), "the kill switch holds the remedy back");
+        assert!(fs::read_to_string(dir.join("remedy.jsonl")).unwrap().contains("\"event\":\"shadow\""));
+        assert!(pending.is_empty(), "a remedy that did not act has no effect to measure");
+
+        let other = Config { shadow_kinds: vec!["units-timer".into()], ..test_config_from(&cfg) };
+        evaluate(&other, &mut state, &mut pending, Check { key: "disk:/w".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
+        assert!(ran.exists(), "a kind the switch does not name still acts");
     }
 
     fn test_config() -> Config {
@@ -1225,6 +1437,12 @@ mod tests {
             log: PathBuf::from("/dev/null"),
             state_path: PathBuf::from("/dev/null"),
             status_log: PathBuf::from("/dev/null"),
+            remedy_log: PathBuf::from("/dev/null"),
+            effect_state: PathBuf::from("/dev/null"),
+            mail_sh: "/bin/true".into(),
+            release: "r-test".into(),
+            shadow_kinds: Vec::new(),
+            effect_passes: 2,
             lock_path: PathBuf::from("/dev/null"),
             spira_db: String::new(),
             scope_label: String::new(),
@@ -1264,6 +1482,12 @@ mod tests {
             log: base.log.clone(),
             state_path: base.state_path.clone(),
             status_log: base.status_log.clone(),
+            remedy_log: base.remedy_log.clone(),
+            effect_state: base.effect_state.clone(),
+            mail_sh: base.mail_sh.clone(),
+            release: base.release.clone(),
+            shadow_kinds: base.shadow_kinds.clone(),
+            effect_passes: base.effect_passes,
             lock_path: base.lock_path.clone(),
             spira_db: base.spira_db.clone(),
             scope_label: base.scope_label.clone(),
