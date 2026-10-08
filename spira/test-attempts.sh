@@ -30,6 +30,7 @@
 # tier: T2
 # covers: spira/*.sh
 set -uo pipefail
+CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
@@ -159,7 +160,7 @@ claimed() {
     local id="$1" n="$2" i=0 uuid
     while [ "$i" -lt "$n" ]; do
         uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-        bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', NOW())" >/dev/null 2>&1
+        bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', DATE_ADD(NOW(), INTERVAL $((++CLAIM_SEQ)) MINUTE))" >/dev/null 2>&1
         i=$((i+1))
     done
 }

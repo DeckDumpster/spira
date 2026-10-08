@@ -33,6 +33,7 @@
 # covers: spira/lib.sh UC-aeon-execution-19
 # timeout: 90
 set -uo pipefail
+CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
@@ -70,10 +71,11 @@ JSONL
 }
 num() { local v="$1"; printf '%d' "${v:-0}"; }
 seedn() {   # seedn <id> <event_type> <new_value> <n> — n raw events via bd sql
+    # each event a minute past the last: claims inside the double-claim window fold into one
     local id="$1" et="$2" nv="$3" n="${4:-1}" i=0 uuid
     while [ "$i" -lt "$n" ]; do
         uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-        bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$et', 'harness', '$nv', NOW())" >/dev/null 2>&1
+        bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$et', 'harness', '$nv', DATE_ADD(NOW(), INTERVAL $((++CLAIM_SEQ)) MINUTE))" >/dev/null 2>&1
         i=$((i+1))
     done
 }
