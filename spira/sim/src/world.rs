@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub const PRODUCTION_LOCATORS: &[&str] = &["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB"];
-const MARKER: &str = ".sim-world";
+pub const MARKER: &str = ".sim-world";
 /// The world's landing ref: `repo.sim.base`, and the ref a LANDED bead's commit must reach.
 pub const LANDING_BASE: &str = "local/main";
 const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: git/tar/cp/testenv steps of building a world
@@ -284,19 +284,24 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     std::fs::create_dir_all(&gh_state).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
     let gh_bin = bin.join("gh");
-    link(&std::env::current_exe().map_err(|e| e.to_string())?, &gh_bin)?;
+    let sim_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    link(&sim_exe, &gh_bin)?;
+    link(&sim_exe, &bin.join("round-vm"))?;
+    crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
     for (k, v) in config_settings(&work, &gh_bin) {
         steps.config_set(&release, &file, &k, &v)?;
     }
     std::fs::write(
         config.join("sim.env"),
         format!(
-            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n",
+            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\n",
             run_dir.display(),
             runner.display(),
             gh_state.display(),
             bin.display(),
-            probe_command(&std::env::current_exe().map_err(|e| e.to_string())?, dir)
+            probe_command(&std::env::current_exe().map_err(|e| e.to_string())?, dir),
+            crate::roundvm::WORLD_ENV,
+            dir.display()
         ),
     )
     .map_err(|e| e.to_string())?;

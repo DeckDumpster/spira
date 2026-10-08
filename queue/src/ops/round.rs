@@ -22,7 +22,7 @@ pub const FAULT: i32 = 4;
 const RECORD: &str = "round";
 const LC_ACTOR: &str = "queue.sh";
 const PASSING: [&str; 2] = ["ok", "skip"];
-pub(crate) const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
+pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
 
 pub fn run(w: &World, r: &Round) -> i32 {
     match r {
@@ -307,7 +307,9 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     OK
 }
 
-fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32) {
+/// Each `<suite>.result` under `dir` (two levels deep) with its first word, the status.
+/// Public so the sim's stub round-vm is tested against this exact reader.
+pub fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();

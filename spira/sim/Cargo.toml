@@ -26,3 +26,4 @@ spira-config = { path = "../../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }
+queue = { path = "../../queue" }

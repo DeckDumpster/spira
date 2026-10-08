@@ -2,14 +2,14 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>";
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
-    let invoked_as_gh = args.first().and_then(|a| std::path::Path::new(a).file_name()).is_some_and(|n| n == "gh");
+    let invoked_as = args.first().and_then(|a| std::path::Path::new(a).file_name()).and_then(|n| n.to_str()).map(str::to_string);
     args.remove(0);
-    if invoked_as_gh {
-        args.insert(0, "gh".to_string());
+    if let Some(name @ ("gh" | "round-vm")) = invoked_as.as_deref() {
+        args.insert(0, name.to_string());
     }
     let code = match run(&args) {
         Ok(()) => 0,
@@ -27,6 +27,7 @@ fn run(args: &[String]) -> Result<(), String> {
     let state_dir = || std::env::var_os(gh::STATE_ENV).filter(|v| !v.is_empty()).map(PathBuf::from).ok_or(format!("{} is not set: sim gh answers only inside a world", gh::STATE_ENV));
     match args.first().map(String::as_str) {
         Some("gh") => return gh_main(&state_dir()?, &cwd, &args[1..]),
+        Some("round-vm") => return round_vm_main(&args[1..], &env),
         Some("ghctl") => {
             let (dir, rest) = args[1..].split_first().ok_or(USAGE.to_string())?;
             print!("{}", gh::ctl(&PathBuf::from(dir), rest)?);
@@ -59,6 +60,15 @@ fn gh_main(state: &std::path::Path, cwd: &std::path::Path, args: &[String]) -> R
         std::process::exit(out.code);
     }
     Ok(())
+}
+
+fn round_vm_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
+    use spira_sim::roundvm;
+    let world = env(roundvm::WORLD_ENV).filter(|v| !v.is_empty()).ok_or(format!("{} is not set: sim round-vm answers only inside a world", roundvm::WORLD_ENV))?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+    let (code, err) = roundvm::run(&PathBuf::from(world), args, env, now);
+    eprint!("{err}");
+    std::process::exit(code);
 }
 
 fn flags(args: &[String], known: &[&str], bare: &[&str]) -> Result<(Vec<String>, std::collections::BTreeMap<String, String>), String> {
