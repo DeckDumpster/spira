@@ -108,6 +108,19 @@ pub fn load(path: &Path) -> Result<SpiraToml, String> {
     load_layered(&path.to_string_lossy()).map(|(doc, _)| doc)
 }
 
+/// `(added, removed)` key paths a `config-delta.toml` declares: `[added]` table keys and the
+/// `removed` array.
+pub fn parse_config_delta(text: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let v: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let added = v.get("added").and_then(|a| a.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default();
+    let removed = v
+        .get("removed")
+        .and_then(|a| a.as_array())
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    Ok((added, removed))
+}
+
 /// [`load`] plus the warnings and [`require_id_prefix`] — the check `spira-config validate`
 /// runs (doctor, pre-activate) over the config in force, layers and all.
 pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {

@@ -25,14 +25,8 @@ pub fn config_path(file: &str) -> String {
 
 /// `(added, removed)` declared by a delta's text.
 pub fn declared(text: &str) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
-    let v: toml::Value = toml::from_str(text).map_err(|e| e.to_string())?;
-    let added = v.get("added").and_then(|a| a.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default();
-    let removed = v
-        .get("removed")
-        .and_then(|a| a.as_array())
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
-        .unwrap_or_default();
-    Ok((added, removed))
+    let (added, removed) = spira_config::parse_config_delta(text)?;
+    Ok((added.into_iter().collect(), removed.into_iter().collect()))
 }
 
 /// `(undeclared additions, undeclared removals)` between two key sets.
