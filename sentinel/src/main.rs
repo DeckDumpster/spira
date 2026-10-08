@@ -147,7 +147,7 @@ fn resolve_repos(vars: &std::collections::BTreeMap<String, String>, home: &Path)
                 .and_then(|r| spira_config::repos::landrefs(&reg, r))
                 .map(|(base, local)| std::iter::once(base).chain(local).collect())
                 .unwrap_or_default();
-            Repo { name: name.clone(), root, landrefs, queued: reg.land_queued(&name) }
+            Repo { name: name.clone(), root, landrefs, forge_queued: reg.land_forge_queued(&name) }
         })
         .collect()
 }

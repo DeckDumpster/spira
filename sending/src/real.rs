@@ -61,8 +61,8 @@ impl Real {
             .into_iter()
             .map(|name| {
                 let root = reg.root(&name).map(PathBuf::from);
-                let queued = reg.land_queued(&name);
-                Repo { name, root, queued }
+                let forge_queued = reg.land_forge_queued(&name);
+                Repo { name, root, forge_queued }
             })
             .collect();
         // SPIRA_SUBMITTED_LABEL/SPIRA_GH are registered config keys (spira/conf.d) — the one

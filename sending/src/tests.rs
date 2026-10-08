@@ -260,7 +260,7 @@ fn opts() -> Opts {
 }
 
 fn repo(fx: &Fx) -> Repo {
-    Repo { name: "home".into(), root: Some(fx.repo.clone()), queued: false }
+    Repo { name: "home".into(), root: Some(fx.repo.clone()), forge_queued: false }
 }
 
 fn sweep(f: &Fake, o: Opts, repos: &[Repo]) -> i32 {
@@ -453,8 +453,8 @@ fn repositories_that_cannot_be_judged_are_skipped_loudly() {
     let plain = t.path().join("plain");
     std::fs::create_dir_all(&plain).unwrap();
     let repos = [
-        Repo { name: "nopath".into(), root: None, queued: false },
-        Repo { name: "plain".into(), root: Some(plain.clone()), queued: false },
+        Repo { name: "nopath".into(), root: None, forge_queued: false },
+        Repo { name: "plain".into(), root: Some(plain.clone()), forge_queued: false },
     ];
     sweep(&f, opts(), &repos);
     let out = f.out();
@@ -470,7 +470,7 @@ fn repositories_that_cannot_be_judged_are_skipped_loudly() {
 #[test]
 fn skip_queue_and_queue_only_partition_the_repositories() {
     let (fx, f) = fixture();
-    let q = Repo { name: "home".into(), root: Some(fx.repo.clone()), queued: true };
+    let q = Repo { name: "home".into(), root: Some(fx.repo.clone()), forge_queued: true };
     sweep(&f, Opts { scope: Scope::SkipQueue, ..opts() }, std::slice::from_ref(&q));
     assert!(!f.out().contains("SENT"), "--skip-queue leaves a queue repo alone");
     assert!(exists(&fx, "spira/sp-cl1"));

@@ -2034,11 +2034,11 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
 
     let spira = repos.iter().find(|r| r.name == "spira").expect("home repo always present");
     assert_eq!(spira.root, None, "unmapped — never a guessed default of the home checkout");
-    assert!(!spira.queued);
+    assert!(!spira.forge_queued);
 
     let other = repos.iter().find(|r| r.name == "other").expect("every mapped name, not only the home repo");
     assert_eq!(other.root.as_deref(), Some("/nonexistent/other"));
-    assert!(other.queued, "queue.local counts as queued");
+    assert!(!other.forge_queued, "queue.local is swept: no forge retires its branches");
     assert!(other.landrefs.is_empty(), "no declared base and no real checkout to ask — refuse, never guess");
 }
 
