@@ -1,9 +1,10 @@
 [Unit]
-Description=Spira rounds — the next pass starts 30 seconds after the last one ends
+Description=Spira rounds — a pass starts every 30 seconds; a pass still running is not restarted
 
 [Timer]
 OnBootSec=120s
-OnUnitInactiveSec=30s
+OnActiveSec=120s
+OnUnitActiveSec=30s
 AccuracySec=5s
 Unit=spira-rounds.service
 

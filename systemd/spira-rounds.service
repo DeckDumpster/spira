@@ -14,7 +14,6 @@ Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/batcher rounds
 TimeoutStartSec=7200
-CPUQuota=50%
 StandardOutput=append:@SPIRA_RUN@/rounds.log
 StandardError=append:@SPIRA_RUN@/rounds.log
 
