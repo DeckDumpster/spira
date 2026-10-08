@@ -28,7 +28,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
     match r {
         Round::Open { repo, members, name, worktree } => open(w, repo.as_deref(), members, name.as_deref(), worktree.as_deref()),
         Round::Certify { batch, repo, attest } => certify(w, batch, repo.as_deref(), attest.as_deref()),
-        Round::Eject { batch, id, repo, reason, suites, red, rebuild } => eject(w, batch, id, repo.as_deref(), reason, suites, *red, *rebuild),
+        Round::Eject { batch, id, repo, reason, suites, red, harness_fault, rebuild } => eject(w, batch, id, repo.as_deref(), reason, suites, *red, *harness_fault, *rebuild),
         Round::Land { batch, repo } => land(w, batch, repo.as_deref()),
         Round::Abandon { batch, repo, reason } => abandon(w, batch, repo.as_deref(), reason),
         Round::Status { repo } => status(w, repo.as_deref()),
@@ -482,7 +482,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, rebuild: bool) -> i32 {
+fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, harness_fault: bool, rebuild: bool) -> i32 {
     let label = "round eject";
     let reason = match read_text(w, reason) {
         Ok(r) if !r.trim().is_empty() => r,
@@ -529,7 +529,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         }
     }
 
-    let cause = EjectCause::decide(red, suites);
+    let cause = EjectCause::decide(red, harness_fault, suites);
     w.lib.bead_reopen(id, cause.as_str(), suites);
     lc_return(w, id);
     w.lib.release_claim(id);

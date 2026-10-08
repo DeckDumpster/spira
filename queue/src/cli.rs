@@ -28,7 +28,7 @@ pub enum Cmd {
     Verdict { repo: String },
     /// `step --all`: every queue-mode repository (queue-step-all.md).
     StepAll,
-    Eject { id: String, repo: Option<String>, reason: Text, suites: String, red: bool, dry_run: bool },
+    Eject { id: String, repo: Option<String>, reason: Text, suites: String, red: bool, harness_fault: bool, dry_run: bool },
     Abandon { repo: Option<String>, reason: Text, dry_run: bool },
     OpenBatch { repo: Option<String>, members: Text, skip_pregate: bool, dry_run: bool },
     Claim { repo: Option<String>, reason: Text, force: bool },
@@ -48,13 +48,13 @@ pub enum Cmd {
 pub enum Round {
     Open { repo: Option<String>, members: Text, name: Option<String>, worktree: Option<PathBuf> },
     Certify { batch: String, repo: Option<String>, attest: Option<String> },
-    Eject { batch: String, id: String, repo: Option<String>, reason: Text, suites: String, red: bool, rebuild: bool },
+    Eject { batch: String, id: String, repo: Option<String>, reason: Text, suites: String, red: bool, harness_fault: bool, rebuild: bool },
     Land { batch: String, repo: Option<String> },
     Abandon { batch: String, repo: Option<String>, reason: Text },
     Status { repo: Option<String> },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round status [<repo>]";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round status [<repo>]";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -160,7 +160,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
     let mut w = Walk { cmd: &label, args: &args[1..], i: 0 };
     let (mut members, mut reason) = (Text::None, Text::None);
     let (mut name, mut worktree, mut attest) = (None, None, None);
-    let (mut suites, mut red, mut rebuild) = (String::new(), false, true);
+    let (mut suites, mut red, mut harness_fault, mut rebuild) = (String::new(), false, false, true);
     let mut pos: Vec<String> = Vec::new();
     while let Some(t) = w.next() {
         match t {
@@ -171,6 +171,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             Tok::Opt("attest", v) => attest = Some(w.value(v)),
             Tok::Opt("suites", v) => suites = w.value(v),
             Tok::Opt("red", None) => red = true,
+            Tok::Opt("harness-fault", None) => harness_fault = true,
             Tok::Opt("no-rebuild", None) => rebuild = false,
             Tok::Opt(k, _) => return Err(w.unknown(k)),
             Tok::Pos(p) => pos.push(p.to_string()),
@@ -186,7 +187,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             Ok(Round::Open { repo: pos.next(), members, name, worktree })
         }
         "certify" => Ok(Round::Certify { batch: need("batch id", pos.next())?, repo: pos.next(), attest }),
-        "eject" => Ok(Round::Eject { batch: need("batch id", pos.next())?, id: need("bead id", pos.next())?, repo: pos.next(), reason, suites, red, rebuild }),
+        "eject" => Ok(Round::Eject { batch: need("batch id", pos.next())?, id: need("bead id", pos.next())?, repo: pos.next(), reason, suites, red, harness_fault, rebuild }),
         "land" => Ok(Round::Land { batch: need("batch id", pos.next())?, repo: pos.next() }),
         "abandon" => Ok(Round::Abandon { batch: need("batch id", pos.next())?, repo: pos.next(), reason }),
         "status" => Ok(Round::Status { repo: pos.next() }),
@@ -231,18 +232,19 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
         "eject" => {
             let id = pos(0).ok_or_else(|| Usage("queue.sh eject: bead id required".into()))?;
             let mut w = Walk { cmd: "eject", args: &args[1..], i: 0 };
-            let (mut repo, mut reason, mut suites, mut red, mut dry_run) = (None, Text::None, String::new(), false, false);
+            let (mut repo, mut reason, mut suites, mut red, mut harness_fault, mut dry_run) = (None, Text::None, String::new(), false, false, false);
             while let Some(t) = w.next() {
                 match t {
                     Tok::Opt(k, v) if reason_opt(&mut w, k, v.clone(), &mut reason) => {}
                     Tok::Opt("suites", v) => suites = w.value(v),
                     Tok::Opt("red", None) => red = true,
+                    Tok::Opt("harness-fault", None) => harness_fault = true,
                     Tok::Opt("dry-run", None) => dry_run = true,
                     Tok::Opt(k, _) => return Err(w.unknown(k)),
                     Tok::Pos(p) => repo = Some(p.to_string()),
                 }
             }
-            Ok(Cmd::Eject { id, repo, reason, suites, red, dry_run })
+            Ok(Cmd::Eject { id, repo, reason, suites, red, harness_fault, dry_run })
         }
         "abandon" => {
             let mut w = Walk { cmd: "abandon", args, i: 0 };
@@ -339,7 +341,7 @@ mod tests {
     #[test]
     fn eject_reason_in_both_spellings_and_red() {
         let c = p(&["eject", "sp-a", "--reason=r1", "--red", "spira"]).unwrap();
-        assert_eq!(c, Cmd::Eject { id: "sp-a".into(), repo: Some("spira".into()), reason: Text::Arg("r1".into()), suites: String::new(), red: true, dry_run: false });
+        assert_eq!(c, Cmd::Eject { id: "sp-a".into(), repo: Some("spira".into()), reason: Text::Arg("r1".into()), suites: String::new(), red: true, harness_fault: false, dry_run: false });
         let c = p(&["eject", "sp-a", "--reason-file", "-", "--suites", "t.sh"]).unwrap();
         assert!(matches!(c, Cmd::Eject { reason: Text::Stdin, ref suites, .. } if suites == "t.sh"));
         assert_eq!(p(&["eject", "sp-a", "--bogus"]), Err(Usage("queue.sh eject: unknown option: --bogus".into())));
