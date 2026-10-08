@@ -295,6 +295,19 @@ pub fn contains_schema_delete(title: &str, description: &str) -> bool {
     bead::bdq::schema_delete_match(&format!("{title} {description}"))
 }
 
+/// The label set every incident bead is filed with: the scope label every persona predicate
+/// requires is unconditional, whether the caller supplied labels or not. With no scope
+/// configured the legacy `spira` label stands in.
+pub fn incident_labels(supplied: Option<&str>, scope: Option<&str>, incident_label: &str) -> String {
+    let scope = scope.filter(|s| !s.is_empty()).unwrap_or("spira");
+    let base = supplied.map(str::to_string).unwrap_or_else(|| incident_label.to_string());
+    if base.split(',').any(|l| l == scope) {
+        base
+    } else {
+        format!("{scope},{base}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +511,15 @@ mod tests {
         assert_eq!(unit_from_cgroup_line("0::/user.slice/session.scope"), "session.scope");
         assert_eq!(unit_from_cgroup_line("0::/user.slice/something-else"), "?");
         assert_eq!(unit_from_cgroup_line(""), "?");
+    }
+
+    #[test]
+    fn incident_labels_always_carry_the_scope() {
+        assert_eq!(incident_labels(None, Some("spira-ops"), "incident"), "spira-ops,incident");
+        assert_eq!(incident_labels(Some("spira,incident"), Some("spira-ops"), "incident"), "spira-ops,spira,incident");
+        assert_eq!(incident_labels(Some("spira-ops,incident"), Some("spira-ops"), "incident"), "spira-ops,incident");
+        assert_eq!(incident_labels(None, None, "incident"), "spira,incident");
+        assert_eq!(incident_labels(None, Some(""), "incident"), "spira,incident");
     }
 
     #[test]
