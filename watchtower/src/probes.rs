@@ -194,9 +194,18 @@ pub fn df_avail_mib_and_used_pct(df_out: &str) -> Option<(i64, i64)> {
     Some((avail, pct))
 }
 
-fn df(cfg: &Cfg, path: &str) -> Option<(i64, i64)> {
-    let out = crate::deadline::output("conditions df", Command::new(&cfg.df_bin).args(["--output=avail,pcent", "-BM", path])).ok()?;
-    out.status.success().then(|| df_avail_mib_and_used_pct(&String::from_utf8_lossy(&out.stdout))).flatten()
+pub fn df_size_mib(df_out: &str) -> Option<i64> {
+    df_out.lines().last()?.split_whitespace().nth(2)?.trim_end_matches('M').parse().ok()
+}
+
+fn df(cfg: &Cfg, path: &str) -> Option<(i64, i64, Option<i64>)> {
+    let out = crate::deadline::output("conditions df", Command::new(&cfg.df_bin).args(["--output=avail,pcent,size", "-BM", path])).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (avail, pct) = df_avail_mib_and_used_pct(&text)?;
+    Some((avail, pct, df_size_mib(&text)))
 }
 
 /// The `full avg60` of a `/proc/pressure/<resource>` file.
@@ -212,9 +221,12 @@ fn cond(key: &str, title: String, body: String, sustain: i64) -> Cond {
 pub fn pressure(cfg: &Cfg) -> Reading {
     let mut standing = Vec::new();
     let mut readable = false;
-    if let Some((avail, _)) = df(cfg, &cfg.tmp_path) {
+    if let Some((avail, _, size)) = df(cfg, &cfg.tmp_path) {
         readable = true;
-        if avail < cfg.tmp_floor_mib {
+        // A filesystem smaller than the floor can never satisfy it: that is a prerequisite
+        // for install-time checking, not a condition a tick can clear.
+        let unsatisfiable = size.is_some_and(|sz| sz < cfg.tmp_floor_mib);
+        if avail < cfg.tmp_floor_mib && !unsatisfiable {
             standing.push(cond(
                 "tmp-free",
                 format!("LOW SPACE: {} has {avail} MiB free, below the {} MiB testenv slots need", cfg.tmp_path, cfg.tmp_floor_mib),
@@ -223,7 +235,7 @@ pub fn pressure(cfg: &Cfg) -> Reading {
             ));
         }
     }
-    if let Some((_, used)) = df(cfg, "/") {
+    if let Some((_, used, _)) = df(cfg, "/") {
         readable = true;
         let free = 100 - used;
         if free < cfg.disk_floor_pct {
@@ -531,5 +543,25 @@ mod tests {
         c.df_bin = df.to_string_lossy().into_owned();
         let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
         assert_eq!(keys, vec!["tmp-free", "root-disk"]);
+    }
+
+    #[test]
+    fn tmp_free_is_not_raised_on_a_filesystem_smaller_than_the_floor() {
+        let d = testkit::TempDir::new("wt-df-small");
+        let mut c = cfg(&d);
+        let df = d.join("df");
+        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use% 1Mblocks'\nif [ \"${@: -1}\" = / ]; then echo '90000M  92% 99999M'; else echo '50M  10% 80M'; fi\n");
+        c.df_bin = df.to_string_lossy().into_owned();
+        let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
+        assert_eq!(keys, vec!["root-disk"]);
+        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use% 1Mblocks'\necho '50M  10% 4000M'\n");
+        let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
+        assert_eq!(keys, vec!["tmp-free"]);
+    }
+
+    #[test]
+    fn df_size_is_the_third_column() {
+        assert_eq!(df_size_mib("Avail Use% 1M-blocks\n 5000M  83% 8000M\n"), Some(8000));
+        assert_eq!(df_size_mib("Avail Use%\n 5000M  83%\n"), None);
     }
 }
