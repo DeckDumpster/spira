@@ -117,7 +117,7 @@ git -C "$ALPHA" commit --allow-empty -m "init" -q
 git -C "$ALPHA" commit --allow-empty -m "spira: land sp-bbb" -q
 git -C "$ALPHA" commit --allow-empty -m "spira: land sp-oldd" -q
 git -C "$ALPHA" checkout -q -b spira/sp-aaa
-git -C "$ALPHA" commit --allow-empty -m "sp-aaa work" -q
+echo sp-aaa > "$ALPHA/sp-aaa.txt"; git -C "$ALPHA" add sp-aaa.txt; git -C "$ALPHA" commit -m "sp-aaa work" -q
 git -C "$ALPHA" checkout -q main
 # A commit whose body mentions sp-ccc but subject is not a landing form.
 git -C "$ALPHA" commit --allow-empty -F - -q <<'EOF'
@@ -126,8 +126,10 @@ other work: fixes an unrelated issue
 This commit mentions sp-ccc in the body but is not a landing commit.
 EOF
 git -C "$ALPHA" checkout -q -b spira/sp-fff
-git -C "$ALPHA" commit --allow-empty -m "sp-fff work" -q
+echo sp-fff > "$ALPHA/sp-fff.txt"; git -C "$ALPHA" add sp-fff.txt; git -C "$ALPHA" commit -m "sp-fff work" -q
 git -C "$ALPHA" checkout -q main
+git -C "$ALPHA" branch spira/sp-nnn main
+lc_seed_bead sp-nnn SUBMITTED
 lc_seed_bead sp-fff CERTIFIED
 for b in sp-aaa sp-ccc; do lc_seed_bead "$b" SUBMITTED; done
 for b in sp-bbb sp-oldd sp-eee; do lc_seed_bead "$b" LANDED; done
@@ -136,7 +138,7 @@ for b in sp-bbb sp-oldd sp-eee; do lc_seed_bead "$b" LANDED; done
 git init -q -b master "$BETA"
 git -C "$BETA" commit --allow-empty -m "init" -q
 git -C "$BETA" checkout -q -b spira/sp-ddd
-git -C "$BETA" commit --allow-empty -m "sp-ddd work" -q
+echo sp-ddd > "$BETA/sp-ddd.txt"; git -C "$BETA" add sp-ddd.txt; git -C "$BETA" commit -m "sp-ddd work" -q
 git -C "$BETA" checkout -q master
 lc_seed_bead sp-ddd SUBMITTED
 
@@ -150,7 +152,7 @@ MAP
 RUN="$TMP/run"; mkdir -p "$RUN"
 SPIRA_SCOPE_LABEL=alpha
 
-for b in sp-aaa sp-bbb sp-ccc sp-ddd sp-fff sp-oldd; do
+for b in sp-aaa sp-bbb sp-ccc sp-ddd sp-fff sp-nnn sp-oldd; do
     printf '{"type":"system","subtype":"init"}\n' > "$RUN/$b.log"
 done
 
@@ -168,6 +170,7 @@ cat > "$TMP/beads.json" <<JSON
   {"id":"sp-ccc","title":"work mentioned only in a body","status":"closed","priority":1,"closed_at":"$AGO15","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]},
   {"id":"sp-ddd","title":"work in master repo","status":"closed","priority":0,"closed_at":"$AGO20","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:beta"]},
   {"id":"sp-fff","title":"work with a real spira-lc row","status":"closed","priority":1,"closed_at":"$AGO12","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]},
+  {"id":"sp-nnn","title":"branch never made a commit of its own","status":"closed","priority":1,"closed_at":"$AGO5","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]},
   {"id":"sp-oldd","title":"landed but outside the 24h window","status":"closed","priority":1,"closed_at":"$AGO48H","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
 ]
 JSON
@@ -196,7 +199,7 @@ out="$(unlanded "$TMP/beads.json")"
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
 echo "--- counts ---"
-is "SP_CLOSED is 24h-scoped (sp-oldd excluded)" "5" "$(val SP_CLOSED)"
+is "SP_CLOSED is 24h-scoped (sp-oldd excluded)" "6" "$(val SP_CLOSED)"
 is "SP_LANDED is 1 (sp-bbb via 'spira: land' subject)" "1" "$(val SP_LANDED)"
 is "SP_UNLANDED_N is 2 (sp-aaa and sp-ddd: SUBMITTED, branch, not landed)" "2" "$(val SP_UNLANDED_N)"
 # Both sp-aaa (5 min ago) and sp-ddd (20 min ago) are within the default 90-min cert window.
@@ -215,7 +218,7 @@ nowant "sp-fff (CERTIFIED) is not in unlanded_n" "SP_UNLANDED_N=3" "$out"
 echo "--- 24h scope, absorbed from test-cockpit-landed.sh ---"
 # sp-oldd carries a genuine "spira: land sp-oldd" subject on main, but closed 48h ago — it
 # must be excluded from SP_CLOSED and SP_LANDED entirely, not merely left off SP_UNLANDED_N.
-nowant "sp-oldd's landing commit does not inflate SP_CLOSED" "SP_CLOSED=6" "$out"
+nowant "sp-oldd's landing commit does not inflate SP_CLOSED" "SP_CLOSED=7" "$out"
 nowant "sp-oldd's landing commit does not inflate SP_LANDED" "SP_LANDED=2" "$out"
 
 echo "--- pane renders QUEUE, not UNLND ---"
