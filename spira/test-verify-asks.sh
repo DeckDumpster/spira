@@ -228,7 +228,8 @@ unset SPIRA_LC_BIN COCKPIT_DB
 testdb_require test-verify-asks
 testdb_up verifyasks || { echo "testdb_up failed"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-tl_config COCKPIT_DB="$SPIRA_DB"
+tl_config COCKPIT_DB="$SPIRA_DB" SPIRA_DB="$SPIRA_DB"
+lc_socket_mirror "$TMP/lcsock"
 
 bd_show_status() {
     # batch-job: fixture bd call against the suite's throwaway store
