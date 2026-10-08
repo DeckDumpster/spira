@@ -115,8 +115,8 @@ echo "groomer supersede <id> --with <successor>"
 : > "$BD_LOG"
 out="$(run_groomer supersede sp-aaa --with sp-bbb)"; rc=$?
 is   "supersede exits 0"                    0                  "$rc"
-want "bd called with supersede"             "supersede sp-aaa" "$(cat "$BD_LOG")"
-want "bd called with --with successor"      "--with sp-bbb"    "$(cat "$BD_LOG")"
+want "closed through the lifecycle door"     "close sp-aaa"     "$(cat "$BD_LOG")"
+want "the reason names the successor"        "superseded by sp-bbb" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
