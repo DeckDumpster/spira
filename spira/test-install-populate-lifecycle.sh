@@ -169,7 +169,7 @@ TABLE_AFTER_UNKNOWN="$(dump)"
 
 # ── an epic is a container: OPEN, never READY; its child is READY ───────────────────
 testdb_seed <<JSONL
-{"id":"sp-epic","title":"a container","type":"epic","status":"open","labels":["repo:demo"]}
+{"id":"sp-epic","title":"a container","issue_type":"epic","status":"open","labels":["repo:demo"]}
 {"id":"sp-epic-kid","title":"its child","type":"task","status":"open","labels":["repo:demo"]}
 JSONL
 wantrc "the epic and its child seed" 0 $?
