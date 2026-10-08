@@ -761,7 +761,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     };
     eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str());
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha);
-    if let Err(e) = env.pool.release(&vm.handle, env.deps.factory) {
+    if let Err(e) = env.pool.release(&vm.handle, ProcId::current(), env.deps.factory) {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
     }
     code
