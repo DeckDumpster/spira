@@ -332,6 +332,33 @@ pub fn is_create(args: &[String]) -> bool {
     matches!(args.first().map(String::as_str), Some("create" | "create-form" | "q"))
 }
 
+/// Whether this call creates beads by any verb: `create` and its kin, `import`, and the
+/// `mol` verbs that spawn issues from a proto. Each must leave a lifecycle row per bead.
+pub fn creates_beads(args: &[String]) -> bool {
+    if args.iter().any(|a| a == "--dry-run") {
+        return false;
+    }
+    let verb = |i: usize| args.get(i).map(String::as_str);
+    match verb(0) {
+        Some("import") => true,
+        Some("mol") => match verb(1) {
+            Some("pour" | "bond") => true,
+            Some("wisp") => !matches!(verb(2), Some("list" | "gc")),
+            _ => false,
+        },
+        _ => is_create(args),
+    }
+}
+
+/// `import` and `mol` print ids only under `--json`, so a run that must read them gets it.
+pub fn id_bearing_args(args: &[String]) -> Vec<String> {
+    let mut a = args.to_vec();
+    if !is_create(args) && creates_beads(args) && !a.iter().any(|x| x == "--json") {
+        a.push("--json".to_string());
+    }
+    a
+}
+
 /// A bead created already closed (`--status closed`) is never claimed, so it needs no
 /// lifecycle row. Such a bead is an insight — a non-work record, filed closed — so the value
 /// is read as one (`spira_config::nonwork`, sp-mve9i).
@@ -625,6 +652,37 @@ mod tests {
         assert!(is_create(&s(&["create-form"])));
         assert!(!is_create(&s(&["update", "sp-a"])));
         assert!(!is_create(&s(&[])));
+    }
+
+    #[test]
+    fn creates_beads_covers_import_and_mol_spawns() {
+        assert!(creates_beads(&s(&["create", "x"])));
+        assert!(creates_beads(&s(&["import", "f.jsonl"])));
+        assert!(creates_beads(&s(&["import", "-"])));
+        assert!(creates_beads(&s(&["mol", "pour", "p"])));
+        assert!(creates_beads(&s(&["mol", "wisp", "p"])));
+        assert!(creates_beads(&s(&["mol", "wisp", "create", "p"])));
+        assert!(creates_beads(&s(&["mol", "bond", "a", "b"])));
+        assert!(!creates_beads(&s(&["mol", "wisp", "list"])));
+        assert!(!creates_beads(&s(&["mol", "wisp", "gc"])));
+        assert!(!creates_beads(&s(&["mol", "show", "m"])));
+        assert!(!creates_beads(&s(&["import", "f", "--dry-run"])));
+        assert!(!creates_beads(&s(&["mol", "pour", "p", "--dry-run"])));
+        assert!(!creates_beads(&s(&["update", "sp-a"])));
+    }
+
+    #[test]
+    fn import_and_mol_are_not_create_fenced() {
+        assert!(!is_create(&s(&["import", "f"])));
+        assert!(!is_create(&s(&["mol", "pour", "p"])));
+    }
+
+    #[test]
+    fn id_bearing_args_adds_json_only_where_ids_are_otherwise_unprinted() {
+        assert_eq!(id_bearing_args(&s(&["import", "f"])), s(&["import", "f", "--json"]));
+        assert_eq!(id_bearing_args(&s(&["mol", "pour", "p"])), s(&["mol", "pour", "p", "--json"]));
+        assert_eq!(id_bearing_args(&s(&["import", "f", "--json"])), s(&["import", "f", "--json"]));
+        assert_eq!(id_bearing_args(&s(&["create", "t"])), s(&["create", "t"]));
     }
 
     // -- czar fence dispatch ------------------------------------------------------------------
