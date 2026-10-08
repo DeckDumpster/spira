@@ -165,6 +165,7 @@ lc_password_file = "/fixture/userhome/.config/spira/spira-lc.credential"
 lc_socket = "/run/user/1000/spira-lc/sock"
 lc_testdb_data = "/fixture/userhome/spira/lc-test"
 lc_testdb_port = 3309
+lc_timeout = 30
 lc_unix_group = "spira"
 lc_unix_user = "spira-lc"
 liveness_model = "claude-haiku-4-5-20251001"

@@ -5,31 +5,6 @@
 
 # Debt the registered-key extension (literal or empty default on any key with a spira/conf.d
 # entry) found on its first run. Same shrink-only rule: fix the read, then delete the line.
-batcher-cut/src/io.rs
-batcher-cut/src/main.rs
-bead/src/main.rs
-broker/src/execute.rs
-broker/src/repo_map.rs
-broker/src/token.rs
-cockpit-collect/src/io.rs
-cockpit-collect/src/probes/core_detail.rs
-cockpit-collect/src/probes/mod.rs
-cockpit-collect/src/probes/queue.rs
-cockpit-collect/src/probes/reachable.rs
-cockpit-collect/src/probes/unsent.rs
-cockpit/panel/src/model.rs
-cockpit/panel/src/store.rs
-czar-pass/src/main.rs
-desired-state/src/store.rs
-gh-intake/src/main.rs
-landing-pass/src/main.rs
-loom/src/lib.rs
-maechen-trigger/src/main.rs
-queue-watch/src/main.rs
-reconciler-flow/src/main.rs
-reconciler/src/main.rs
 release/src/canary.rs
-rule/src/main.rs
 spira-config/src/main.rs
-spira-ctrl/src/main.rs
 tsd/src/main.rs
