@@ -83,8 +83,14 @@ fi
 say "applying grants.sql (as $SPIRA_LC_ADMIN_USER)"
 TMP_GRANTS="$(mktemp)"
 trap 'rm -f "$TMP_GRANTS"' EXIT INT TERM
-sed -e "s/@SPIRA_LC_PASSWORD@/$SPIRA_LC_PASSWORD/" -e "s/@SPIRA_LC_RO_PASSWORD@/$SPIRA_LC_RO_PASSWORD/" \
-    "$HERE/../lifecycle/grants.sql" > "$TMP_GRANTS"
+PW="$SPIRA_LC_PASSWORD" RO_PW="$SPIRA_LC_RO_PASSWORD" awk '
+    function sub_all(s, tok, val,   out, i) {
+        out = ""
+        while ((i = index(s, tok)) > 0) { out = out substr(s, 1, i - 1) val; s = substr(s, i + length(tok)) }
+        return out s
+    }
+    { $0 = sub_all($0, "@SPIRA_LC_PASSWORD@", ENVIRON["PW"]); print sub_all($0, "@SPIRA_LC_RO_PASSWORD@", ENVIRON["RO_PW"]) }
+' "$HERE/../lifecycle/grants.sql" > "$TMP_GRANTS"
 if [ "$DRY_RUN" != 1 ]; then
     admin_lc admin-apply-ddl "$TMP_GRANTS" || exit 1
 fi
