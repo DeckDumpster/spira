@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 use bead::claimdesc;
 use bead::bdq::{
     check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
-    should_retry, retryable, backoff_ms,
+    should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
 };
 use spira_config::repos::Registry;
 
@@ -202,8 +202,27 @@ fn date_now_utc_nanos() -> String {
 /// (matching bash's unredirected call — a retried attempt can duplicate stdout a prior
 /// failed attempt already printed, same latent behaviour the bash original has), stderr
 /// captured so the retry loop can inspect it before replaying it once at the end.
-fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String], capture_stdout: bool) -> (i32, String, Vec<u8>) {
-    let mut cmd = Command::new("timeout");
+/// The writer cap: `SPIRA_BDQ_WRITERS=0` disables it; otherwise bd writes take one exclusive
+/// slot under `$SPIRA_RUN/bdq`, so concurrent writers stop piling connections onto one server.
+fn writer_lock_for(args: &[String]) -> Option<(String, String)> {
+    if !is_write(args) || env_or("SPIRA_BDQ_WRITERS", "1") == "0" {
+        return None;
+    }
+    let run = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty())?;
+    let dir = format!("{run}/bdq");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some((format!("{dir}/write.lock"), env_or("SPIRA_BDQ_WRITER_WAIT_S", "30")))
+}
+
+fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String], capture_stdout: bool, writer_lock: Option<&(String, String)>) -> (i32, String, Vec<u8>) {
+    let mut cmd = match writer_lock {
+        Some((file, wait_s)) => {
+            let mut c = Command::new("flock");
+            c.arg("-w").arg(wait_s).arg("-E").arg(WRITER_LOCK_BUSY.to_string()).arg(file).arg("timeout");
+            c
+        }
+        None => Command::new("timeout"),
+    };
     cmd.arg(timeout_s).arg(bd_bin).arg("-C").arg(db).args(args);
     cmd.stdin(Stdio::inherit());
     cmd.stdout(if capture_stdout { Stdio::piped() } else { Stdio::inherit() });
@@ -402,9 +421,14 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let t_start = std::time::Instant::now();
 
     let lc_row = creates_beads(args) && !(is_create(args) && creates_closed(args));
+    let writer_lock = writer_lock_for(args);
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
-        let (rc, err, out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row);
+        let (mut rc, mut err, mut out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row, writer_lock.as_ref());
+        if writer_lock.is_some() && rc == WRITER_LOCK_BUSY {
+            eprintln!("bdq: writer slot busy; running uncapped rather than failing the write");
+            (rc, err, out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row, None);
+        }
         if should_retry(rc, try_n, max_tries, retryable(args, &err)) {
             eprintln!("bdq: invalid connection (attempt {try_n}/{max_tries}); retrying");
             std::thread::sleep(std::time::Duration::from_millis(backoff_ms(backoff_base, try_n)));

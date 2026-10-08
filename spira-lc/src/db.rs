@@ -51,6 +51,14 @@ pub const ADMIN_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 // batch-job: census report, bounded at 30 s.
 pub const FACTS_QUERY_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// A connect that fails is retried this many times in all: nothing has been sent, so a
+/// retry cannot double a write.
+const CONNECT_ATTEMPTS: u32 = 3;
+
+fn connect_backoff(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_millis(200u64 << (attempt - 1).min(6))
+}
+
 /// The socket limit a verb's connection uses.
 pub fn io_timeout_for(verb: &str) -> std::time::Duration {
     match verb {
@@ -109,7 +117,17 @@ impl Conn {
     }
 
     fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
-        Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout)
+        let mut failure = None;
+        for attempt in 0..CONNECT_ATTEMPTS {
+            if attempt > 0 {
+                std::thread::sleep(connect_backoff(attempt));
+            }
+            match Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout) {
+                Ok(w) => return Ok(w),
+                Err(e) => failure = Some(e),
+            }
+        }
+        Err(failure.expect("CONNECT_ATTEMPTS is at least one"))
     }
 
     /// A single read-only query: the rows of its last result set.
@@ -476,6 +494,12 @@ mod password_tests {
 
 #[cfg(test)]
 mod io_timeout_tests {
+    #[test]
+    fn connect_backoff_doubles_from_200ms() {
+        assert_eq!(super::connect_backoff(1), std::time::Duration::from_millis(200));
+        assert_eq!(super::connect_backoff(2), std::time::Duration::from_millis(400));
+    }
+
     use super::*;
     #[test]
     fn only_the_admin_batch_verbs_get_the_long_socket_limit() {

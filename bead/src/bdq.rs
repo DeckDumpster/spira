@@ -461,6 +461,16 @@ pub fn retryable(args: &[String], stderr: &str) -> bool {
     READ_VERBS.contains(&verb) || stderr.contains("failed to open database")
 }
 
+/// A call that mutates the store: anything whose verb is not a read. These are the calls the
+/// writer cap serialises.
+pub fn is_write(args: &[String]) -> bool {
+    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
+    !verb.is_empty() && !READ_VERBS.contains(&verb)
+}
+
+/// Exit status `flock -E` reports when the writer slot was not won in time.
+pub const WRITER_LOCK_BUSY: i32 = 75;
+
 /// Sleep before attempt `try_n + 1`: base, then doubling.
 pub fn backoff_ms(base_ms: u64, try_n: u32) -> u64 {
     base_ms.saturating_mul(1u64 << (try_n.saturating_sub(1)).min(10))
@@ -760,6 +770,15 @@ mod tests {
     }
 
     // -- should_retry -------------------------------------------------------------------------
+
+    #[test]
+    fn is_write_is_every_verb_that_is_not_a_read() {
+        assert!(is_write(&s(&["close", "x"])));
+        assert!(is_write(&s(&["--json", "update", "x"])));
+        assert!(!is_write(&s(&["show", "x"])));
+        assert!(!is_write(&s(&["--json", "list"])));
+        assert!(!is_write(&[]));
+    }
 
     #[test]
     fn should_retry_only_on_invalid_connection_within_budget() {
