@@ -116,7 +116,7 @@ mod tests {
         run(&d, &log_path, "db", "spira", &inc);
         let got = std::fs::read_to_string(&calls).unwrap();
         assert_eq!(got.matches("incident:slow-query").count(), 1, "{got}");
-        assert!(got.contains("|1|file"), "{got}");
+        assert!(got.contains("|1|SLOW STORE"), "{got}");
         assert!(got.contains("count: 5") && got.contains("p50: 1700ms") && got.contains("max: 1900ms"), "{got}");
     }
 
