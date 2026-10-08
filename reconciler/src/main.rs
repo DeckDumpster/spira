@@ -854,6 +854,30 @@ fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
     checks
 }
 
+fn orphan_reading(out: &str) -> RawStatus {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(out.trim()) else {
+        return RawStatus::Unobservable { reason: "spira-lc requeue-orphans gave no readable answer".into() };
+    };
+    let Some(orphans) = v.get("orphans").and_then(|o| o.as_array()) else {
+        return RawStatus::Unobservable { reason: "spira-lc requeue-orphans named no orphans field".into() };
+    };
+    if orphans.is_empty() {
+        return RawStatus::Satisfied;
+    }
+    let ids: Vec<&str> = orphans.iter().filter_map(|o| o.as_str()).collect();
+    RawStatus::Gap { desired: "no bead IN_DELIVERY without an open batch naming it".into(), observed: ids.join(" "), since_hint: None }
+}
+
+fn observe_lc_orphans(cfg: &Config) -> Check {
+    let actor = "reconciler";
+    let raw = orphan_reading(&run_cmd(&cfg.lc_bin, &["requeue-orphans", "--actor", actor]));
+    Check {
+        key: "lc-orphan-in-delivery".into(),
+        raw,
+        remedy: Remedy::Command { program: cfg.lc_bin.clone(), args: vec!["requeue-orphans".into(), "--actor".into(), actor.into(), "--apply".into()] },
+    }
+}
+
 fn observe_queue_lock_age(cfg: &Config) -> Vec<Check> {
     let mut checks = Vec::new();
     for repo_name in queue_repo_names(&cfg.queue_dir) {
@@ -1021,6 +1045,7 @@ fn run_pass() -> Result<(), String> {
     checks.extend(observe_disk(&cfg));
     checks.extend(observe_queue_mergeable(&cfg));
     checks.extend(observe_queue_lock_age(&cfg));
+    checks.push(observe_lc_orphans(&cfg));
 
     let n = checks.len();
     for check in checks {
@@ -1042,6 +1067,15 @@ mod tests {
 
     fn scratch_dir(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("reconciler-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
+    }
+
+    #[test]
+    fn orphan_reading_is_a_gap_only_when_an_orphan_is_named() {
+        let gap = orphan_reading(r#"{"orphans":["sp-a","sp-b"],"requeued":[],"failed":[]}"#);
+        assert!(matches!(&gap, RawStatus::Gap { observed, .. } if observed == "sp-a sp-b"), "{gap:?}");
+        assert_eq!(orphan_reading(r#"{"orphans":[],"requeued":[],"failed":[]}"#), RawStatus::Satisfied);
+        assert!(matches!(orphan_reading(""), RawStatus::Unobservable { .. }));
+        assert!(matches!(orphan_reading("{}"), RawStatus::Unobservable { .. }));
     }
 
     #[test]

@@ -764,6 +764,57 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// `requeue-orphans --actor A [--apply]`
+///
+/// A bead IN_DELIVERY that no open batch names is held by nothing and invisible to every
+/// round. Lists them; with `--apply` each goes back through `Requeued{tip}` in its own
+/// transaction (so a SUBMITTED member returns to SUBMITTED, a CERTIFIED one to CERTIFIED).
+/// Beads whose delivery is live outside a batch (pr, push, local) are not orphans.
+pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(actor) = flag(args, "--actor") else {
+        return (CANNOT_TELL, "requeue-orphans: --actor is required".into());
+    };
+    let apply = args.iter().any(|a| a == "--apply");
+    let sql = "SELECT bead_id FROM bead WHERE state = 'IN_DELIVERY' AND bead_id NOT IN \
+               (SELECT bm.bead_id FROM batch_member bm JOIN batch b ON b.batch_id = bm.batch_id \
+                WHERE b.state NOT IN ('LANDED', 'SETTLED', 'ABANDONED')) ORDER BY bead_id";
+    let found = match conn.query(sql) {
+        Ok(r) => r,
+        Err(e) => return cannot_tell(e),
+    };
+    let mut orphans = Vec::new();
+    for r in &found {
+        let Some(id) = r.get("bead_id").and_then(|v| v.as_str()) else { continue };
+        match rows::fetch_delivery(conn, id) {
+            Ok(Some(d)) if d.mode != delivery::Mode::Queue && !d.state.is_terminal() => continue,
+            Ok(_) => orphans.push(id.to_string()),
+            Err(e) => return cannot_tell(e),
+        }
+    }
+    let mut requeued = Vec::new();
+    let mut failed = Vec::new();
+    if apply {
+        for id in &orphans {
+            let at = crate::db::now_epoch();
+            let tip = match rows::fetch_bead(conn, id) {
+                Ok(Some(b)) => b.tip.unwrap_or_default(),
+                Ok(None) => continue,
+                Err(e) => return cannot_tell(e),
+            };
+            let mut steps = Vec::new();
+            if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Requeued { tip }, &actor, at) {
+                return cannot_tell(e);
+            }
+            match conn.cascade("", &steps) {
+                Ok(applied) if !applied.is_empty() && applied.iter().all(|a| *a) => requeued.push(id.clone()),
+                _ => failed.push(id.clone()),
+            }
+        }
+    }
+    let summary = serde_json::json!({"orphans": orphans, "requeued": requeued, "failed": failed});
+    (if failed.is_empty() { 0 } else { REFUSED }, serde_json::to_string(&summary).unwrap())
+}
+
 /// `eject-member <batch-id> --bead-id ID --expect S --version V --actor A --reason R`
 ///
 /// One transaction: `Eject{bead_id,reason}` on the batch (OPEN or CI_RUNNING only; the batch
@@ -1025,7 +1076,6 @@ fn add_exit_steps(
     actor: &str,
     at: i64,
 ) -> Result<(), DbError> {
-    let Some(delivery_row) = rows::fetch_delivery(conn, id)? else { return Ok(()) };
     let bead_kind = match &kind {
         delivery::DeliveryEventKind::Returned { reason } => bead::BeadEventKind::Returned { reason: reason.clone() },
         delivery::DeliveryEventKind::Requeued { tip } => bead::BeadEventKind::Requeued { tip: tip.clone() },
@@ -1036,28 +1086,31 @@ fn add_exit_steps(
             return Ok(()); // not a settle/abandon exit shape — never reached by this module's callers
         }
     };
-    let ev = delivery::DeliveryEvent { expect: delivery_row.state, version: delivery_row.version, kind: kind.clone(), actor: actor.to_string() };
-    let outcome = delivery::apply(&delivery_row, &ev);
     let event_name = match &kind {
         delivery::DeliveryEventKind::Returned { .. } => "Returned",
         delivery::DeliveryEventKind::Requeued { .. } => "Requeued",
         _ => unreachable!(),
     };
-    if outcome.applied {
-        steps.push(cascade_step(
-            "delivery",
-            "bead_id",
-            id,
-            delivery_row.version,
-            rows::delivery_set_clause(&outcome.row),
-            outcome.row.state.as_str(),
-            "delivery",
-            event_name,
-            delivery_row.state.as_str(),
-            &ev.kind,
-            actor,
-            at,
-        ));
+    // A missing or already-exited delivery row never keeps the bead in IN_DELIVERY.
+    if let Some(delivery_row) = rows::fetch_delivery(conn, id)? {
+        let ev = delivery::DeliveryEvent { expect: delivery_row.state, version: delivery_row.version, kind: kind.clone(), actor: actor.to_string() };
+        let outcome = delivery::apply(&delivery_row, &ev);
+        if outcome.applied {
+            steps.push(cascade_step(
+                "delivery",
+                "bead_id",
+                id,
+                delivery_row.version,
+                rows::delivery_set_clause(&outcome.row),
+                outcome.row.state.as_str(),
+                "delivery",
+                event_name,
+                delivery_row.state.as_str(),
+                &ev.kind,
+                actor,
+                at,
+            ));
+        }
     }
 
     let Some(bead_row) = rows::fetch_bead(conn, id)? else { return Ok(()) };

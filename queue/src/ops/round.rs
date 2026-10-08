@@ -609,6 +609,19 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
     rc
 }
 
+fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<String> {
+    let (state, version) = w.lc.bead_state(id)?;
+    if state != "IN_DELIVERY" {
+        return Some(state);
+    }
+    let kind = serde_json::json!({"Requeued": {"tip": tip}}).to_string();
+    if let Err((rc, e)) = w.lc.bead_event(id, &state, &version, LC_ACTOR, &kind) {
+        w.err(format!("queue.sh {label}: {id} is still IN_DELIVERY after the abandon and the requeue was refused (rc={rc}): {e}"));
+        return None;
+    }
+    w.lc.bead_state(id).map(|(s, _)| s)
+}
+
 fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
     let label = "round abandon";
     let reason = read_text(w, reason).unwrap_or_default();
@@ -633,7 +646,10 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
         }
     }
     for m in &members {
-        let state = w.lc.bead_row(&m.id).map(|r| r.state).unwrap_or_else(|| "unknown".into());
+        let mut state = w.lc.bead_row(&m.id).map(|r| r.state).unwrap_or_else(|| "unknown".into());
+        if state == "IN_DELIVERY" {
+            state = requeue_stranded(w, label, &m.id, &m.tip).unwrap_or(state);
+        }
         w.out(format!("queue.sh {label}: {}: {state}", m.id));
     }
     let _ = fs::remove_file(c.queue_file(RECORD));
