@@ -1,9 +1,6 @@
 TYPE=string
 GROUP=round
-DOC=SPIRA_ROUND_VM_SSH_PORT — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_ROUND_VM_SSH_PORT — ssh port of the round VM host.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_ROUND_VM_SSH_PORT:=22}"
 SPIRA_CONF_DEFAULT_EOF

@@ -4,3 +4,14 @@
 "spira.scratch_max_age_hours" = 24
 "spira.sccache_dav_max_gb" = 40
 "spira.round_certify_wall_secs" = 900
+"spira.preflight_wall_secs" = "240"
+"spira.flow_window_hours" = "0.5"
+"spira.flow_baseline_hours" = "24"
+"spira.flow_grace_secs" = "1800"
+"spira.flow_unobservable_grace_secs" = "3600"
+"spira.round_vm_ssh_port" = "22"
+"spira.round_vm_vcpus" = "16"
+"spira.round_vm_maxpar" = "16"
+"spira.round_vm_retry_interval" = "60"
+"spira.round_vm_max_retries" = "0"
+"spira.round_vm_mirror_port" = "9430"

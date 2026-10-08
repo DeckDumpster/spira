@@ -1767,6 +1767,16 @@ fn an_added_key_the_operator_already_set_keeps_the_operators_value() {
 }
 
 #[test]
+fn an_added_key_held_as_the_empty_string_takes_the_releases_value() {
+    let w = World::with_git(delta_git("[added]\n\"spira.new_key\" = \"240\"\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nnew_key = \"\"\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = \"240\""), "{}", cfg_text(&w));
+}
+
+#[test]
 fn a_malformed_config_delta_refuses_the_activation() {
     for bad in ["[added]\n\"spira.x\" = 1\n[extra]\nk = 1\n", "removed = [\"spira.x\"]\n[added]\n\"spira.x\" = 1\n", "removed = [1]\n", "[added]\n\"spira..x\" = 1\n"] {
         assert!(config_delta::Delta::parse(bad).is_err(), "{bad}");
