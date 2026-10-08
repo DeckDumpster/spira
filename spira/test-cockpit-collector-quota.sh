@@ -2,9 +2,9 @@
 #
 # test-cockpit-collector-quota.sh — collector unit CPU limits and probe fault rendering.
 #
-# 1. UNIT CPUQuota: the collector service carries a CPUQuota of at least 100%. A quota
-#    below the core probe's real cost throttles it until the timeout fires and the snapshot
-#    goes stale; none at all lets its bd reads starve the box. Pair: 35% fails this check.
+# 1. UNIT CPUQuota: the collector service must not carry CPUQuota. A quota below the
+#    core probe's real cost throttles it until the timeout fires and the snapshot goes
+#    stale. Pair: the old 35% value fails this check.
 # 2. PASS LOG LINE: cockpit-collect logs "probe <name> ok <N>s" after a successful run.
 #
 # The STALE-vs-FAULT badge case moved to test-cockpit-probe-fault.sh's renderer table
@@ -29,30 +29,27 @@ UNIT="$(dirname "$HERE")/systemd/spira-cockpit.service"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # ============================================================
-echo "1. CPUQuota: collector service is fenced, but not below the core probe's cost"
+echo "1. CPUQuota: collector service must not carry CPUQuota"
 # ============================================================
-
-quota_pct() { sed -n 's/^[[:space:]]*CPUQuota=\([0-9][0-9]*\)%.*/\1/p' "$1" | head -n1; }
 
 if [ ! -f "$UNIT" ]; then
     bad "unit file not found" "$UNIT"
 else
+    # Positive control: a unit with CPUQuota=35% is detected.
     FAKE_UNIT="$TMP/fake-cockpit.service"
     printf '[Service]\nCPUQuota=35%%\nNice=10\n' > "$FAKE_UNIT"
-    fake_q="$(quota_pct "$FAKE_UNIT")"
-    if [ "$fake_q" = 35 ] && [ "$fake_q" -lt 100 ]; then
-        ok "CPUQuota/positive control: fake unit's 35% is read and judged throttling"
+    if grep -qE '^[[:space:]]*CPUQuota=' "$FAKE_UNIT" 2>/dev/null; then
+        ok "CPUQuota/positive control: fake unit with CPUQuota=35% is detected"
     else
-        bad "CPUQuota/positive control: matcher did not read 35% from fake unit" "$fake_q"
+        bad "CPUQuota/positive control: grep did not find CPUQuota=35% in fake unit" ""
     fi
 
-    q="$(quota_pct "$UNIT")"
-    if [ -z "$q" ]; then
-        bad "spira-cockpit.service has no CPUQuota — the collector's bd reads are unfenced" ""
-    elif [ "$q" -lt 100 ]; then
-        bad "spira-cockpit.service CPUQuota=$q% is below one core — throttles core probe" "$q"
+    # Real check: spira-cockpit.service must have no CPUQuota directive.
+    if grep -qE '^[[:space:]]*CPUQuota=' "$UNIT" 2>/dev/null; then
+        bad "spira-cockpit.service has CPUQuota — remove it (throttles core probe)" \
+            "$(grep 'CPUQuota' "$UNIT")"
     else
-        ok "spira-cockpit.service: CPUQuota=$q% (fenced, at least one core)"
+        ok "spira-cockpit.service: no CPUQuota"
     fi
 fi
 
