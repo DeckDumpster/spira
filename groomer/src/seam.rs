@@ -1,30 +1,17 @@
-//! The boundary to the STATE and LIVELOCK detectors, and to the lifecycle hold verb.
-//! The detectors themselves now live in the `strand` crate (wave 4.29, sp-8ofmt) and are
-//! called in-process — [`LibSeam::strand_cfg`] resolves `strand::config::Config` once per
-//! process, the same way `strand`'s own binary does. `bead_reopen`/`bump_poison_cleared`/
-//! `poison_asked_clear`/`conf` and the repo lookups still go through the `bash -c '.
-//! "$LIB"; <func> "$@"'` seam (group 4, last — "leave lib.sh alone"), shared with callers
-//! this crate does not own (`cockpit.sh livelock`, `attempts.sh`, `auron.sh`, `incident.sh`).
-//! Production shells out for real; tests use a recording fake.
+//! The boundary to `all_partition_members` and the lifecycle hold verb (in-process, via the
+//! `strand` crate), and to `bump_poison_cleared`/`poison_asked_clear` and the repo lookups
+//! through the `bash -c '. "$LIB"; <func> "$@"'` seam, shared with callers this crate does
+//! not own. Production shells out for real; tests use a recording fake.
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub trait Seam {
-    /// `detect_livelocked` — one `LIVELOCK <id> <category> — <reason>` line per row.
-    fn detect_livelocked(&self) -> Result<String, String>;
-    /// `detect_incident_needs_builder`.
-    fn detect_incident_needs_builder(&self) -> Result<String, String>;
-    /// `bead_reopen <id> <cause> <note>`.
-    fn bead_reopen(&self, id: &str, cause: &str, note: &str) -> Result<(), String>;
     /// `bump_poison_cleared <id> <cause>`.
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String>;
     /// `poison_asked_clear <id>`.
     fn poison_asked_clear(&self, id: &str) -> Result<(), String>;
-    /// A resolved `SPIRA_*` config key, read after sourcing conf.sh/lib.sh (e.g.
-    /// `SPIRA_CI_LABEL`, `SPIRA_INCIDENT_LABEL`, `SPIRA_PLAN_LABEL`). Empty if unset.
-    fn conf(&self, key: &str) -> Result<String, String>;
     /// `all_partition_members` — every open/in_progress bead id across every partition
     /// this roster covers, deduplicated, one per line.
     fn all_partition_members(&self) -> Result<String, String>;
@@ -101,44 +88,12 @@ impl LibSeam {
 }
 
 impl Seam for LibSeam {
-    fn detect_livelocked(&self) -> Result<String, String> {
-        Ok(strand::detectors::detect_livelocked(self.strand_cfg()))
-    }
-
-    fn detect_incident_needs_builder(&self) -> Result<String, String> {
-        strand::detectors::detect_incident_needs_builder(self.strand_cfg())
-    }
-
-    fn bead_reopen(&self, id: &str, cause: &str, note: &str) -> Result<(), String> {
-        self.run(&["bead_reopen", id, cause, note]).map(|_| ())
-    }
-
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
         self.run(&["bump_poison_cleared", id, cause]).map(|_| ())
     }
 
     fn poison_asked_clear(&self, id: &str) -> Result<(), String> {
         self.run(&["poison_asked_clear", id]).map(|_| ())
-    }
-
-    fn conf(&self, key: &str) -> Result<String, String> {
-        // run_stdin unused here; a plain var read never needs a payload.
-        let script = format!(r#". "$0" >/dev/null 2>&1 || exit 97; printf '%s' "${{{key}:-}}""#);
-        // batch-job: runs a gate, build or forge script that takes as long as its work
-        let o = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(&self.lib_sh)
-            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("lib.sh conf {key}: {e}"))?;
-        if !o.status.success() {
-            return Err(format!("lib.sh conf {key} exited {}", o.status.code().unwrap_or(-1)));
-        }
-        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
     fn all_partition_members(&self) -> Result<String, String> {
@@ -204,10 +159,7 @@ pub mod fake {
 
     #[derive(Default)]
     pub struct FakeSeam {
-        pub livelocked: RefCell<String>,
-        pub incident_needs_builder: RefCell<String>,
         pub calls: RefCell<Vec<String>>,
-        pub confs: RefCell<std::collections::BTreeMap<String, String>>,
         pub partition_members: RefCell<String>,
         pub repos: RefCell<std::collections::BTreeMap<String, String>>,
         pub roots: RefCell<std::collections::BTreeMap<String, String>>,
@@ -226,21 +178,6 @@ pub mod fake {
     }
 
     impl Seam for FakeSeam {
-        fn detect_livelocked(&self) -> Result<String, String> {
-            self.calls.borrow_mut().push("detect_livelocked".into());
-            Ok(self.livelocked.borrow().clone())
-        }
-
-        fn detect_incident_needs_builder(&self) -> Result<String, String> {
-            self.calls.borrow_mut().push("detect_incident_needs_builder".into());
-            Ok(self.incident_needs_builder.borrow().clone())
-        }
-
-        fn bead_reopen(&self, id: &str, cause: &str, note: &str) -> Result<(), String> {
-            self.calls.borrow_mut().push(format!("bead_reopen {id} {cause} {note}"));
-            Ok(())
-        }
-
         fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("bump_poison_cleared {id} {cause}"));
             Ok(())
@@ -249,10 +186,6 @@ pub mod fake {
         fn poison_asked_clear(&self, id: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("poison_asked_clear {id}"));
             Ok(())
-        }
-
-        fn conf(&self, key: &str) -> Result<String, String> {
-            Ok(self.confs.borrow().get(key).cloned().unwrap_or_default())
         }
 
         fn all_partition_members(&self) -> Result<String, String> {

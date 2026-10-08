@@ -124,9 +124,6 @@ spira/test-gate-tree.sh
 spira/test-gate-verdict.sh
 spira/test-gh-intake.sh
 spira/test-gh-run-gate.sh
-spira/test-groomer-incident-reroute.sh
-spira/test-groomer-state.sh
-spira/test-groomer-sweep.sh
 spira/test-groom-escalation-check.sh
 spira/test-guards.sh
 spira/test-held.sh

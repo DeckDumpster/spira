@@ -212,7 +212,6 @@ test-governor-deleted.sh	T1	3.0
 test-groom-escalation-check.sh	T1	45.5
 test-groom-trigger.sh	T1	4.0
 test-groomer-split-piece.sh	T1	9.0
-test-groomer-sweep.sh	T1	18.5
 test-groomer.sh	T1	3.0
 test-guards.sh	T1	10.0
 test-held.sh	T2	12.5
