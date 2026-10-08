@@ -41,6 +41,11 @@ pub struct Conn {
     pub io_timeout: std::time::Duration,
 }
 
+/// A query's server-side deadline: a statement that has not answered in this long is
+/// abandoned and reported as [`DEADLINE_MESSAGE`], never as a partial answer.
+pub const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
+pub const DEADLINE_MESSAGE: &str = "deadline";
+
 /// The admin batch verbs' socket limit (admin-apply-ddl, admin-migrate): one-off install
 /// DDL on a fresh Dolt server under load ran past the 5 s query cap ("Resource temporarily
 /// unavailable", sp-4o5um). Bounded, and never used for a query.
@@ -64,7 +69,7 @@ pub fn io_timeout_for(verb: &str) -> std::time::Duration {
     match verb {
         "admin-apply-ddl" | "admin-migrate" => ADMIN_IO_TIMEOUT,
         "facts-query" => FACTS_QUERY_IO_TIMEOUT,
-        _ => std::time::Duration::from_secs(5),
+        _ => QUERY_DEADLINE,
     }
 }
 
@@ -97,7 +102,7 @@ impl Conn {
         let password = password_from(password_file, std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: std::time::Duration::from_secs(5) })
+        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: QUERY_DEADLINE })
     }
 
     /// A second connection to the same server and database under other credentials — the
@@ -506,10 +511,10 @@ mod io_timeout_tests {
         assert_eq!(io_timeout_for("admin-apply-ddl"), ADMIN_IO_TIMEOUT);
         assert_eq!(io_timeout_for("admin-migrate"), ADMIN_IO_TIMEOUT);
         for v in ["show", "event", "history", "create-bead", "list", "serve", ""] {
-            assert_eq!(io_timeout_for(v), std::time::Duration::from_secs(5), "{v} keeps the 5 s query cap");
+            assert_eq!(io_timeout_for(v), QUERY_DEADLINE, "{v} keeps the query deadline");
         }
         assert!(ADMIN_IO_TIMEOUT <= std::time::Duration::from_secs(120), "bounded");
         assert_eq!(io_timeout_for("facts-query"), FACTS_QUERY_IO_TIMEOUT);
-        assert_eq!(io_timeout_for("facts"), std::time::Duration::from_secs(5));
+        assert_eq!(io_timeout_for("facts"), QUERY_DEADLINE);
     }
 }

@@ -235,7 +235,7 @@ fn watch(o: &Opts) -> Result<(), String> {
         // always.
         lc_bin: lc_bin_from(env::var_os("SPIRA_LC_BIN"), &env::var_os("PATH").unwrap_or_default()),
         // SPIRA_LC_TIMEOUT is not a registered config key.
-        lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
+        lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(5),
     };
     let lim = Limits {
         // QUEUE_WATCH_IDLE_STALL_SECS/QUEUE_WATCH_HEAD_STALL_SECS are not registered config

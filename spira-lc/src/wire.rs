@@ -41,6 +41,13 @@ fn cannot(msg: impl std::fmt::Display) -> ScriptFailure {
     ScriptFailure::CannotTell(msg.to_string())
 }
 
+fn io_failure(what: &str, e: std::io::Error) -> ScriptFailure {
+    match e.kind() {
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => cannot(crate::db::DEADLINE_MESSAGE),
+        _ => cannot(format!("{what}: {e}")),
+    }
+}
+
 impl Wire {
     pub fn connect(host: &str, port: u16, user: &str, password: &str, database: Option<&str>) -> Result<Self, ScriptFailure> {
         Self::connect_with(host, port, user, password, database, IO_TIMEOUT)
@@ -229,11 +236,11 @@ impl Wire {
         let mut out = Vec::new();
         loop {
             let mut head = [0u8; 4];
-            self.stream.read_exact(&mut head).map_err(|e| cannot(format!("reading from server: {e}")))?;
+            self.stream.read_exact(&mut head).map_err(|e| io_failure("reading from server", e))?;
             let len = head[0] as usize | (head[1] as usize) << 8 | (head[2] as usize) << 16;
             let start = out.len();
             out.resize(start + len, 0);
-            self.stream.read_exact(&mut out[start..]).map_err(|e| cannot(format!("reading from server: {e}")))?;
+            self.stream.read_exact(&mut out[start..]).map_err(|e| io_failure("reading from server", e))?;
             if len < 0xff_ffff {
                 return Ok((head[3], out));
             }

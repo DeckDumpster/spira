@@ -93,7 +93,7 @@ pub fn list(state: Option<&str>) -> Option<Vec<LcRow>> {
 
 fn list_live(state: Option<&str>) -> Option<String> {
     let bin = std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into());
-    let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
+    let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "5".into());
     let mut cmd = Command::new("timeout");
     cmd.arg(timeout).arg(bin).arg("list");
     if let Some(s) = state {

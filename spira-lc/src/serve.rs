@@ -15,6 +15,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant};
 
 use crate::db::Conn;
 
@@ -34,7 +36,7 @@ pub fn run(args: &[String]) -> i32 {
     };
 
     let conn = match Conn::from_env() {
-        Ok(c) => c,
+        Ok(c) => Arc::new(c),
         Err(e) => {
             eprintln!("spira-lc serve: cannot configure a connection: {e:?}");
             return 2;
@@ -64,8 +66,8 @@ pub fn run(args: &[String]) -> i32 {
         for conn_stream in listener.incoming() {
             match conn_stream {
                 Ok(stream) => {
-                    let conn = &conn;
-                    scope.spawn(move || handle(stream, conn));
+                    let conn = Arc::clone(&conn);
+                    scope.spawn(move || handle(stream, &conn));
                 }
                 Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
             }
@@ -101,7 +103,8 @@ fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-fn handle(stream: UnixStream, conn: &Conn) {
+fn handle(stream: UnixStream, conn: &Arc<Conn>) {
+    let received = Instant::now();
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
     let mut line = String::new();
     if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -116,10 +119,23 @@ fn handle(stream: UnixStream, conn: &Conn) {
     };
     let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
     let (code, out) = match crate::work::bind_peer(&argv, peer_uid(&stream), &map) {
-        Ok(argv) => crate::dispatch(&argv, conn),
+        Ok(argv) => {
+            let worker = Arc::clone(conn);
+            within(crate::db::QUERY_DEADLINE.saturating_sub(received.elapsed()), move || crate::dispatch(&argv, &worker))
+                .unwrap_or_else(|| (2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
+        }
         Err(refusal) => refusal,
     };
     let _ = write_response(&stream, code, &out);
+}
+
+/// `f`'s answer, or `None` once `deadline` passes; the abandoned work finishes unobserved.
+fn within<T: Send + 'static>(deadline: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(deadline).ok()
 }
 
 /// Beside the socket, so the one configured socket path locates it: `<uid> <persona>` lines.
@@ -155,6 +171,18 @@ mod tests {
         assert!(super::inherited_listener(Some("8"), Some("1"), 7).is_none(), "another process's descriptors are not ours");
         assert!(super::inherited_listener(Some("7"), Some("0"), 7).is_none());
         assert!(super::inherited_listener(Some("x"), Some("1"), 7).is_none());
+    }
+
+    #[test]
+    fn a_slow_request_is_abandoned_at_the_deadline_not_waited_for() {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let slow = super::within(std::time::Duration::from_millis(300), move || {
+            let _ = held.recv();
+            1
+        });
+        assert_eq!(slow, None, "answered at the deadline while the work was still running");
+        drop(release);
+        assert_eq!(super::within(std::time::Duration::from_secs(5), || 7), Some(7));
     }
 
     #[test]
