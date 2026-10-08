@@ -1,6 +1,6 @@
 //! `spira-lc classify` — the one-time migration classifier (design §4). Assigns every
 //! existing work bead, and every open batch, a lifecycle state by reading the legacy
-//! records (bd, the landstate ledger, batch membership files, git) in the fixed precedence
+//! records (bd, batch membership files, git) in the fixed precedence
 //! `lifecycle::classify` implements, then writes one event per decision with the deciding
 //! rule as evidence. Idempotent: a bead that already has a row is left untouched and no new
 //! event is written for it, which is what makes re-running this command a no-op. `--dry-run`
@@ -37,7 +37,6 @@ struct Args {
     home: Option<PathBuf>,
     bd_bin: String,
     bd_db: String,
-    landstate_dir: PathBuf,
     queue_dir: PathBuf,
     repos: Vec<String>,
     base_override: Option<String>,
@@ -72,7 +71,6 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
     }
     let bd_bin = flag(args, "--bd-bin").unwrap_or_else(|| "bd".to_string());
     let bd_db = flag(args, "--bd-db").ok_or("classify: --bd-db is required")?;
-    let landstate_dir = flag(args, "--landstate-dir").ok_or("classify: --landstate-dir is required")?;
     let queue_dir = flag(args, "--queue-dir").ok_or("classify: --queue-dir is required")?;
     let repos = flag_all(args, "--repo");
     if every_bead && !repos.is_empty() {
@@ -82,7 +80,6 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         home: home.map(PathBuf::from),
         bd_bin,
         bd_db,
-        landstate_dir: PathBuf::from(landstate_dir),
         queue_dir: PathBuf::from(queue_dir),
         repos,
         base_override: flag(args, "--base"),
@@ -300,24 +297,15 @@ fn classify_one(
     }
     let ctx = repo_name.as_deref().and_then(|r| ctxs.get(r));
 
-    let (landstate, landstate_tip) = legacy_files::read_landstate(&parsed.landstate_dir, id)
-        .map(|(ls, tip)| (Some(ls), tip))
-        .unwrap_or((None, None));
-
     // No repository, no git evidence: every git-derived fact is false.
-    let (tip_ancestor_of_base, content_on_base, branch_ahead, batch_open_member, landing_commit) = match ctx {
-        None => (false, false, false, false, None),
+    let (content_on_base, branch_ahead, batch_open_member, landing_commit) = match ctx {
+        None => (false, false, false, None),
         Some(c) => {
-            let tip_ancestor_of_base =
-                landstate_tip.as_deref().map(|tip| git_evidence::is_ancestor(&c.path, tip, &c.base)).unwrap_or(false);
             let branch_ref = format!("spira/{id}");
             let branch_exists = git_output_exists(&c.path, &branch_ref);
             let branch_content_on_base = branch_exists && git_evidence::content_on_base(&c.path, &branch_ref, &c.base);
-            let tip_content_on_base =
-                landstate_tip.as_deref().map(|tip| git_evidence::content_on_base(&c.path, tip, &c.base)).unwrap_or(false);
             (
-                tip_ancestor_of_base,
-                branch_content_on_base || tip_content_on_base,
+                branch_content_on_base,
                 branch_exists && !branch_content_on_base,
                 c.batch_members.contains(id),
                 c.landing_lines.get(id).cloned(),
@@ -331,8 +319,6 @@ fn classify_one(
         has_ask_hold: parsed.ask_label.as_deref().is_some_and(|l| bd.labels.contains(l)),
         labels: bd.labels.clone(),
         supersedes: bd.supersedes.clone(),
-        landstate,
-        tip_ancestor_of_base,
         content_on_base,
         batch_open_member,
         branch_ahead,
@@ -373,18 +359,18 @@ fn classify_one(
         }));
     }
 
-    match write_classified_bead(conn, id, &landstate_tip, &outcome, repo_shown, mode, cfg.source, parsed.dry_run) {
+    match write_classified_bead(conn, id, &outcome, repo_shown, mode, cfg.source, parsed.dry_run) {
         Ok(()) => t.classified += 1,
         Err(e) => t.errors.push(format!("{id}: writing classification: {e}")),
     }
 }
 
 /// A re-run corrects an existing row only by the rules that were missing when it was written,
-/// and only where the row is the classifier's own guess: the ledger files are no longer kept
-/// current, so recomputing every other rule would overwrite what the machine has since decided.
+/// and only where the row is the classifier's own guess: recomputing every other rule would
+/// overwrite what the machine has since decided.
 fn correctable(row: &lifecycle::bead::BeadRow, outcome: &classify::Classification) -> bool {
     use lifecycle::bead::BeadState::*;
-    if !matches!(outcome.rule, "terminal-landing-line" | "closed-branch-never-landed") {
+    if !matches!(outcome.rule, "terminal-landing-line") {
         return false;
     }
     match row.state {
@@ -413,7 +399,6 @@ fn holds_json(holds: &BTreeSet<HoldKind>) -> String {
 fn write_classified_bead(
     conn: &Conn,
     id: &str,
-    tip: &Option<String>,
     outcome: &classify::Classification,
     repo_name: &str,
     mode: &str,
@@ -437,7 +422,7 @@ fn write_classified_bead(
         "'{}', '{}', {}, NULL, NULL, NULL, '{}', '{}', 0, {}",
         rows::escape(id),
         outcome.state.as_str(),
-        opt_sql_str(tip),
+        "NULL",
         holds_json(&outcome.holds),
         rows::escape(outcome.rule),
         at,
@@ -588,7 +573,7 @@ mod tests {
 
     #[test]
     fn every_bead_needs_no_home_but_a_per_repo_run_does() {
-        let common = "--bd-db /db --landstate-dir /ls --queue-dir /q";
+        let common = "--bd-db /db --queue-dir /q";
         let a = parse_args(&argv(&format!("{common} --every-bead"))).unwrap();
         assert!(a.every_bead && a.home.is_none());
         assert!(parse_args(&argv(common)).unwrap_err().contains("--home"));
@@ -596,7 +581,7 @@ mod tests {
 
     #[test]
     fn every_bead_refuses_a_repo_filter() {
-        let e = parse_args(&argv("--every-bead --repo demo --bd-db /db --landstate-dir /ls --queue-dir /q")).unwrap_err();
+        let e = parse_args(&argv("--every-bead --repo demo --bd-db /db --queue-dir /q")).unwrap_err();
         assert!(e.contains("exclusive"), "{e}");
     }
 }

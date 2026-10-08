@@ -1,20 +1,6 @@
-//! Reads the two legacy on-disk records the classifier's precedence tiers 2 and 3 consult:
-//! the landstate ledger (`land_mark`'s own file, one per bead) and the queue's open-batch
-//! record (`_batch_open_file`'s own file, one per repository). Plain file reads — the parsing
-//! itself is pure and lives in `lifecycle::classify::parse_landstate`.
+//! Reads the queue's open-batch record (one file per repository) for the migration classifier.
 
 use std::path::Path;
-
-use lifecycle::classify::{parse_landstate, LandState};
-
-/// Reads `<landstate_dir>/<id>`, exactly `land_mark`'s write format
-/// (`"<STATE> <tip> <at> [reason...]"`). `None` means no file, or a state/reason this
-/// classifier does not recognize — either way, the caller falls through to a lower
-/// precedence tier rather than guessing.
-pub fn read_landstate(landstate_dir: &Path, id: &str) -> Option<(LandState, Option<String>)> {
-    let text = std::fs::read_to_string(landstate_dir.join(id)).ok()?;
-    parse_landstate(text.trim())
-}
 
 /// A currently open batch for one repository: its `members=` line (space-separated bead
 /// ids), plus `head`/`base`/`opened` for the batch row the classifier writes.
@@ -54,23 +40,6 @@ mod tests {
 
     fn scratch(tag: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("spira-lc-legacy-files-test-{tag}"))
-    }
-
-    #[test]
-    fn reads_a_landstate_file_in_land_marks_own_format() {
-        let dir = scratch("landstate");
-        fs::write(dir.join("sp-1"), "CERTIFIED abc123 1700000000 ").unwrap();
-        let (ls, tip) = read_landstate(&dir, "sp-1").unwrap();
-        assert_eq!(ls, LandState::Certified);
-        assert_eq!(tip.as_deref(), Some("abc123"));
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_missing_landstate_file_is_none_not_an_error() {
-        let dir = scratch("missing");
-        assert!(read_landstate(&dir, "sp-nope").is_none());
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

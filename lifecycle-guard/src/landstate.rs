@@ -1,12 +1,11 @@
 //! The Rust half of this bead's landstate barrier: a call to `land_mark`/`landed`/`landed_sha`
-//! (however module-qualified) or an `fs` read of a path naming the landstate ledger, outside
-//! the allow-listed lifecycle crate and spira-lc. Shell gets the same two checks in
+//! (however module-qualified) or an `fs` read of a path naming the landstate ledger, anywhere
+//! in the tree. Shell gets the same two checks in
 //! `shell.rs`, over its own tree-sitter parse; Rust has no grammar in this crate, so this is a
 //! line-oriented textual pass, the same shape already used here for credential/retired-label
 //! tokens.
 
 use crate::finding::{Class, Finding};
-use crate::rules::landstate_path_allowed;
 use std::path::{Path, PathBuf};
 
 // land_state added (sp-cnnt6, "wave 4.16"): the read side moved from a lib.sh function no
@@ -23,9 +22,6 @@ pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        if landstate_path_allowed(&rel_path) {
-            continue;
-        }
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };

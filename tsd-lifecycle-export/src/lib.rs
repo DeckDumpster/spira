@@ -51,8 +51,6 @@ fn default_facts() -> BeadFacts {
         labels: Default::default(),
         has_ask_hold: false,
         supersedes: None,
-        landstate: None,
-        tip_ancestor_of_base: false,
         content_on_base: false,
         batch_open_member: false,
         branch_ahead: false,

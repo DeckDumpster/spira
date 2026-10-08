@@ -74,7 +74,7 @@ git -C "$GITREPO" commit -q -m "a batch" -m "spira: land sp-landed"
 git -C "$GITREPO" commit -q --allow-empty -m "another batch" -m "spira: land sp-gone-landed"
 
 # ── config: the run/queue dirs, a repository table layer, and a bd that logs its argv ──
-mkdir -p "$TMP/run/landstate" "$TMP/run/queue"
+mkdir -p "$TMP/run/queue"
 REAL_BD="$(command -v "$SPIRA_BD" 2>/dev/null || printf '%s' "$SPIRA_BD")"
 BD_LOG="$TMP/bd-calls.log"
 cat > "$TMP/bd-logged" <<EOF
