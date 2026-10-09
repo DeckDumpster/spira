@@ -39,6 +39,10 @@ pub fn main_health_log(run: &Path, class: &str) -> PathBuf {
     run.join(format!("main-health-{class}.log"))
 }
 
+pub fn main_health_cache(run: &Path) -> PathBuf {
+    run.join("main-health-verdicts.json")
+}
+
 pub fn flow_state(run: &Path) -> PathBuf {
     run.join("reconciler-flow-state.json")
 }
