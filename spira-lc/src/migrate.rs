@@ -412,6 +412,35 @@ pub fn service_may(grants: &str, privilege: &str, table: &str) -> bool {
     })
 }
 
+/// The `GRANT ... ON spira_lifecycle.<table> TO ...` statements of `grants` (single-line, no
+/// placeholders), each with its table.
+pub fn table_grants(grants: &str) -> Vec<(String, String)> {
+    grants
+        .lines()
+        .filter_map(|line| {
+            let stmt = line.trim().trim_end_matches(';').trim();
+            let rest = stmt.strip_prefix("GRANT ")?;
+            let (_, rest) = rest.split_once(" ON ")?;
+            let (object, _) = rest.split_once(" TO ")?;
+            let table = object.trim().strip_prefix("spira_lifecycle.")?;
+            Some((ident(table), stmt.to_string()))
+        })
+        .collect()
+}
+
+/// Apply every grant in `grants` whose table exists, as `admin`; GRANT is idempotent. A table
+/// a pending migration has yet to create is skipped until that migration has run.
+fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
+    for (table, stmt) in table_grants(grants) {
+        let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&table));
+        if admin.rows(&probe).map_err(|e| format!("cannot tell whether {table} exists: {e}"))?.is_empty() {
+            continue;
+        }
+        admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Who applies a pending migration file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Applier {
@@ -475,6 +504,12 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
     // Once the admin has written, later steps are probed on the admin's session: a probe
     // may read what an earlier step added, which the service user's grants need not cover.
     let mut admin_wrote = false;
+    let grant_failed = |when: &str, e: &str| (2, format!("admin-migrate: grants.sql {when}: {e} — the release ships grants the server lacks; check {ADMIN_VARS}"));
+    if let Some(a) = admin {
+        if let Err(e) = apply_grants(a, grants) {
+            return grant_failed("before the migrations", &e);
+        }
+    }
     for (name, st) in steps {
         let prober: &dyn Sql = match admin {
             Some(a) if admin_wrote => a,
@@ -531,6 +566,9 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
                 report.push(format!("{name}: {}", applied_as(st, "the database admin")));
             }
             Err(e) => return refused(name, &e),
+        }
+        if let Err(e) = apply_grants(admin, grants) {
+            return grant_failed(&format!("after {name}"), &e);
         }
     }
     if !wrote {
@@ -786,6 +824,7 @@ mod tests {
                 Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE VIEW") => {
                     st.views.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
                 }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("GRANT") => {}
                 _ => st.stale_terminal_rows = false,
             }
             st.writes.push(format!("{}: {sql}", self.user));
@@ -824,6 +863,28 @@ mod tests {
 
     fn admin(state: &Rc<RefCell<State>>, refused: bool) -> FakeConn {
         FakeConn { user: "root", state: state.clone(), refused, can_ddl: true, can_dml: true, attempts: RefCell::default() }
+    }
+
+    #[test]
+    fn the_admin_applies_a_missing_grant_on_an_existing_table_and_skips_one_not_yet_created() {
+        let db = migrated();
+        let adm = admin(&db, false);
+        let grants = "GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';\nGRANT SELECT ON spira_lifecycle.later TO 'spira_lc'@'%';\nCREATE USER x;\n";
+        apply_grants(&adm, grants).unwrap();
+        assert_eq!(adm.attempts.borrow().as_slice(), ["GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%'"]);
+        let svc = admin(&db, false);
+        let bad = FakeConn { can_ddl: false, ..svc };
+        let e = apply_grants(&bad, grants).unwrap_err();
+        assert!(e.contains("GRANT SELECT ON spira_lifecycle.bead_dep"), "{e}");
+    }
+
+    #[test]
+    fn migrate_grants_before_probing_so_a_table_added_by_an_earlier_release_is_readable() {
+        let db = migrated();
+        let adm = admin(&db, false);
+        let (rc, out) = migrate(&real_steps(), &service(&db), Some(&adm));
+        assert_eq!(rc, 0, "{out}");
+        assert!(adm.attempts.borrow().iter().any(|s| s.contains("ON spira_lifecycle.bead_dep TO 'spira_lc'@'%'")), "{:?}", adm.attempts.borrow());
     }
 
     #[test]
@@ -903,7 +964,7 @@ mod tests {
         let (rc, out) = migrate(&real_steps(), &service(&db), Some(&admin));
         assert_eq!(rc, 0, "{out}");
         assert!(out.contains("0002-since.sql: added bead.since"), "{out}");
-        let w = db.borrow().writes.clone();
+        let w: Vec<String> = db.borrow().writes.iter().filter(|w| !w.contains(": GRANT ")).cloned().collect();
         assert_eq!(w.len(), 2, "0002 and 0003 only, 0001 untouched: {w:?}");
         assert!(w[0].starts_with("root: ALTER"), "the DDL as the admin: {w:?}");
         assert!(w[1].starts_with("spira_lc: UPDATE"), "the guarded DML as the service user: {w:?}");
@@ -920,7 +981,7 @@ mod tests {
         let (rc, out) = migrate(&real_steps(), &service(&db), Some(&admin));
         assert_eq!(rc, 2, "{out}");
         assert!(out.contains("SPIRA_LC_ADMIN_USER") && out.contains("SPIRA_LC_ADMIN_PASSWORD"), "{out}");
-        assert!(out.contains("0002-since.sql"), "{out}");
+        assert!(out.contains("grants.sql"), "{out}");
         assert!(db.borrow().writes.is_empty());
     }
 
