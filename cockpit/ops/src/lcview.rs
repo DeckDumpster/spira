@@ -168,8 +168,9 @@ pub struct Snapshot {
     /// Why a round last ejected each bead, newest eject per bead (the batch's own reason).
     #[serde(default)]
     pub eject_why: BTreeMap<String, String>,
-    /// The ids the claim tool would claim right now, when it answered (interim until the one
-    /// claimable-set read, sp-cuyg5f, serves both); `None` falls back to the row heuristic.
+    /// The ids the claim tool would claim right now (interim until the one claimable-set read,
+    /// sp-cuyg5f, serves both). `None` when it has not answered: NEXT then says it does not
+    /// know rather than guess, since a guess listed a blocked bead as claimable.
     #[serde(default)]
     pub claimable: Option<Vec<String>>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
@@ -341,6 +342,8 @@ pub struct View {
     pub pipe: Vec<PipeLine>,
     pub rework_items: Vec<Item>,
     pub next_count: usize,
+    /// The claim tool did not answer, so NEXT is unknown, not empty.
+    pub next_unknown: bool,
     pub next: Vec<Item>,
     pub blocked: Vec<Item>,
     pub recent: Vec<Item>,
@@ -737,7 +740,7 @@ pub fn view(s: &Snapshot) -> View {
         .copied()
         .filter(|r| match &s.claimable {
             Some(ids) => ids.iter().any(|i| *i == r.id) && !is_ask(&r.id),
-            None => r.claimable.unwrap_or(r.holds.is_empty() && !s.on_base.contains_key(&r.id)) && !blocked_row(r) && !is_ask(&r.id),
+            None => false,
         })
         .collect();
     nx.sort_by_key(|r| (!r.rework, s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
@@ -747,6 +750,7 @@ pub fn view(s: &Snapshot) -> View {
         .map(|r| item(r, r.since, format!("{} <- {}", r.id, r.blocker.as_deref().unwrap_or(""))))
         .collect();
     v.next_count = nx.len();
+    v.next_unknown = s.claimable.is_none();
     v.next = nx.iter().take(12).map(|r| item(r, r.since, String::new())).collect();
 
     let mut rc: Vec<&Row> = s.rows.iter().collect();
@@ -1062,7 +1066,8 @@ mod tests {
         let v = view(&s);
         assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-free"], "a bead the claim tool would not take is not NEXT");
         s.claimable = None;
-        assert_eq!(view(&s).next_count, 2, "without the claim tool's answer the row heuristic stands");
+        let v = view(&s);
+        assert!(v.next_unknown && v.next.is_empty(), "without the claim tool's answer NEXT says it does not know, never guesses");
     }
 
     #[test]
@@ -1079,6 +1084,7 @@ mod tests {
     fn a_question_for_the_operator_is_in_decide_and_never_counted_as_claimable_work() {
         let mut s = snap(vec![row("sp-ask1", "READY", 90_000), row("sp-work1", "READY", 91_000), row("sp-done-ask", "DROPPED", 80_000)]);
         s.ask_label = "fixture-ask-label".into();
+        s.claimable = Some(vec!["sp-ask1".into(), "sp-work1".into()]); // even listed, an ask is never NEXT
         for id in ["sp-ask1", "sp-done-ask"] {
             s.meta.insert(id.into(), Meta { title: "Statute: something".into(), priority: Some(2), labels: vec![s.ask_label.clone()], ..Default::default() });
         }
@@ -1108,6 +1114,7 @@ mod tests {
         let mut held = row("sp-held", "READY", 10);
         held.holds = vec!["ask".into()];
         let mut s = snap(vec![row("sp-low", "READY", 1), row("sp-high", "READY", 5), held, row("sp-landed", "LANDED", 3)]);
+        s.claimable = Some(vec!["sp-low".into(), "sp-high".into()]);
         s.meta.insert("sp-low".into(), Meta { title: "low".into(), priority: Some(2), ..Default::default() });
         s.meta.insert("sp-high".into(), Meta { title: "high".into(), priority: Some(0), ..Default::default() });
         let v = view(&s);
@@ -1206,6 +1213,7 @@ mod tests {
         bl.blocker = Some("sp-o4s4t4".into());
         bl.claimable = Some(false);
         let mut s = snap(vec![fresh, rw, no, bl]);
+        s.claimable = Some(vec!["sp-fresh".into(), "sp-rw".into()]);
         s.meta.insert("sp-fresh".into(), Meta { title: "f".into(), priority: Some(0), ..Default::default() });
         s.meta.insert("sp-rw".into(), Meta { title: "r".into(), priority: Some(2), ..Default::default() });
         let v = view(&s);

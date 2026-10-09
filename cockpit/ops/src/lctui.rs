@@ -315,7 +315,14 @@ pub fn tree(v: &View) -> Vec<Node> {
 
     let next = v.next.iter().map(|i| Node::new(format!("next/{}", i.id), format!("{} {:<12} {}", i.prio, i.id, i.title))).collect();
     out.push(
-        Node::new("next", format!("{B}NEXT{R}   {B}{}{R} claimable {D}(express, REWORK, then priority){R}", v.next_count))
+        Node::new(
+            "next",
+            if v.next_unknown {
+                format!("{B}NEXT{R}   {YEL}unknown{R} {D}— the claim tool has not answered{R}")
+            } else {
+                format!("{B}NEXT{R}   {B}{}{R} claimable {D}(the claim tool's own set){R}", v.next_count)
+            },
+        )
             .kids(ranked(next, &[(5, R_NEXT_SOME), (2, R_NEXT_FEW), (0, R_NEXT_ALL)])),
     );
 

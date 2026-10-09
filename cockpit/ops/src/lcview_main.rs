@@ -159,14 +159,15 @@ fn gather_state_machine(s: &mut Snapshot) {
 fn claimable_ids() -> Option<Vec<String>> {
     use std::sync::Mutex;
     static CACHE: Mutex<Option<(std::time::Instant, Vec<String>)>> = Mutex::new(None);
-    if let Ok(c) = CACHE.lock() {
-        if let Some((at, ids)) = c.as_ref() {
-            if at.elapsed() < Duration::from_secs(60) {
-                return Some(ids.clone());
-            }
+    let last = CACHE.lock().ok().and_then(|c| c.clone());
+    if let Some((at, ids)) = &last {
+        if at.elapsed() < Duration::from_secs(60) {
+            return Some(ids.clone());
         }
     }
-    let counts = run("spira-claim", &["bulk-ready-by-fayth"]).ok()?;
+    // A slow or failed answer keeps the last good one for ten minutes, never a guess.
+    let stale = || last.as_ref().filter(|(at, _)| at.elapsed() < Duration::from_secs(600)).map(|(_, ids)| ids.clone());
+    let Ok(counts) = run("spira-claim", &["bulk-ready-by-fayth"]) else { return stale() };
     let mut ids = Vec::new();
     for l in counts.lines() {
         let mut f = l.split_whitespace();
@@ -174,8 +175,8 @@ fn claimable_ids() -> Option<Vec<String>> {
         if n == "0" {
             continue;
         }
-        let rows = run("spira-claim", &["fayth-ready", fayth, "--json"]).ok()?;
-        let v: serde_json::Value = serde_json::from_str(&rows).ok()?;
+        let Ok(rows) = run("spira-claim", &["fayth-ready", fayth, "--json"]) else { return stale() };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&rows) else { return stale() };
         ids.extend(v.as_array().cloned().unwrap_or_default().iter().filter_map(|r| r["id"].as_str().map(String::from)));
     }
     ids.sort();
