@@ -10,7 +10,9 @@ SIM="$SPIRA_RELEASE/bin/sim"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 REPO="$T/repo"
-git clone -q "$HERE/.." "$REPO" 2>&1 | tail -2
+mkdir -p "$REPO"
+tar -C "$HERE/.." --exclude=./target --exclude=./.git -cf - . | tar -xf - -C "$REPO"
+git -C "$REPO" init -q --initial-branch=main && git -C "$REPO" add -A && git -C "$REPO" -c user.name=t -c user.email=t@t commit -q -m seed || echo "REPO FAIL"
 NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
 W="$T/w"
 (cd "$REPO" && env "${NOLOC[@]}" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" world up "$W") 2>&1 | tail -5
