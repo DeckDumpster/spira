@@ -213,7 +213,7 @@ fn hits(beads: Vec<Value>) -> Vec<(String, String)> {
     let t = Trace::create(&d).unwrap();
     t.snapshot(1, &Snapshot { beads, ..Default::default() }).unwrap();
     let db = t.load(&d).unwrap();
-    let mut v: Vec<(String, String)> = violations(&db)
+    let mut v: Vec<(String, String)> = violations(&db, &[])
         .unwrap()
         .into_iter()
         .map(|v| (v.view, serde_json::from_str::<Value>(&v.row).unwrap()["bead"].as_str().unwrap_or("").to_string()))

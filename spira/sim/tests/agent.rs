@@ -13,7 +13,9 @@ impl Rig {
         let bin = t.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let log = t.join("work.log");
-        testkit::write_exe(bin.join("work"), &format!("#!/bin/sh\necho \"$*\" >> {}\n", log.display()));
+        testkit::write_exe(bin.join("work"), &format!("#!/bin/sh\necho \"$*\" >> {}\npwd >> {}\n", log.display(), t.join("work.cwd").display()));
+        std::fs::create_dir_all(t.join("world/work")).unwrap();
+        let world = t.join("world").display().to_string();
         let wt = t.join("wt");
         let g = |a: &[&str]| {
             let o = Command::new("git").arg("-C").arg(&wt).args(a).output().unwrap();
@@ -23,7 +25,7 @@ impl Rig {
         g(&["init", "-q", "--initial-branch=main"]);
         g(&["-c", "user.name=x", "-c", "user.email=x@x", "commit", "-q", "--allow-empty", "-m", "seed"]);
         let path = format!("{}:/usr/bin:/bin", bin.display());
-        let _env = testkit::env(&[("PATH", Some(&path))]);
+        let _env = testkit::env(&[("PATH", Some(&path)), ("SIM_WORLD", Some(&world))]);
         Rig { t, _env }
     }
     fn wt(&self) -> PathBuf {
@@ -37,6 +39,9 @@ impl Rig {
     }
     fn work_calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.t.join("work.log")).unwrap_or_default().lines().map(str::to_string).collect()
+    }
+    fn work_cwds(&self) -> Vec<String> {
+        std::fs::read_to_string(self.t.join("work.cwd")).unwrap_or_default().lines().map(str::to_string).collect()
     }
     fn subjects(&self) -> Vec<String> {
         let o = Command::new("git").arg("-C").arg(self.wt()).args(["log", "--format=%s"]).output().unwrap();
@@ -117,4 +122,25 @@ fn a_bead_with_no_script_or_a_bad_step_fails_closed() {
     assert!(parse("sp-a ask no default\n", "sp-a").is_err());
     assert!(parse("sp-a commit\n", "sp-a").is_err());
     assert_eq!(parse("sp-a ask q | d\n", "sp-a").unwrap()[0], vec![Step::Ask { question: "q".into(), default: "d".into() }]);
+}
+
+#[test]
+fn submit_from_main_runs_work_submit_in_the_worlds_primary_checkout() {
+    let r = Rig::new();
+    r.summon("sp-a commit a.txt\nsp-a submit-from-main\nsp-a submit\n", "sp-a").unwrap();
+    assert_eq!(r.work_calls(), vec!["submit", "submit"]);
+    let cwds = r.work_cwds();
+    assert!(cwds[0].ends_with("/world/work"), "{cwds:?}");
+    assert!(cwds[1].ends_with("/wt"), "{cwds:?}");
+    assert_eq!(parse("sp-a submit-from-main\n", "sp-a").unwrap()[0], vec![Step::SubmitFromMain]);
+}
+
+#[test]
+fn drop_removes_a_committed_file_in_a_commit_of_its_own() {
+    let r = Rig::new();
+    r.summon("sp-a commit a.txt\nsp-a drop a.txt\n", "sp-a").unwrap();
+    assert!(!exists(&r.wt().join("a.txt")));
+    assert_eq!(r.subjects()[0], "sp-a: sim drop a.txt");
+    assert_eq!(r.subjects().len(), 3);
+    assert!(parse("sp-a drop\n", "sp-a").is_err());
 }

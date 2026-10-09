@@ -13,13 +13,13 @@ const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: spira-lc
 pub const HOLDER: &str = "sim-aeon";
 const LEASE_UNTIL: u64 = 4_102_444_800;
 
-/// The READY beads in `lc_list` that `scenario` scripts, in id order, with their versions.
-pub fn claimable(lc_list: &str, scenario: &str) -> Result<Vec<(String, i64)>, String> {
+/// The READY or REWORK beads in `lc_list` that `scenario` scripts, in id order, with their versions.
+pub fn claimable(lc_list: &str, scenario: &str) -> Result<Vec<(String, String, i64)>, String> {
     let rows: Value = serde_json::from_str(lc_list.trim()).map_err(|e| format!("spira-lc list: not JSON: {e}"))?;
     let rows = rows.as_array().ok_or("spira-lc list: not a JSON array")?;
     let mut out = Vec::new();
     for r in rows {
-        if r["state"].as_str() != Some("READY") {
+        if !matches!(r["state"].as_str(), Some("READY" | "REWORK")) {
             continue;
         }
         let id = r["bead_id"].as_str().ok_or_else(|| format!("spira-lc list: a row has no bead_id: {r}"))?;
@@ -30,7 +30,7 @@ pub fn claimable(lc_list: &str, scenario: &str) -> Result<Vec<(String, i64)>, St
             Value::String(s) => s.trim().parse::<i64>().ok(),
             v => v.as_i64(),
         };
-        out.push((id.to_string(), version.ok_or_else(|| format!("spira-lc list: {id} has no numeric version"))?));
+        out.push((id.to_string(), r["state"].as_str().unwrap_or_default().to_string(), version.ok_or_else(|| format!("spira-lc list: {id} has no numeric version"))?));
     }
     out.sort();
     Ok(out)
@@ -61,18 +61,21 @@ pub fn summon(world: &Path, scenario_file: &Path, state: &Path) -> Result<Vec<St
     let list = run(Command::new("spira-lc").arg("list"), CALL_DEADLINE)?;
     let work = world.join("work");
     let mut ran = Vec::new();
-    for (id, version) in claimable(&list, &scenario)? {
+    for (id, lc_state, version) in claimable(&list, &scenario)? {
         run(
-            Command::new("spira-lc").args(["event", "bead", &id, "--expect", "READY", "--version", &version.to_string(), "--actor", HOLDER, "--kind", &claim_event()]),
+            Command::new("spira-lc").args(["event", "bead", &id, "--expect", &lc_state, "--version", &version.to_string(), "--actor", HOLDER, "--kind", &claim_event()]),
             CALL_DEADLINE,
         )?;
         let wt = world.join("wt").join(&id);
         let branch = format!("spira/{id}");
         let wt_arg = wt.display().to_string();
-        if git(&work, &["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")]).is_ok() {
-            git(&work, &["worktree", "add", &wt_arg, &branch])?;
-        } else {
-            git(&work, &["worktree", "add", "-b", &branch, &wt_arg, LANDING_BASE])?;
+        let has_branch = git(&work, &["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")]).is_ok();
+        if !wt.join(".git").exists() {
+            if has_branch {
+                git(&work, &["worktree", "add", &wt_arg, &branch])?;
+            } else {
+                git(&work, &["worktree", "add", "-b", &branch, &wt_arg, LANDING_BASE])?;
+            }
         }
         run(
             Command::new(agent_bin()?)

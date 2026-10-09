@@ -12,6 +12,10 @@ pub const STATE_VAR: &str = "SPIRA_SIM_STATE";
 pub enum Step {
     Commit(String),
     Submit,
+    /// `work submit` run from the world's primary checkout, not the bead's worktree.
+    SubmitFromMain,
+    /// Remove a file the branch added, in a commit of its own.
+    Drop(String),
     NoProgress,
     Ask { question: String, default: String },
 }
@@ -38,6 +42,8 @@ pub fn parse(text: &str, bead: &str) -> Result<Vec<Vec<Step>>, String> {
             }
             ("commit", f) if !f.is_empty() => Step::Commit(f.to_string()),
             ("submit", "") => Step::Submit,
+            ("submit-from-main", "") => Step::SubmitFromMain,
+            ("drop", f) if !f.is_empty() => Step::Drop(f.to_string()),
             ("no-progress", "") => Step::NoProgress,
             ("ask", r) if !r.is_empty() => match r.split_once(" | ") {
                 Some((q, d)) => Step::Ask { question: q.trim().to_string(), default: d.trim().to_string() },
@@ -99,6 +105,14 @@ fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), 
             git(worktree, &["commit", "-q", "-m", &format!("{bead}: sim commit {file}")]).map(|_| ())
         }
         Step::Submit => work(worktree, &["submit"]).map(|_| ()),
+        Step::SubmitFromMain => {
+            let world = std::env::var(crate::roundvm::WORLD_ENV).ok().filter(|v| !v.is_empty()).ok_or_else(|| format!("{} is not set", crate::roundvm::WORLD_ENV))?;
+            work(&Path::new(&world).join("work"), &["submit"]).map(|_| ())
+        }
+        Step::Drop(file) => {
+            git(worktree, &["rm", "-q", "--", file])?;
+            git(worktree, &["commit", "-q", "-m", &format!("{bead}: sim drop {file}")]).map(|_| ())
+        }
         Step::NoProgress => Ok(()),
         Step::Ask { question, default } => work(worktree, &["blocked", question, "--default", default]).map(|_| ()),
     }

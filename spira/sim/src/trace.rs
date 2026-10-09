@@ -178,9 +178,15 @@ pub fn invariant_views() -> Vec<String> {
         .collect()
 }
 
-pub fn violations(db: &Path) -> Result<Vec<Violation>, String> {
-    let parts: Vec<String> = invariant_views().iter().map(|v| format!("SELECT '{v}' AS view, seq, CAST(to_json(t) AS VARCHAR) AS row FROM {v} t")).collect();
-    let sql = format!("{} ORDER BY seq, view;", parts.join(" UNION ALL "));
+fn scenario_view(d: &crate::drive::SqlDef) -> String {
+    format!("scn_{}", d.name)
+}
+
+pub fn violations(db: &Path, own: &[crate::drive::SqlDef]) -> Result<Vec<Violation>, String> {
+    let views: Vec<String> = invariant_views().into_iter().chain(own.iter().map(scenario_view)).collect();
+    let create: String = own.iter().map(|d| format!("CREATE OR REPLACE VIEW {} AS {};\n", scenario_view(d), d.sql.trim())).collect();
+    let parts: Vec<String> = views.iter().map(|v| format!("SELECT '{v}' AS view, seq, CAST(to_json(t) AS VARCHAR) AS row FROM {v} t")).collect();
+    let sql = format!("{create}{} ORDER BY seq, view;", parts.join(" UNION ALL "));
     let out = duckdb(db, &sql, true)?;
     if out.trim().is_empty() {
         return Ok(vec![]);
@@ -195,6 +201,19 @@ pub fn violations(db: &Path) -> Result<Vec<Violation>, String> {
             })
         })
         .collect()
+}
+
+/// The names of the `expect` queries that returned no row.
+pub fn unmet(db: &Path, expects: &[crate::drive::SqlDef]) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for d in expects {
+        let rows = duckdb(db, &format!("SELECT count(*) AS n FROM ({});", d.sql.trim()), true)?;
+        let v: Vec<Value> = serde_json::from_str(&rows).map_err(|e| format!("duckdb output for {}: {e}", d.name))?;
+        if v.first().and_then(|r| r["n"].as_u64()).ok_or_else(|| format!("expect {}: no count", d.name))? == 0 {
+            out.push(d.name.clone());
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Debug, PartialEq)]

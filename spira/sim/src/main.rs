@@ -3,7 +3,8 @@ use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
-       sim summon";
+       sim summon
+       sim ci run <workflow.yml> <job> --sha <sha> --workspace <dir> [--skip <step name>]... [--path <dir>]... [--env KEY=VALUE]...";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
@@ -12,7 +13,7 @@ fn main() {
     if invoked_as.as_deref().is_some_and(|n| world::INERT_TOOLS.contains(&n)) {
         std::process::exit(0);
     }
-    if let Some(name @ ("gh" | "round-vm")) = invoked_as.as_deref() {
+    if let Some(name @ ("gh" | "round-vm" | "cargo")) = invoked_as.as_deref() {
         args.insert(0, name.to_string());
     }
     let code = match run(&args) {
@@ -32,6 +33,8 @@ fn run(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("gh") => return gh_main(&state_dir()?, &cwd, &args[1..]),
         Some("round-vm") => return round_vm_main(&args[1..], &env),
+        Some("cargo") => return spira_sim::ci::cargo_shim(&args[1..], &cwd, &env),
+        Some("ci") => return ci_main(&args[1..], &env),
         Some("ghctl") => {
             let (dir, rest) = args[1..].split_first().ok_or(USAGE.to_string())?;
             print!("{}", gh::ctl(&PathBuf::from(dir), rest)?);
@@ -74,6 +77,51 @@ fn round_vm_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Resul
     let (code, err) = roundvm::run(&PathBuf::from(world), args, env, now);
     eprint!("{err}");
     std::process::exit(code);
+}
+
+fn ci_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
+    use spira_sim::ci::{run_job, steps, Context, Job};
+    let usage = || USAGE.to_string();
+    let (verb, rest) = args.split_first().ok_or_else(usage)?;
+    if verb != "run" {
+        return Err(usage());
+    }
+    let (mut pos, mut skip, mut path, mut sha, mut workspace) = (Vec::new(), Vec::new(), Vec::new(), None, None);
+    let mut image_env: Vec<(String, String)> = Vec::new();
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--skip" => skip.push(it.next().ok_or("usage: --skip needs a step name")?.clone()),
+            "--env" => {
+                let kv = it.next().ok_or("usage: --env needs KEY=VALUE")?;
+                image_env.push(kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).ok_or("usage: --env needs KEY=VALUE")?);
+            }
+            "--path" => path.push(PathBuf::from(it.next().ok_or("usage: --path needs a directory")?)),
+            "--sha" => sha = Some(it.next().ok_or("usage: --sha needs a value")?.clone()),
+            "--workspace" => workspace = Some(PathBuf::from(it.next().ok_or("usage: --workspace needs a value")?)),
+            f if f.starts_with("--") => return Err(format!("usage: unknown flag {f}")),
+            p => pos.push(p.to_string()),
+        }
+    }
+    let ([workflow, job], Some(sha), Some(workspace)) = (pos.as_slice(), sha, workspace) else { return Err(usage()) };
+    let need = |k: &str| env(k).filter(|v| !v.is_empty()).ok_or(format!("{k} is not set: sim ci answers only inside a world"));
+    let gh_dir = PathBuf::from(need(gh::STATE_ENV)?);
+    let release_bin = PathBuf::from(need("SPIRA_RELEASE")?).join("bin");
+    let text = std::fs::read_to_string(workflow).map_err(|e| format!("{workflow}: {e}"))?;
+    let steps = steps(&text, job)?;
+    for s in &skip {
+        if !steps.iter().any(|st| &st.name == s) {
+            return Err(format!("job {job} has no step {s:?} to skip"));
+        }
+    }
+    let scratch = std::env::temp_dir().join(format!("sim-ci-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+    let sim = std::env::current_exe().map_err(|e| e.to_string())?;
+    let workspace = workspace.canonicalize().map_err(|e| format!("{}: {e}", workspace.display()))?;
+    let j = Job { steps: &steps, skip: &skip, cx: Context { sha: &sha, workspace: &workspace }, scratch: &scratch, gh_dir: &gh_dir, release_bin: &release_bin, path: &path, env: &image_env };
+    let code = run_job(&j, &sim, |l| print!("{l}"))?;
+    let _ = std::fs::remove_dir_all(&scratch);
+    if code == 0 { Ok(()) } else { Err(format!("job {job} failed with exit {code}")) }
 }
 
 fn summon_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
