@@ -112,7 +112,7 @@ types_of() {               # types_of <id> -> "<depends_on>:<type>" per edge
         | python3 -c '
 import json, sys
 for d in json.load(sys.stdin):
-    print((d.get("depends_on_id") or d.get("id") or "") + ":" + (d.get("type") or d.get("dependency_type") or ""))
+    print((d.get("depends_on_id") or d.get("id") or "") + ":" + (d.get("dependency_type") or ""))
 ' 2>/dev/null
 }
 

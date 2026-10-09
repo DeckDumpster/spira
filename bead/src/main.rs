@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc::notify_live_aeon;
 use bead::{
-    branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, parse_dependents, is_blocks_type,
+    branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
     awaits_dispatch, lane_check, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
@@ -1057,16 +1057,13 @@ fn cmd_dep_epic_edges(home: &str) -> i32 {
     if epics.is_empty() {
         return 0;
     }
-    let mut call = s(&["dep", "list"]);
-    call.extend(epics.iter().cloned());
-    call.extend(s(&["--direction", "up", "--type", "blocks", "--json"]));
-    let (code, out) = bdq_capture(home, &call);
-    if code != 0 {
-        eprintln!("bead: dep epic-edges: bd dep list exited {code}");
-        return 1;
-    }
-    for (child, epic) in parse_dependents(&out) {
-        if epics.contains(&epic) {
+    for epic in &epics {
+        let (code, out) = bdq_capture(home, &s(&["dep", "list", epic, "--direction", "up", "--type", "blocks", "--json"]));
+        if code != 0 {
+            eprintln!("bead: dep epic-edges: bd dep list {epic} exited {code}");
+            return 1;
+        }
+        for child in parse_blocks_targets(&out) {
             println!("{child} {epic}");
         }
     }

@@ -392,23 +392,6 @@ pub fn epic_blocks_refusal(id: &str, depid: &str) -> String {
     )
 }
 
-/// `(dependent, target)` pairs from a `bd dep list --direction up --json` payload.
-pub fn parse_dependents(json: &str) -> Vec<(String, String)> {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
-        return Vec::new();
-    };
-    let Some(arr) = v.as_array() else {
-        return Vec::new();
-    };
-    arr.iter()
-        .filter_map(|d| {
-            let from = d.get("issue_id").and_then(|x| x.as_str())?;
-            let to = d.get("depends_on_id").and_then(|x| x.as_str())?;
-            (!from.is_empty() && !to.is_empty()).then(|| (from.to_string(), to.to_string()))
-        })
-        .collect()
-}
-
 // ---------------------------------------------------------------------------------------
 // `contract` — formatting only; the three sections' data comes from main.rs's subprocess
 // calls (`fayth_names`/`fayth_get`, `schema.sh kinds`, `repos_by_name`).
@@ -754,13 +737,6 @@ mod tests {
         let msg = epic_blocks_refusal("sp-a", "sp-e");
         assert!(msg.contains("--type parent-child"));
         assert!(msg.contains("sp-e"));
-    }
-
-    #[test]
-    fn parse_dependents_reads_pairs() {
-        let json = r#"[{"issue_id":"sp-a","depends_on_id":"sp-e"},{"issue_id":"","depends_on_id":"sp-e"}]"#;
-        assert_eq!(parse_dependents(json), vec![("sp-a".to_string(), "sp-e".to_string())]);
-        assert!(parse_dependents("nope").is_empty());
     }
 
     #[test]
