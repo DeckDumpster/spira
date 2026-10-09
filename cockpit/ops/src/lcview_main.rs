@@ -23,9 +23,10 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The "plane work" line of `world status`, which it prints first (within a second); the rest of
-/// its report takes it tens of seconds, so read until the line and stop. The 5 s deadline bounds
-/// the whole call, so nothing it spawned outlives it.
+/// Whether the world is halted, from the first line `world status` prints ("not halted by
+/// world.sh", or the halt it names), within half a second. Its per-plane lines take ~11 s
+/// (it queries every timer first), past the 5 s call cap, so they are not waited for.
+/// A running world reads as "plane work: RUNNING", the form the view already understands.
 fn world_plane() -> Result<String, String> {
     use std::io::BufRead;
     let mut child = Command::new("timeout")
@@ -34,13 +35,14 @@ fn world_plane() -> Result<String, String> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("world status: {e}"))?;
-    let found = child
-        .stdout
-        .take()
-        .and_then(|o| std::io::BufReader::new(o).lines().map_while(Result::ok).find(|l| l.contains("plane work")));
+    let first = child.stdout.take().and_then(|o| std::io::BufReader::new(o).lines().map_while(Result::ok).find(|l| l.contains("halted")));
     let _ = child.kill();
     let _ = child.wait();
-    found.ok_or_else(|| "world status: no 'plane work' line".into())
+    match first {
+        Some(l) if l.contains("not halted") => Ok("plane work: RUNNING".into()),
+        Some(l) => Ok(l.trim_start_matches("spira: ").to_string()),
+        None => Err("world status: printed no halt line within 5 s".into()),
+    }
 }
 
 fn num(v: &serde_json::Value) -> Option<i64> {

@@ -33,6 +33,8 @@ const R_REFUSED_ALL: u16 = 15;
 const R_BLOCKED_SOME: u16 = 16;
 const R_BLOCKED_ALL: u16 = 17;
 const R_DRIFT: u16 = 18;
+const R_STATE_BEADS_MORE: u16 = 9;
+const R_STATE_BEADS: u16 = 19;
 const R_IDLE_EDGE: u16 = 20;
 const R_EMPTY_STATE: u16 = 21;
 const R_STATE_FOLD: u16 = 22;
@@ -41,8 +43,6 @@ const R_NEXT_SOME: u16 = 30;
 const R_NEXT_FEW: u16 = 31;
 const R_REWORK_SOME: u16 = 32;
 const R_REWORK_FEW: u16 = 33;
-const R_PIPE_SOME: u16 = 34;
-const R_PIPE_ALL: u16 = 35;
 const R_NEXT_ALL: u16 = 36;
 const R_REWORK_ALL: u16 = 37;
 const R_NOW_FOLD: u16 = 40;
@@ -187,7 +187,8 @@ fn banner(v: &View) -> Vec<String> {
     out
 }
 
-/// The whole pane as a tree, in Ryan's order: ROUND, NOW, STATE MACHINE, PIPE, REWORK, NEXT,
+/// The whole pane as a tree, in Ryan's order: DECIDE, ROUND, NOW, STATE MACHINE (with each state's
+/// beads under it; PIPE retired 2026-10-09), REWORK, NEXT,
 /// BLOCKED, DRIFT, REFUSED, HOLDS, RECENT.
 pub fn tree(v: &View) -> Vec<Node> {
     let mut out = Vec::new();
@@ -284,6 +285,17 @@ pub fn tree(v: &View) -> Vec<Node> {
         if st.no_rework_exit {
             moves.push(Node::new(format!("{sk}/no-rework-exit"), format!("{RED}└▶ (no exit to REWORK)  ●{R}")));
         }
+        // The beads themselves, under their state (per Ryan 2026-10-09, replacing PIPE): the
+        // first five go only when the machine itself must shrink, the rest go first of all.
+        let beads = st
+            .beads
+            .iter()
+            .map(|i| {
+                let note = if i.note.is_empty() { String::new() } else { format!(" {D}· {}{R}", i.note) };
+                Node::new(format!("{sk}/{}", i.id), format!("{:<12} {D}{:>4}{R} {} {}{note}", i.id, i.age, i.prio, i.title))
+            })
+            .collect();
+        moves.extend(ranked(beads, &[(5, R_STATE_BEADS_MORE), (0, R_STATE_BEADS)]));
         let c = if st.name == "REWORK" { YEL } else { "" };
         let detail = if st.detail.is_empty() { String::new() } else { format!("  {}", st.detail) };
         let mut n = Node::new(sk, format!("{c}{B}{:<12}{R}{B}{:>4}{R}{detail}{}", st.name, st.count, dot(st.red))).kids(moves).fold(R_STATE_FOLD);
@@ -294,17 +306,6 @@ pub fn tree(v: &View) -> Vec<Node> {
     }
     states.push(Node::new("state/terminal", format!("{D}terminal 24h  {}{R}", v.terminal)).elide(R_TERMINAL));
     out.push(Node::new("state", format!("{B}STATE MACHINE{R}  {D}counts now · moves per hour{R}")).kids(states));
-
-    let pipe = v
-        .pipe
-        .iter()
-        .map(|p| {
-            let items = p.items.iter().map(|i| Node::new(format!("pipe/{}/{}", p.state, i.id), format!("{:<12} {D}{:>4}{R} {}", i.id, i.age, i.title))).collect();
-            Node::new(format!("pipe/{}", p.state), format!("{:<11} {B}{:>3}{R} {D}oldest {}{R}", p.state, p.count, p.oldest)).kids(ranked(items, &[(2, R_PIPE_SOME), (0, R_PIPE_ALL)]))
-        })
-        .collect();
-    let pipe_sum = v.pipe.iter().map(|p| format!("{} {}", p.state, p.count)).collect::<Vec<_>>().join(" · ");
-    out.push(Node::new("pipe", format!("{B}PIPE{R}   {}", if pipe_sum.is_empty() { format!("{D}empty{R}") } else { pipe_sum })).kids(pipe));
 
     let rework = v
         .rework_items
@@ -481,7 +482,8 @@ pub fn layout(v: &View, ui: &Ui, w: usize, h: usize) -> Frame {
     let mut a = Vec::new();
     let roots = flatten(tree(v), 0, None, &mut a);
     let n = a.len();
-    // A node under an OPEN ancestor is shown whole unless the operator collapsed it.
+    // Under an OPEN ancestor nothing is cut to save space, but a node whose detail is folded by
+    // default (a transition's events, a bead's title) stays folded until opened itself.
     let forced: Vec<bool> = (0..n)
         .map(|i| {
             let mut p = a[i].parent;
@@ -498,7 +500,7 @@ pub fn layout(v: &View, ui: &Ui, w: usize, h: usize) -> Frame {
         .map(|i| match ui.mode(&a[i].key) {
             Mode::Collapsed => Show::Folded,
             Mode::Open => Show::Open,
-            Mode::Auto if forced[i] || a[i].auto_open => Show::Open,
+            Mode::Auto if a[i].auto_open => Show::Open,
             Mode::Auto => Show::Folded,
         })
         .collect();
@@ -773,6 +775,21 @@ mod tests {
         let t = text(&layout(&v, &ui, 100, 200));
         assert!(has(&t, "event ev0-a") && has(&t, "refused 2/h"), "{t:#?}");
         assert_eq!(t.iter().filter(|l| l.contains("event ev0-a")).count(), 1, "only READY's transition opened");
+    }
+
+    #[test]
+    fn a_states_beads_fold_under_it_and_show_when_it_is_opened() {
+        let mut v = busy_view();
+        let item = |id: &str| Item { id: id.into(), prio: "P1".into(), title: format!("t {id}"), age: "3m".into(), ..Default::default() };
+        v.machine.iter_mut().find(|s| s.name == "SUBMITTED").unwrap().beads = (0..8).map(|k| item(&format!("sp-sub{k}"))).collect();
+        let short = text(&layout(&v, &Ui::default(), 70, 40));
+        assert!(!has(&short, "sp-sub0"), "beads give way first on a short pane: {short:#?}");
+        let mut ui = Ui::default();
+        ui.set("state/SUBMITTED", Mode::Open);
+        let t = text(&layout(&v, &ui, 70, 200));
+        assert!(has(&t, "sp-sub0") && has(&t, "sp-sub7"), "an opened state lists every bead: {t:#?}");
+        assert!(!has(&t, "event ev0-a"), "opening a state does not spill its transitions' events: {t:#?}");
+        assert!(!t.iter().any(|l| l.contains("PIPE")), "PIPE is gone");
     }
 
     #[test]

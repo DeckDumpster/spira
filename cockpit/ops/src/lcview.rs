@@ -255,6 +255,9 @@ pub struct SmEdge {
 pub struct SmState {
     pub name: String,
     pub count: usize,
+    /// The beads in this state, oldest first (LANDED: the last 24 h, newest first).
+    #[serde(default)]
+    pub beads: Vec<Item>,
     pub detail: String,
     pub red: bool,
     pub edges: Vec<SmEdge>,
@@ -458,7 +461,7 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
             edges.push(SmEdge { event: events.join("/"), events: detail, to: to.into(), rate_1h: rate, main: Some(to) == next });
         }
         let no_rework_exit = NEEDS_REWORK_EXIT.contains(&name) && !s.graph.is_empty() && !s.graph.iter().any(|g| g.from == name && g.to == "REWORK");
-        out.push(SmState { name: name.into(), count, detail: join_parts(parts), red, edges, no_rework_exit });
+        out.push(SmState { name: name.into(), count, detail: join_parts(parts), red, edges, no_rework_exit, beads: Vec::new() });
     }
     out
 }
@@ -580,6 +583,16 @@ pub fn view(s: &Snapshot) -> View {
     ];
 
     v.machine = state_machine(s, &|id| s.on_base.contains_key(id));
+    for st in v.machine.iter_mut() {
+        let mut rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == st.name).collect();
+        if st.name == "LANDED" {
+            rows.retain(|r| day(r));
+            rows.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
+        } else {
+            rows.sort_by_key(|r| r.since);
+        }
+        st.beads = rows.iter().take(40).map(|r| item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, r.reason.clone().unwrap_or_default())).collect();
+    }
     v.terminal = TERMINAL
         .iter()
         .map(|t| format!("{t} {}", s.rows.iter().filter(|r| r.state == *t && day(r)).count()))
