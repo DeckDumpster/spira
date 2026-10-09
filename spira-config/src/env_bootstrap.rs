@@ -172,6 +172,37 @@ pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &
         Err(e) => (1, format!("spira: could not run {bd}: {e}")),
     };
 
+    let SchemaVerdict { ok, refuse, messages } = schema_verdict(rc, &combined, bd, doctor, conf_file);
+
+    // Write the stamp only after a successful check (best-effort; failure is silent, exactly
+    // as the bash `|| true` this replaces was).
+    if ok {
+        if let Some(stamp) = &stamp_val {
+            if fs::create_dir_all(run).is_ok() {
+                let _ = fs::write(&stamp_path, format!("{stamp}\n"));
+            }
+        }
+    }
+
+    if refuse {
+        SchemaCheckResult::refuse(messages)
+    } else {
+        SchemaCheckResult::ok(messages)
+    }
+}
+
+/// What `bd migrate schema` said, judged: `ok` means stamp it, `refuse` means end the caller.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SchemaVerdict {
+    pub ok: bool,
+    pub refuse: bool,
+    pub messages: Vec<String>,
+}
+
+/// The pure half of the schema check: exit code and combined output in, verdict out. No
+/// process, filesystem or clock, so every refusal path is a table row.
+pub fn schema_verdict(rc: i32, combined: &str, bd: &str, doctor: bool, conf_file: &str) -> SchemaVerdict {
+    let combined = combined.to_string();
     let mut ok = false;
     let mut refuse = false;
     let mut messages = Vec::new();
@@ -209,21 +240,7 @@ pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &
         refuse = !doctor;
     }
 
-    // Write the stamp only after a successful check (best-effort; failure is silent, exactly
-    // as the bash `|| true` this replaces was).
-    if ok {
-        if let Some(stamp) = &stamp_val {
-            if fs::create_dir_all(run).is_ok() {
-                let _ = fs::write(&stamp_path, format!("{stamp}\n"));
-            }
-        }
-    }
-
-    if refuse {
-        SchemaCheckResult::refuse(messages)
-    } else {
-        SchemaCheckResult::ok(messages)
-    }
+    SchemaVerdict { ok, refuse, messages }
 }
 
 /// `grep -q 'dolt_server_port.*deprecated'` — a per-line basic-regex match, not a whole-text
@@ -459,5 +476,42 @@ mod tests {
         let result = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), false, "spira.conf");
         assert!(result.refuse);
         assert!(result.messages.iter().any(|m| m.contains("embedded mode") && m.contains("doctor")), "{:?}", result.messages);
+    }
+
+    #[test]
+    fn schema_verdict_table() {
+        const MISMATCH: &str = "database is at v99\nbinary knows up to v53\n";
+        const LOCKED: &str = "database is locked by another dolt process\n";
+        // (name, rc, output, doctor, ok, refuse, first-message needle)
+        let rows: &[(&str, i32, &str, bool, bool, bool, Option<&str>)] = &[
+            ("clean exit", 0, "Schema already at v61\n", false, true, false, None),
+            ("clean exit under doctor", 0, "", true, true, false, None),
+            ("exit 0 with mismatch text is still ok", 0, MISMATCH, false, true, false, None),
+            ("port deprecation", 1, "warning: dolt_server_port is deprecated\n", false, true, false, None),
+            ("port and deprecated on different lines is a failure", 1, "dolt_server_port\ndeprecated\n", false, false, true, Some("migrate schema failed")),
+            ("mismatch", 1, MISMATCH, false, false, true, Some("v99")),
+            ("mismatch under doctor", 1, MISMATCH, true, false, false, Some("v99")),
+            ("mismatch with only the database side", 1, "database is at v7\n", false, false, true, Some("knows up to v?")),
+            ("mismatch with only the binary side", 1, "binary knows up to v3\n", false, false, true, Some("database is at v?")),
+            ("locked", 1, LOCKED, false, false, true, Some("embedded mode")),
+            ("locked under doctor", 1, LOCKED, true, false, false, Some("embedded mode")),
+            ("unrecognised failure", 2, "boom\nsecond\n", false, false, true, Some("failed — boom")),
+            ("could not run bd", 1, "spira: could not run bd: no such file", false, false, true, Some("failed — spira: could not run")),
+        ];
+        for (name, rc, out, doctor, ok, refuse, needle) in rows {
+            let v = schema_verdict(*rc, out, "/x/bd", *doctor, "spira.conf");
+            assert_eq!((v.ok, v.refuse), (*ok, *refuse), "{name}: {v:?}");
+            match needle {
+                Some(n) => assert!(v.messages.iter().any(|m| m.contains(n)), "{name}: {v:?}"),
+                None => assert!(v.messages.is_empty(), "{name}: {v:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn schema_verdict_mismatch_names_cause_and_remedy() {
+        let v = schema_verdict(1, "database is at v99\nbinary knows up to v53\n", "/x/bd", false, "/etc/spira.conf");
+        assert!(v.messages.iter().any(|m| m.contains("/x/bd") && m.contains("v53")), "{v:?}");
+        assert!(v.messages.iter().any(|m| m.contains("rebuild bd at v99") && m.contains("/etc/spira.conf")), "{v:?}");
     }
 }
