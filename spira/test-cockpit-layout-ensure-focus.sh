@@ -188,7 +188,7 @@ copy_err="$(ensure_stderr "$TMP/copy/layout")"
 for hk in window-resized client-resized client-attached; do
     want "ensure installs the $hk hook sizing the health pane to right_pct" \
         "resize-pane -t $health -x 33%" \
-        "$(TMUX_TMPDIR="$TMUXDIR" tmux show-hooks -t w1 "$hk")"
+        "$(TMUX_TMPDIR="$TMUXDIR" tmux show-hooks -t w1 "$hk" | tr -d '"')"
 done
 want   "a copy refuses ensure"                        "ensure refused" "$copy_err"
 want   "and names the installed binary's path"        "/bin/layout ensure" "$copy_err"
