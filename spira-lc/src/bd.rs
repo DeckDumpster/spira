@@ -274,3 +274,19 @@ mod noisy_tests {
         assert!(!tool("sh", &["-c".to_string(), "echo hidden >&2".to_string()], None, "t", 10).1.contains("hidden"));
     }
 }
+
+impl crate::ask::AskSource for LiveBd {
+    fn open_asks(&mut self, ask_label: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+        let out = run(&["list", "--type", "decision", "--label", ask_label, "--status", "open", "--limit", "0", "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd list --json: {e}"))?;
+        let rows = parsed.as_array().cloned().unwrap_or_default();
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let id = r.get("id")?.as_str()?.to_string();
+                let works = r.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str()).filter_map(|x| x.strip_prefix("work-bead:").map(str::to_string)).collect()).unwrap_or_default();
+                Some((id, works))
+            })
+            .collect())
+    }
+}

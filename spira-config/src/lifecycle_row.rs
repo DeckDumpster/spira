@@ -10,6 +10,91 @@ pub fn lc_bin() -> String {
     std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "spira-lc".to_string())
 }
 
+/// An ask is its own lifecycle machine, never a bead row: `spira-lc create-ask` opens it
+/// (idempotent), naming the work bead whose `ask` hold its close lifts.
+pub fn create_ask_with(bin: &str, id: &str, work_bead: &str) -> Result<(), String> {
+    let mut args = vec!["create-ask", id];
+    if !work_bead.is_empty() {
+        args.extend(["--work-bead", work_bead]);
+    }
+    lc_status(bin, &args)
+}
+
+pub fn create_ask(id: &str, work_bead: &str) -> Result<(), String> {
+    create_ask_with(&lc_bin(), id, work_bead)
+}
+
+/// How an ask closes (`spira-lc close-ask --exit`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskExit {
+    /// The operator's answer; `channel` names where it came from.
+    Answered,
+    /// Dismissed, the default executed.
+    Default,
+    /// Moot.
+    Withdrawn,
+}
+
+impl AskExit {
+    fn as_str(self) -> &'static str {
+        match self {
+            AskExit::Answered => "answered",
+            AskExit::Default => "default",
+            AskExit::Withdrawn => "withdrawn",
+        }
+    }
+}
+
+/// Close an ask on its own machine, recording who and the quoted words, and lift the `ask`
+/// hold on the work bead it names. Exit 1 (the id is no ask: a legacy ask bead) is `Ok(false)`.
+pub fn close_ask_with(bin: &str, id: &str, exit: AskExit, quote: &str, actor: &str, channel: &str) -> Result<bool, String> {
+    let mut args = vec!["close-ask", id, "--exit", exit.as_str(), "--quote", quote, "--actor", actor];
+    if !channel.is_empty() {
+        args.extend(["--channel", channel]);
+    }
+    match run_lc(bin, &args)? {
+        (0, _) => Ok(true),
+        (1, _) => Ok(false),
+        (code, msg) => Err(format!("{bin} close-ask {id} exited {code}: {msg}")),
+    }
+}
+
+pub fn close_ask(id: &str, exit: AskExit, quote: &str, actor: &str, channel: &str) -> Result<bool, String> {
+    close_ask_with(&lc_bin(), id, exit, quote, actor, channel)
+}
+
+/// Whether `id` is an ask on the ask machine: the only authority on ask-ness (not a label).
+pub fn is_ask_with(bin: &str, id: &str) -> Result<bool, String> {
+    match run_lc(bin, &["show-ask", id])? {
+        (0, _) => Ok(true),
+        (1, _) => Ok(false),
+        (code, msg) => Err(format!("{bin} show-ask {id} exited {code}: {msg}")),
+    }
+}
+
+pub fn is_ask(id: &str) -> Result<bool, String> {
+    is_ask_with(&lc_bin(), id)
+}
+
+fn run_lc(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
+    let out = Command::new("timeout")
+        .arg(LC_TIMEOUT_SECS)
+        .arg(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim());
+    Ok((out.status.code().unwrap_or(-1), msg))
+}
+
+fn lc_status(bin: &str, args: &[&str]) -> Result<(), String> {
+    match run_lc(bin, args)? {
+        (0, _) => Ok(()),
+        (code, msg) => Err(format!("{bin} {} exited {code}: {msg}", args.join(" "))),
+    }
+}
+
 /// The id `bd create` printed: `--silent` prints the bare id, `--json` an object (or a
 /// one-element array) with `id`.
 pub fn created_id(stdout: &str) -> Option<String> {
@@ -274,6 +359,34 @@ mod tests {
         let log = dir.join("calls");
         testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> {}\nexit {exit}\n", log.display()));
         p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn an_ask_is_opened_and_closed_on_its_own_machine_and_never_as_a_bead() {
+        let t = testkit::TempDir::new("lcask");
+        let bin = stub(t.path(), 0);
+        assert_eq!(create_ask_with(&bin, "sp-a", "sp-w"), Ok(()));
+        assert_eq!(create_ask_with(&bin, "sp-b", ""), Ok(()));
+        assert_eq!(close_ask_with(&bin, "sp-a", AskExit::Answered, "ship it", "operator", "pane"), Ok(true));
+        assert_eq!(close_ask_with(&bin, "sp-b", AskExit::Withdrawn, "moot", "concierge", ""), Ok(true));
+        let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
+        assert_eq!(
+            calls,
+            "create-ask sp-a --work-bead sp-w\ncreate-ask sp-b\nclose-ask sp-a --exit answered --quote ship it --actor operator --channel pane\nclose-ask sp-b --exit withdrawn --quote moot --actor concierge\n"
+        );
+        assert!(!calls.contains("create-bead"));
+    }
+
+    #[test]
+    fn exit_one_is_no_ask_and_anything_else_is_an_error() {
+        let t = testkit::TempDir::new("lcask-codes");
+        assert_eq!(is_ask_with(&stub(t.path(), 0), "sp-a"), Ok(true));
+        let t1 = testkit::TempDir::new("lcask-none");
+        assert_eq!(is_ask_with(&stub(t1.path(), 1), "sp-a"), Ok(false));
+        assert_eq!(close_ask_with(&stub(t1.path(), 1), "sp-a", AskExit::Default, "d", "a", ""), Ok(false));
+        let t3 = testkit::TempDir::new("lcask-refused");
+        assert!(is_ask_with(&stub(t3.path(), 2), "sp-a").is_err());
+        assert!(close_ask_with(&stub(t3.path(), 3), "sp-a", AskExit::Default, "d", "a", "").unwrap_err().contains("exited 3"));
     }
 
     #[test]

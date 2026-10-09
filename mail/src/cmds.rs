@@ -510,6 +510,9 @@ pub fn sweep_dismissed(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, mail_root:
         let reason = format!("dismissed by operator (mail deleted) — default taken: {}", if default.is_empty() { "<none given>" } else { default });
         if bead::close(bd, bead_id, &reason).is_ok() {
             report.dismissed += 1;
+            if let Some(w) = lc::take_default(lc, bead_id, &reason, operator_actor) {
+                eprintln!("{w}");
+            }
             if let Some(w) = lc::lift_ask(lc, fields.get(5).copied().unwrap_or(""), Lift::Reply { message_id: msgid }, operator_actor) {
                 eprintln!("{w}");
             }
@@ -580,7 +583,9 @@ mod sweep_tests {
         let lc = FakeLc::new(0);
         let Ok(SweepOutcome::Report(r)) = sweep_dismissed(&bd, &lc, true, t.path(), &idx, "ops", "ryan") else { panic!("no report") };
         assert_eq!(r.dismissed, 2, "{:?}", bd.calls());
-        assert_eq!(lc.calls(), vec![vec!["reply", "sp-work1", "m1@spira", "ryan"]]);
+        let calls = lc.calls();
+        assert_eq!(calls.iter().filter(|c| c[0] == "close-ask" && c.contains(&"default".to_string())).count(), 2, "{calls:?}");
+        assert!(calls.contains(&vec!["reply".to_string(), "sp-work1".into(), "m1@spira".into(), "ryan".into()]), "{calls:?}");
     }
 }
 

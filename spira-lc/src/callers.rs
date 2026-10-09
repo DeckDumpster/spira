@@ -1107,8 +1107,9 @@ pub fn close(
         Ok(w) => w,
         Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: its labels are unreadable — nothing closed: {}\n", e.trim()), ..Default::default() },
     };
+    let mut rowless = false;
     match show(m, &id) {
-        Err(NO_ROW) => {}
+        Err(NO_ROW) => rowless = true,
         Err(rc) => return Answer { code: rc, stderr: format!("spira-lc close: {id}: the lifecycle row is unreadable — nothing closed\n"), ..Default::default() },
         Ok(v) => {
             let (mut state, mut version) = (bead_field(&v, "state"), bead_field(&v, "version"));
@@ -1153,12 +1154,30 @@ pub fn close(
         }
     }
     match bd.close(&id, &reason) {
-        Ok(()) => withdraw_named_asks(&id, &asked_about, &actor, m),
+        Ok(()) => {
+            if rowless {
+                let a = close_ask_row(&id, &reason, &actor, m);
+                if a.code != APPLIED {
+                    return a;
+                }
+            }
+            withdraw_named_asks(&id, &asked_about, &actor, m)
+        }
         Err(e) => Answer {
             code: CANNOT_TELL,
             stderr: format!("spira-lc close: {id}: the lifecycle row is terminal but the store close failed: {}\n", e.trim()),
             ..Default::default()
         },
+    }
+}
+
+/// A bead with no bead row may be an ask: its own machine records the close. Exit 1 (no ask
+/// row either: an alert, an insight) and 3 (already closed) are nothing to record.
+fn close_ask_row(id: &str, reason: &str, actor: &str, m: &mut dyn Machine) -> Answer {
+    let args: Vec<String> = ["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", actor].iter().map(|x| x.to_string()).collect();
+    match m.call(&args) {
+        (0 | 1 | REFUSED, _) => Answer::code(APPLIED),
+        (rc, out) => Answer { code: rc, stderr: format!("spira-lc close: {id} is closed but its ask row was not: {}\n", out.trim()), ..Default::default() },
     }
 }
 

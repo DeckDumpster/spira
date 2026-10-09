@@ -170,6 +170,15 @@ pub fn sendmail(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, home: &Path, mail
         }
     }
 
+    if !orig_bead.is_empty() && db_configured && (orig_kind == "question" || orig_kind == "decision") {
+        let actor = lc::actor_of(&message::header_ci_before_blank(raw, "from"), "operator");
+        let own_id = strip_angle_brackets(&message::header_ci_before_blank(raw, "message-id"));
+        let answer_id = if own_id.is_empty() { format!("{msgid}@spira") } else { own_id };
+        if let Some(w) = lc::answer_ask(lc, &orig_bead, &first_para, &actor, "mail", &answer_id) {
+            eprintln!("{w}");
+        }
+    }
+
     Ok(SendmailOutcome { dest_mailbox, delivered_path })
 }
 
@@ -245,6 +254,31 @@ mod tests {
         sendmail(&bd, &FakeLc::new(0), true, &home, d.path(), false, &raw).unwrap();
         let reason = bd.calls()[0].1.clone().unwrap();
         assert!(reason.contains(&q) && reason.contains("May I?"), "{reason}");
+    }
+
+    #[test]
+    fn a_reply_to_a_question_closes_the_ask_on_the_ask_machine_with_his_words() {
+        let d = testkit::TempDir::new("mail-sendmail-ask");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        maildir::mail_ensure(&d.path().join("gate")).unwrap();
+        let mut sent = Vec::new();
+        for (kind, bead) in [("question", "sp-ask1"), ("note", "sp-note1")] {
+            let msgid = maildir::mint_msgid();
+            let orig = format!("From: Gate <gate@spira>\nSubject: S\nX-Spira-Kind: {kind}\nX-Spira-Bead: {bead}\nMessage-ID: <{msgid}@spira>\n\nbody\n");
+            fs::write(d.path().join("gate/tmp").join(&msgid), &orig).unwrap();
+            maildir::mail_deliver(&d.path().join("gate"), &msgid, false).unwrap();
+            let lc = FakeLc::new(0);
+            let bd = FakeBd::new(vec![BdOut::ok(""), BdOut::ok("[]")]);
+            let raw = format!("From: Operator <operator@spira>\nSubject: Re: S\nMessage-ID: <ans-{kind}@spira>\nIn-Reply-To: <{msgid}@spira>\n\nApprove it.\n");
+            sendmail(&bd, &lc, true, &home, d.path(), false, &raw).unwrap();
+            sent.push(lc.calls());
+        }
+        assert_eq!(
+            sent[0],
+            vec![vec!["close-ask", "sp-ask1", "--exit", "answered", "--quote", "Approve it.", "--actor", "operator", "--channel", "mail", "--message-id", "ans-question@spira"]]
+        );
+        assert!(sent[1].is_empty(), "a note is no ask: {:?}", sent[1]);
     }
 
     #[test]
@@ -352,7 +386,10 @@ mod tests {
         let raw = format!("From: Operator <operator@spira>\nSubject: Re: May I?\nIn-Reply-To: <{q}@spira>\nMessage-ID: <ans-1@spira>\n\nYes.\n");
         sendmail(&bd, &lc, true, &home, d.path(), false, &raw).unwrap();
         assert_eq!(bd.calls()[0].0[..2], ["close".to_string(), "sp-dec1".to_string()]);
-        assert_eq!(lc.calls(), vec![vec!["reply", "sp-work1", "ans-1@spira", "operator"]]);
+        let calls = lc.calls();
+        assert_eq!(calls[0], vec!["reply", "sp-work1", "ans-1@spira", "operator"]);
+        assert_eq!(calls[1][..2], ["close-ask", "sp-dec1"]);
+        assert_eq!(calls.len(), 2);
         assert!(!bd.calls().iter().any(|c| c.0[0] == "note" && c.0[1] == "sp-work1"), "the tracking bead's verdict note covers it: {:?}", bd.calls());
     }
 
@@ -380,7 +417,7 @@ mod tests {
 
     /// No X-Spira-Work-Bead (a note, an old question): nothing to lift.
     #[test]
-    fn a_reply_to_mail_with_no_work_bead_lifts_nothing() {
+    fn a_reply_to_mail_with_no_work_bead_lifts_no_hold_and_only_closes_the_ask() {
         let d = testkit::TempDir::new("mail-sendmail-nolift");
         let home = d.path().join("home");
         fs::create_dir_all(home.join("chamber")).unwrap();
@@ -389,7 +426,9 @@ mod tests {
         let lc = FakeLc::new(0);
         let raw = format!("From: Operator <operator@spira>\nSubject: Re: May I?\nIn-Reply-To: <{q}@spira>\n\nYes.\n");
         sendmail(&bd, &lc, true, &home, d.path(), false, &raw).unwrap();
-        assert!(lc.calls().is_empty());
+        let calls = lc.calls();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert_eq!(calls[0][..2], ["close-ask", "sp-dec1"]);
     }
 
     #[test]

@@ -338,6 +338,7 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
     let lc = crate::store::bin("spira-lc", cfg);
     let e = match spira_config::lifecycle_row::close_with(&lc, id, reason, actor, None) {
         Ok(()) => {
+            record_answer(item, reason, actor, cfg);
             lift_work_holds(db, item, actor, cfg);
             notify_or_log(db, item, "verdict", reason, actor, cfg);
             return Ok(());
@@ -347,6 +348,21 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
     match run_as("spira-lc", &["content", "comments", "add", id, reason], Some(actor), cfg) {
         Ok(()) => Err(format!("{e} — still open; your answer is kept as a comment")),
         Err(_) => Err(format!("{e} — AND THE ANSWER WAS NOT SAVED: {reason}")),
+    }
+}
+
+/// The verdict is the operator's answer: it closes the ask on its own machine with his words
+/// and the channel (`pane`), which also lifts the hold on the work bead the ask row names. Exit
+/// 1 (a decision bead that is no ask) and 3 (already closed) are not failures; anything else is
+/// written to the bead, like a failed lift.
+fn record_answer(item: &Item, reason: &str, actor: &str, cfg: &Cfg) {
+    let mut c = Command::new(crate::store::bin("spira-lc", cfg));
+    c.args(["close-ask", &item.id, "--exit", "answered", "--quote", reason, "--actor", actor, "--channel", "pane", "--message-id", &item.id])
+        .env("PATH", crate::store::child_path(cfg));
+    if let (code, out) = spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT) {
+        if !matches!(code, 0 | 1 | 3) {
+            let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[answer not recorded on the ask machine: exit {code}: {}]", out.trim())], Some(actor), cfg);
+        }
     }
 }
 
@@ -1253,13 +1269,21 @@ mod tests {
         assert!(log.find("close sp-x").unwrap() < log.find("LC: reply").unwrap(), "the close is the verdict; the lift follows it: {log}");
     }
 
+    /// The verdict is recorded on the ask machine with his words and the pane as the channel.
+    #[test]
+    fn a_verdict_is_recorded_as_the_answer_on_the_ask_machine() {
+        let stub = crate::test_support::StubBd::new().mail().lc().operator_actor("optest");
+        assert!(close_decision("/fake/db", &work_item(&["ask-question"]), "yes, go", &stub.cfg()).is_ok());
+        want(&stub.argv_log(), "LC: close-ask sp-x --exit answered --quote yes, go --actor optest --channel pane");
+    }
+
     /// No work-bead label: nothing is lifted. A refusal (no ask hold to lift) is not recorded
     /// as a failure; a cannot-tell is, on the ask bead.
     #[test]
     fn a_verdict_lifts_only_what_its_labels_name_and_records_a_failed_lift() {
         let stub = crate::test_support::StubBd::new().mail().lc();
         assert!(close_decision("/fake/db", &work_item(&["ask-question"]), "ok", &stub.cfg()).is_ok());
-        assert!(!stub.argv_log().contains("LC:"), "{}", stub.argv_log());
+        assert!(!stub.argv_log().contains("LC: reply"), "{}", stub.argv_log());
         drop(stub);
         let stub = crate::test_support::StubBd::new().mail().lc().env("LC_RC", "3");
         assert!(close_decision("/fake/db", &work_item(&["ask-question", "work-bead:sp-w1"]), "ok", &stub.cfg()).is_ok());
