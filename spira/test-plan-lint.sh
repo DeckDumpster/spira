@@ -59,7 +59,7 @@ statement = "a claim writes a lease"
 
 [[use_case]]
 id = "UC-dispatch-02"
-tier = "T2"
+tier = "T4"
 statement = "a stale lease is reclaimed"
 
 [[use_case]]
@@ -71,7 +71,7 @@ EOF
 # A clean suite that stays in the tree so withdrawing a planted offender does
 # not leave an empty corpus (empty corpus is its own, distinct exit code).
 CLEAN="$ROOT/spira/test-planted-clean.sh"
-printf '#!/usr/bin/env bash\n# tier: T0\n# covers: spira/lib.sh UC-dispatch-01 UC-dispatch-02\necho clean\n' > "$CLEAN"
+printf '#!/usr/bin/env bash\n# tier: T0\n# covers: spira/lib.sh UC-dispatch-01\necho clean\n' > "$CLEAN"
 commit "seed"
 
 PLANTED="$ROOT/spira/test-planted.sh"
