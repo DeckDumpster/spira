@@ -188,12 +188,63 @@ lc event bead sp-lc-rw --expect SUBMITTED --version "$v" --actor test --kind '{"
 lc cut batch-rw --repo spira --head HR --base BR --members "sp-lc-rw:tipR" --actor test >/dev/null 2>&1
 wantrc "cut still refuses a REWORK member" 3 $?
 
+# ── an applied event's states come from the row it applied to (sp-zt7r2p) ───────────────
+ev_field() {   # ev_field <machine> <key> <event> <column>
+    root_sql --use-db spira_lifecycle sql -q "SELECT $4 AS v FROM event WHERE machine = '$1' AND lc_key = '$2' AND event = '$3' AND applied = 1 ORDER BY seq DESC LIMIT 1" -r json \
+        | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["v"] if d else "")' 2>/dev/null
+}
+is "a SUBMITTED member's Deliver logs SUBMITTED as its from_state" "SUBMITTED" "$(ev_field bead sp-lc-sub Deliver from_state)"
+is "...and as its expect" "SUBMITTED" "$(ev_field bead sp-lc-sub Deliver expect)"
+is "a CERTIFIED member's Deliver logs CERTIFIED" "CERTIFIED" "$(ev_field bead sp-lc-cer Deliver from_state)"
+is "a delivery row that did not exist is enqueued from NONE" "NONE" "$(ev_field delivery sp-lc-sub Enqueued from_state)"
+is "...and cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-sub Cut from_state)"
+
+certify sp-lc-bx tipBX
+root_sql --use-db spira_lifecycle sql -q "UPDATE delivery SET state = 'BATCHED', batch_id = 'batch-elsewhere' WHERE bead_id = 'sp-lc-bx'" >/dev/null
+out="$(lc cut batch-bx --repo spira --head HX --base BX --members "sp-lc-bx:tipBX" --actor test 2>&1)"
+wantrc "a cut over a member BATCHED in another batch is refused" 3 $?
+want "...naming that batch" "batch-elsewhere" "$out"
+is "...and the member's bead is untouched" "CERTIFIED" "$(member_field sp-lc-bx bead state)"
+is "...and its delivery row still names the other batch" "batch-elsewhere" "$(member_field sp-lc-bx delivery batch_id)"
+
+certify sp-lc-ex tipEX
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, version) VALUES ('sp-lc-ex', 'queue', 'EXITED', 4)" >/dev/null
+lc cut batch-ex --repo spira --head HE --base BE --members "sp-lc-ex:tipEX" --actor test >/dev/null
+wantrc "a cut over an EXITED delivery row re-queues it by compare-and-swap" 0 $?
+is "...logging the EXITED row it was" "EXITED" "$(ev_field delivery sp-lc-ex Enqueued from_state)"
+is "...then the cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-ex Cut from_state)"
+is "...to BATCHED in the new batch" "batch-ex" "$(member_field sp-lc-ex delivery batch_id)"
+is "...at version 6" "6" "$(member_field sp-lc-ex delivery version)"
+
+# ── event continuity: red first on a planted break, then on the real log ────────────────
+lc event-continuity >/dev/null
+wantrc "the log the cascades above wrote is continuous" 0 $?
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-brk','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-brk','B','Q','Q','R',1,'{}','t',2),('bead','sp-lc-brk','C','Q','Q','S',1,'{}','t',3)" >/dev/null
+out="$(lc event-continuity)"
+wantrc "a planted break is reported" 3 $?
+want "...naming the key" '"key":"sp-lc-brk"' "$out"
+is "...once, the first break only" "1" "$(printf '%s\n' "$out" | grep -c sp-lc-brk)"
+root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key = 'sp-lc-brk'" >/dev/null
+
+# ── migration 0013 corrects the hard-coded Deliver/Cut states from their predecessors ───
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-mig','Submit','WORKING','WORKING','SUBMITTED',1,'{}','t',1),('bead','sp-lc-mig','Deliver','CERTIFIED','CERTIFIED','IN_DELIVERY',1,'{}','t',2),('delivery','sp-lc-mig','Cut','QUEUED','QUEUED','BATCHED',1,'{}','t',3)" >/dev/null
+lc event-continuity >/dev/null
+wantrc "POSITIVE CONTROL: the old hard-coded states are seen as breaks" 3 $?
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0013-event-continuity.sql" >/dev/null 2>&1
+wantrc "migration 0013 applies" 0 $?
+is "the Deliver now says what the bead was" "SUBMITTED" "$(ev_field bead sp-lc-mig Deliver from_state)"
+is "the Cut of a row with no predecessor says NONE" "NONE" "$(ev_field delivery sp-lc-mig Cut from_state)"
+lc event-continuity >/dev/null
+wantrc "...and the log is continuous again" 0 $?
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0013-event-continuity.sql" >/dev/null 2>&1
+wantrc "migration 0013 is idempotent" 0 $?
+
 # ── criterion 1: a green batch lands every member atomically in one transaction ──────────
 certify sp-lc-1 tipA
 certify sp-lc-2 tipB
 out="$(lc cut batch-green --repo spira --head H1 --base B1 --members "sp-lc-1:tipA,sp-lc-2:tipB" --actor test)"
 wantrc "cut opens batch-green with two members" 0 $?
-want "cut applied every step" '"applied":[true,true,true,true]' "$out"
+want "cut applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
 v="$(batch_field batch-green version)"
 lc event batch batch-green --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
@@ -352,7 +403,7 @@ certify sp-lc-s2 tipS2
 certify sp-lc-s3 tipS3
 out="$(lc stack batch-stack --members "sp-lc-s2:tipS2,sp-lc-s3:tipS3" --actor test)"
 wantrc "stack applies" 0 $?
-want "stack applied every step" '"applied":[true,true,true,true]' "$out"
+want "stack applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
 is "stack does not insert a second batch row — still OPEN" "OPEN" "$(batch_field batch-stack state)"
 is "stack advances the batch's version by exactly the new member count" "3" "$(batch_field batch-stack version)"

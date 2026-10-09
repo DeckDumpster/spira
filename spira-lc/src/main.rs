@@ -248,6 +248,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // A round assembled behind a running one, and its promotion (queue round stage/promote).
         Some("stage") => cutover::cmd_stage(&args[1..], conn),
         Some("promote") => cutover::cmd_promote(&args[1..], conn),
+        Some("event-continuity") => cutover::cmd_event_continuity(&args[1..], conn),
         Some("land") => cutover::cmd_land(&args[1..], conn),
         Some("settle") => cutover::cmd_settle(&args[1..], conn),
         Some("abandon-batch") => cutover::cmd_abandon_batch(&args[1..], conn),
@@ -278,7 +279,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
         ),
     }
 }
@@ -596,17 +597,7 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         _ => bead::apply(&row, &ev),
     };
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
-    let rec = db::EventRecord {
-        machine: "bead".into(),
-        key: key.into(),
-        event: kind_name(&evidence),
-        expect: expect.into(),
-        from_state: row.state.as_str().into(),
-        refusal: outcome.refusal.as_ref().map(refusal_name),
-        evidence,
-        actor: actor.into(),
-        at,
-    };
+    let rec = db::EventRecord::of_apply("bead", key, kind_name(&evidence), expect, row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
     if !outcome.applied {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return (CANNOT_TELL, format!("cannot tell: {e:?}"));
@@ -671,17 +662,7 @@ fn run_delivery_event(conn: &Conn, key: &str, expect: &str, version: u64, actor:
     let ev = delivery::DeliveryEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
     let outcome = delivery::apply(&row, &ev);
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
-    let rec = db::EventRecord {
-        machine: "delivery".into(),
-        key: key.into(),
-        event: kind_name(&evidence),
-        expect: expect.into(),
-        from_state: row.state.as_str().into(),
-        refusal: outcome.refusal.as_ref().map(refusal_name),
-        evidence,
-        actor: actor.into(),
-        at,
-    };
+    let rec = db::EventRecord::of_apply("delivery", key, kind_name(&evidence), expect, row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
     if !outcome.applied {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return (CANNOT_TELL, format!("cannot tell: {e:?}"));
@@ -712,17 +693,7 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
     let ev = batch::BatchEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
     let outcome = batch::apply(&row, &ev);
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
-    let rec = db::EventRecord {
-        machine: "batch".into(),
-        key: key.into(),
-        event: kind_name(&evidence),
-        expect: expect.into(),
-        from_state: row.state.as_str().into(),
-        refusal: outcome.refusal.as_ref().map(refusal_name),
-        evidence,
-        actor: actor.into(),
-        at,
-    };
+    let rec = db::EventRecord::of_apply("batch", key, kind_name(&evidence), expect, row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
     if !outcome.applied {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return (CANNOT_TELL, format!("cannot tell: {e:?}"));

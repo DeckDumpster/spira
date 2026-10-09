@@ -1,0 +1,14 @@
+[Unit]
+Description=Check the lifecycle event log for a break in continuity
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Unit=spira-event-continuity.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
