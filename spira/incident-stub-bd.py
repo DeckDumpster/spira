@@ -154,6 +154,8 @@ def main():
 
     if cmd == "note":
         bid, text = argv[1], argv[2]
+        if text == "--stdin":
+            text = sys.stdin.read()
         bead = state["beads"].setdefault(bid, {"id": bid, "notes": ""})
         bead["notes"] = (bead.get("notes") or "") + ("\n\n" if bead.get("notes") else "") + text
         save_state(state_path, state)

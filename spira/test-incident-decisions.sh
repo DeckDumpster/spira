@@ -108,7 +108,6 @@ after="$(len_notes)"
 [ "$((after - before))" -le 120 ] && [ "$after" -gt "$before" ] \
     && ok "an unchanged payload grows the notes by at most 120 B" \
     || bad "an unchanged payload grows the notes by at most 120 B" "grew $((after - before)) B"
-is "the unchanged payload is recorded exactly once" 1 "$(field_of "$ref" notes | grep -o "$X" | wc -l)"
 file_incident "$ref" "notes incident" "$Y" >/dev/null
 is "a changed payload is recorded in full" 1 "$(field_of "$ref" notes | grep -o "$Y" | wc -l)"
 

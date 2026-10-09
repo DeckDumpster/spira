@@ -202,7 +202,7 @@ echo "pane identity: a tag on a pane that runs no dashboard is cleared, not obey
 TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s w3 -x 214 -y 53
 TMUX_TMPDIR="$TMUXDIR" tmux set-option -t w3 window-size largest
 sess3="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w3:0 -F '#{pane_id}' | head -1)"
-imp="$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t w3:0 -h -P -F '#{pane_id}' "exec sleep 300 health.sh")"
+imp="$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t w3:0 -h -P -F '#{pane_id}' "sh -c 'sleep 300; :' health.sh")"
 TMUX_TMPDIR="$TMUXDIR" tmux set-option -p -t "$imp" @cockpit health
 is "positive control: the impostor carries the health tag before ensure" "health" \
     "$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -p -t "$imp" '#{@cockpit}')"
