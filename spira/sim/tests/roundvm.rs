@@ -81,6 +81,24 @@ fn green_writes_an_ok_result_per_suite_and_installs_the_release() {
 }
 
 #[test]
+fn the_batchers_own_flags_are_accepted_and_suites_narrows_the_results() {
+    let w = world();
+    write_verdict(&w.world, &Verdict::Green).unwrap();
+    let mut a = vec!["run".to_string(), w.tree.display().to_string()];
+    for (k, v) in [("--suites", "test-a.sh,test-c.sh"), ("--maxpar", "8"), ("--toolchain", "1.90"), ("--attr-spool", "/spool"), ("--base", "local/main")] {
+        a.extend([k.to_string(), v.to_string()]);
+    }
+    a.extend(["--results-dir".to_string(), w.results.display().to_string()]);
+    let (code, err) = roundvm::run(&w.world, &a, &none, 946684800);
+    assert_eq!(code, 0, "{err}");
+    let names: Vec<String> = read_back(&w).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["test-a.sh", "test-c.sh"]);
+    let (code, err) = roundvm::run(&w.world, &["run".into(), w.tree.display().to_string(), "--frobnicate".into(), "1".into()], &none, 0);
+    assert_eq!(code, FAULT);
+    assert!(err.contains("does not take --frobnicate"), "{err}");
+}
+
+#[test]
 fn red_marks_exactly_the_named_suites_blocking() {
     let w = world();
     std::fs::write(w.world.join(VERDICT_FILE), "red test-b.sh test-new.sh\n").unwrap();

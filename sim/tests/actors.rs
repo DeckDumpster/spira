@@ -11,7 +11,7 @@ const DURATIONS: &str = include_str!("../durations.toml");
 const SERVICE: &str = "[Service]\nType=oneshot\nExecStart=/bin/true\n";
 
 fn units(dir: &Path, every: &str) {
-    for unit in ["spira-landing-pass", "spira-gate-worker"] {
+    for unit in parse_specs(SPECS).unwrap().iter().map(|a| a.timer.trim_end_matches(".timer").to_string()) {
         std::fs::write(
             dir.join(format!("{unit}.timer")),
             format!("[Timer]\nOnBootSec=10s\nOnUnitActiveSec={every}\nUnit={unit}.service\n"),

@@ -35,6 +35,9 @@ impl Steps for Fake {
         self.lifecycles.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+    fn bd(&self) -> Result<PathBuf, String> {
+        Ok(PathBuf::from("/fake/bin/bd"))
+    }
     fn db_down(&self, _: &str) -> Result<(), String> {
         self.downs.fetch_add(1, Ordering::SeqCst);
         self.calls.lock().unwrap().push("db_down".into());
@@ -72,7 +75,7 @@ fn up_then_down_leaves_nothing_behind() {
     let fake = Fake::default();
     up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap();
     let work = dir.join("work");
-    for p in ["release", "origin.git", "work", "run", "config/sim.toml", "bin/gh", "bin/round-vm", "gh"] {
+    for p in ["release", "origin.git", "work", "run", "config/sim.toml", "bin/gh", "bin/round-vm", "bin/sim", "bin/unit-ensure", "bin/target-reap", "home", "gate-verdict", "gh"] {
         assert!(dir.join(p).exists(), "{p}");
     }
     let rev = |r: &str| {
@@ -219,6 +222,9 @@ fn a_failed_up_cleans_up_after_itself() {
         }
         fn db_up(&self, _: &Path) -> Result<String, String> {
             Err("no dolt".into())
+        }
+        fn bd(&self) -> Result<PathBuf, String> {
+            Ok(PathBuf::from("/fake/bin/bd"))
         }
         fn db_down(&self, _: &str) -> Result<(), String> {
             Ok(())

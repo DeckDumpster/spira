@@ -56,27 +56,40 @@ pub fn write_verdict(world: &Path, v: &Verdict) -> Result<(), String> {
 pub struct Run {
     pub tree: PathBuf,
     pub results: PathBuf,
+    /// `--suites`: the suites the caller wants run, instead of the tree's whole corpus.
+    pub suites: Option<Vec<String>>,
 }
+
+/// Flags the batcher passes that say how a real VM runs, and mean nothing to a stub.
+const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool", "--base"];
 
 pub fn parse_args(args: &[String]) -> Result<Run, String> {
     let Some((verb, rest)) = args.split_first() else { return Err("usage: round-vm run <tree> --results-dir <dir>".into()) };
     if verb != "run" {
         return Err(format!("the sim round-vm answers only `run`, not {verb:?}"));
     }
-    let (mut tree, mut results) = (None, None);
+    let (mut tree, mut results, mut suites) = (None, None, None);
+    let csv = |v: &str| v.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>();
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         if let Some(v) = a.strip_prefix("--results-dir=") {
             results = Some(PathBuf::from(v));
         } else if a == "--results-dir" {
             results = Some(PathBuf::from(it.next().ok_or("--results-dir needs a value")?));
+        } else if let Some(v) = a.strip_prefix("--suites=") {
+            suites = Some(csv(v));
+        } else if a == "--suites" {
+            suites = Some(csv(it.next().ok_or("--suites needs a value")?));
+        } else if IGNORED_FLAGS.iter().any(|f| a == f) {
+            it.next().ok_or_else(|| format!("{a} needs a value"))?;
+        } else if IGNORED_FLAGS.iter().any(|f| a.strip_prefix(f).is_some_and(|r| r.starts_with('='))) {
         } else if a.starts_with("--") {
             return Err(format!("the sim round-vm does not take {a}"));
         } else if tree.replace(PathBuf::from(a)).is_some() {
             return Err("round-vm run takes one tree".into());
         }
     }
-    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")? })
+    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")?, suites })
 }
 
 /// The corpus as testenv defines it: every `test-*.sh` regular file in `<tree>/spira`.
@@ -157,7 +170,7 @@ fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>
         Verdict::Green => Vec::new(),
         Verdict::Red(s) => s,
     };
-    let mut suites = corpus(&r.tree);
+    let mut suites = r.suites.clone().unwrap_or_else(|| corpus(&r.tree));
     suites.extend(reds.iter().cloned());
     suites.sort();
     suites.dedup();

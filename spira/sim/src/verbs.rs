@@ -29,7 +29,9 @@ impl RunResult {
 fn load_world(world: &Path) -> Result<(Scenario, u64), String> {
     let read = |f: &str| std::fs::read_to_string(world.join(f)).map_err(|e| format!("{}: {e}", world.join(f).display()));
     let seed = read(SEED_FILE)?.trim().parse().map_err(|e| format!("{SEED_FILE}: {e}"))?;
-    Ok((parse_scenario(&read(SCENARIO_FILE)?)?, seed))
+    let mut sc = parse_scenario(&read(SCENARIO_FILE)?)?;
+    sc.tree = Some(world.join("work"));
+    Ok((sc, seed))
 }
 
 fn finish(world: &Path, seed: u64, goal: Option<String>, goal_reached: bool) -> Result<RunResult, String> {
@@ -38,7 +40,8 @@ fn finish(world: &Path, seed: u64, goal: Option<String>, goal_reached: bool) -> 
 }
 
 pub fn run_scenario(world: &Path, text: &str, seed: u64, exec: Box<dyn Exec>, probe: Box<dyn Probe>) -> Result<RunResult, String> {
-    let sc = parse_scenario(text)?;
+    let mut sc = parse_scenario(text)?;
+    sc.tree = Some(world.join("work"));
     std::fs::write(world.join(SCENARIO_FILE), text).map_err(|e| e.to_string())?;
     std::fs::write(world.join(SEED_FILE), seed.to_string()).map_err(|e| e.to_string())?;
     let trace = Trace::create(world)?;
@@ -69,7 +72,7 @@ pub fn replay_world(world: &Path, seed: u64) -> Result<Option<crate::trace::Dive
     let (sc, _) = load_world(world)?;
     let recorded = Trace::open(world)?.events()?;
     let exec = Box::new(Resumed { recorded: recorded.iter().filter(|e| matches!(e["kind"].as_str(), Some("start" | "step"))).map(|e| e["exit"].as_i64().unwrap_or(0) as i32).collect(), live: None });
-    let report = match drive(&sc, seed, exec, Box::new(NoProbe), None, &[], &Stop::Events(recorded.len() as u64 + 1)) {
+    let report = match drive(&sc, seed, exec, Box::new(NoProbe), None, &[], &Stop::Events(recorded.len() as u64 + u64::from(sc.goal.is_none()))) {
         Ok(r) => r,
         Err(e) if e.contains("fewer executions") => return Ok(first_divergence(&recorded, &[])),
         Err(e) => return Err(e),

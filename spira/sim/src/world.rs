@@ -15,10 +15,21 @@ pub const RELEASE_ENV: &str = "SPIRA_SIM_RELEASE";
 /// testenv's mark on every suite it runs (testenv/src/fixture.rs). It only ever widens the
 /// refusal below, so a forged value can stop a build but never start one.
 pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
+/// Host-touching tools the loop calls by bare name at the end of a pass: `unit-ensure`
+/// (re)installs the user's systemd units, `target-reap` removes shared build directories. In a
+/// world each is `sim` invoked under that name, and does nothing.
+pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap"];
 /// The release binaries the world itself calls; a prebuilt release without them is refused.
 const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
 /// The world's lifecycle service socket, under the world dir (sp-hq1v76).
 const LC_SOCKET: &str = "lc.sock";
+const HOME: &str = "home";
+/// The file the legacy bash readers still require, with the one row the world registers.
+const REGISTRY_ROWS: &str = "registry-rows";
+/// The name the world's one repository is registered under (`repo.<name>` in its config).
+pub const REPO_NAME: &str = "sim";
+/// The home every path in the complete fixture config is rooted at (spira-config/tests/fixtures).
+const FIXTURE_HOME: &str = "/fixture/userhome";
 /// The PID world up recorded for the world's `spira-lc serve`; world down signals only it.
 const LC_PID: &str = "lc-serve.pid";
 const LC_LOG: &str = "lc-serve.log";
@@ -91,6 +102,8 @@ pub trait Steps {
     fn release(&self, repo: &Path, tree: &str, cache: &Path) -> Result<PathBuf, String>;
     fn db_up(&self, world: &Path) -> Result<String, String>;
     fn db_down(&self, fixture: &str) -> Result<(), String>;
+    /// The absolute `bd` the world's config names; its bead store is only reachable through it.
+    fn bd(&self) -> Result<PathBuf, String>;
     fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String>;
     fn config_set(&self, release: &Path, file: &Path, key: &str, value: &str) -> Result<(), String>;
     /// Start the world's `spira-lc serve` on [`lc_socket`], write its PID to [`lc_pid_file`]
@@ -289,6 +302,10 @@ impl Steps for ProcessSteps {
         lc("admin-migrate", lifecycle.join("migrations"))
     }
 
+    fn bd(&self) -> Result<PathBuf, String> {
+        on_path("bd", &std::env::var("PATH").unwrap_or_default()).ok_or_else(|| "bd is not on PATH: a world's bead store is read through it".to_string())
+    }
+
     fn db_down(&self, fixture: &str) -> Result<(), String> {
         run(Command::new("testenv").args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
     }
@@ -418,6 +435,8 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     )?;
     run(Command::new("tar").arg("-xf").arg(&tarball).arg("-C").arg(&work), CALL_DEADLINE)?;
     std::fs::remove_file(&tarball).map_err(|e| e.to_string())?;
+    let runner = dir.join("config/suite-runner");
+    std::fs::write(work.join("gate.steps"), stub_gate_steps(&runner)).map_err(|e| e.to_string())?;
     git(&work, &["add", "-A"])?;
     git(&work, &["commit", "-q", "-m", "sim seed"])?;
     git(&work, &["remote", "add", "origin", &p(&origin)])?;
@@ -442,9 +461,17 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     let sim_exe = std::env::current_exe().map_err(|e| e.to_string())?;
     link(&sim_exe, &gh_bin)?;
     link(&sim_exe, &bin.join("round-vm"))?;
+    link(&sim_exe, &bin.join("sim"))?;
+    for tool in INERT_TOOLS {
+        link(&sim_exe, &bin.join(tool))?;
+    }
     crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
-    std::fs::write(&file, CONFIG_BASE).map_err(|e| e.to_string())?;
-    for (k, v) in config_settings(&work, &gh_bin) {
+    let home = dir.join(HOME);
+    std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
+    std::fs::write(home.join(REGISTRY_ROWS), registry_rows(&work)).map_err(|e| e.to_string())?;
+    std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
+    let bd = steps.bd()?;
+    for (k, v) in config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, &fixture, &bd)) {
         steps.config_set(&release, &file, &k, &v)?;
     }
     for (k, v) in lc_settings(dir) {
@@ -454,8 +481,9 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     std::fs::write(
         config.join("sim.env"),
         format!(
-            "SPIRA_RUN={}\nSPIRA_LIFECYCLE_ENFORCE=1\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\n",
+            "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\n",
             run_dir.display(),
+            dir.join("release/spira").display(),
             runner.display(),
             gh_state.display(),
             bin.display(),
@@ -464,11 +492,72 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
             dir.display(),
             dir.join("release").display(),
             lc_socket(dir).display(),
-            port.trim()
+            port.trim(),
+            bead_db(&fixture).display(),
+            crate::agent::SCENARIO_VAR,
+            dir.join("agent.scenario").display(),
+            crate::agent::STATE_VAR,
+            dir.join("agent-state").display()
         ),
     )
     .map_err(|e| e.to_string())?;
     steps.lc_serve(dir, &fixture)
+}
+
+/// The gate string the tree under test carries inside a world: the stub suite runner alone, whose
+/// verdict a scenario decides. The tree's own gate builds tools with cargo and runs suites.
+pub fn stub_gate_steps(runner: &Path) -> String {
+    format!("step \"{}\"\n", runner.display())
+}
+
+/// The one registry row of a world: `name|path|land|base|format|gate|lanes`.
+pub fn registry_rows(work: &Path) -> String {
+    format!("{REPO_NAME}|{}|queue.local|{LANDING_BASE}|||plan\n", work.display())
+}
+
+/// The complete base with every path of the fixture's home moved under the world's `home`,
+/// and without the fixture's own `repo.spira`: a world registers only the repository it built.
+pub fn base_config(home: &Path) -> String {
+    let release = home.parent().unwrap_or(home).join("release");
+    let moved = CONFIG_BASE
+        .replace(&format!("{FIXTURE_HOME}/spira/spira-releases/current"), &release.display().to_string())
+        .replace(FIXTURE_HOME, &home.display().to_string());
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in moved.lines() {
+        if line.starts_with('[') {
+            skipping = line == "[repo.spira]";
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The workspace of a testdb fixture: where `bd` finds the bead store.
+pub fn bead_db(fixture: &str) -> PathBuf {
+    Path::new(fixture.trim()).join("ws")
+}
+
+/// `name` as an absolute path from `path`'s directories (a world's config names tools absolutely).
+pub fn on_path(name: &str, path: &str) -> Option<PathBuf> {
+    path.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(name)).find(|p| p.is_file())
+}
+
+/// What the world's tools find at locators the base's moved paths leave empty: the release's
+/// own harness tree, and the world's bead store.
+pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, String)> {
+    let spira = world.join("release/spira");
+    vec![
+        ("spira.bd".to_string(), bd.display().to_string()),
+        ("spira.prod".to_string(), spira.display().to_string()),
+        ("spira.chamber".to_string(), spira.join("chamber").display().to_string()),
+        ("spira.db".to_string(), bead_db(fixture).display().to_string()),
+        ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
+        ("spira.home_repo".to_string(), REPO_NAME.to_string()),
+    ]
 }
 
 /// The world's own lifecycle locators (sp-hq1v76), written over the complete base so none of
@@ -492,10 +581,13 @@ pub fn probe_command(sim: &Path, world: &Path) -> String {
 /// The world's config settings, as `spira-config set` pairs. `spira-config set`
 /// validates the whole document after every write, so the repository section goes in as
 /// one JSON table: set field by field, `repo.sim.path` alone is refused (no `mode` yet).
-/// `spira.lifecycle_enforce` is retired (sp-v62vn) and no longer set.
 pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
     let repo = serde_json::json!({ "path": work.display().to_string(), "mode": "queue.local", "base": LANDING_BASE });
-    vec![("repo.sim".to_string(), repo.to_string()), ("spira.gh".to_string(), gh.display().to_string())]
+    vec![
+        (format!("repo.{REPO_NAME}"), repo.to_string()),
+        ("spira.gh".to_string(), gh.display().to_string()),
+        ("spira.batcher_enable".to_string(), "1".to_string()),
+    ]
 }
 
 /// Where the world's Dolt fixture lives. Nested inside testenv, `TESTDB_ROOT` is the

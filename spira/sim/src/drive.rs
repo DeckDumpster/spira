@@ -11,6 +11,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 const COMMAND_DEADLINE: Duration = Duration::from_secs(120); // batch-job: one actor run or scenario step against a world
+const REPO: &str = crate::world::REPO_NAME;
+pub const SCENARIOS_DIR: &str = "spira/sim/scenarios";
+pub const EXEC_LOG: &str = "exec.log";
 const PROBE_KEY: &str = "SIM_PROBE";
 
 #[derive(Debug, Deserialize)]
@@ -29,7 +32,45 @@ pub struct ActorDef {
 #[derive(Debug, Deserialize)]
 pub struct StepDef {
     pub at: u64,
-    pub command: String,
+    pub command: Option<String>,
+    /// File this bead: a READY lifecycle row the world's summon can claim.
+    pub file: Option<String>,
+    /// Script the stub agent for this bead (`script` lines are `agent::parse` steps); the
+    /// world's summon claims the bead and plays them.
+    pub claim: Option<String>,
+    #[serde(default)]
+    pub script: Vec<String>,
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn bead_id(s: &str) -> Result<&str, String> {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+        Ok(s)
+    } else {
+        Err(format!("scenario: {s:?} is not a bead id"))
+    }
+}
+
+impl StepDef {
+    /// The shell command this step runs in the world.
+    pub fn shell(&self) -> Result<String, String> {
+        match (&self.command, &self.file, &self.claim) {
+            (Some(c), None, None) if self.script.is_empty() => Ok(c.clone()),
+            (None, Some(b), None) if self.script.is_empty() => {
+                let b = bead_id(b)?;
+                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p 2 -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}"))))
+            }
+            (None, None, Some(b)) if !self.script.is_empty() => {
+                let b = bead_id(b)?;
+                let lines: Vec<String> = self.script.iter().map(|l| shell_quote(&format!("{b} {l}"))).collect();
+                Ok(format!("printf '%s\\n' {} >> \"${}\"", lines.join(" "), crate::agent::SCENARIO_VAR))
+            }
+            _ => Err(format!("scenario: step at {} needs exactly one of command, file, or claim with a script", self.at)),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,16 +78,46 @@ pub struct Scenario {
     pub epoch: u64,
     pub horizon: u64,
     pub goal: Option<String>,
+    /// With a goal: the run is done only once the bead is there and a tag with this prefix exists.
+    pub goal_tag: Option<String>,
     #[serde(default, rename = "actor")]
     pub actors: Vec<ActorDef>,
+    /// Actors taken by name from the tree's `sim/actors.toml`: cadence from its real timer
+    /// units, durations from its fitted series.
+    #[serde(default)]
+    pub real_actors: Vec<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<StepDef>,
+    /// The tree under test `real_actors` resolve against: the world's `work` checkout.
+    #[serde(skip)]
+    pub tree: Option<PathBuf>,
+}
+
+/// A scenario argument: a path, or a bare name of a scenario shipped under `spira/sim/scenarios/`
+/// in the checkout `cwd` is in.
+pub fn scenario_path(cwd: &Path, arg: &str) -> PathBuf {
+    let named = !arg.contains('/') && !arg.ends_with(".toml");
+    if named {
+        for dir in cwd.ancestors() {
+            let shipped = dir.join(SCENARIOS_DIR).join(format!("{arg}.toml"));
+            if shipped.is_file() {
+                return shipped;
+            }
+        }
+    }
+    PathBuf::from(arg)
 }
 
 pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
     let sc: Scenario = toml::from_str(text).map_err(|e| format!("scenario: {e}"))?;
     if let Some(g) = &sc.goal {
         parse_bead_state(g)?;
+    }
+    if sc.goal_tag.is_some() && sc.goal.is_none() {
+        return Err("scenario: goal_tag needs a goal".to_string());
+    }
+    for st in &sc.steps {
+        st.shell()?;
     }
     for a in &sc.actors {
         if a.duration_min > a.duration_max {
@@ -64,6 +135,21 @@ pub fn parse_bead_state(spec: &str) -> Result<(String, String), String> {
         Some((b, s)) if !b.is_empty() && !s.is_empty() => Ok((b.to_string(), s.to_string())),
         _ => Err(format!("{spec:?} is not <bead>:<STATE>")),
     }
+}
+
+fn read(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn load_specs(release: &Path, names: &[String]) -> Result<Vec<sim::actors::ActorSpec>, String> {
+    let mut all = sim::actors::parse_specs(&read(&release.join("sim/actors.toml"))?)?;
+    names
+        .iter()
+        .map(|n| match all.iter().position(|a| &a.name == n) {
+            Some(i) => Ok(all.remove(i)),
+            None => Err(format!("scenario: no actor {n:?} in the tree's sim/actors.toml")),
+        })
+        .collect()
 }
 
 pub trait Exec {
@@ -114,9 +200,10 @@ impl ProcessExec {
     fn command(&self, shell: &str, now_ms: u64) -> Result<Command, String> {
         let mut cmd = sim::actor_command("sh", self.epoch + now_ms / 1000);
         let path = format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             self.world.join("bin").display(),
             self.world.join("release/bin").display(),
+            self.world.join("release/spira").display(),
             std::env::var("PATH").unwrap_or_default()
         );
         cmd.arg("-c").arg(shell).current_dir(self.world.join("work")).env("PATH", path);
@@ -131,9 +218,21 @@ impl ProcessExec {
     }
 }
 
+impl ProcessExec {
+    /// Appends one run to `exec.log` in the world: what each command printed is not in the trace.
+    fn log(&self, command: &str, now_ms: u64, status: &str, out: &str, err: &str) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.world.join(EXEC_LOG)) {
+            let _ = writeln!(f, "=== t={now_ms} {command}: {status}\n{}{}", out, err);
+        }
+    }
+}
+
 impl Exec for ProcessExec {
     fn run(&mut self, command: &str, now_ms: u64) -> Result<i32, String> {
-        let (status, _, _) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
+        let started = std::time::Instant::now();
+        let (status, out, err) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
+        self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
 }
@@ -152,6 +251,15 @@ impl ProcessProbe {
 
 impl Probe for ProcessProbe {
     fn snapshot(&mut self) -> Result<Snapshot, String> {
+        let started = std::time::Instant::now();
+        let snap = self.take();
+        self.exec.log("(probe)", 0, &format!("in {}ms", started.elapsed().as_millis()), "", "");
+        snap
+    }
+}
+
+impl ProcessProbe {
+    fn take(&mut self) -> Result<Snapshot, String> {
         let work = self.exec.world.join("work");
         let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&work).args(args), COMMAND_DEADLINE);
         let mut snap = Snapshot::default();
@@ -161,6 +269,11 @@ impl Probe for ProcessProbe {
             }
         }
         snap.tags = git(&["tag"])?.lines().map(str::to_string).collect();
+        for t in crate::gh::tag_names(&self.exec.world.join("gh"))? {
+            if !snap.tags.contains(&t) {
+                snap.tags.push(t);
+            }
+        }
         if let Some(p) = &self.probe {
             let out = run(&mut self.exec.command(p, 0)?, COMMAND_DEADLINE)?;
             for l in out.lines().filter(|l| !l.trim().is_empty()) {
@@ -239,8 +352,28 @@ pub fn drive(
             }
         }
     }
+    if !sc.real_actors.is_empty() {
+        let release = sc.tree.as_deref().ok_or("scenario names real_actors but no tree to read them from")?;
+        let specs = load_specs(release, &sc.real_actors)?;
+        let durations = sim::fit::Durations::parse(&read(&release.join("sim/durations.toml"))?)?;
+        for spec in &specs {
+            let timer = read(&release.join("systemd").join(&spec.timer))?;
+            let service = sim::units::timer_target(&spec.timer, &timer);
+            sim::units::require_oneshot(&service, &read(&release.join("systemd").join(&service))?)?;
+            let schedule = sim::units::parse_timer(&timer).map_err(|e| format!("{}: {e}", spec.timer))?;
+            let model = durations.series.get(&spec.duration).ok_or_else(|| format!("{}: no fitted series {:?}", spec.name, spec.duration))?.clone();
+            let (command, call) = (spec.command.clone(), call.clone());
+            sim.add_actor(&spec.name, spec.staged, Box::new(move |_, rng| {
+                call(&command);
+                Outcome { writes: Vec::new(), duration: model.sample_ms(rng) }
+            }));
+            for at in schedule.fire_times(sc.epoch, sc.horizon, &mut sim.rng) {
+                sim.schedule_due(at, &spec.name);
+            }
+        }
+    }
     for (i, s) in sc.steps.iter().enumerate() {
-        let (command, call) = (s.command.clone(), call.clone());
+        let (command, call) = (s.shell()?, call.clone());
         let name = format!("step{}", i + 1);
         sim.add_scenario(&name, Box::new(move |_| call(&command)));
         sim.schedule_step(s.at, &name);
@@ -251,6 +384,7 @@ pub fn drive(
         (Some(g), Stop::Goal) => Some(parse_bead_state(g)?),
         _ => None,
     };
+    let tag_prefix = sc.goal_tag.clone().filter(|_| matches!(stop, Stop::Goal));
     let mut events: Vec<Value> = Vec::new();
     let mut open: BTreeMap<String, (u64, i32)> = BTreeMap::new();
     let mut reached = false;
@@ -305,7 +439,8 @@ pub fn drive(
             tr.snapshot(seq, &snap)?;
         }
         if let Some((b, s)) = &goal {
-            if bead_in_state(&snap, b, s) {
+            let tagged = tag_prefix.as_deref().is_none_or(|p| snap.tags.iter().any(|t| t.starts_with(p)));
+            if bead_in_state(&snap, b, s) && tagged {
                 reached = true;
                 break;
             }

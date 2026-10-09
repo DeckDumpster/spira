@@ -105,6 +105,18 @@ fn replaying_an_identical_run_reports_no_divergence() {
 }
 
 #[test]
+fn replaying_a_run_that_stopped_at_its_goal_reports_no_divergence() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
+    let w = world("sim-verbs-replay-goal");
+    let r = go(&w, 7, 3, false);
+    assert!(r.goal_reached);
+    assert_eq!(Trace::open(&w).unwrap().events().unwrap().len(), 3);
+    assert_eq!(replay_world(&w, 7).unwrap(), None);
+}
+
+#[test]
 fn replaying_a_perturbed_run_reports_the_first_differing_seq() {
     if !spira_sim::trace::duckdb_available() {
         return;
