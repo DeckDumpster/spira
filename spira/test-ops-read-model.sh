@@ -40,6 +40,9 @@ want "the second run finds nothing pending" "already applied" "$again"
 views_of() { python3 -I -c 'import re,sys; t=open(sys.argv[1]).read(); print(re.sub(r"\s+"," ",t[t.index("CREATE "+sys.argv[2]+"VIEW ops_live"):]).replace("CREATE OR REPLACE VIEW","CREATE VIEW"))' "$1" "$2"; }
 is "schema.sql and migration 0007 define the same views" "$(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "")" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE ")"
 
+cols="SELECT column_name FROM information_schema.columns WHERE table_schema = 'spira_lifecycle' AND table_name = 'ops_live' AND column_name IN ('persona','rework') ORDER BY 1"
+is "ops_live carries the persona and rework columns the NOW rows render" "persona rework" "$(lcfix_sql -r csv -q "$cols" | sed 1d | paste -sd' ')"
+
 NOW="$(date +%s)"
 python3 - "$NOW" > "$TMP/seed.sql" <<'PY'
 import sys
