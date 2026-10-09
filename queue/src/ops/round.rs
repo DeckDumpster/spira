@@ -141,13 +141,18 @@ fn assemble(w: &World, c: &Ctx, path: &Path, wt: &Path, base_sha: &str, members:
 }
 
 /// A member that no longer merges onto the base goes back to REWORK on its own tip, so a
-/// builder claims it to rebase; left as it was, every later round would skip it again.
-fn return_to_rework(w: &World, m: &Member) -> String {
-    let Some((state, version)) = w.lc.bead_state(&m.id) else { return " (no lifecycle row — not returned to rework)".into() };
+/// builder claims it to rebase; left as it was, every later round would skip it again. The
+/// claim is made only after reading the row back in REWORK.
+fn return_to_rework(w: &World, m: &Member) -> Result<(), String> {
+    let Some((state, version)) = w.lc.bead_state(&m.id) else { return Err("no lifecycle row — not returned to rework".into()) };
     let kind = format!("{{\"GateRed\":{{\"tip\":\"{}\",\"reason\":\"no-rebase\"}}}}", m.tip);
-    match w.lc.bead_event(&m.id, &state, version.trim(), LC_ACTOR, &kind) {
-        Ok(()) => " — returned to rework".into(),
-        Err((rc, e)) => format!(" (return to rework refused rc={rc}: {})", one_line(&e)),
+    if let Err((rc, e)) = w.lc.bead_event(&m.id, &state, version.trim(), LC_ACTOR, &kind) {
+        return Err(format!("return to rework refused rc={rc}: {}", one_line(&e)));
+    }
+    match w.lc.bead_state(&m.id) {
+        Some((now, _)) if now == "REWORK" => Ok(()),
+        Some((now, _)) => Err(format!("return to rework accepted but the bead is {now}, not REWORK")),
+        None => Err("return to rework accepted but the bead's row cannot be read back".into()),
     }
 }
 
@@ -234,13 +239,20 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         return FAIL;
     }
     let mut merged: Vec<Member> = Vec::new();
+    let mut unreturned = false;
     for m in admitted {
         if w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip, &c.s.git_name, &c.s.git_email) {
             merged.push(m);
         } else {
             w.git.merge_abort(&wt);
             if w.lib.base_conflict(&path, &base_sha, &m.tip) {
-                skips.push(format!("{}: conflicts with base{}", m.id, return_to_rework(w, &m)));
+                skips.push(match return_to_rework(w, &m) {
+                    Ok(()) => format!("{}: conflicts with base — returned to rework", m.id),
+                    Err(e) => {
+                        unreturned = true;
+                        format!("{}: conflicts with base ({e})", m.id)
+                    }
+                });
             } else {
                 skips.push(format!("{}: conflicts with the round", m.id));
             }
@@ -248,6 +260,11 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     }
     for s in &skips {
         w.out(format!("queue.sh {label}: skip — {s}"));
+    }
+    if unreturned {
+        w.err(format!("queue.sh {label}: a member that conflicts with base could not be returned to rework — no round opened for {repo_name}"));
+        w.git.worktree_remove(&path, &wt);
+        return FAIL;
     }
     if merged.is_empty() {
         w.err(format!("queue.sh {label}: no round — nothing admissible for {repo_name}"));

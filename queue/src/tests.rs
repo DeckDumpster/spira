@@ -399,6 +399,8 @@ struct FLc {
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
+    /// Bead events report success and change nothing.
+    event_ignored: Cell<bool>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
     calls: RefCell<Vec<String>>,
@@ -406,7 +408,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), row_fails: Cell::new(false), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), calls: RefCell::default() }
     }
 }
 
@@ -459,7 +461,12 @@ impl Lc for FLc {
         self.calls.borrow_mut().push(format!("event bead {bead} {s} {v} {kind}"));
         match self.event_refused.get() {
             Some(why) => Err((1, why.into())),
-            None => Ok(()),
+            None => {
+                if kind.contains("\"GateRed\"") && !self.event_ignored.get() {
+                    self.bead_rows.borrow_mut().insert(bead.into(), ("REWORK".into(), "4".into()));
+                }
+                Ok(())
+            }
         }
     }
     fn land_batch(&self, id: &str, v: &str, _: &str, sha: &str) -> Result<(), (i32, String)> {
