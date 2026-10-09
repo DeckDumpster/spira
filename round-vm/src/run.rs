@@ -337,7 +337,8 @@ if [ -n "$lint" ]; then
 fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
 # They run beside the suites, on the binaries built above; a red here makes the round red.
-unit_progress="$HOME/round-work/.runtime/spira/unit-progress"
+unit_progress="$HOME/round-work/.runtime/spira/batch-results/unit-progress"
+mkdir -p "$(dirname "$unit_progress")"
 : > ~/round-unit-tests.log
 unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
