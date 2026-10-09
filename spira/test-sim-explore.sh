@@ -23,7 +23,7 @@ in_world() {
     (cd "$W/work" && env "${NOLOC[@]}" SPIRA_TOML="$W/config/sim.toml" "${kv[@]}" PATH="$W/bin:$W/release/bin:$PATH" "$@")
 }
 show() { echo "   state: $(in_world spira-lc show "$1" 2>&1 | tr -d '\n ' | grep -o '"state":"[A-Z_]*"' | head -1)"; }
-run() { local o rc; o="$(in_world "$@" 2>&1)"; rc=$?; echo "## $* rc=$rc :: $(printf '%s' "$o" | tail -${TN:-2} | tr '\n' '|' | tr -s ' ' | cut -c1-${CW:-330})"; }
+run() { local o rc; o="$(in_world "$@" 2>&1)"; rc=$?; echo "## $* rc=$rc :: $(printf '%s' "$o" | tail -${TN:-3} | tr '\n' '|' | tr -s ' ' | cut -c1-${CW:-300})"; }
 B=sp-h1
 run spira-lc create-bead $B
 run spira-lc event bead $B --expect READY --version 0 --actor sim --kind '{"Claim":{"holder":"aeon-1","lease_until":4102444800}}'
@@ -33,12 +33,14 @@ git -C "$W/wt-$B" -c user.name=a -c user.email=a@a commit -q -m "$B: sim commit"
 run bash -c "cd $W/wt-$B && SPIRA_WORK_BEAD_ID=$B work submit"
 show $B
 for i in 1 2 3; do
-for cmd in "landing-pass --pass" "gate-worker run" "batcher rounds" "queue publish-settle"; do
+for cmd in "landing-pass land" "gate-worker run" "batcher rounds" "queue step --all" "queue publish-settle"; do
   run $cmd
   show $B
 done
 done
 run git -C $W/work branch -a -v
 run git -C $W/work tag
+run queue round status sim
+run ls $W/run $W/gh
 bad "dump" "forced"
 tl_summary
