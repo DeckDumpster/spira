@@ -497,6 +497,7 @@ mod tests {
     #[test]
     fn aeons_live_lanes_resolves_fayth_name_and_sums_lane_units() {
         let t = testkit::TempDir::new("strand-live-lanes");
+        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", Some(t.join("chamber").to_str().unwrap()))]);
         std::fs::create_dir_all(t.join("chamber")).unwrap();
         // A lane fayth declaring a different unit name than its chamber filename —
         // aeons_live_lanes must resolve FAYTH_NAME, not use the fayth id verbatim.
@@ -510,6 +511,7 @@ mod tests {
     #[test]
     fn fayth_free_matches_the_bash_originals_arithmetic() {
         let t = testkit::TempDir::new("strand-fayth-free");
+        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", Some(t.join("chamber").to_str().unwrap()))]);
         std::fs::create_dir_all(t.join("chamber")).unwrap();
         std::fs::write(t.join("chamber/stretchy.fayth"), "FAYTH_MAX_CONCURRENT=4\nFAYTH_ELASTIC=1\n").unwrap();
         std::fs::write(t.join("chamber/anchor.fayth"), "FAYTH_MAX_CONCURRENT=10\n").unwrap();
