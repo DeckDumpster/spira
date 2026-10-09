@@ -904,6 +904,9 @@ jobs:
           GIT_AUTHOR_EMAIL: gate@spira.local
           GIT_COMMITTER_NAME: Spira Gate
           GIT_COMMITTER_EMAIL: gate@spira.local
+          # spira-config refuses with no SPIRA_TOML, and a hosted runner has no box config.
+          # The checkout's complete fixture satisfies lib.sh; cut reads no value from it.
+          SPIRA_TOML: ${{ github.workspace }}/spira-config/tests/fixtures/complete.toml
         # release.sh exits 0 WITHOUT tagging when no commits landed since the last
         # tag (the land ref did not move). That is the common case on a docs or
         # workflow commit that touches only the workflow itself, and it is success,
