@@ -105,6 +105,14 @@ where
     cfg_parse::<T>(key).map_err(|e| format!("round-vm: {e}"))
 }
 
+/// One suite slot per vCPU unless the config names a number.
+pub(crate) fn maxpar_or_vcpus(raw: &str, vcpus: u32) -> Result<u32, String> {
+    match raw.trim() {
+        "" => Ok(vcpus),
+        v => v.parse().map_err(|_| format!("round-vm: SPIRA_ROUND_VM_MAXPAR: not a number: {v:?}")),
+    }
+}
+
 /// A round-vm knob `spira/conf.d` does not declare: read straight from the environment, with
 /// its own default — unaffected by the `cfg`/`cfg_parse` migration above.
 fn num_env<T: std::str::FromStr>(key: &str, default: T) -> Result<T, String> {
@@ -153,6 +161,8 @@ impl Config {
             }
         };
         let testenv_registry = Some(must_cfg("SPIRA_TESTENV_REGISTRY")?).filter(|v| !v.is_empty());
+        let vcpus: u32 = must_cfg_parse("SPIRA_ROUND_VM_VCPUS")?;
+        let maxpar = maxpar_or_vcpus(&must_cfg("SPIRA_ROUND_VM_MAXPAR")?, vcpus)?;
         Ok(Config::build(Fields {
             run: must_cfg("SPIRA_RUN")?,
             state_dir: must_cfg("SPIRA_ROUND_VM_STATE_DIR")?,
@@ -163,8 +173,8 @@ impl Config {
             host_pubkey: must_cfg("SPIRA_ROUND_VM_HOST_PUBKEY")?,
             host_addr,
             testenv_registry,
-            vcpus: must_cfg_parse("SPIRA_ROUND_VM_VCPUS")?,
-            maxpar: must_cfg_parse("SPIRA_ROUND_VM_MAXPAR")?,
+            vcpus,
+            maxpar,
             max_retries: must_cfg_parse("SPIRA_ROUND_VM_MAX_RETRIES")?,
             retry_interval_secs: must_cfg_parse("SPIRA_ROUND_VM_RETRY_INTERVAL")?,
             mirror_port: must_cfg_parse("SPIRA_ROUND_VM_MIRROR_PORT")?,
@@ -340,6 +350,14 @@ mod tests {
             stream_every_secs: 10,
             attr_linger_secs: 3600,
         }
+    }
+
+    #[test]
+    fn maxpar_defaults_to_the_vcpu_count() {
+        assert_eq!(maxpar_or_vcpus("", 32).unwrap(), 32);
+        assert_eq!(maxpar_or_vcpus(" ", 32).unwrap(), 32);
+        assert_eq!(maxpar_or_vcpus("8", 32).unwrap(), 8);
+        assert!(maxpar_or_vcpus("x", 32).is_err());
     }
 
     #[test]

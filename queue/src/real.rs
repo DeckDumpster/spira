@@ -609,7 +609,7 @@ impl Scripts for RealScripts {
     fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut {
         // batch-job: the round's lint and suites, bounded by the caller's wall budget
         match Command::new("timeout")
-            .args(["-k", "10", &wall_secs.to_string(), "round-vm", "run"])
+            .args(["-k", "5", &wall_secs.to_string(), "round-vm", "run"])
             .arg(tree)
             .arg("--results-dir")
             .arg(results)

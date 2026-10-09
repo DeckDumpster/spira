@@ -1,7 +1,7 @@
 TYPE=string
 GROUP=round
 DOC=SPIRA_ROUND_VM_MAXPAR — round VMs that may run at once.
-SCHEMA=Maximum round VMs run concurrently (unit: count; default 16; sane range 1-64). Parsed as an integer, so it must not be empty.
+SCHEMA=Maximum round VMs run concurrently (unit: count; default empty = the round VM's vCPU count; sane range 1-64). Empty is valid.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_ROUND_VM_MAXPAR:=16}"
+    : "${SPIRA_ROUND_VM_MAXPAR:=}"
 SPIRA_CONF_DEFAULT_EOF

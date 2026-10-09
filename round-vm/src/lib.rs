@@ -4,6 +4,7 @@ pub mod alarm;
 pub mod ci_yield;
 pub mod cli;
 pub mod config;
+pub mod lpt;
 pub mod pool;
 pub mod procs;
 pub mod provider;
