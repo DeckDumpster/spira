@@ -171,7 +171,7 @@ fn dot(red: bool) -> String {
 
 fn banner(v: &View) -> Vec<String> {
     let mut out = vec![format!(
-        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}",
+        "{B}SPIRA{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 24)) },
@@ -199,13 +199,10 @@ pub fn tree(v: &View) -> Vec<Node> {
 
     // DECIDE: what is waiting on the operator, above everything else; it is never work.
     let asks: Vec<Node> = v.decide.iter().map(|i| Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {}", i.id, i.age, i.title))).collect();
-    out.push(
-        Node::new(
-            "decide",
-            if asks.is_empty() { format!("{B}DECIDE{R} {D}nothing waiting on you{R}") } else { format!("{YEL}{B}DECIDE{R} {B}{}{R} {D}waiting on you{R}", asks.len()) },
-        )
-        .kids(asks),
-    );
+    // Only when something waits on him (per Ryan 2026-10-09).
+    if !asks.is_empty() {
+        out.push(Node::new("decide", format!("{YEL}{B}DECIDE{R} {B}{}{R} {D}waiting on you{R}", asks.len())).kids(asks));
+    }
 
     // DRIFT is an alarm, not a section (per Ryan 2026-10-09): beads whose own commit is on the
     // base while the lifecycle still says READY/REWORK. The content-on-base reconciler closes
@@ -330,7 +327,7 @@ pub fn tree(v: &View) -> Vec<Node> {
         states.push(n);
     }
     states.push(Node::new("state/terminal", format!("{D}terminal 24h  {}{R}", v.terminal)).elide(R_TERMINAL));
-    out.push(Node::new("state", format!("{B}STATE MACHINE{R}  {D}counts now · moves per hour{R}")).kids(states));
+    out.push(Node::new("state", format!("{B}STATES{R}  {D}counts now · moves per hour{R}")).kids(states));
 
     let next = v.next.iter().map(|i| Node::new(format!("next/{}", i.id), format!("{} {:<12} {}", i.prio, i.id, i.title))).collect();
     out.push(
@@ -346,10 +343,12 @@ pub fn tree(v: &View) -> Vec<Node> {
     );
 
     let blocked = v.blocked.iter().map(|i| Node::new(format!("blocked/{}", i.id), format!("{} {:<26} {}", i.prio, i.note, i.title))).collect();
-    out.push(
-        Node::new("blocked", format!("{B}BLOCKED{R} {B}{}{R} {D}READY, waiting on a dependency{R}", v.blocked.len()))
-            .kids(ranked(blocked, &[(3, R_BLOCKED_SOME), (0, R_BLOCKED_ALL)])),
-    );
+    if !v.blocked.is_empty() {
+        out.push(
+            Node::new("blocked", format!("{B}BLOCKED{R} {B}{}{R} {D}READY, waiting on a dependency{R}", v.blocked.len()))
+                .kids(ranked(blocked, &[(3, R_BLOCKED_SOME), (0, R_BLOCKED_ALL)])),
+        );
+    }
 
     let refused = v
         .refused
@@ -767,7 +766,7 @@ mod tests {
         for k in 0..3 {
             assert!(has(&t, &format!("sp-w{k}")), "aeon sp-w{k} missing: {t:#?}");
         }
-        assert!(has(&t, "STATE MACHINE"));
+        assert!(has(&t, "STATES"));
     }
 
     #[test]
@@ -784,7 +783,7 @@ mod tests {
     fn a_pane_shorter_than_the_essentials_still_fits_exactly() {
         let t = text(&layout(&busy_view(), &Ui::default(), 70, 12));
         assert_eq!(t.len(), 12, "{t:#?}");
-        assert!(t[0].contains("LIFECYCLE"));
+        assert!(t[0].contains("SPIRA"));
     }
 
     #[test]
@@ -868,6 +867,15 @@ mod tests {
         let mut ui = Ui::default();
         ui.set("state/REWORK/sp-rw1", Mode::Open);
         assert!(has(&text(&layout(&v, &ui, 100, 200)), "wanted 1 got 0"), "opening the bead shows why");
+    }
+
+    #[test]
+    fn empty_decide_and_blocked_do_not_appear_and_the_names_are_spira_and_states() {
+        let v = busy_view();
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        assert!(t[0].starts_with("SPIRA"), "{}", t[0]);
+        assert!(has(&t, "STATES") && !has(&t, "STATE MACHINE"));
+        assert!(!has(&t, "DECIDE") && !has(&t, "BLOCKED"), "empty sections are not drawn: {t:#?}");
     }
 
     #[test]
