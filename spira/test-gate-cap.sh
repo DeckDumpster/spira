@@ -63,4 +63,14 @@ for _ in $(seq 1 50); do kill -0 "$gp" 2>/dev/null || break; sleep 0.1; done
 kill -0 "$gp" 2>/dev/null && bad "TERM to gate.sh kills the gate" "pid $gp still alive" || ok "TERM to gate.sh kills the gate"
 wait "$gs" 2>/dev/null
 
+echo
+echo "5. the gate runs fenced — idle I/O class and a raised nice value:"
+cat > "$STUB/gate" <<'EOF'
+#!/usr/bin/env bash
+echo "ioclass=$(ionice -p $$) nice=$(nice)" >&2
+EOF
+out="$(bash "$HERE/gate.sh" br repo 2>&1)"
+want "gate child is in the idle I/O class" "ioclass=idle" "$out"
+want "gate child is niced" "nice=10" "$out"
+
 tl_summary
