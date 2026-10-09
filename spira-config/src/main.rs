@@ -514,7 +514,7 @@ fn repo_registry() -> Registry {
     // Named, never searched for: SPIRA_HOME, else the release this runs from — what every
     // launcher sets (resolve::locate_home). Neither is no home, and the config cannot resolve.
     let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
-    Registry::from_env(env_map, &home)
+    Registry::from_env_checkout(env_map, &home)
 }
 
 fn parse_column(s: &str) -> Option<Column> {
