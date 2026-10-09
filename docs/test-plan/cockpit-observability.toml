@@ -315,4 +315,4 @@ bead = "sp-94lbj.2"
 id = "UC-cockpit-observability-51"
 tier = "T2"
 statement = "The ops pane's start command, run as the cockpit starts it, renders once with real values — no '?' placeholders and no STOPPED banner."
-launcher = { site = "cockpit/ops/src/layout.rs", needle = "lc-view loop" }
+launcher = { site = "cockpit/ops/src/layout.rs", needle = "lc-view tui" }
