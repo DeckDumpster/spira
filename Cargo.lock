@@ -237,6 +237,7 @@ name = "cockpit-ops"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "crossterm",
  "libc",
  "regex",
  "serde",

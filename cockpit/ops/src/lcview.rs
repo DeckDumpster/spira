@@ -131,6 +131,15 @@ pub struct BatchRow {
     pub state: String,
     pub last_at: i64,
     pub members: Vec<String>,
+    /// When the round was opened, and the members it has ejected so far (each eject costs the
+    /// round another certification pass).
+    #[serde(default)]
+    pub opened_at: i64,
+    #[serde(default)]
+    pub ejected: Vec<String>,
+    /// When each eject was recorded (open rounds only); ejects minutes apart are one attribution.
+    #[serde(default)]
+    pub eject_at: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -258,6 +267,28 @@ pub struct SmBatch {
     pub red: bool,
 }
 
+/// The open landing round, the first thing the operator looks for (Ryan, 2026-10-09: "what's in
+/// the round? ... i can't see what it's called ... how many attempts ... how long it's been running").
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RoundView {
+    pub name: String,
+    pub state: String,
+    pub age: String,
+    /// Certification passes so far: one, plus one per eject.
+    pub passes: usize,
+    pub ejected: Vec<String>,
+    pub members: Vec<RoundMember>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RoundMember {
+    pub id: String,
+    pub prio: String,
+    pub title: String,
+    /// How many recent rounds have ejected this bead.
+    pub ejects: usize,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct View {
     pub clock: String,
@@ -290,6 +321,7 @@ pub struct View {
     pub terminal: String,
     pub refused: Vec<SmRefusal>,
     pub batch: Vec<SmBatch>,
+    pub round: Option<RoundView>,
 }
 
 const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
@@ -440,7 +472,15 @@ fn batch_block(s: &Snapshot) -> Vec<SmBatch> {
     out
 }
 
-fn age(secs: i64) -> String {
+/// Certification passes a round has taken, as the store knows them: the first, plus one per
+/// attribution (ejects within ten minutes of each other were decided from one red pass).
+pub fn passes(eject_at: &[i64]) -> usize {
+    let mut at = eject_at.to_vec();
+    at.sort();
+    1 + at.windows(2).filter(|w| w[1] - w[0] > 600).count() + usize::from(!at.is_empty())
+}
+
+pub fn age(secs: i64) -> String {
     let s = secs.max(0);
     if s < 90 {
         format!("{s}s")
@@ -453,7 +493,7 @@ fn age(secs: i64) -> String {
     }
 }
 
-fn cut(s: &str, n: usize) -> String {
+pub fn cut(s: &str, n: usize) -> String {
     if s.chars().count() > n {
         format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
     } else {
@@ -523,6 +563,28 @@ pub fn view(s: &Snapshot) -> View {
         .join(" · ");
     v.refused = refusals(s);
     v.batch = batch_block(s);
+    v.round = s
+        .batches
+        .iter()
+        .filter(|b| OPEN_BATCH.contains(&b.state.as_str()))
+        .max_by_key(|b| b.opened_at.max(b.last_at))
+        .map(|b| {
+            let opened = if b.opened_at > 0 { b.opened_at } else { b.last_at };
+            let ejects_of = |id: &str| s.batches.iter().filter(|o| o.ejected.iter().any(|e| e == id)).count();
+            RoundView {
+                name: b.id.clone(),
+                state: b.state.clone(),
+                age: age(s.now - opened),
+                passes: passes(&b.eject_at),
+                ejected: b.ejected.clone(),
+                members: b
+                    .members
+                    .iter()
+                    .filter(|m| !b.ejected.contains(m))
+                    .map(|m| RoundMember { id: m.clone(), prio: prio(m), title: title(m), ejects: ejects_of(m) })
+                    .collect(),
+            }
+        });
 
     let mut by_kind: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for r in s.rows.iter().filter(|r| !r.holds.is_empty() && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED")) {
@@ -1252,7 +1314,7 @@ BATCH
     fn stranded_delivery_is_split_into_open_batch_and_orphaned() {
         let mut s = healthy();
         s.rows = (0..5).map(|i| row(&format!("sp-d{i}"), "IN_DELIVERY", 99_000)).collect();
-        s.batches = vec![BatchRow { id: "r-1".into(), state: "CI_RUNNING".into(), last_at: 99_000, members: vec!["sp-d0".into(), "sp-d1".into()] }];
+        s.batches = vec![BatchRow { id: "r-1".into(), state: "CI_RUNNING".into(), last_at: 99_000, members: vec!["sp-d0".into(), "sp-d1".into()], ..Default::default() }];
         let f = squash(&machine_lines(&s).join("\n"));
         assert!(f.contains("IN_DELIVERY 5 in open batch 2 · orphaned 3 ●"), "{f}");
         s.rows.truncate(2);
@@ -1279,8 +1341,8 @@ BATCH
         let mut s = healthy();
         s.dwell.push(dwell("sp-x", "IN_DELIVERY", 99_000, 1_800));
         s.batches = vec![
-            BatchRow { id: "r-1".into(), state: "GREEN".into(), last_at: 100_000 - 4 * 3600, members: vec![] },
-            BatchRow { id: "r-0".into(), state: "LANDED".into(), last_at: 90_000, members: vec![] },
+            BatchRow { id: "r-1".into(), state: "GREEN".into(), last_at: 100_000 - 4 * 3600, members: vec![], ..Default::default() },
+            BatchRow { id: "r-0".into(), state: "LANDED".into(), last_at: 90_000, members: vec![], ..Default::default() },
         ];
         let f = squash(&plain(&render(&view(&s), 120)));
         assert!(f.contains("GREEN 1 stuck 4h ●"), "{f}");
