@@ -201,7 +201,7 @@ echo "halt tears down a real container recorded in the registry (gap G9)"
 # conf.sh (sourced by landing.sh) unconditionally overwrites PATH with a fixed
 # tail after it — SPIRA_PATH is the one seam it prepends first, and is the mechanism every
 # other suite in this tree already injects a mock command through
-# (test-bd-resolve.sh, test-cadence.sh, and others). A first attempt at this
+# (test-cadence.sh and others). A first attempt at this
 # case that prepended $PATH directly built a stub that was never reachable —
 # conf.sh's own PATH= line discarded it before landing.sh's halt code ever ran.
 BIN_DIR="$TMP/bin"; mkdir -p "$BIN_DIR"
