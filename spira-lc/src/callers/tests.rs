@@ -500,10 +500,18 @@ struct FakeBd {
     /// bead id -> close reason, for beads bd reports closed.
     reasons: BTreeMap<String, String>,
     reopened: Vec<String>,
+    /// ask bead id -> the work beads its `work-bead:` labels name.
+    asks: BTreeMap<String, Vec<String>>,
     down: bool,
 }
 
 impl Bd for FakeBd {
+    fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        Ok(self.asks.get(id).cloned().unwrap_or_default())
+    }
     fn reopen(&mut self, id: &str) -> Result<(), String> {
         if self.down {
             return Err("bd down".into());
@@ -794,6 +802,33 @@ fn close_withdraws_an_open_ask_first_and_names_a_successor() {
     assert_eq!(close(&v(&["sp-c", "--reason", "Superseded by sp-z (landed)"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.state("sp-c"), "SUPERSEDED");
     assert_eq!(f.beads["sp-c"].reason.as_deref(), Some("sp-z"));
+}
+
+#[test]
+fn closing_an_ask_withdraws_the_hold_on_its_work_bead_and_moves_nothing_else() {
+    for state in [BeadState::Submitted, BeadState::Ready, BeadState::Certified] {
+        let mut f = Fake::default();
+        f.bead("sp-w", state).holds.insert(HoldKind::Ask);
+        let mut bd = FakeBd::default();
+        bd.asks.insert("sp-d".into(), vec!["sp-w".into()]);
+        let a = close(&v(&["sp-d", "--reason", "decided"]), &mut f, &mut bd, &mut no_file);
+        assert_eq!(a.code, APPLIED, "{}", a.stderr);
+        assert_eq!(f.beads["sp-w"].state, state, "the work bead keeps its state");
+        assert!(f.beads["sp-w"].holds.is_empty(), "the ask hold is lifted");
+        let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
+        assert_eq!(kinds, vec![r#""AskWithdrawn""#]);
+        assert_eq!(bd.closed.len(), 1);
+    }
+}
+
+#[test]
+fn closing_an_ask_whose_work_bead_has_no_hold_or_no_row_still_closes() {
+    let mut f = Fake::default();
+    f.bead("sp-w", BeadState::Submitted);
+    let mut bd = FakeBd::default();
+    bd.asks.insert("sp-d".into(), vec!["sp-w".into(), "sp-gone".into()]);
+    assert_eq!(close(&v(&["sp-d", "--reason", "decided"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(f.state("sp-w"), "SUBMITTED");
 }
 
 #[test]
