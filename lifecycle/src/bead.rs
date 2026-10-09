@@ -930,7 +930,7 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
 /// of a finished row, not a move of the flow, and is left out.
 fn edge_probes() -> Vec<BeadEventKind> {
     vec![
-        BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 },
+        BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
         BeadEventKind::Release,
         BeadEventKind::HolderDead,
         BeadEventKind::Submit { tip: "t1".into() },
