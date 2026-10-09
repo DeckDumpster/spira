@@ -412,42 +412,16 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express, aeon_phase, disposition, disposition_note, ejected_red_tip, blockers.blocked_by FROM bead \
+        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, blockers.blocked_by FROM bead \
          LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
         blockers_join()
     );
-    let mut beads = match conn.query(&sql) {
+    let beads = match conn.query(&sql) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
-    // One join, not an IN list per 500 beads or a per-row subquery: the covering index
-    // serves it in one pass whatever the result size (0.5 s vs 4.4 s at 12k beads / 100k
-    // events). The join keeps only each bead's current-state row.
-    let q = format!(
-        "SELECT e.lc_key, e.to_state, MAX(e.at) AS since FROM event e JOIN bead b ON b.bead_id = e.lc_key AND b.state = e.to_state WHERE e.machine = 'bead' AND e.applied = 1{} GROUP BY e.lc_key, e.to_state",
-        filters("b.")
-    );
-    let mut since: std::collections::HashMap<(String, String), Value> = std::collections::HashMap::new();
-    match conn.query(&q) {
-        Ok(r) => {
-            for row in r {
-                let k = row.get("lc_key").and_then(Value::as_str).unwrap_or_default().to_string();
-                let st = row.get("to_state").and_then(Value::as_str).unwrap_or_default().to_string();
-                since.insert((k, st), row.get("since").cloned().unwrap_or(Value::Null));
-            }
-        }
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
-    }
     for b in beads.iter_mut() {
         split_blocked_by(b);
-        let key = (
-            b.get("bead_id").and_then(Value::as_str).unwrap_or_default().to_string(),
-            b.get("state").and_then(Value::as_str).unwrap_or_default().to_string(),
-        );
-        let v = since.get(&key).cloned().unwrap_or(Value::Null);
-        if let Some(o) = b.as_object_mut() {
-            o.insert("since".into(), v);
-        }
     }
     (0, serde_json::to_string(&Value::Array(beads)).unwrap())
 }

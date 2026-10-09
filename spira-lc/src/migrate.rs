@@ -1103,6 +1103,7 @@ mod tests {
         assert_eq!(applier_for(GRANTS_SQL, &real, "0003-terminal-holder.sql"), Applier::Service);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0001-stack.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0002-since.sql"), Applier::Admin);
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0016-since-every-state.sql"), Applier::Service);
     }
 
     #[test]
