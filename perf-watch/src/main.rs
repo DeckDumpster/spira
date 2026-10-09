@@ -5,7 +5,7 @@ use perf_watch::{pass, parse_probes, Clock, Runner};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const DEADLINE: Duration = Duration::from_secs(30);
+const DEADLINE: Duration = Duration::from_secs(5);
 
 struct Wall(Instant);
 impl Clock for Wall {
@@ -46,26 +46,32 @@ impl Runner for Spawn {
 }
 
 fn main() {
+    if let Err(e) = run() {
+        eprintln!("{e}");
+        std::process::exit(2);
+    }
+}
+
+const USAGE: &str = "usage: perf-watch --probes FILE [--limit-ms N] [--stats \"CMD\"] [--record FILE]";
+
+fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let (mut probes, mut limit, mut stats, mut record) = (None, 500u64, "spira-lc stats".to_string(), None);
     while let Some(a) = args.next() {
         let v = args.next();
         match (a.as_str(), v) {
             ("--probes", Some(v)) => probes = Some(v),
-            ("--limit-ms", Some(v)) => limit = v.parse().unwrap_or_else(|_| usage()),
+            ("--limit-ms", Some(v)) => limit = v.parse().map_err(|_| USAGE.to_string())?,
             ("--stats", Some(v)) => stats = v,
             ("--record", Some(v)) => record = Some(v),
-            _ => usage(),
+            _ => return Err(USAGE.to_string()),
         }
     }
-    let Some(file) = probes else { usage() };
-    let probes = match std::fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|t| parse_probes(&t)) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("perf-watch: {file}: {e}");
-            std::process::exit(2);
-        }
-    };
+    let Some(file) = probes else { return Err(USAGE.to_string()) };
+    let probes = std::fs::read_to_string(&file)
+        .map_err(|e| e.to_string())
+        .and_then(|t| parse_probes(&t))
+        .map_err(|e| format!("perf-watch: {file}: {e}"))?;
     let stats_argv: Vec<String> = stats.split_whitespace().map(String::from).collect();
     let (timings, lines) = pass(&probes, limit, &stats_argv, &Wall(Instant::now()), &mut Spawn);
     for l in &lines {
@@ -75,9 +81,5 @@ fn main() {
         let body: String = timings.iter().map(|t| format!("{}\t{}\n", t.name, t.millis)).collect();
         let _ = std::fs::write(r, body);
     }
-}
-
-fn usage() -> ! {
-    eprintln!("usage: perf-watch --probes FILE [--limit-ms N] [--stats \"CMD\"] [--record FILE]");
-    std::process::exit(2)
+    Ok(())
 }
