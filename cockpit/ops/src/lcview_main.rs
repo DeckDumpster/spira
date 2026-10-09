@@ -90,7 +90,7 @@ fn gather_state_machine(s: &mut Snapshot) {
                     id: text(&b["batch_id"]),
                     state: text(&b["state"]),
                     last_at: num(&b["last_at"]).or_else(|| num(&b["opened_at"])).unwrap_or(0),
-                    members: b["members"].as_array().map(|m| m.iter().map(|x| text(&x["bead_id"])).collect()).unwrap_or_default(),
+                    members: b["members"].as_array().map(|arr| arr.iter().map(|x| text(&x["bead_id"])).collect()).unwrap_or_default(),
                 })
                 .collect()
         }
