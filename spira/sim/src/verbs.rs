@@ -1,5 +1,5 @@
 use crate::drive::{drive, parse_bead_state, parse_scenario, Exec, NoProbe, Probe, Resumed, Scenario, Stop};
-use crate::trace::{first_divergence, violations, Trace, Violation};
+use crate::trace::{first_divergence, unmet, violations, Trace, Violation};
 use std::path::Path;
 
 const SCENARIO_FILE: &str = "scenario.toml";
@@ -10,6 +10,7 @@ pub struct RunResult {
     pub violations: Vec<Violation>,
     pub goal: Option<String>,
     pub goal_reached: bool,
+    pub unmet: Vec<String>,
 }
 
 impl RunResult {
@@ -22,6 +23,7 @@ impl RunResult {
         if let (Some(g), false) = (&self.goal, self.goal_reached) {
             out.push(format!("goal {g} unreached: seed {}", self.seed));
         }
+        out.extend(self.unmet.iter().map(|n| format!("expectation {n} unmet: seed {}", self.seed)));
         out
     }
 }
@@ -34,9 +36,10 @@ fn load_world(world: &Path) -> Result<(Scenario, u64), String> {
     Ok((sc, seed))
 }
 
-fn finish(world: &Path, seed: u64, goal: Option<String>, goal_reached: bool) -> Result<RunResult, String> {
+fn finish(world: &Path, seed: u64, sc: &Scenario, goal: Option<String>, goal_reached: bool, at_end: bool) -> Result<RunResult, String> {
     let db = Trace::open(world)?.load(world)?;
-    Ok(RunResult { seed, violations: violations(&db)?, goal, goal_reached })
+    let unmet = if at_end { unmet(&db, &sc.expects)? } else { Vec::new() };
+    Ok(RunResult { seed, violations: violations(&db, &sc.invariants)?, goal, goal_reached, unmet })
 }
 
 pub fn run_scenario(world: &Path, text: &str, seed: u64, exec: Box<dyn Exec>, probe: Box<dyn Probe>) -> Result<RunResult, String> {
@@ -46,7 +49,7 @@ pub fn run_scenario(world: &Path, text: &str, seed: u64, exec: Box<dyn Exec>, pr
     std::fs::write(world.join(SEED_FILE), seed.to_string()).map_err(|e| e.to_string())?;
     let trace = Trace::create(world)?;
     let report = drive(&sc, seed, exec, probe, Some(&trace), &[], &Stop::Goal)?;
-    finish(world, seed, sc.goal, report.goal_reached)
+    finish(world, seed, &sc, sc.goal.clone(), report.goal_reached, true)
 }
 
 pub fn parse_until(spec: &str) -> Result<Stop, String> {
@@ -64,7 +67,7 @@ pub fn step_world(world: &Path, until: Option<Stop>, exec: Box<dyn Exec>, probe:
     let resume = trace.events()?;
     let stop = until.unwrap_or(Stop::Events(1));
     let report = drive(&sc, seed, exec, probe, Some(&trace), &resume, &stop)?;
-    finish(world, seed, sc.goal.filter(|_| matches!(stop, Stop::Goal)), report.goal_reached)
+    finish(world, seed, &sc, sc.goal.clone().filter(|_| matches!(stop, Stop::Goal)), report.goal_reached, matches!(stop, Stop::Goal))
 }
 
 /// Re-derives the world's run from `seed` and reports the first event that differs from the recorded one.

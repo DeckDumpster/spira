@@ -150,3 +150,55 @@ fn step_resumes_without_re_executing_recorded_events() {
     assert_eq!(Trace::open(&w).unwrap().events().unwrap().len(), 5);
     assert!(more.get() <= 1, "only the new event may execute, ran {}", more.get());
 }
+
+fn go_text(text: &str, w: &Path, seed: u64, landed_at: u32) -> spira_sim::verbs::RunResult {
+    run_scenario(w, text, seed, Box::new(Count(Rc::default())), Box::new(Script { snaps: 0, landed_at, broken: false })).unwrap()
+}
+
+#[test]
+fn a_settle_keeps_the_run_going_after_the_goal_and_replays_clean() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
+    let text = SCENARIO.replacen("horizon = 600", "horizon = 600\nsettle = 250", 1);
+    let w = world("sim-verbs-settle");
+    let r = go_text(&text, &w, 7, 3);
+    let events = Trace::open(&w).unwrap().events().unwrap();
+    let goal_at = events[2]["vtime"].as_u64().unwrap();
+    assert!(r.goal_reached && r.failures().is_empty(), "{:?}", r.failures());
+    assert!(events.len() > 3, "events after the goal are traced");
+    assert!(events.iter().all(|e| e["vtime"].as_u64().unwrap() <= goal_at + 250), "and none past the settle");
+    assert_eq!(replay_world(&w, 7).unwrap(), None);
+}
+
+#[test]
+fn an_expectation_failing_is_reported_by_name_with_the_seed() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
+    let text = format!("{SCENARIO}\n[[expect]]\nname = \"landed_once\"\nsql = \"SELECT 1 FROM bead_state WHERE lc_state = 'LANDED'\"\n");
+    let met = go_text(&text, &world("sim-verbs-expect-met"), 7, 3);
+    assert!(met.failures().is_empty(), "{:?}", met.failures());
+    let never = go_text(&text, &world("sim-verbs-expect-unmet"), 9, 10_000);
+    assert_eq!(never.failures(), vec!["goal sp-x:LANDED unreached: seed 9".to_string(), "expectation landed_once unmet: seed 9".to_string()]);
+}
+
+#[test]
+fn a_step_that_exits_outside_the_contract_trips_the_scenarios_own_invariant() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
+    struct Exit(i32);
+    impl Exec for Exit {
+        fn run(&mut self, c: &str, _: u64) -> Result<i32, String> {
+            Ok(if c == "poke" { self.0 } else { 0 })
+        }
+    }
+    let text = format!("{SCENARIO}\n[[invariant]]\nname = \"step_failed\"\nsql = \"SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)\"\n");
+    let run = |code: i32, name: &str| run_scenario(&world(name), &text, 7, Box::new(Exit(code)), Box::new(Script { snaps: 0, landed_at: 100_000, broken: false })).unwrap();
+    for ok in [0, 3] {
+        assert!(run(ok, "sim-verbs-step-ok").violations.is_empty());
+    }
+    let bad = run(9, "sim-verbs-step-bad");
+    assert_eq!(bad.violations.iter().map(|v| v.view.as_str()).collect::<Vec<_>>(), vec!["scn_step_failed"]);
+}

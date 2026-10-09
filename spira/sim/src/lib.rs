@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod ci;
 pub mod drive;
 pub mod gh;
 pub mod jq;

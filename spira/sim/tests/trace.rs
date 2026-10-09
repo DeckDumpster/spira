@@ -22,7 +22,7 @@ fn hits(events: &[Event], beads: Vec<Value>) -> Vec<(String, u64)> {
     }
     t.snapshot(1, &Snapshot { beads, ..Default::default() }).unwrap();
     let db = t.load(&w).unwrap();
-    violations(&db).unwrap().into_iter().map(|v| (v.view, v.seq)).collect()
+    violations(&db, &[]).unwrap().into_iter().map(|v| (v.view, v.seq)).collect()
 }
 
 fn only(view: &str, seq: u64) -> Vec<(String, u64)> {
@@ -110,4 +110,43 @@ fn unknown_probe_field_is_refused() {
     }
     assert!(bead_row(&json!({"bead": "x", "lc_stat": "READY"})).is_err());
     assert!(bead_row(&json!({"lc_state": "READY"})).is_err());
+}
+
+fn sql(name: &str, q: &str) -> spira_sim::drive::SqlDef {
+    spira_sim::drive::SqlDef { name: name.into(), sql: q.into() }
+}
+
+fn traced(events: &[Event], beads: Vec<Value>) -> (testkit::TempDir, std::path::PathBuf) {
+    let w = testkit::TempDir::new("sim-trace-own");
+    let t = Trace::create(&w).unwrap();
+    for e in events {
+        t.event(e).unwrap();
+    }
+    t.snapshot(1, &Snapshot { beads, ..Default::default() }).unwrap();
+    let db = t.load(&w).unwrap();
+    (w, db)
+}
+
+#[test]
+fn a_scenarios_own_invariant_reports_its_rows_under_its_own_name() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
+    let (_w, db) = traced(&[ev(1, 10, "step", "step1", None)], vec![bead(json!({"lc_state": "SUBMITTED"}))]);
+    let own = [sql("submitted_is_unwanted", "SELECT seq, bead FROM bead_state WHERE lc_state = 'SUBMITTED'")];
+    let v = violations(&db, &own).unwrap();
+    assert_eq!(v.iter().map(|v| (v.view.as_str(), v.seq)).collect::<Vec<_>>(), vec![("scn_submitted_is_unwanted", 1)]);
+    let none = [sql("landed_is_unwanted", "SELECT seq FROM bead_state WHERE lc_state = 'LANDED'")];
+    assert!(violations(&db, &none).unwrap().is_empty());
+}
+
+#[test]
+fn an_expectation_is_unmet_exactly_when_its_query_returns_no_row() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
+    let (_w, db) = traced(&[ev(1, 10, "step", "step1", None)], vec![bead(json!({"lc_state": "CERTIFIED"}))]);
+    let met = sql("certified", "SELECT 1 FROM bead_state WHERE lc_state = 'CERTIFIED'");
+    let unmet = sql("landed", "SELECT 1 FROM bead_state WHERE lc_state = 'LANDED'");
+    assert_eq!(spira_sim::trace::unmet(&db, &[met, unmet]).unwrap(), vec!["landed".to_string()]);
 }
