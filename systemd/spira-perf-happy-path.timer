@@ -3,6 +3,7 @@ Description=Time the sim happy path hourly
 
 [Timer]
 OnBootSec=20min
+OnActiveSec=20min
 OnUnitActiveSec=1h
 AccuracySec=1min
 Persistent=true
