@@ -27,7 +27,7 @@ _cc_init_done=1
 trap - EXIT
 
 # A citation ends at a non-id character: sp-ow-mail is one hyphenated token, not the id sp-ow.
-BEAD_ID_RE='(?<![A-Za-z0-9_-])sp-[a-z0-9]++(\.[0-9]++)*+(?![A-Za-z0-9_]|-[A-Za-z0-9])'
+BEAD_ID_RE="(?<![A-Za-z0-9_-])${SPIRA_ID_PREFIX:-sp}-[a-z0-9]++(\\.[0-9]++)*+(?![A-Za-z0-9_]|-[A-Za-z0-9])"
 
 # bead_ids_present <ids...> -> the subset that resolve in the store, one per line.
 # Empty stdin/output from `bd show` (a store that could not be reached at all) is

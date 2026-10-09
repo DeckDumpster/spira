@@ -81,6 +81,14 @@ want "REOPENS fires at 3" "REOPENS 3" "$out"
 case "$out" in *CHURN*) bad=1 ;; *) bad=0 ;; esac
 is "REOPENS alone does not raise CHURN" "0" "$bad"
 
+printf 'guardian/ifrit: claimed xx-test2\n' > "$TMP/claims"
+: > "$TMP/run/xx-test2.log"; touch -d '-40 min' "$TMP/run/xx-test2.log"
+tl_config SPIRA_ID_PREFIX=xx
+out="$(run --show)"
+tl_config SPIRA_ID_PREFIX=sp
+want "a non-sp prefix finds the claimed bead" "xx-test2" "$out"
+want "and its stalled log is flagged" "STALL" "$out"
+
 : > "$TMP/claims"
 want "an unclaimed aeon is not a stall" "no claim seen yet" "$(run --show)"
 

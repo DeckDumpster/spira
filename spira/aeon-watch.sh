@@ -25,6 +25,7 @@ TEST_MIN="${AEON_WATCH_TEST_MIN:-15}"
 CHURN_MIN_COUNT="${AEON_WATCH_CHURN_COUNT:-5}"
 REOPEN_MIN_COUNT="${AEON_WATCH_REOPEN_COUNT:-3}"
 WINDOW="${AEON_WATCH_WINDOW:-600}"
+ID_PREFIX="${SPIRA_ID_PREFIX:-sp}"
 
 _aw_unit_of() {
     sed -n 's#.*/\([^/]*\.service\).*#\1#p' "$PROC/$1/cgroup" 2>/dev/null | head -1
@@ -46,9 +47,9 @@ _aw_tick() {
         n=$((n + 1))
         st="$(systemctl --user show "$u" -p ActiveEnterTimestamp --value 2>/dev/null)"
         stS="$(date -d "$st" +%s 2>/dev/null || echo "$now")"
-        who="$(timeout 5 journalctl --user -u "$u" --since "@$stS" -g '(claiming|claimed|resuming) sp-' -o cat --no-pager 2>/dev/null \
-            | grep -oE '[a-z]+/[a-z]+: (claiming|claimed|resuming) sp-[a-z0-9.]+' | tail -1)"
-        bead="$(printf '%s' "$who" | grep -oE 'sp-[a-z0-9.]+')"
+        who="$(timeout 5 journalctl --user -u "$u" --since "@$stS" -g "(claiming|claimed|resuming) $ID_PREFIX-" -o cat --no-pager 2>/dev/null \
+            | grep -oE "[a-z]+/[a-z]+: (claiming|claimed|resuming) $ID_PREFIX-[a-z0-9.]+" | tail -1)"
+        bead="$(printf '%s' "$who" | grep -oE "$ID_PREFIX-[a-z0-9.]+")"
         fayth="${who%%:*}"
         age=$(( (now - stS) / 60 )); idle="?"; flag=""
         if [ -n "$bead" ] && [ -f "$SPIRA_RUN/$bead.log" ]; then
