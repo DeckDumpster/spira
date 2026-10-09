@@ -19,11 +19,11 @@ use crate::rows;
 const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
-fn flag(args: &[String], name: &str) -> Option<String> {
+pub fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
-fn q(s: &str) -> String {
+pub fn q(s: &str) -> String {
     format!("'{}'", rows::escape(s))
 }
 
@@ -54,7 +54,7 @@ fn parse_ids(s: &str) -> Vec<String> {
 }
 
 /// A lifecycle key: `sp-` then a non-empty tail of alphanumerics, `.`, `-` or `_` — prose and bare prefixes are not.
-fn is_row_key(x: &str) -> bool {
+pub fn is_row_key(x: &str) -> bool {
     x.len() > 3
         && x[..3].eq_ignore_ascii_case("sp-")
         && x[3..].chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))

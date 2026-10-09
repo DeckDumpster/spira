@@ -16,6 +16,7 @@ GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.bead TO 'spira_lc'@'%';
 GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.delivery TO 'spira_lc'@'%';
 GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.batch TO 'spira_lc'@'%';
 GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.batch_member TO 'spira_lc'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';
 
 -- The load-bearing line: INSERT and SELECT only. No UPDATE, no DELETE — verified to hold
 -- in Dolt as a table-level grant (design §3.3's throwaway-server findings, 2026-09-26).
@@ -36,6 +37,7 @@ GRANT SELECT ON spira_lifecycle.bead TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.delivery TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.batch TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.batch_member TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.`event` TO 'spira_lc_ro'@'%';
 
 -- The ops read model (migrations/0007-ops-read-model.sql): the views the panes read. spira_lc

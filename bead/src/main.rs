@@ -1047,6 +1047,7 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
         }
     }
 
+    let (id_for_mirror, depid_for_mirror) = (id.clone(), depid.clone());
     let mut call = s(&["dep", "add"]);
     call.push(id);
     call.push(depid);
@@ -1055,7 +1056,41 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
         call.push(t.clone());
     }
     call.extend(rest);
-    bdq_status(home, &call)
+    let rc = bdq_status(home, &call);
+    if rc == 0 {
+        mirror_dep("dep-add", &id_for_mirror, &depid_for_mirror, dep_type.as_deref().map(dep_type_name));
+    }
+    rc
+}
+
+/// bd's spellings of a `blocks` edge, normalised to the name the lifecycle store records.
+fn dep_type_name(t: &str) -> &str {
+    if is_blocks_type(Some(t)) {
+        "blocks"
+    } else {
+        t
+    }
+}
+
+/// Mirror one dependency edge into the lifecycle store, which `ops_live` reads for `claimable`
+/// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
+/// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
+fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
+    let mut args = vec!["30".to_string(), "spira-lc".into(), verb.into(), id.into(), depid.into()];
+    if let Some(t) = dep_type {
+        args.extend(["--type".to_string(), t.to_string()]);
+    }
+    // batch-job: one point write, bounded by timeout(1)
+    let done = Command::new("timeout")
+        .args(&args)
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if !done.is_ok_and(|s| s.success()) {
+        eprintln!("bead: {verb}: {id} -> {depid} is in bd but was not mirrored to the lifecycle store; `spira-lc backfill-deps --force` repairs it");
+    }
 }
 
 // =========================================================================================
@@ -1141,6 +1176,7 @@ fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
 
     let rc = bdq_status(home, &s(&["dep", "remove", &id, &depid]));
     if rc == 0 {
+        mirror_dep("dep-remove", &id, &depid, None);
         println!("removed edge: {id} -> {depid}");
     }
     rc
