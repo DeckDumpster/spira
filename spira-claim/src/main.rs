@@ -393,20 +393,6 @@ fn read_ready(a: &Args, env: &mut Env) -> Result<Vec<ReadyRow>, Outcome> {
     rank::parse_ready(&text).map_err(Outcome::cannot_tell)
 }
 
-/// The lifecycle rows the epic lookup reads a child's progress from (sp-mve9i: a work bead's
-/// state is its row, never bd's status). `known` is a snapshot the caller already holds
-/// (machine-mode `select`). Otherwise `spira-lc list` is read, and a machine that cannot
-/// answer is cannot-tell — never a guess from bd, which would be the very read this replaces
-/// (DESIGN.md §6a).
-fn epic_lc(st: &Store, known: Option<&HashMap<String, LifecycleRow>>) -> Result<HashMap<String, LifecycleRow>, Outcome> {
-    if let Some(m) = known {
-        return Ok(m.clone());
-    }
-    st.lifecycle_snapshot()
-        .and_then(|t| rank::parse_lifecycle(&t))
-        .map_err(|e| Outcome::cannot_tell(format!("epic lookup: lifecycle snapshot: {e} (the machine must answer)")))
-}
-
 fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
     let parents = rank::parents(rows);
     if parents.is_empty() {
@@ -415,14 +401,16 @@ fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow], known: Option<&HashMap<S
     let s = store(a, &env.config).map_err(Outcome::usage)?;
     let epics = s.list_by_ids(&parents).map_err(Outcome::cannot_tell)?;
     let prio = epics.iter().map(|e| (e.id.clone(), e.priority.unwrap_or(99))).collect();
-    let lc = epic_lc(&s, known)?;
-    let mut started = Vec::new();
+    let mut kids_of = Vec::new();
     for p in &parents {
-        let kids = s.children(p).map_err(Outcome::cannot_tell)?;
-        if rank::epic_started(&kids, &lc) {
-            started.push(p.clone());
-        }
+        kids_of.push((p.clone(), s.children(p).map_err(Outcome::cannot_tell)?));
     }
+    // A child's progress is its lifecycle row (never bd's status); a machine that cannot
+    // answer is cannot-tell, and only the children's own rows are asked for.
+    let mut lc = known.cloned().unwrap_or_default();
+    let missing: Vec<String> = kids_of.iter().flat_map(|(_, k)| k.iter().map(|c| c.id.clone())).filter(|id| !lc.contains_key(id)).collect();
+    lc.extend(s.lifecycle_of(&missing).map_err(|e| Outcome::cannot_tell(format!("epic lookup: lifecycle rows: {e} (the machine must answer)")))?);
+    let started = kids_of.into_iter().filter(|(_, kids)| rank::epic_started(kids, &lc)).map(|(p, _)| p).collect();
     Ok(EpicLookup { prio, started })
 }
 
@@ -476,11 +464,13 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(s) => s,
             Err(e) => return Outcome::usage(e),
         };
-        let lc_text = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin),
-            None => st.lifecycle_snapshot(),
+        let mut ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        ids.extend(rank::all_blockers(&rows));
+        let lc_rows = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
+            None => st.lifecycle_of(&ids),
         };
-        let lc = match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+        let lc = match lc_rows {
             Ok(m) => m,
             Err(e) => {
                 return Outcome::cannot_tell(format!(
@@ -575,17 +565,21 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         },
         Err(e) => return Outcome::cannot_tell(format!("{bead}: {e}")),
     };
+    let wanted = rank::blockers(&cand);
     let lc = {
-        let lc_text = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin),
-            None => st.lifecycle_snapshot(),
+        let lc_rows = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
+            None => {
+                let mut ids = wanted.clone();
+                ids.push(bead.clone());
+                st.lifecycle_of(&ids)
+            }
         };
-        match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+        match lc_rows {
             Ok(m) => m,
             Err(e) => return Outcome::cannot_tell(format!("{bead}: lifecycle snapshot: {e}")),
         }
     };
-    let wanted = rank::blockers(&cand);
     let recs = match a.get("--blocker-records") {
         Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
         None if wanted.is_empty() => Ok(Vec::new()),
@@ -834,7 +828,7 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
     let st = store(a, &env.config)?;
-    let lc = rank::parse_lifecycle(&st.lifecycle_snapshot()?)?;
+    let mut lc = st.lifecycle_in_states(&["READY", "REWORK"])?;
     let ids = ready::lifecycle_ready_ids(&lc);
     let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
     let mut rows = if ids.is_empty() { Vec::new() } else { st.list_by_ids(&ids)? };
@@ -843,6 +837,8 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let wanted = rank::all_blockers(&rows);
     let recs = if wanted.is_empty() { Vec::new() } else { st.list_by_ids(&wanted)? };
     let bd = rank::index_rows(recs);
+    let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
+    lc.extend(st.lifecycle_of(&blocker_rows)?);
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
     Ok(rows.into_iter().filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. })).collect())
 }
@@ -1083,14 +1079,14 @@ fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {
         events_by.entry(r.issue_id.clone()).or_default().push(r);
     }
     let lc = {
-        let lc_text = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin),
+        let lc_rows = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
             None => match store(a, &env.config) {
-                Ok(s) => s.lifecycle_snapshot(),
+                Ok(s) => s.lifecycle_of(&ids),
                 Err(e) => return Outcome::usage(e),
             },
         };
-        match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+        match lc_rows {
             Ok(m) => m,
             Err(e) => return Outcome::cannot_tell(format!("lifecycle snapshot: {e} (the machine must answer)")),
         }
