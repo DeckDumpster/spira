@@ -535,7 +535,7 @@ impl World for Real {
     }
 
     fn git_hooks_path(&self, repo: &Path) -> Option<String> {
-        let o = std::process::Command::new("git").arg("-C").arg(repo).args(["config", "--get", "core.hooksPath"]).output().ok()?;
+        let o = std::process::Command::new("timeout").arg("5").arg("git").arg("-C").arg(repo).args(["config", "--get", "core.hooksPath"]).output().ok()?;
         let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
         (o.status.success() && !v.is_empty()).then_some(v)
     }
