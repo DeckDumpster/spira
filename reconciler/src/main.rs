@@ -1324,6 +1324,36 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
     if sha.is_empty() {
         return unobservable(format!("{} does not resolve in {}", MAIN_REF, repo_str));
     }
+    let cache_path = paths::main_health_cache(&cfg.spira_run);
+    let mut cache: serde_json::Map<String, serde_json::Value> = fs::read_to_string(&cache_path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let cached = |cache: &serde_json::Map<String, serde_json::Value>, class: &str| -> Option<RawStatus> {
+        let e = cache.get(class)?;
+        if e.get("sha")?.as_str()? != sha {
+            return None;
+        }
+        match e.get("observed").and_then(|o| o.as_str()) {
+            None => Some(RawStatus::Satisfied),
+            Some(observed) => Some(RawStatus::Gap {
+                desired: format!("{} passes on {}", class, MAIN_REF),
+                observed: observed.to_string(),
+                since_hint: None,
+            }),
+        }
+    };
+    let fences = base_fences(cfg, "", &sha);
+    if fences.iter().all(|f| cached(&cache, f.class).is_some()) {
+        return fences
+            .iter()
+            .map(|f| Check {
+                key: format!("main-health:{}", f.class),
+                raw: cached(&cache, f.class).expect("checked above"),
+                remedy: Remedy::Escalate,
+            })
+            .collect();
+    }
     let tree = paths::main_health_tree(&cfg.spira_run);
     let tree_str = tree.to_string_lossy().to_string();
     let _ = run_cmd_ok(git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
@@ -1356,8 +1386,20 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
                 reason: format!("{} exit {} on {}", fence.program, o.status.code().unwrap_or(-1), sha),
             },
         };
+        match &raw {
+            RawStatus::Satisfied => {
+                cache.insert(fence.class.to_string(), serde_json::json!({ "sha": sha }));
+            }
+            RawStatus::Gap { observed, .. } => {
+                cache.insert(fence.class.to_string(), serde_json::json!({ "sha": sha, "observed": observed }));
+            }
+            _ => {
+                cache.remove(fence.class);
+            }
+        }
         checks.push(Check { key: format!("main-health:{}", fence.class), raw, remedy: Remedy::Escalate });
     }
+    let _ = fs::write(&cache_path, serde_json::Value::Object(cache).to_string());
     let _ = run_cmd_ok(git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
     let _ = fs::remove_dir_all(&tree);
     checks
@@ -1555,6 +1597,15 @@ fn run_hold_sweep(cfg: &Config, pending: &mut PendingMap) {
 // Main pass
 // ──────────────────────────────────────────────────────────────────────────────
 
+fn observed(cfg: &Config, name: &str, observe: impl FnOnce() -> Vec<Check>) -> Vec<Check> {
+    log_print(cfg, &format!("reconciler: invariant {name}: observing"));
+    let started = clock::now_secs(&cfg.seams.date);
+    let checks = observe();
+    let took = clock::now_secs(&cfg.seams.date).saturating_sub(started);
+    log_print(cfg, &format!("reconciler: invariant {name}: {} check(s), {took}s", checks.len()));
+    checks
+}
+
 fn run_pass() -> Result<(), String> {
     let cfg = Config::from_process(Seams::production())?.with_desired_state();
 
@@ -1579,24 +1630,24 @@ fn run_pass() -> Result<(), String> {
     let mut alerted = load_alerted(&cfg.alerted_path);
 
     let mut checks = Vec::new();
-    checks.extend(observe_units(&cfg));
-    checks.extend(observe_fleet(&cfg));
-    checks.push(observe_cockpit(&cfg));
-    checks.push(observe_release(&cfg));
-    checks.extend(observe_disk(&cfg));
-    checks.extend(observe_queue_mergeable(&cfg));
-    checks.extend(observe_queue_lock_age(&cfg));
-    let stranded = observe_queue_stranded_runs(&cfg);
+    checks.extend(observed(&cfg, "units", || observe_units(&cfg)));
+    checks.extend(observed(&cfg, "fleet", || observe_fleet(&cfg)));
+    checks.extend(observed(&cfg, "cockpit", || vec![observe_cockpit(&cfg)]));
+    checks.extend(observed(&cfg, "release", || vec![observe_release(&cfg)]));
+    checks.extend(observed(&cfg, "disk", || observe_disk(&cfg)));
+    checks.extend(observed(&cfg, "queue-mergeable", || observe_queue_mergeable(&cfg)));
+    checks.extend(observed(&cfg, "queue-lock-age", || observe_queue_lock_age(&cfg)));
+    let stranded = observed(&cfg, "queue-stranded-runs", || observe_queue_stranded_runs(&cfg));
     state.retain(|k, _| !k.starts_with(STRANDED_RUN_PREFIX) || stranded.iter().any(|c| &c.key == k));
     checks.extend(stranded);
-    checks.push(observe_lc_orphans(&cfg));
-    let junk = observe_junk_rows(&cfg);
+    checks.extend(observed(&cfg, "lc-orphans", || vec![observe_lc_orphans(&cfg)]));
+    let junk = observed(&cfg, "junk-row", || observe_junk_rows(&cfg));
     state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
     checks.extend(junk);
-    let epic_edges = observe_epic_edges(&cfg);
+    let epic_edges = observed(&cfg, "epic-edges", || observe_epic_edges(&cfg));
     state.retain(|k, _| !k.starts_with(EPIC_EDGE_PREFIX) || epic_edges.iter().any(|c| &c.key == k));
     checks.extend(epic_edges);
-    checks.extend(observe_main_health(&cfg));
+    checks.extend(observed(&cfg, "main-health", || observe_main_health(&cfg)));
 
     remind_due_suspensions(&cfg, &load_ctrl(&cfg));
 
@@ -2214,6 +2265,22 @@ mod tests {
         assert!(matches!(&by_key["main-health:lifecycle-guard"], RawStatus::Gap { observed, .. } if observed.contains("main-health-lifecycle-guard.log")));
         assert!(fs::read_to_string(dir.join("main-health-lifecycle-guard.log")).unwrap().contains("planted violation"));
         assert!(!dir.join("main-health-tree").exists(), "the scratch checkout is removed");
+
+        let ran = dir.join("ran");
+        let tripwire = dir.join("tripwire");
+        testkit::write_exe(&tripwire, &format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", ran.display()));
+        let again = Config {
+            seams: Seams {
+                lint: tripwire.to_string_lossy().to_string(),
+                guard: tripwire.to_string_lossy().to_string(),
+                ..cfg.seams.clone()
+            },
+            ..cfg
+        };
+        let second: std::collections::BTreeMap<String, RawStatus> =
+            observe_main_health(&again).into_iter().map(|c| (c.key, c.raw)).collect();
+        assert_eq!(second, by_key, "an unchanged landing ref keeps its verdicts");
+        assert!(!ran.exists(), "no fence re-runs on a sha already judged");
     }
 
     fn stub_mail_seams(mail: &Path) -> Seams {
