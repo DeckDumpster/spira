@@ -32,7 +32,8 @@ echo hi > "$W/wt-$B/h.txt"; git -C "$W/wt-$B" add h.txt
 git -C "$W/wt-$B" -c user.name=a -c user.email=a@a commit -q -m "$B: sim commit"
 run bash -c "cd $W/wt-$B && SPIRA_WORK_BEAD_ID=$B work submit"
 show $B
-for i in 1 2 3; do
+TN=14 CW=1500 run landing-pass land
+for i in 1; do
 for cmd in "landing-pass land" "gate-worker run" "batcher rounds" "queue step --all" "queue publish-settle"; do
   run $cmd
   show $B
