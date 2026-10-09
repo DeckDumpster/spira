@@ -192,6 +192,16 @@ fn banner(v: &View) -> Vec<String> {
 pub fn tree(v: &View) -> Vec<Node> {
     let mut out = Vec::new();
 
+    // DECIDE: what is waiting on the operator, above everything else; it is never work.
+    let asks: Vec<Node> = v.decide.iter().map(|i| Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {}", i.id, i.age, i.title))).collect();
+    out.push(
+        Node::new(
+            "decide",
+            if asks.is_empty() { format!("{B}DECIDE{R} {D}nothing waiting on you{R}") } else { format!("{YEL}{B}DECIDE{R} {B}{}{R} {D}waiting on you{R}", asks.len()) },
+        )
+        .kids(asks),
+    );
+
     out.push(match &v.round {
         None => Node::new("round", format!("{B}ROUND{R}  {D}none open{R}")),
         Some(r) => {

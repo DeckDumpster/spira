@@ -40,6 +40,9 @@ pub struct Row {
 pub struct Meta {
     pub title: String,
     pub priority: Option<i64>,
+    /// The bead's labels; `needs-ryan` marks a question waiting on the operator, never work.
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 /// The tail of one aeon's session log: its last meaningful lines and the log's mtime.
@@ -155,6 +158,10 @@ pub struct Snapshot {
     pub ceiling: usize,
     /// Log tails of WORKING beads, by bead id; a bead with no log is absent.
     pub tails: HashMap<String, Tail>,
+    /// The label that marks a question for the operator (SPIRA_ASK_LABEL); such a bead is in
+    /// DECIDE, never counted as work.
+    #[serde(default)]
+    pub ask_label: String,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
     #[serde(default)]
@@ -326,6 +333,8 @@ pub struct View {
     pub refused: Vec<SmRefusal>,
     pub batch: Vec<SmBatch>,
     pub round: Option<RoundView>,
+    /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
+    pub decide: Vec<Item>,
 }
 
 const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
@@ -667,10 +676,14 @@ pub fn view(s: &Snapshot) -> View {
     v.rework_items = rw.iter().map(|r| item(r, r.updated_at, r.reason.clone().unwrap_or_default())).collect();
 
     let blocked_row = |r: &Row| r.blocker.as_deref().is_some_and(|b| !b.is_empty());
+    let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.iter().any(|l| *l == s.ask_label));
+    let mut asks: Vec<&Row> = s.rows.iter().filter(|r| is_ask(&r.id) && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED" | "DONE")).collect();
+    asks.sort_by_key(|r| r.since);
+    v.decide = asks.iter().map(|r| item(r, r.since, String::new())).collect();
     let mut nx: Vec<&Row> = ready
         .iter()
         .copied()
-        .filter(|r| r.claimable.unwrap_or(r.holds.is_empty() && !s.on_base.contains_key(&r.id)) && !blocked_row(r))
+        .filter(|r| r.claimable.unwrap_or(r.holds.is_empty() && !s.on_base.contains_key(&r.id)) && !blocked_row(r) && !is_ask(&r.id))
         .collect();
     nx.sort_by_key(|r| (!r.rework, s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
     v.blocked = ready
@@ -987,6 +1000,20 @@ mod tests {
         Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, ..Default::default() }
     }
 
+    #[test]
+    fn a_question_for_the_operator_is_in_decide_and_never_counted_as_claimable_work() {
+        let mut s = snap(vec![row("sp-ask1", "READY", 90_000), row("sp-work1", "READY", 91_000), row("sp-done-ask", "DROPPED", 80_000)]);
+        s.ask_label = "fixture-ask-label".into();
+        for id in ["sp-ask1", "sp-done-ask"] {
+            s.meta.insert(id.into(), Meta { title: "Statute: something".into(), priority: Some(2), labels: vec![s.ask_label.clone()] });
+        }
+        s.meta.insert("sp-work1".into(), Meta { title: "real work".into(), priority: Some(1), ..Default::default() });
+        let v = view(&s);
+        assert_eq!(v.decide.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-ask1"], "open asks only");
+        assert_eq!(v.next_count, 1, "only the work bead is claimable");
+        assert_eq!(v.next[0].id, "sp-work1");
+    }
+
     fn plain(lines: &[String]) -> String {
         let re = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
         lines.iter().map(|l| re.replace_all(l, "").into_owned()).collect::<Vec<_>>().join("\n")
@@ -1006,8 +1033,8 @@ mod tests {
         let mut held = row("sp-held", "READY", 10);
         held.holds = vec!["ask".into()];
         let mut s = snap(vec![row("sp-low", "READY", 1), row("sp-high", "READY", 5), held, row("sp-landed", "LANDED", 3)]);
-        s.meta.insert("sp-low".into(), Meta { title: "low".into(), priority: Some(2) });
-        s.meta.insert("sp-high".into(), Meta { title: "high".into(), priority: Some(0) });
+        s.meta.insert("sp-low".into(), Meta { title: "low".into(), priority: Some(2), ..Default::default() });
+        s.meta.insert("sp-high".into(), Meta { title: "high".into(), priority: Some(0), ..Default::default() });
         let v = view(&s);
         assert_eq!(v.next_count, 2);
         assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-high", "sp-low"]);
@@ -1104,8 +1131,8 @@ mod tests {
         bl.blocker = Some("sp-o4s4t4".into());
         bl.claimable = Some(false);
         let mut s = snap(vec![fresh, rw, no, bl]);
-        s.meta.insert("sp-fresh".into(), Meta { title: "f".into(), priority: Some(0) });
-        s.meta.insert("sp-rw".into(), Meta { title: "r".into(), priority: Some(2) });
+        s.meta.insert("sp-fresh".into(), Meta { title: "f".into(), priority: Some(0), ..Default::default() });
+        s.meta.insert("sp-rw".into(), Meta { title: "r".into(), priority: Some(2), ..Default::default() });
         let v = view(&s);
         assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-rw", "sp-fresh"]);
         assert_eq!(v.next_count, 2);
@@ -1195,7 +1222,7 @@ mod tests {
     #[test]
     fn the_snapshot_survives_a_round_trip_through_the_file_loom_reads() {
         let mut s = snap(vec![row("sp-a", "READY", 1)]);
-        s.meta.insert("sp-a".into(), Meta { title: "t".into(), priority: Some(1) });
+        s.meta.insert("sp-a".into(), Meta { title: "t".into(), priority: Some(1), ..Default::default() });
         let back: Snapshot = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(serde_json::to_string(&view(&back)).unwrap(), serde_json::to_string(&view(&s)).unwrap());
     }

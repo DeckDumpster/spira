@@ -173,7 +173,11 @@ fn gather() -> Snapshot {
         Ok(v) => {
             for b in v.as_array().cloned().unwrap_or_default() {
                 if let Some(id) = b["id"].as_str() {
-                    s.meta.insert(id.into(), Meta { title: b["title"].as_str().unwrap_or("").into(), priority: num(&b["priority"]) });
+                    s.meta.insert(id.into(), Meta {
+                            title: b["title"].as_str().unwrap_or("").into(),
+                            priority: num(&b["priority"]),
+                            labels: b["labels"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect()).unwrap_or_default(),
+                        });
                 }
             }
         }
@@ -212,6 +216,7 @@ fn gather() -> Snapshot {
         }
     }
     gather_state_machine(&mut s);
+    s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s
 }
