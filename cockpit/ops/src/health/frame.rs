@@ -68,6 +68,7 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
     let ci = ci_section(&snap, cols);
     let standing = standing_lines(&snap, cols);
     let round = super::round::round_section(&snap, cols, inputs.now);
+    let flow = flow_lines(&snap);
 
     let want = [
         now_v.len() as i64,
@@ -91,7 +92,7 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         Spec::new(want[5], want[5], true),
     ];
 
-    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + standing.len() as i64;
+    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + flow.len() as i64 + standing.len() as i64;
     let give = share(rows, fixed, &specs);
 
     let mut out = Vec::new();
@@ -99,6 +100,7 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
     out.push(slots);
     out.extend(tokens);
     out.extend(round);
+    out.extend(flow);
     out.extend(now_v.into_iter().take(give[0].max(0) as usize));
     out.extend(next_v.into_iter().take(give[1].max(0) as usize));
     out.extend(unlanded.into_iter().take(give[2].max(0) as usize));

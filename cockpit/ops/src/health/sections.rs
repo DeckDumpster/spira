@@ -802,6 +802,17 @@ pub fn ci_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     out
 }
 
+/// `flow_lines` — the reconciler time series' two headlines. A headline the collector could
+/// not read renders `?` in the bad colour; it is never a zero.
+pub fn flow_lines(snap: &Snapshot) -> Vec<String> {
+    let row = |label: &str, key: &str| {
+        let v = snap.get(key).filter(|s| !s.is_empty()).unwrap_or("?");
+        let col = if v == "?" { BAD } else { "" };
+        format!(" {DIM}{label}{RST} {col}{v}{}", if col.is_empty() { "" } else { RST })
+    };
+    vec![row("WHERE ", "SP_TSD_WHERE"), row("REWORK", "SP_TSD_REWORK")]
+}
+
 /// `standing_lines` — the fixed-height figures: ATTN, SEND, BEADS, LAND, LOCK, GATE, SUITES,
 /// BOX, MAIL, OPS. Always emitted in full; never part of the elastic share.
 fn pools_row(snap: &Snapshot) -> String {
@@ -1236,6 +1247,15 @@ mod tests {
     fn ci_section_prints_even_at_zero() {
         let s = snap(&[("SP_AWAITING_N", "0"), ("SP_AWAITING_STUCK", "0")]);
         assert_eq!(ci_section(&s, 80), vec![format!(" {DIM}CI{RST}     {DIM}nothing parked on CI{RST}")]);
+    }
+
+    #[test]
+    fn flow_lines_render_the_headlines_and_question_marks_never_zero() {
+        let ok = flow_lines(&snap(&[("SP_TSD_WHERE", "WORKING 3 (12m)"), ("SP_TSD_REWORK", "1 reopened / 9 landed")])).join("\n");
+        assert!(ok.contains("WORKING 3 (12m)") && ok.contains("1 reopened / 9 landed"), "{ok}");
+        let bad = flow_lines(&snap(&[("SP_TSD_WHERE", "?")])).join("\n");
+        assert_eq!(bad.matches('?').count(), 2, "{bad}");
+        assert!(!bad.contains(" 0"), "{bad}");
     }
 
     #[test]

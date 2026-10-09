@@ -246,7 +246,7 @@ fn cmd_probe(name: Option<&str>) -> i32 {
         }
         None => {
             eprintln!(
-                "usage: cockpit-collect probe [now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|drift|mail|czar_triggers|sending|queue|slots|admission]"
+                "usage: cockpit-collect probe [now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|drift|mail|czar_triggers|sending|queue|slots|admission|tsd]"
             );
             1
         }

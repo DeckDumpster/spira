@@ -12,6 +12,7 @@ mod queue;
 mod ratelim;
 mod reachable;
 mod round;
+mod tsd;
 mod unsent;
 
 use crate::io;
@@ -150,6 +151,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(core_counts_keys());
     out.extend(slots_keys(cfg));
     out.extend(admission::admission_keys());
+    out.extend(tsd::tsd_keys());
     out.extend(unsent::unsent_keys(cfg));
     out.extend(queue::queue_keys(cfg));
     out.extend(round::round_keys(cfg.round_cap_secs));
@@ -188,6 +190,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "core_detail" => Some(core_detail::core_detail_keys(cfg)),
         "slots" => Some(slots_keys(cfg)),
         "admission" => Some(admission::admission_keys()),
+        "tsd" => Some(tsd::tsd_keys()),
         "unsent" => Some(unsent::unsent_keys(cfg)),
         "queue" => Some(queue::queue_keys(cfg)),
         "round" => Some(round::round_keys(cfg.round_cap_secs)),
