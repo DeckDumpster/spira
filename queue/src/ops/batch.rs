@@ -10,11 +10,18 @@ use crate::ports::ref_branch;
 use crate::records::{self, one_line, write_atomic, Kv};
 
 /// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED (Returned is
-/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK. Reported, never fatal.
-pub fn lc_return(w: &World, id: &str) {
-    let fail = |why: String| w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
+/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK; a row already in REWORK is the target state, not a refusal. The refusal is
+/// reported here and handed back: an eject that leaves the row where it was must exit non-zero.
+pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
+    let fail = |why: String| {
+        w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
+        Err(())
+    };
     let Some((mut state, version)) = w.lc.bead_state(id) else { return fail("no lifecycle row".into()) };
     let Ok(mut v) = version.trim().parse::<u64>() else { return fail(format!("unreadable version {version:?}")) };
+    if state == "REWORK" {
+        return Ok(());
+    }
     let who = "queue.sh";
     if state == "CERTIFIED" {
         if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "\"Deliver\"") {
@@ -27,8 +34,9 @@ pub fn lc_return(w: &World, id: &str) {
         return fail(format!("in state {state}, not CERTIFIED or IN_DELIVERY"));
     }
     if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "{\"Returned\":{\"reason\":\"batch-ejected\"}}") {
-        fail(format!("Returned refused (rc={rc}): {e}"));
+        return fail(format!("Returned refused (rc={rc}): {e}"));
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -92,8 +100,11 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             w.out(format!("dry-run: would post comment to {id}"));
             return bead_resolves(w, id);
         }
-        w.lib.bead_reopen(id, cause.as_str(), suites);
-        lc_return(w, id);
+        let reopened = w.lib.bead_reopen(id, cause.as_str(), suites);
+        if !reopened {
+            w.err(format!("queue.sh eject: cannot reopen {id} (cause {})", cause.as_str()));
+        }
+        let returned = lc_return(w, id).is_ok();
         let mut comment = format!("Ejected while certified but not yet batched in {}.", c.r.name);
         if !reason.is_empty() {
             comment.push_str(&format!("\n\n{reason}"));
@@ -103,6 +114,9 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
         }
         w.lib.comment(id, &comment);
+        if !reopened || !returned {
+            return FAIL;
+        }
         w.out(format!("queue.sh eject: ejected {id} (certified, not yet batched) for {} (withdrawn)", c.r.name));
         return OK;
     };
@@ -125,13 +139,16 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     // `bead_reopen` carries the suites a recertification must force.
     w.lib.cause_event(id, cause.as_str());
     // The delivery-exit event legal from IN_DELIVERY (sp-rlyl0).
-    lc_return(w, id);
+    let mut failed = lc_return(w, id).is_err();
     w.lib.release_claim(id);
     if !batch_id.is_empty() {
         let r = bounded_text(&why);
         match lc_cas(w, &batch_id, |s, v| w.lc.eject_member(&batch_id, id, s, v, "queue.sh", &r)) {
             Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc (returned to CERTIFIED there)")),
-            Err((rc, out)) => w.err(format!("queue.sh eject: spira-lc eject-member refused for {id} (rc={rc}): {out}")),
+            Err((rc, out)) => {
+                failed = true;
+                w.err(format!("queue.sh eject: spira-lc eject-member refused for {id} (rc={rc}): {out}"));
+            }
         }
     }
     let mut comment = format!("Ejected from open batch in {}.", c.r.name);
@@ -156,7 +173,11 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     }
     body.push_str(&format!("\nSurvivors returned to CERTIFIED: {surv}"));
     w.lib.notify(&c.s.mailbox, &c.r.name, &format!("{id} ejected (queue.sh eject)"), &body);
-    w.out(format!("queue.sh eject: ejected {id} from {} batch", c.r.name));
+    if failed {
+        w.err(format!("queue.sh eject: {id} left the {} batch record but spira-lc did not take every write — see above", c.r.name));
+        return FAIL;
+    }
+    w.out(format!("queue.sh eject: ejected {id} from {} batch {batch_id}; {} member(s) remain", c.r.name, survivors.len()));
     OK
 }
 
