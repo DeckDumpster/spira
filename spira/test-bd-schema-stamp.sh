@@ -9,7 +9,7 @@
 #   second source mean the cache worked — not that counting itself is broken.
 #
 # tier: T1
-# covers: spira/conf.sh
+# covers: spira/conf.sh UC-config-store-preflight-11
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

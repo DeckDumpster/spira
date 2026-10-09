@@ -27,7 +27,7 @@
 # 6. SPIRA_BD is exported so child processes inherit it.
 #
 # tier: T1
-# covers: spira/conf.sh
+# covers: spira/conf.sh UC-config-store-preflight-09
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -26,7 +26,7 @@
 # the excluding.
 #
 # tier: T1
-# covers: spira/chamber/builder.fayth spira/lib.sh spira-claim/*
+# covers: spira/chamber/builder.fayth spira/lib.sh spira-claim/* UC-config-store-preflight-15
 # hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

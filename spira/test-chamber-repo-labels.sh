@@ -27,7 +27,7 @@
 # (law-absence-needs-a-positive-control).
 #
 # tier: T2
-# covers: spira/chamber/*.md spira/chamber/*.fayth
+# covers: spira/chamber/*.md spira/chamber/*.fayth UC-config-store-preflight-14
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

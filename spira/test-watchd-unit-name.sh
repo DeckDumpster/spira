@@ -20,7 +20,7 @@
 # needs to be loaded or active.
 #
 # tier: T1
-# covers: spira/conf.sh
+# covers: spira/conf.sh UC-config-store-preflight-04
 # covers: watchd/*
 # covers: systemd/units.sh
 set -uo pipefail

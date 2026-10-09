@@ -24,7 +24,7 @@
 #   C — a prod config with the (example) repos loads unchanged.
 #
 # tier: T1
-# covers: spira/lib.sh spira/conf.sh
+# covers: spira/lib.sh spira/conf.sh UC-config-store-preflight-16
 # defect: sp-g2vl
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

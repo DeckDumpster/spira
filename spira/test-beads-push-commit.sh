@@ -35,7 +35,7 @@
 #
 # defect: sp-e1l1
 # tier: T2
-# covers: beads-push.sh spira/conf.sh
+# covers: beads-push.sh spira/conf.sh UC-config-store-preflight-26
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

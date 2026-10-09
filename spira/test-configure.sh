@@ -20,7 +20,7 @@
 #
 # defect: sp-id7cx
 # tier: T1
-# covers: spira/configure.sh spira/conf.sh
+# covers: spira/configure.sh spira/conf.sh UC-config-store-preflight-07
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

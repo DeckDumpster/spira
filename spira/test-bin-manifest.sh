@@ -14,7 +14,7 @@
 # back untiered and unpurposed, or the scan is not looking at anything.
 #
 # tier: T1
-# covers: spira/conf.sh spira/deps.toml
+# covers: spira/conf.sh spira/deps.toml UC-config-store-preflight-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

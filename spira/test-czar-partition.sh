@@ -21,7 +21,7 @@
 # test-builder-qa-proposed.sh uses.
 #
 # tier: T1
-# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/* UC-dispatch-09
+# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/* UC-dispatch-09 UC-config-store-preflight-15
 # hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
