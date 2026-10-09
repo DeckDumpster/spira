@@ -111,22 +111,13 @@ pub fn default_conf_d(home: &Path) -> std::path::PathBuf {
 /// race a `std::env::set_var`-based version of this test caused: another thread's own
 /// unrelated `git` spawn, running concurrently with the lock this test held, inherited
 /// the poison anyway, because inheritance does not consult any Rust-level lock).
-pub fn derive_repo_filesystem(home: &Path, env: &BTreeMap<String, String>) -> std::path::PathBuf {
-    let scrubbed = env
-        .iter()
-        .filter(|(k, _)| !matches!(k.as_str(), "GIT_DIR" | "GIT_WORK_TREE" | "GIT_INDEX_FILE" | "GIT_PREFIX"));
-    let toplevel = crate::bounded::bounded("git")
-        .env_clear()
-        .envs(scrubbed)
-        .arg("-C")
-        .arg(home)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from);
+pub fn derive_repo_filesystem(home: &Path, _env: &BTreeMap<String, String>) -> std::path::PathBuf {
+    // `git rev-parse --show-toplevel`, answered from the filesystem: the nearest directory at
+    // or above `home` holding a `.git` (a directory, or a worktree's file). Spawning git for it
+    // cost every Spira process ~100 ms at start, and from a release's bundled `spira/` (no
+    // checkout at all) it only ever failed into the fallback below.
+    let start = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    let toplevel = start.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf);
     toplevel.unwrap_or_else(|| {
         home.join("..")
             .canonicalize()
@@ -1209,8 +1200,8 @@ mod tests {
         assert_eq!(derive_home_repo(&home, &e), Path::new("/explicit/override"));
     }
 
-    // derive_repo_filesystem runs its git subprocess with exactly this map (`.env_clear()`
-    // plus it) — PATH must be in it for the real `git` binary to be found at all.
+    // The tests' own `git init` needs PATH; derive_repo_filesystem itself reads only the
+    // filesystem now, so a poisoned map (GIT_DIR below) cannot steer it.
     fn env_with_path(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         let mut m = env(pairs);
         m.entry("PATH".to_string()).or_insert_with(|| std::env::var("PATH").unwrap_or_default());
