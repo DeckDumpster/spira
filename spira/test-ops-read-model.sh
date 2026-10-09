@@ -44,7 +44,7 @@ wantrc "a second migrate run is a no-op" 0 $?
 want "the second run finds nothing pending" "already applied" "$again"
 
 views_of() { python3 -I -c 'import re,sys; t=re.sub(r"--[^\n]*","",open(sys.argv[1]).read()); print(re.sub(r"\s+"," ",t[t.index("CREATE "+sys.argv[2]+"VIEW "+sys.argv[3]):]).replace("CREATE OR REPLACE VIEW","CREATE VIEW").strip())' "$1" "$2" "$3"; }
-is "schema.sql and migrations 0007 and 0008 define the same views" "$(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_live) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_edges)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
+is "schema.sql and migrations 0007 and 0009 define the same views" "$(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_live) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_edges)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
 
 NOW="$(date +%s)"
 python3 - "$NOW" > "$TMP/seed.sql" <<'PY'
