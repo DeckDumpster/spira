@@ -126,6 +126,7 @@ version = "0.1.0"
 dependencies = [
  "batcher",
  "gate",
+ "lifecycle",
  "serde_json",
  "sift",
  "spira-config",
@@ -893,6 +894,7 @@ name = "queue"
 version = "1.0.0"
 dependencies = [
  "gate",
+ "landing-pass",
  "libc",
  "release",
  "serde",

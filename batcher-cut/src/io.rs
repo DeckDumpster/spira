@@ -1486,19 +1486,49 @@ pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[Stri
         first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
     let csv = if owner { suites.join(",") } else { String::new() };
+    round_eject_with(env, repo, batch, id, &reason, &csv)
+}
+
+/// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
+/// round holds, as `(id, the row's mark)`: the gate already judged this tree red, so the round's
+/// corpus need not rediscover it.
+pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, String)> {
+    members
+        .iter()
+        .filter_map(|(id, tip)| {
+            let row = serde_json::from_str::<serde_json::Value>(&lcq(env, &["show", id]).ok()?).ok()?;
+            let bead = row.get("bead")?;
+            let field = |k: &str| bead.get(k).and_then(|v| v.as_str()).unwrap_or("");
+            let mark = field("reason").strip_prefix(lifecycle::bead::GATE_RED_MARK)?;
+            (field("state") == "IN_DELIVERY" && field("tip") == tip).then(|| (id.clone(), mark.to_string()))
+        })
+        .collect()
+}
+
+/// `queue round eject` for a member the gate had already marked red while it sat in the round.
+pub fn round_eject_gate_red(env: &Env, repo: &Repo, batch: &str, id: &str, mark: &str) -> Result<(), String> {
+    let reason = format!(
+        "Ejected from the round before its corpus ran: spira/{id}'s own gate went red at the tip the round holds ({mark}). The gate's whole output is kept under the gate-worker's output directory."
+    );
+    round_eject_with(env, repo, batch, id, &reason, "")
+}
+
+fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str, csv: &str) -> Result<(), String> {
     let mut args = vec!["eject", batch, id, &repo.name, "--reason-file", "-", "--no-rebuild"];
-    if owner {
-        args.extend(["--suites", &csv]);
+    if !csv.is_empty() {
+        args.extend(["--suites", csv]);
+    } else {
+        args.push("--red");
     }
     let attempts = env.land_lock_attempts.max(1);
-    let mut last = round_verb(env, &args, &reason)?;
+    let mut last = round_verb(env, &args, reason)?;
     for n in 1..attempts {
         if last.code == Some(0) || !last.err.contains(LOCK_BUSY) {
             break;
         }
         println!("batcher {}: queue round eject refused ({}) — retry {n}/{attempts}", repo.name, refusal_line(&last.err));
         std::thread::sleep(env.land_lock_wait);
-        last = round_verb(env, &args, &reason)?;
+        last = round_verb(env, &args, reason)?;
     }
     if last.code == Some(0) {
         Ok(())
@@ -2420,6 +2450,29 @@ mod lc_withdraw_tests {
             let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
             let passed = calls.contains("\"GatePass\"") && calls.contains("\"gate_key\":\"round:k1\"") && calls.contains("\"tip\":\"aaaa\"");
             assert_eq!(passed, certified, "{state}: {calls}");
+        }
+    }
+
+    /// A red gate verdict recorded on an IN_DELIVERY member at the tip the round holds names it
+    /// for eject; a moved tip, an unmarked row or another state does not.
+    #[test]
+    fn only_a_member_marked_red_at_the_round_tip_is_named_for_eject() {
+        for (state, reason, tip, named) in [
+            ("IN_DELIVERY", "gate-red: suites-failed", "aaaa", true),
+            ("IN_DELIVERY", "gate-red: suites-failed", "moved", false),
+            ("IN_DELIVERY", "delivered-from-submitted", "aaaa", false),
+            ("REWORK", "gate-red: suites-failed", "aaaa", false),
+        ] {
+            let d = testkit::TempDir::new("batcher-cut-gate-red");
+            let mut e = super::lifecycle_tests_env(&d);
+            let bin = d.join("spira-lc");
+            testkit::write_exe(
+                &bin,
+                &format!("#!/bin/sh\necho '{{\"bead\":{{\"state\":\"{state}\",\"tip\":\"{tip}\",\"reason\":\"{reason}\",\"version\":4}}}}'\n"),
+            );
+            e.lc_bin = Some(bin);
+            let got = gate_red_marks(&e, &[("sp-a".into(), "aaaa".into())]);
+            assert_eq!(got, if named { vec![("sp-a".to_string(), "suites-failed".to_string())] } else { vec![] }, "{state} {reason} {tip}");
         }
     }
 
