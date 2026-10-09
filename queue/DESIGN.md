@@ -635,6 +635,22 @@ from §2.2/§8:
 | stats, CLI, records, idents | `stats::tests`, `cli::tests`, `records::tests`, `ident::tests`, `model::tests`, `lock::tests` |
 | the seam mechanism itself, for real through bash with a stand-in lib.sh | `seam::tests::values_travel_on_stdin_with_newlines_and_empties_intact`, `real::tests::context_seam_round_trips_through_bash`, `real::tests::answer_seams_ignore_log_lines_and_carry_failures` |
 
+## Staged rounds
+
+A queue.local round's suites run for minutes while the next round could already be assembled.
+`round stage` does that behind the open round `N`; the batch row is STAGED, parented to `N`,
+and no bead moves, so a discarded stage returns nothing.
+
+| verb | effect |
+|---|---|
+| `round stage --members` | needs an open round. Admits as `round open` does (SUBMITTED or CERTIFIED at the named tip, blockers landed or merged ahead — `N`'s members count as ahead), skips `N`'s own members, merges onto `N`'s head with open's merges (`land_subject`, the queue's git identity, the same order), runs the gate's fences on the result, then writes the STAGED row and `round-staged`. One stage per repo. |
+| `round stage-test` | refused until `N`'s phase is `green`; runs the round VM on the staged head and records `tested_tree` on a green. |
+| `round promote` | refused while any round is open. `N` not LANDED, a member no longer admissible, or a member that no longer merges onto the moved base: STAGED → DISCARDED with the reason, exit 1. Otherwise the members are re-merged onto the landing ref only if it is not the head `N` landed at, then spira-lc `promote` cuts STAGED → OPEN and delivers the members in one transaction. A green `tested_tree` equal to the promoted head's tree is attested through `round certify --attest`; otherwise the round waits for its own pass. |
+| `round discard --reason` | STAGED → DISCARDED by hand. |
+
+`N` going red, being abandoned or being emptied discards the stage behind it; `round open`
+discards a stage whose round is gone.
+
 ## 10. Lifecycle machine
 
 There is no lifecycle switch: sp-v62vn retired `lifecycle_enforce`, and spira-lc is the

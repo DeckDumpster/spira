@@ -775,6 +775,21 @@ impl Lc for RealLc {
         }
         Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
     }
+    fn stage(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, parent: &str, actor: &str) -> Result<String, (i32, String)> {
+        let (rc, out) = self.run(&["stage", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", members, "--parent", parent, "--actor", actor]);
+        if rc != 0 {
+            return Err((rc, out.trim().to_string()));
+        }
+        Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
+    }
+    fn promote(&self, batch_id: &str, head: &str, base: &str, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["promote", batch_id, "--head", head, "--base", base, "--actor", actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["abandon-batch", batch_id, "--expect", state, "--version", version, "--actor", actor, "--reason", reason]);
         if rc == 0 {

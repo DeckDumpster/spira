@@ -56,9 +56,16 @@ pub enum Round {
     SuitesStarted { batch: String, repo: Option<String> },
     PassVerdict { batch: String, repo: Option<String>, verdict: String, red_suites: String, suites_s: u64, build_s: u64, reason: Text },
     Status { repo: Option<String> },
+    /// Assemble the next round behind the open one and run the fences on it.
+    Stage { repo: Option<String>, members: Text, name: Option<String>, worktree: Option<PathBuf> },
+    /// The staged round's own VM pass, once the round it waits behind is green.
+    StageTest { repo: Option<String> },
+    /// The round it waited behind landed: cut the staged round, reusing its pass when the tree matches.
+    Promote { repo: Option<String> },
+    Discard { repo: Option<String>, reason: Text },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>]";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -228,6 +235,15 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             })
         }
         "status" => Ok(Round::Status { repo: pos.next() }),
+        "stage" => {
+            if matches!(&members, Text::None) {
+                return Err(Usage("queue.sh round stage: --members is required".into()));
+            }
+            Ok(Round::Stage { repo: pos.next(), members, name, worktree })
+        }
+        "stage-test" => Ok(Round::StageTest { repo: pos.next() }),
+        "promote" => Ok(Round::Promote { repo: pos.next() }),
+        "discard" => Ok(Round::Discard { repo: pos.next(), reason }),
         _ => Err(Usage(USAGE.into())),
     }
 }
@@ -415,6 +431,16 @@ mod tests {
         assert!(matches!(c, Cmd::Round(Round::Preempt { ref batch, ref repo, ref eject, ref suites, .. })
             if batch == "b1" && repo.as_deref() == Some("spira") && eject == "sp-a,sp-b" && suites == "test-x.sh"));
         assert_eq!(p(&["round", "preempt", "b1"]), Err(Usage("queue.sh round preempt: --eject <id>[,<id>...] is required".into())));
+    }
+
+    #[test]
+    fn staged_round_verbs_parse() {
+        let c = p(&["round", "stage", "spira", "--members", "a:1", "--name", "r2"]).unwrap();
+        assert_eq!(c, Cmd::Round(Round::Stage { repo: Some("spira".into()), members: Text::Arg("a:1".into()), name: Some("r2".into()), worktree: None }));
+        assert_eq!(p(&["round", "stage"]), Err(Usage("queue.sh round stage: --members is required".into())));
+        assert_eq!(p(&["round", "stage-test"]), Ok(Cmd::Round(Round::StageTest { repo: None })));
+        assert_eq!(p(&["round", "promote", "spira"]), Ok(Cmd::Round(Round::Promote { repo: Some("spira".into()) })));
+        assert_eq!(p(&["round", "discard", "--reason", "x"]), Ok(Cmd::Round(Round::Discard { repo: None, reason: Text::Arg("x".into()) })));
     }
 
     #[test]
