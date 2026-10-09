@@ -1,0 +1,11 @@
+TYPE=u64
+GROUP=summon
+DOC=SECONDS AFTER ONE COMPILE OR TEST SLOT IS TAKEN BEFORE THE NEXT MAY START WHILE OTHERS ARE HELD
+SCHEMA=Seconds a fresh compile/test admission waits after the previous one began, when slots are already held (0 disables; unset in a bare process: 0).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HEAVY PHASES START ONE AT A TIME. A new compile or test lease is not granted until this
+    # many seconds after the pool's last fresh lease, so the cold-start IO burst (checkout,
+    # codegen, dolt init) of one job finishes before the next begins. Admission only: an
+    # admitted job's own limits are untouched. 0 disables.
+    : "${SPIRA_ADMIT_STAGGER_SECS:=30}"
+SPIRA_CONF_DEFAULT_EOF
