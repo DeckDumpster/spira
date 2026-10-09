@@ -834,7 +834,8 @@ pub fn lc_gate_red(env: &Env, id: &str, tip: &str, reason: &str) -> Result<(), S
 
 pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
     let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
-    lcq(env, &["close", id, "--superseded-by", keeper, "--actor", "sift", "--reason", &reason]).map(|_| ())
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
+    spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), id, &reason, "sift", Some(keeper))
 }
 
 /// The evidence a send-back stands on, written on the bead before the GateRed.
