@@ -575,7 +575,6 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/configure.sh` | bootstraps ~/.config/spira/spira.toml on first install; never overwrites an existing file |
 | `testenv/src/container.rs` | rootless podman container with user systemd for the install-rehearsal suite tier |
 | `docs/` | spike investigations and evidence files from the harness's own development |
-| `docs/reinstall-runbook.md` | replacing an existing instance with a release tarball: stop and wipe, verify, answers file, install, launchers, one bead to landing, rollback |
 | `concierge.sh` | one named Remote Control session, so a phone can reach the harness |
 | `rule.sh` | enacting a statute writes the beads KV store, which is the harness's substrate |
 | `spira/archive.sh` | keeps every session transcript and indexes it by time range and by the lineage id that survives a clear. The mechanism ships; the transcripts and the store they land in are the operator's own and stay out of every repository |
