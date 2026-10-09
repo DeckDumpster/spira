@@ -601,7 +601,7 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
         let files = ordered_files(&[dir.to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
-        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql", "0007-ops-read-model.sql", "0008-event-history-idx.sql"]);
+        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql", "0007-ops-read-model.sql", "0008-event-history-idx.sql", "0009-where-stuck.sql"]);
         let steps = plan(&texts).unwrap();
         let adds: Vec<(String, String)> = steps
             .iter()
@@ -612,9 +612,9 @@ mod tests {
             .collect();
         assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into()), ("bead".into(), "persona".into()), ("bead".into(), "title".into()), ("bead".into(), "priority".into())]);
         let plain = steps.iter().filter(|(_, s)| matches!(s, Stmt::Plain(_))).count();
-        assert_eq!(plain, 10, "the guarded UPDATEs of 0003 and 0006, four indexes and 0007's three views run as written");
+        assert_eq!(plain, 14, "the guarded UPDATEs, four indexes and the six views of 0007 and 0009 run as written");
         let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
-        assert_eq!(views, [Probe::View("ops_live".into()), Probe::View("ops_round".into()), Probe::View("ops_recent".into())], "a view is probed, never always-pending");
+        assert_eq!(views, [Probe::View("ops_live".into()), Probe::View("ops_round".into()), Probe::View("ops_recent".into()), Probe::View("ops_edges".into()), Probe::View("ops_dwell_p95".into()), Probe::View("ops_dwell".into())], "a view is probed, never always-pending");
         assert!(steps.iter().all(|(_, s)| probe_for(s) != Probe::Unprobeable), "every shipped step can be probed read-only");
     }
 
@@ -740,10 +740,10 @@ mod tests {
         for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority"] {
             st.columns.insert(("bead".into(), c.into()));
         }
-        for i in ["event_since_idx", "bead_state_since_idx", "batch_state_idx", "event_history_idx"] {
+        for i in ["event_since_idx", "bead_state_since_idx", "batch_state_idx", "event_history_idx", "event_at_idx"] {
             st.indexes.insert(i.into());
         }
-        for v in ["ops_live", "ops_round", "ops_recent"] {
+        for v in ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell_p95", "ops_dwell"] {
             st.views.insert(v.into());
         }
         Rc::new(RefCell::new(st))
