@@ -187,6 +187,17 @@ struct LcRoConn {
     data_dir: String,
 }
 
+/// The password file for `user`. `SPIRA_LC_PASSWORD_FILE` names the `spira_lc` secret; the
+/// read-only user's is its `-ro` sibling, so handing this exporter the writer's file would
+/// log `spira_lc_ro` in with the wrong password.
+fn credential_path(user: &str, configured: &str) -> String {
+    if user == "spira_lc_ro" && !configured.is_empty() {
+        format!("{configured}-ro")
+    } else {
+        configured.to_string()
+    }
+}
+
 impl LcRoConn {
     fn from_env() -> Result<Self, String> {
         // SPIRA_LC_DOLT_BIN/HOST/PORT/USER/PASSWORD/DB/DATA_DIR are not registered config keys
@@ -199,7 +210,8 @@ impl LcRoConn {
             .parse()
             .map_err(|e| format!("SPIRA_LC_PORT: {e}"))?;
         let user = std::env::var("SPIRA_LC_USER").unwrap_or_else(|_| "spira_lc_ro".to_string());
-        let password = match spira_config::process::cfg("SPIRA_LC_PASSWORD_FILE")?.as_str() {
+        let configured = spira_config::process::cfg("SPIRA_LC_PASSWORD_FILE")?;
+        let password = match credential_path(&user, &configured).as_str() {
             "" => std::env::var("SPIRA_LC_PASSWORD").unwrap_or_default(),
             path => std::fs::read_to_string(path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string(),
         };
@@ -307,5 +319,22 @@ mod argv_secret_tests {
         let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(!args.iter().any(|a| a.contains("s3cret-pw") || a == "-p" || a == "--password"), "{args:?}");
         assert!(cmd.get_envs().any(|(k, v)| k == "DOLT_CLI_PASSWORD" && v.is_some_and(|v| v == "s3cret-pw")));
+    }
+}
+
+#[cfg(test)]
+mod credential_path_tests {
+    use super::credential_path;
+
+    #[test]
+    fn the_read_only_user_reads_the_ro_sibling_of_the_configured_file() {
+        assert_eq!(credential_path("spira_lc_ro", "/etc/spira-lc/credential"), "/etc/spira-lc/credential-ro");
+        assert_eq!(credential_path("spira_lc_ro", "/h/spira-lc.credential"), "/h/spira-lc.credential-ro");
+    }
+
+    #[test]
+    fn another_user_or_no_file_is_left_alone() {
+        assert_eq!(credential_path("spira_lc", "/h/c"), "/h/c");
+        assert_eq!(credential_path("spira_lc_ro", ""), "");
     }
 }
