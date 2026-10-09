@@ -52,20 +52,11 @@ if [ -f "$W/trace/events.jsonl" ]; then
 fi
 
 if [ -d "$W" ]; then
-    in_world() {
-        local -a kv=(); local line
-        while IFS= read -r line; do [ -n "$line" ] && kv+=("$line"); done < "$W/config/sim.env"
-        (cd "$W/work" && env "${NOLOC[@]}" SPIRA_TOML="$W/config/sim.toml" "${kv[@]}" PATH="$W/bin:$W/release/bin:$W/release/spira:$PATH" "$@")
-    }
-    PB="$(git -C "$W/work" for-each-ref --format='%(refname:strip=3)' refs/remotes/origin/spira/publish | head -1)"
-    echo "# pb=$PB"
-    out="$(in_world gh pr view "$PB" --json number -q .number </dev/null 2>&1)"; echo "# gh view rc=$? out=[$(printf '%s' "$out" | tail -3 | cut -c1-300)]"
-    out="$(in_world gh pr list --state all --json number,headRefName </dev/null 2>&1)"; echo "# gh list rc=$? out=[$(printf '%s' "$out" | tail -3 | cut -c1-300)]"
-    git -C "$W/work" branch -q probe-b "$(git -C "$W/work" rev-parse HEAD)"; git -C "$W/work" push -q origin probe-b:refs/heads/spira/publish/probe-b
-    out="$(in_world gh pr create --head spira/publish/probe-b --base main --title t --body-file - </dev/null 2>&1)"; echo "# gh create rc=$? out=[$(printf '%s' "$out" | tail -3 | cut -c1-300)]"
-    grep -h "publish" "$W/run/landing.log" 2>/dev/null | tail -5 | cut -c1-250 | sed 's/^/# landing.log: /'
-    ls "$W/run" "$W/run/queue" 2>&1 | tr '\n' ' ' | cut -c1-300
-    echo "# state: $(head -c 400 "$W/gh/state.json")"
+    out="$(timeout 70 env "${NOLOC[@]}" bash -c "cd '$REPO' && '$SIM' step '$W' --until 7200000" 2>&1)"; rc=$?
+    echo "# step rc=$rc: $(printf '%s' "$out" | tail -2 | cut -c1-300)"
+    echo "# tags: $(git -C "$W/work" tag | tr '\n' ' ')"
+    echo "# prs: $(grep -o '"state": "[A-Z]*"' "$W/gh/state.json" | tr '\n' ' ')"
+    grep -A5 'publish-settle' "$W/exec.log" | grep -v '^--\|probe\|^$' | cut -c1-220 | tail -14 | sed 's/^/# pub: /'
     echo "# ${SECONDS}s"
     bad "explore" "forced"
 fi

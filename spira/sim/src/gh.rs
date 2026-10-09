@@ -65,8 +65,7 @@ fn call(program: &str, args: &[&str], cwd: Option<&Path>, input: &[u8]) -> R<Vec
 }
 
 pub fn jq(json: &str, expr: &str) -> R<String> {
-    let out = call("jq", &["-r", expr], None, json.as_bytes())?;
-    String::from_utf8(out).map_err(|e| e.to_string())
+    crate::jq::jq_r(json, expr)
 }
 
 pub struct State {
