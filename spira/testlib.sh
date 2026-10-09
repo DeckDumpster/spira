@@ -953,8 +953,8 @@ while True:
     try:
         f = c.makefile("rw")
         code, out = answer(json.loads(f.readline() or "[]"))
-        f.write(json.dumps({"exit_code": code, "stdout": out}) + "\n")
-        f.flush()
+        body = out.encode()
+        c.sendall(json.dumps({"exit_code": code, "len": len(body)}).encode() + b"\n" + body)
     except Exception as e:
         print(e, file=sys.stderr)
     finally:
