@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-epic-claim-order.sh — the epic-first claim rank (sp-ns46j, per Ryan 2026-09-28):
-# rank ready beads by their parent epic's priority, then a started epic before an unstarted
+# rank ready beads by min(epic priority, bead priority), then a started epic before an unstarted
 # one at equal priority, then the bead's own priority, then resumable-before-fresh, then
 # oldest. Covers epic_parent_lookup/epic_rank_rows (lib.sh) directly and aeon.sh's wiring
 # of them into the actual claim.
@@ -107,8 +107,8 @@ sp-e1-p2" "$order"
 
 # ==========================================================================================
 echo
-echo "T2: equal epic priority — a STARTED epic outranks an unstarted one, even against a"
-echo "    better bead priority"
+echo "T2: the first rank component is min(epic priority, bead priority); at equal effective"
+echo "    priority a STARTED epic outranks an unstarted one"
 # ==========================================================================================
 seed <<JSONL
 $(epic sp-e1 1)
@@ -118,9 +118,20 @@ $(epic sp-e2 1)
 $(bead sp-e2-p0 sp-e2 0)
 JSONL
 order="$(ranked_ids)"
-is "E1 (started) at P1: its P2 child outranks E2's (unstarted) P0 child" \
-    "sp-e1-p2
-sp-e2-p0" "$order"
+is "a P0 child of an unstarted P1 epic outranks a P2 child of a started P1 epic" \
+    "sp-e2-p0
+sp-e1-p2" "$order"
+seed <<JSONL
+$(epic sp-e1 1)
+$(closed_child sp-e1-done sp-e1)
+$(bead sp-e1-p1 sp-e1 1)
+$(epic sp-e2 1)
+$(bead sp-e2-p1 sp-e2 1)
+JSONL
+order="$(ranked_ids)"
+is "equal effective priority keeps started-epic-first order" \
+    "sp-e1-p1
+sp-e2-p1" "$order"
 
 # ==========================================================================================
 echo
