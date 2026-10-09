@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-lc-list-timing.sh — `spira-lc list` and `list --state READY` are served by the since covering index
+# test-lc-list-timing.sh — `spira-lc list` and `list --state READY` are read from the stored since column
 # on a store of production size (12,000 beads, 100,000 events), against a real Dolt.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh.
