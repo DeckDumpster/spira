@@ -275,7 +275,7 @@ want "one bad of five: units unaffected"        "ok   units" "$out"
 REL="$TMP/rel-lc-ok"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
 cat > "$REL/bin/spira-lc" <<EOF2
 #!/usr/bin/env bash
-echo "user=\$SPIRA_LC_USER pwfile=\${SPIRA_LC_PASSWORD_FILE-unset} admin=\${SPIRA_LC_ADMIN_USER-unset} \$*" > "$TMP/lc-argv"
+echo "user=\$SPIRA_LC_USER pwfile=\${SPIRA_LC_PASSWORD_FILE-unset} admin=\${SPIRA_LC_ADMIN_USER-unset} \$*" >> "$TMP/lc-argv"
 echo "admin-migrate: applied 0003-x.sql"
 exit 0
 EOF2
@@ -287,6 +287,8 @@ want "lifecycle: runs admin-migrate against the release's own migrations" "admin
 nowant "lifecycle: passes no retired --if-enforced (sp-v62vn)" "--if-enforced" "$(cat "$TMP/lc-argv")"
 # sp-p1z81: the service identity lc-serve uses, untouched — never swapped for a default root.
 want "lifecycle: as the service user, its credential file kept" "user=spira_lc pwfile=$TMP/svc.cred admin=unset admin-migrate" "$(cat "$TMP/lc-argv")"
+
+want "lifecycle: backfills the mirrored titles after the migrations" "backfill-titles" "$(cat "$TMP/lc-argv")"
 
 REL="$TMP/rel-lc-bad"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
 printf '#!/usr/bin/env bash\necho "admin-migrate: 0003-x.sql FAILED" >&2\nexit 2\n' > "$REL/bin/spira-lc"

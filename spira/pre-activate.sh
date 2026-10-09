@@ -217,6 +217,7 @@ check_lifecycle() {
     rc=$?
     if [ "$rc" -eq 0 ]; then
         ok "lifecycle ($(printf '%s' "$out" | tail -1))"
+        out="$("$lc" backfill-titles 2>&1)" || printf 'pre-activate: warn: %s\n' "$out"
     else
         fail lifecycle "$out"
     fi

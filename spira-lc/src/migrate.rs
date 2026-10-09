@@ -223,6 +223,9 @@ pub enum Probe {
     Table(String),
     /// `CREATE [UNIQUE] INDEX i ON t`: applied when `information_schema.statistics` lists it.
     Index { table: String, index: String },
+    /// `CREATE VIEW v`: applied when `information_schema.tables` lists it as a VIEW (the `views`
+    /// table needs SHOW VIEW, which the service user does not hold).
+    View(String),
     /// No read can tell (an UPDATE with no WHERE, an INSERT, ...): always pending, so a
     /// migration of that shape needs the admin on every activation — write it guarded.
     Unprobeable,
@@ -282,6 +285,7 @@ pub fn probe_for(st: &Stmt) -> Probe {
             let at = if up(2) == "IF" && up(3) == "NOT" && up(4) == "EXISTS" { 5 } else { 2 };
             toks.get(at).map(|t| t.split('(').next().unwrap_or("")).and_then(plain_ident).map_or(Probe::Unprobeable, Probe::Table)
         }
+        ("CREATE", "VIEW") => toks.get(2).and_then(|t| plain_ident(t)).map_or(Probe::Unprobeable, Probe::View),
         ("CREATE", "INDEX") | ("CREATE", "UNIQUE") => {
             let at = if up(1) == "UNIQUE" { 3 } else { 2 };
             if (up(1) == "UNIQUE" && up(2) != "INDEX") || up(at + 1) != "ON" {
@@ -314,6 +318,7 @@ pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
         }
         Probe::NoRowMatches(q) => Ok(db.rows(&q)?.is_empty()),
         Probe::Table(t) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&t)))?.is_empty()),
+        Probe::View(v) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_type = 'VIEW' AND table_name = {}", quote(&v)))?.is_empty()),
         Probe::Index { table, index } => Ok(!db
             .rows(&format!("SELECT index_name FROM information_schema.statistics WHERE table_schema = 'spira_lifecycle' AND table_name = {} AND index_name = {}", quote(&table), quote(&index)))?
             .is_empty()),
@@ -327,6 +332,7 @@ fn what(st: &Stmt, applied: bool) -> String {
         Probe::Column { table, column } => (format!("{table}.{column} present"), format!("{table}.{column} absent")),
         Probe::NoRowMatches(_) => ("no row left for it to change".into(), "rows it still has to change".into()),
         Probe::Table(t) => (format!("table {t} present"), format!("table {t} absent")),
+        Probe::View(v) => (format!("view {v} present"), format!("view {v} absent")),
         Probe::Index { table, index } => (format!("index {table}.{index} present"), format!("index {table}.{index} absent")),
         Probe::Unprobeable => (String::new(), "a statement no read can confirm".into()),
     };
@@ -595,7 +601,7 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
         let files = ordered_files(&[dir.to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
-        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql", "0008-event-history-idx.sql"]);
+        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql", "0007-ops-read-model.sql", "0008-event-history-idx.sql"]);
         let steps = plan(&texts).unwrap();
         let adds: Vec<(String, String)> = steps
             .iter()
@@ -604,9 +610,12 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into()), ("bead".into(), "persona".into())]);
+        assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into()), ("bead".into(), "persona".into()), ("bead".into(), "title".into()), ("bead".into(), "priority".into())]);
         let plain = steps.iter().filter(|(_, s)| matches!(s, Stmt::Plain(_))).count();
-        assert_eq!(plain, 5, "the guarded UPDATEs and the CREATE INDEXes run as written");
+        assert_eq!(plain, 10, "the guarded UPDATEs of 0003 and 0006, four indexes and 0007's three views run as written");
+        let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
+        assert_eq!(views, [Probe::View("ops_live".into()), Probe::View("ops_round".into()), Probe::View("ops_recent".into())], "a view is probed, never always-pending");
+        assert!(steps.iter().all(|(_, s)| probe_for(s) != Probe::Unprobeable), "every shipped step can be probed read-only");
     }
 
     #[test]
@@ -648,6 +657,7 @@ mod tests {
     struct State {
         columns: std::collections::BTreeSet<(String, String)>,
         indexes: std::collections::BTreeSet<String>,
+        views: std::collections::BTreeSet<String>,
         /// Terminal rows still carrying a holder (what 0003's guarded UPDATE corrects).
         stale_terminal_rows: bool,
         /// Every statement that changed something, as `<user>: <sql>`.
@@ -679,6 +689,10 @@ mod tests {
                 let index = sql.split("index_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(if st.indexes.contains(index) { vec![serde_json::json!({ "INDEX_NAME": index })] } else { vec![] });
             }
+            if sql.contains("table_type = 'VIEW'") {
+                let view = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.views.contains(view) { vec![serde_json::json!({ "TABLE_NAME": view })] } else { vec![] });
+            }
             if sql.starts_with("SELECT 1 FROM bead WHERE") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
             }
@@ -704,6 +718,9 @@ mod tests {
                 Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE INDEX") => {
                     st.indexes.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
                 }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE VIEW") => {
+                    st.views.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
+                }
                 _ => st.stale_terminal_rows = false,
             }
             st.writes.push(format!("{}: {sql}", self.user));
@@ -720,11 +737,15 @@ mod tests {
     /// A store with every shipped migration's effect already present (production today).
     fn migrated() -> Rc<RefCell<State>> {
         let mut st = State::default();
-        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona"] {
+        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority"] {
             st.columns.insert(("bead".into(), c.into()));
         }
-        st.indexes.insert("event_since_idx".into());
-        st.indexes.insert("event_history_idx".into());
+        for i in ["event_since_idx", "bead_state_since_idx", "batch_state_idx", "event_history_idx"] {
+            st.indexes.insert(i.into());
+        }
+        for v in ["ops_live", "ops_round", "ops_recent"] {
+            st.views.insert(v.into());
+        }
         Rc::new(RefCell::new(st))
     }
 
@@ -858,6 +879,7 @@ mod tests {
         assert_eq!(probe_for(&Stmt::Plain("UPDATE t SET a = 'x where y' WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
         assert_eq!(probe_for(&Stmt::Plain("DELETE FROM t WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE TABLE IF NOT EXISTS t2 (a INT)".into())), Probe::Table("t2".into()));
+        assert_eq!(probe_for(&Stmt::Plain("CREATE VIEW v1 AS SELECT 1".into())), Probe::View("v1".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE UNIQUE INDEX i ON bead (state)".into())), Probe::Index { table: "bead".into(), index: "i".into() });
         assert_eq!(probe_for(&Stmt::Plain("INSERT INTO t VALUES (1)".into())), Probe::Unprobeable);
     }

@@ -141,22 +141,56 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
-fn bdq_create(home: &str, args: &[String], incident: Option<&str>) -> i32 {
-    let Some(incident) = incident else { return bdq_status(home, args) };
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>) -> i32 {
+    if incident.is_none() && mirror.is_none() {
+        return bdq_status(home, args);
+    }
     let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
     print!("{stdout}");
     if code != 0 {
         return code;
     }
     let Some(new_id) = parse_created_id(&stdout) else {
-        eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
-        return 1;
+        if let Some(incident) = incident {
+            eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
+            return 1;
+        }
+        eprintln!("bead: file: created, but could not read its id to mirror its title; `spira-lc backfill-titles` fills it");
+        return 0;
     };
+    if let Some((title, priority)) = mirror {
+        mirror_to_lifecycle(&new_id, Some(title), priority);
+    }
+    let Some(incident) = incident else { return 0 };
     let rc = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
     if rc != 0 {
         eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
     }
     rc
+}
+
+/// bd's priority when `-p` is not given.
+const BD_DEFAULT_PRIORITY: i64 = 2;
+
+/// Write the bead's title and priority into its lifecycle row, which the ops views read
+/// instead of bd. Detached: filing has a server deadline and a second connect inside it
+/// overran it. A write that fails is repaired by `spira-lc backfill-titles`.
+fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64) {
+    let mut args = vec!["30".to_string(), "spira-lc".into(), "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
+    if let Some(t) = title {
+        args.extend(["--title".to_string(), t.to_string()]);
+    }
+    // batch-job: detached, bounded by timeout(1), one point write
+    let spawned = Command::new("timeout")
+        .args(&args)
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if spawned.is_err() {
+        eprintln!("bead: {id} filed, but its title and priority were not mirrored to the lifecycle store; `spira-lc backfill-titles` fills them");
+    }
 }
 
 fn s(strs: &[&str]) -> Vec<String> {
@@ -453,6 +487,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             labels.push(',');
             labels.push_str(&cfg_label("SPIRA_SUBMITTED_LABEL"));
         }
+        let title_for_mirror = title.clone();
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
         bd_args.push("-l".into());
@@ -475,7 +510,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, incident_parent.as_deref())
+        let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
+        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)))
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -523,7 +559,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, incident_parent.as_deref())
+        bdq_create(home, &bd_args, incident_parent.as_deref(), None)
     }
 }
 
@@ -590,6 +626,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         let upd = bdq_status(home, &s(&["update", &id, "-p", &new.to_string()]));
         rc |= upd;
         if upd == 0 {
+            mirror_to_lifecycle(&id, None, new);
             let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
             rc |= bdq_status(home, &s(&["note", &id, &text]));
             changed.push_str(&text);
