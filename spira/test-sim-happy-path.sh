@@ -59,8 +59,12 @@ if [ -d "$W" ]; then
     }
     PB="$(git -C "$W/work" for-each-ref --format='%(refname:strip=3)' refs/remotes/origin/spira/publish | head -1)"
     echo "# pb=$PB"
-    out="$(in_world forge pr-create "$W/work" "$PB" main t </dev/null 2>&1)"; echo "# forge rc=$? out=$(printf '%s' "$out" | tail -3 | cut -c1-300)"
-    out="$(in_world gh pr create --head "$PB" --base main --title t --body-file - </dev/null 2>&1)"; echo "# gh rc=$? out=$(printf '%s' "$out" | tail -3 | cut -c1-300)"
+    out="$(in_world gh pr view "$PB" --json number -q .number </dev/null 2>&1)"; echo "# gh view rc=$? out=[$(printf '%s' "$out" | tail -3 | cut -c1-300)]"
+    out="$(in_world gh pr list --state all --json number,headRefName </dev/null 2>&1)"; echo "# gh list rc=$? out=[$(printf '%s' "$out" | tail -3 | cut -c1-300)]"
+    git -C "$W/work" branch -q probe-b "$(git -C "$W/work" rev-parse HEAD)"; git -C "$W/work" push -q origin probe-b:refs/heads/spira/publish/probe-b
+    out="$(in_world gh pr create --head spira/publish/probe-b --base main --title t --body-file - </dev/null 2>&1)"; echo "# gh create rc=$? out=[$(printf '%s' "$out" | tail -3 | cut -c1-300)]"
+    grep -h "publish" "$W/run/landing.log" 2>/dev/null | tail -5 | cut -c1-250 | sed 's/^/# landing.log: /'
+    ls "$W/run" "$W/run/queue" 2>&1 | tr '\n' ' ' | cut -c1-300
     echo "# state: $(head -c 400 "$W/gh/state.json")"
     echo "# ${SECONDS}s"
     bad "explore" "forced"
