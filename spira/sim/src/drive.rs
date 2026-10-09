@@ -77,6 +77,8 @@ pub struct Scenario {
     pub epoch: u64,
     pub horizon: u64,
     pub goal: Option<String>,
+    /// With a goal: the run is done only once the bead is there and a tag with this prefix exists.
+    pub goal_tag: Option<String>,
     #[serde(default, rename = "actor")]
     pub actors: Vec<ActorDef>,
     /// Actors taken by name from the tree's `sim/actors.toml`: cadence from its real timer
@@ -94,6 +96,9 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
     let sc: Scenario = toml::from_str(text).map_err(|e| format!("scenario: {e}"))?;
     if let Some(g) = &sc.goal {
         parse_bead_state(g)?;
+    }
+    if sc.goal_tag.is_some() && sc.goal.is_none() {
+        return Err("scenario: goal_tag needs a goal".to_string());
     }
     for st in &sc.steps {
         st.shell()?;
@@ -248,6 +253,11 @@ impl ProcessProbe {
             }
         }
         snap.tags = git(&["tag"])?.lines().map(str::to_string).collect();
+        for t in crate::gh::tag_names(&self.exec.world.join("gh"))? {
+            if !snap.tags.contains(&t) {
+                snap.tags.push(t);
+            }
+        }
         if let Some(p) = &self.probe {
             let out = run(&mut self.exec.command(p, 0)?, COMMAND_DEADLINE)?;
             for l in out.lines().filter(|l| !l.trim().is_empty()) {
@@ -358,6 +368,7 @@ pub fn drive(
         (Some(g), Stop::Goal) => Some(parse_bead_state(g)?),
         _ => None,
     };
+    let tag_prefix = sc.goal_tag.clone().filter(|_| matches!(stop, Stop::Goal));
     let mut events: Vec<Value> = Vec::new();
     let mut open: BTreeMap<String, (u64, i32)> = BTreeMap::new();
     let mut reached = false;
@@ -412,7 +423,8 @@ pub fn drive(
             tr.snapshot(seq, &snap)?;
         }
         if let Some((b, s)) = &goal {
-            if bead_in_state(&snap, b, s) {
+            let tagged = tag_prefix.as_deref().is_none_or(|p| snap.tags.iter().any(|t| t.starts_with(p)));
+            if bead_in_state(&snap, b, s) && tagged {
                 reached = true;
                 break;
             }

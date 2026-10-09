@@ -68,6 +68,15 @@ pub fn jq(json: &str, expr: &str) -> R<String> {
     crate::jq::jq_r(json, expr)
 }
 
+/// The tag names the forge in `state_dir` holds; none when it holds no state yet.
+pub fn tag_names(state_dir: &Path) -> R<Vec<String>> {
+    if !state_dir.join(STATE_FILE).is_file() {
+        return Ok(Vec::new());
+    }
+    let st = State::open(state_dir)?;
+    Ok(st.list("tags").iter().filter_map(|t| t["name"].as_str().map(str::to_string)).collect())
+}
+
 pub struct State {
     dir: PathBuf,
     pub v: Value,
