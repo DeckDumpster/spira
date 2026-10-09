@@ -18,7 +18,7 @@
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh.
 #
 # tier: T2
-# covers: lifecycle/* spira-lc/src/ops.rs spira-lc/src/cutover.rs spira-lc/src/migrate.rs bead/src/main.rs
+# covers: lifecycle/* loom/src/stuck.rs spira-lc/src/ops.rs spira-lc/src/cutover.rs spira-lc/src/migrate.rs bead/src/main.rs
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -110,6 +110,13 @@ check_stuck_plans() {
     p="$(plan_of "SELECT * FROM ops_dwell")"
     want "ops_dwell looks each bead's entry up by key in the event index ($when)" "$lookup_index" "$p"
     reads "$p" bead && ok "ops_dwell reads bead by index ($when)" || bad "ops_dwell reads bead by index ($when)" "$p"
+    p="$(plan_of "$(spira-lc ops-gantt --print-sql)")"
+    if scans "$p"; then bad "the stuck page's gantt query scans no table ($when)" "$p"; else ok "the stuck page's gantt query scans no table ($when)"; fi
+    want "the gantt query takes its window from the event time index ($when)" "$window_index" "$p"
+    p="$(plan_of "SELECT seq, event, from_state, to_state, applied, refusal, evidence, actor, at FROM event WHERE machine = 'bead' AND lc_key = 'sp-1' ORDER BY seq")"
+    if scans "$p"; then bad "a bead's timeline query scans no table ($when)" "$p"; else ok "a bead's timeline query scans no table ($when)"; fi
+    p="$(plan_of "SELECT bead_id, state, holder FROM bead WHERE bead_id = 'sp-1'")"
+    reads "$p" bead && ok "a bead's row is read by key ($when)" || bad "a bead's row is read by key ($when)" "$p"
 }
 check_plans "no statistics"
 check_stuck_plans "no statistics"

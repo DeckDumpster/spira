@@ -117,6 +117,7 @@ fn cfg(lc: &str, budget_ms: u64, cache_s: u64) -> Config {
         run: String::new(),
         instance: "test".to_string(),
         systemctl: "systemctl".to_string(),
+        lc: "spira-lc".to_string(),
     }
 }
 
@@ -315,6 +316,7 @@ fn ops_cfg(run: &str) -> Config {
         run: run.to_string(),
         instance: "test".to_string(),
         systemctl: "systemctl".to_string(),
+        lc: "spira-lc".to_string(),
     }
 }
 
@@ -380,4 +382,44 @@ async fn ops_reports_halted_only_from_the_stamp_not_the_snapshot() {
     assert_eq!(code, 200, "{v}");
     assert_eq!(v["halted"], true, "{v}");
     assert_eq!(v["halted_why"], "acceptance", "{v}");
+}
+
+/// A fake `spira-lc` answering the three reads the stuck page makes, from canned JSON.
+fn fake_lc(dir: &PathBuf) -> String {
+    let bin = dir.join("spira-lc");
+    script(
+        &bin,
+        r#"#!/bin/sh
+now=$(date +%s)
+case "$1 $2" in
+  "ops-gantt "*) echo "{\"now\":$now,\"events\":[{\"seq\":1,\"bead_id\":\"sp-2cah6\",\"from_state\":\"SUBMITTED\",\"to_state\":\"CERTIFIED\",\"at\":$((now-72000))},{\"seq\":2,\"bead_id\":\"sp-fine\",\"from_state\":\"READY\",\"to_state\":\"WORKING\",\"at\":$((now-600))}]}" ;;
+  "ops-view ops_dwell") echo "[{\"bead_id\":\"sp-2cah6\",\"state\":\"CERTIFIED\",\"holds\":\"[]\",\"priority\":1,\"title\":\"stuck one\",\"entered_at\":$((now-72000))},{\"bead_id\":\"sp-fine\",\"state\":\"WORKING\",\"holds\":\"[]\",\"priority\":2,\"title\":\"fine one\",\"entered_at\":$((now-600))}]" ;;
+  "ops-view ops_dwell_p95") echo '[{"state":"CERTIFIED","p95_s":7200},{"state":"WORKING","p95_s":10800}]' ;;
+  "ops-bead sp-2cah6") echo "{\"now\":$now,\"bead\":{\"state\":\"CERTIFIED\",\"holder\":null,\"holds\":\"[]\",\"title\":\"stuck one\"},\"events\":[{\"seq\":1,\"event\":\"Certify\",\"from_state\":\"SUBMITTED\",\"to_state\":\"CERTIFIED\",\"applied\":1,\"actor\":\"gate\",\"at\":$((now-72000))},{\"seq\":2,\"event\":\"Rework\",\"from_state\":\"CERTIFIED\",\"to_state\":\"CERTIFIED\",\"applied\":0,\"refusal\":\"no-edge\",\"actor\":\"x\",\"at\":$((now-60))}]}" ;;
+  *) echo "no such bead" >&2; exit 1 ;;
+esac
+"#,
+    );
+    bin.to_string_lossy().into_owned()
+}
+
+#[tokio::test]
+async fn the_stuck_page_leads_with_the_bead_past_its_p95_and_a_row_opens_its_timeline() {
+    let dir = scratch("stuck");
+    let mut c = ops_cfg("");
+    c.lc = fake_lc(&dir.to_path_buf());
+    let addr = spawn(c).await;
+
+    let (status, page) = get(addr, "/stuck").await;
+    assert_eq!(status, 200, "{page}");
+    let (stuck_at, fine_at) = (page.find("/stuck/sp-2cah6").expect("stuck row"), page.find("/stuck/sp-fine").expect("healthy row"));
+    assert!(stuck_at < fine_at, "the stuck bead is listed first");
+    assert!(page.contains("seg s-CERTIFIED over"), "its bar is outlined");
+    assert!(!page.contains("seg s-WORKING over"), "positive control: the healthy bar is not");
+
+    let (status, detail) = get(addr, "/stuck/sp-2cah6").await;
+    assert_eq!(status, 200, "{detail}");
+    assert!(detail.contains("refused: no-edge"));
+    assert_eq!(get(addr, "/stuck/sp-nope1").await.0, 404);
+    assert_eq!(get(addr, "/stuck/a%20b").await.0, 400);
 }
