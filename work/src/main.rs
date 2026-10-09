@@ -12,7 +12,7 @@
 //! sp-xethq, and the restricted unit environment this bead only provides — see
 //! aeon/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::Command;
 use std::time::Duration;
@@ -103,7 +103,7 @@ fn read_tip(bead: &str) -> Option<String> {
 }
 
 /// The exact wire protocol spira-lc's own CLI speaks to its socket (client.rs): one JSON
-/// line in (the argv array), one JSON line out (`{exit_code, stdout}`). No same-user
+/// line in (the argv array), one header line out (`{exit_code, len}`) then `len` raw stdout bytes. No same-user
 /// fallback exists here — see this file's module doc for why that absence is the point.
 fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
     let socket_path = spira_config::process::cfg("SPIRA_LC_SOCKET")?;
@@ -134,6 +134,21 @@ fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
     }
     let resp: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| format!("malformed reply: {e}"))?;
     let code = resp.get("exit_code").and_then(|v| v.as_i64()).ok_or("reply had no exit_code")? as i32;
-    let out = resp.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let len = resp.get("len").and_then(|v| v.as_u64()).ok_or("reply had no len")? as usize;
+    let mut body = vec![0u8; len];
+    let mut at = 0;
+    while at < len {
+        match reader.read(&mut body[at..]) {
+            Ok(0) => return Err("spira-lc closed the connection mid-reply".to_string()),
+            Ok(n) => at += n,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!("no reply from spira-lc within {}s: {e}", wait.as_secs()));
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let out = String::from_utf8(body).map_err(|e| format!("reply was not UTF-8: {e}"))?;
     Ok((code, out))
 }

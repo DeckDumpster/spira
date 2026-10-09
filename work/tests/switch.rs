@@ -11,7 +11,7 @@ fn scratch(tag: &str) -> testkit::TempDir {
     testkit::TempDir::new(&format!("work-switch-{tag}"))
 }
 
-/// A listening socket that answers `{"exit_code":0,"stdout":"ok"}` and records a connection.
+/// A listening socket that answers a header and `ok` and records a connection.
 fn machine(sock: &PathBuf) -> Arc<AtomicBool> {
     let hit = Arc::new(AtomicBool::new(false));
     let l = UnixListener::bind(sock).unwrap();
@@ -22,7 +22,7 @@ fn machine(sock: &PathBuf) -> Arc<AtomicBool> {
             h.store(true, Ordering::SeqCst);
             let mut line = String::new();
             let _ = BufReader::new(s.try_clone().unwrap()).read_line(&mut line);
-            let _ = writeln!(&s, r#"{{"exit_code":0,"stdout":"ok"}}"#);
+            let _ = write!(&s, "{{\"exit_code\":0,\"len\":2}}\nok");
         }
     });
     hit
@@ -78,7 +78,7 @@ fn a_reply_slower_than_one_read_slice_is_waited_for() {
             let mut line = String::new();
             let _ = BufReader::new(s.try_clone().unwrap()).read_line(&mut line);
             std::thread::sleep(std::time::Duration::from_millis(3000));
-            let _ = writeln!(&s, r#"{{"exit_code":0,"stdout":"late"}}"#);
+            let _ = write!(&s, "{{\"exit_code\":0,\"len\":4}}\nlate");
         }
     });
     let o = work(&sock, &d, "show");

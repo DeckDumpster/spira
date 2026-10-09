@@ -120,5 +120,8 @@ is "since is filled from the event log" True "$since_ok"
 
 spira-lc list --state READY --hold poison >/dev/null 2>&1
 wantrc "list with both filters is valid SQL" 0 $?
+live_n="$(spira-lc list --live | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+all_n="$(spira-lc list | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+[ "${live_n:-x}" -le "${all_n:-0}" ] 2>/dev/null; wantrc "list --live is valid SQL and never wider than list" 0 $?
 
 tl_summary
