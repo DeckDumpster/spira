@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::process::{Command, Stdio};
 
 const MAX_ROWS: usize = 12;
+const MAX_ROUNDS: usize = 4;
 
 pub fn round_keys(cap_secs: i64) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
@@ -73,6 +74,7 @@ fn terminal(state: &str) -> bool {
 
 pub fn phase(state: &str) -> &'static str {
     match state {
+        "STAGED" => "staged",
         "OPEN" => "merging",
         "CI_RUNNING" => "certifying",
         "GREEN" => "landing",
@@ -94,20 +96,25 @@ pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs:
         push(&mut out, "SP_ROUND_STATE", "?");
         return out;
     };
-    if let Some(b) = batches.iter().find(|b| !terminal(&b.state)) {
+    let live: Vec<&Batch> = batches.iter().filter(|b| !terminal(&b.state)).collect();
+    if !live.is_empty() {
         push(&mut out, "SP_ROUND_STATE", "open");
-        push(&mut out, "SP_ROUND_NAME", sanitize(&b.id));
-        push(&mut out, "SP_ROUND_PHASE", phase(&b.state));
-        push(&mut out, "SP_ROUND_OPENED", b.opened_at.to_string());
-        let ejected: Vec<&str> = b.ejected.iter().map(|(id, _)| id.as_str()).collect();
-        let live: Vec<_> = b.members.iter().filter(|(id, _)| !ejected.contains(&id.as_str())).collect();
-        push(&mut out, "SP_ROUND_N", live.len().to_string());
-        for (i, (id, outcome)) in live.iter().take(MAX_ROWS).enumerate() {
-            push(&mut out, &format!("SP_ROUND_MEMBER{i}"), format!("{}|{}", sanitize(id), sanitize(member_state(outcome))));
-        }
-        push(&mut out, "SP_ROUND_EJECT_N", b.ejected.len().to_string());
-        for (i, (id, why)) in b.ejected.iter().take(MAX_ROWS).enumerate() {
-            push(&mut out, &format!("SP_ROUND_EJECT{i}"), format!("{}|{}", sanitize(id), sanitize(why)));
+        push(&mut out, "SP_ROUNDS_N", live.len().to_string());
+        for (r, b) in live.iter().take(MAX_ROUNDS).enumerate() {
+            let k = format!("SP_ROUNDS{r}");
+            push(&mut out, &format!("{k}_NAME"), sanitize(&b.id));
+            push(&mut out, &format!("{k}_PHASE"), phase(&b.state));
+            push(&mut out, &format!("{k}_OPENED"), b.opened_at.to_string());
+            let ejected: Vec<&str> = b.ejected.iter().map(|(id, _)| id.as_str()).collect();
+            let members: Vec<_> = b.members.iter().filter(|(id, _)| !ejected.contains(&id.as_str())).collect();
+            push(&mut out, &format!("{k}_N"), members.len().to_string());
+            for (i, (id, outcome)) in members.iter().take(MAX_ROWS).enumerate() {
+                push(&mut out, &format!("{k}_MEMBER{i}"), format!("{}|{}", sanitize(id), sanitize(member_state(outcome))));
+            }
+            push(&mut out, &format!("{k}_EJECT_N"), b.ejected.len().to_string());
+            for (i, (id, why)) in b.ejected.iter().take(MAX_ROWS).enumerate() {
+                push(&mut out, &format!("{k}_EJECT{i}"), format!("{}|{}", sanitize(id), sanitize(why)));
+            }
         }
         return out;
     }
@@ -142,15 +149,30 @@ mod tests {
         let b = parse_batches(RAW).unwrap();
         let kv = round_keys_from(Some(&b), Some(4), 900);
         assert_eq!(get(&kv, "SP_ROUND_STATE"), Some("open"));
-        assert_eq!(get(&kv, "SP_ROUND_NAME"), Some("r-9"));
-        assert_eq!(get(&kv, "SP_ROUND_PHASE"), Some("certifying"));
-        assert_eq!(get(&kv, "SP_ROUND_OPENED"), Some("1000"));
+        assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("1"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_NAME"), Some("r-9"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_PHASE"), Some("certifying"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_OPENED"), Some("1000"));
         assert_eq!(get(&kv, "SP_ROUND_CAP"), Some("900"));
-        assert_eq!(get(&kv, "SP_ROUND_N"), Some("2"));
-        assert_eq!(get(&kv, "SP_ROUND_MEMBER1"), Some("sp-b|in"));
-        assert_eq!(get(&kv, "SP_ROUND_MEMBER2"), None);
-        assert_eq!(get(&kv, "SP_ROUND_EJECT0"), Some("sp-c|red: test-x.sh"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_N"), Some("2"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_MEMBER1"), Some("sp-b|in"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_MEMBER2"), None);
+        assert_eq!(get(&kv, "SP_ROUNDS0_EJECT0"), Some("sp-c|red: test-x.sh"));
         assert_eq!(get(&kv, "SP_ROUND_POOL"), Some("4"));
+    }
+
+    #[test]
+    fn two_live_rounds_are_both_reported_and_a_landed_one_is_not() {
+        let raw = r#"[
+          {"batch_id":"r-11","state":"STAGED","opened_at":2000,"members":[{"bead_id":"sp-z","outcome":"skipped: unlanded dependency"}],"ejected":[]},
+          {"batch_id":"r-10","state":"CI_RUNNING","opened_at":1000,"members":[{"bead_id":"sp-y","outcome":null}],"ejected":[]},
+          {"batch_id":"r-9","state":"LANDED","opened_at":500,"members":[{"bead_id":"sp-x","outcome":null}],"ejected":[]}]"#;
+        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900);
+        assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("2"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_PHASE"), Some("staged"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_MEMBER0"), Some("sp-z|skipped: unlanded dependency"));
+        assert_eq!(get(&kv, "SP_ROUNDS1_NAME"), Some("r-10"));
+        assert!(!kv.iter().any(|(_, v)| v == "r-9"));
     }
 
     #[test]

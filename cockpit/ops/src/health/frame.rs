@@ -67,7 +67,7 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
     let inflow = inflow_section(&snap, cols);
     let ci = ci_section(&snap, cols);
     let standing = standing_lines(&snap, cols);
-    let round = super::round::round_section(&snap, cols, inputs.now);
+    let round = super::round::round_section(&snap, cols, inputs.now, rows);
     let flow = flow_lines(&snap);
 
     let want = [
