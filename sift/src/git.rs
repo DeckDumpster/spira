@@ -8,6 +8,7 @@ pub struct GitProbe {
     pub repo: PathBuf,
     pub base_ref: String,
     pub work: PathBuf,
+    pub lint: bool,
     pub state: Box<dyn Fn(&str) -> Result<String, String>>,
 }
 
@@ -104,6 +105,9 @@ impl Probe for GitProbe {
     }
 
     fn lint(&self, merged: &str) -> Result<Vec<String>, String> {
+        if !self.lint {
+            return Ok(Vec::new());
+        }
         let base = self.base()?;
         let target = self.work.join("lint-target");
         let (wt_m, wt_b) = (self.work.join("lint-merged"), self.work.join("lint-base"));
@@ -153,7 +157,7 @@ mod tests {
         let conflict = commit(&p, "f", "other\n", "sp-other: edits the same line");
         g(&p, &["checkout", "-q", "-b", "clean", "main"]);
         let clean = commit(&p, "g", "new\n", "spira: land sp-bead — adds g");
-        let probe = GitProbe { repo: p.clone(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())) };
+        let probe = GitProbe { repo: p.clone(), base_ref: "main".into(), work: p.join(".sift"), lint: true, state: Box::new(|_| Ok("SUBMITTED".into())) };
         (d, probe, [conflict, clean, "x".into()])
     }
 
@@ -174,6 +178,14 @@ mod tests {
         assert_eq!(probe.patch_id(&clean).unwrap(), probe.patch_id(&copy).unwrap());
         assert_eq!(probe.stacked_on("sp-me", &clean).unwrap(), ["sp-bead"]);
         assert!(probe.stacked_on("sp-bead", &clean).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_probe_with_lint_off_builds_nothing_and_reports_nothing() {
+        let (d, mut probe, [_, clean, _]) = fixture();
+        probe.lint = false;
+        assert_eq!(probe.lint(&clean).unwrap(), Vec::<String>::new());
+        assert!(!d.path().join(".sift").exists());
     }
 
     #[test]

@@ -50,6 +50,7 @@ pub fn screened(env: &Env, repo: &Repo, pool: Vec<Member>, open: Option<&OpenBat
         repo: repo.path.clone(),
         base_ref: repo.base.clone(),
         work: work.clone(),
+        lint: std::env::var_os("SIM_WORLD").is_none_or(|v| v.is_empty()),
         state: Box::new(move |id| io::lc_state(&probe_env, id)),
     };
     let candidates: Vec<Candidate> = pool.iter().map(|m| Candidate { id: m.id.clone(), tip: m.tip.clone() }).collect();
