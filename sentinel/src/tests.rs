@@ -2633,13 +2633,17 @@ fn overlap_world(r: &FakeRunner, w: &World) {
     r.on(move |s| {
         (s.prog == "spira-config" && s.args == ["repo", "root", "spira"]).then(|| ok(&format!("{root}\n"))).flatten()
     });
-    const LIST: &str = r#"[
+    const LIST: &str = concat!(r#"[
       {"id":"sp-busy","status":"in_progress","issue_type":"task","labels":["spira","repo:spira"]},
       {"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
       {"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
       {"id":"sp-alone","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira","needs-operator"]}
-    ]"#; // literal-ok: test fixture
+      {"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira",
+"#,
+        r#""needs-operator""#, // literal-ok: test fixture
+        r#"]}
+    ]"#
+    );
     r.on(|s| (is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type")).then(|| ok(LIST)).flatten());
     r.on(|s| (s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")).then(|| ok(&lc_mirror(LIST))).flatten());
     r.on(|s| {
