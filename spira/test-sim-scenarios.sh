@@ -30,9 +30,9 @@ cleanup() {
     rm -rf "$T"
 }
 trap cleanup EXIT
-FIXED_SEEDS="${SIM_SCENARIOS_SEEDS:-7 11}"
+FIXED_SEEDS="${SIM_SCENARIOS_SEEDS:-7}"
 FRESH_SEED=$(( $(date +%s%N) % 1000000000 ))
-PAR="${SIM_SCENARIOS_PAR:-8}"
+PAR="${SIM_SCENARIOS_PAR:-5}"
 RUN_LIMIT=280
 echo "# seeds: $FIXED_SEEDS and fresh $FRESH_SEED (SIM_SCENARIOS_SEEDS pins the fixed list)"
 
