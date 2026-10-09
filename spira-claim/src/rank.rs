@@ -153,7 +153,7 @@ impl Ranked {
 pub fn rank_one(r: &ReadyRow, lookup: &EpicLookup, resumable: &BTreeSet<String>, rework: &BTreeSet<String>) -> Ranked {
     let pid = r.parent.clone().unwrap_or_default();
     let started: BTreeSet<&str> = lookup.started.iter().map(String::as_str).collect();
-    let epic_priority = if pid.is_empty() { r.prio() } else { *lookup.prio.get(&pid).unwrap_or(&r.prio()) };
+    let epic_priority = if pid.is_empty() { r.prio() } else { (*lookup.prio.get(&pid).unwrap_or(&r.prio())).min(r.prio()) };
     Ranked {
         epic_priority,
         epic_started: if started.contains(pid.as_str()) { 0 } else { 1 },
@@ -437,10 +437,28 @@ mod tests {
 
     #[test]
     fn epic_priority_ranks_first() {
-        // a P0 bead in a P2 epic loses to a P3 bead in a P1 epic.
-        let rows = vec![row("a", 0, Some("E2"), "2026-01-01"), row("b", 3, Some("E1"), "2026-01-02")];
+        let rows = vec![row("a", 2, Some("E2"), "2026-01-01"), row("b", 3, Some("E1"), "2026-01-02")];
         let lk = EpicLookup { prio: [("E2".into(), 2), ("E1".into(), 1)].into(), started: vec![] };
         assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
+    }
+
+    #[test]
+    fn a_p0_child_of_a_p1_epic_outranks_a_standalone_p1() {
+        let rows = vec![row("solo", 1, None, "2026-01-01"), row("kid", 0, Some("E"), "2026-02-01")];
+        let lk = EpicLookup { prio: [("E".into(), 1)].into(), started: vec![] };
+        let r = rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(ids(&r), ["kid", "solo"]);
+        assert_eq!(r[0].epic_priority, 0);
+    }
+
+    #[test]
+    fn equal_effective_priority_keeps_epic_first_order() {
+        let rows = vec![row("a", 1, Some("E1"), "2026-01-01"), row("b", 0, Some("E2"), "2026-01-02")];
+        let lk = EpicLookup { prio: [("E1".into(), 1), ("E2".into(), 1)].into(), started: vec!["E1".into()] };
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
+        let lk = EpicLookup { prio: [("E1".into(), 0), ("E2".into(), 1)].into(), started: vec!["E1".into()] };
+        let rows = vec![row("b", 0, Some("E2"), "2026-01-02"), row("a", 1, Some("E1"), "2026-01-01")];
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["a", "b"]);
     }
 
     #[test]
