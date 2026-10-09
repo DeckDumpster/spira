@@ -68,6 +68,7 @@ SUITE_RE='^[A-Za-z0-9._-]+$'
 BEAD_RE='^[a-z][a-z0-9]*-[a-z0-9.]+$'
 DEFAULT_HOURS=720
 BRANCH_RE='^[A-Za-z0-9._/-]+$'
+STAGE_FAMILY=bead-stage
 
 usage() {
     cat >&2 <<'USAGE'
@@ -304,7 +305,7 @@ case "$cmd" in
         ;;
     where)
         hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
-        path="$(_check_family bead-stage)" || exit $?
+        path="$(_check_family "$STAGE_FAMILY")" || exit $?
         duckdb -json -c "
             WITH latest AS (
                 SELECT to_state, epoch(now()) - epoch(CAST(ts AS TIMESTAMPTZ)) AS dwell_s,
@@ -325,7 +326,7 @@ case "$cmd" in
         ;;
     rework)
         hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
-        path="$(_check_family bead-stage)" || exit $?
+        path="$(_check_family "$STAGE_FAMILY")" || exit $?
         duckdb -json -c "
             WITH win AS (
                 SELECT key, to_state, COALESCE(reason, 'unknown') AS reason
@@ -406,7 +407,7 @@ case "$cmd" in
     bead)
         id="${1:?bead id required}"
         [[ "$id" =~ $BEAD_RE ]] || { printf 'tsd-query: bad bead %q\n' "$id" >&2; exit 2; }
-        path="$(_check_family bead-stage)" || exit $?
+        path="$(_check_family "$STAGE_FAMILY")" || exit $?
         extra=""
         [ -f "$(_family_path aeon-session)" ] && extra="$extra
             UNION ALL SELECT ts, 'aeon', fayth || ' ' || status, CAST(wall_s AS BIGINT)
