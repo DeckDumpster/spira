@@ -284,6 +284,25 @@ pub fn orphan_violations(
     out
 }
 
+/// T0-T3 use cases no suite covers and no `[use_case.uncovered]` marker explains.
+pub fn coverage_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -> Vec<String> {
+    let covered: BTreeSet<&str> = suites.iter().flat_map(|s| s.uc_ids()).collect();
+    let mut out = Vec::new();
+    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+        if !matches!(uc.tier, Tier::T0 | Tier::T1 | Tier::T2 | Tier::T3) {
+            continue;
+        }
+        if uc.uncovered.is_none() && !covered.contains(uc.id.as_str()) {
+            out.push(format!(
+                "gap: {} [{}] has no covering suite and no [use_case.uncovered] marker",
+                uc.id,
+                uc.tier.as_str()
+            ));
+        }
+    }
+    out
+}
+
 /// Launchers no suite covers. An `[use_case.uncovered]` marker does not silence this: it
 /// explains the gap, the launcher is still a launcher nobody has started the way its
 /// launcher starts it.
@@ -524,6 +543,17 @@ mod tests {
 
     fn suite(covers: &[&str]) -> SuiteCoverage {
         SuiteCoverage { path: "spira/test-a.sh".into(), tier: Some("T2".into()), covers: covers.iter().map(|c| c.to_string()).collect() }
+    }
+
+    #[test]
+    fn an_unmarked_uncovered_uc_is_a_gap_and_a_marker_or_cover_clears_it() {
+        let bare = "api_version = \"test-plan/v1\"\narea = \"ops\"\n\n[[use_case]]\nid = \"UC-ops-01\"\ntier = \"T2\"\nstatement = \"s\"\n";
+        let marked = format!("{bare}\n[use_case.uncovered]\nreason = \"r\"\ndate = \"2026-10-08\"\nbead = \"sp-x\"\n");
+        assert_eq!(coverage_gaps(&[lc("ops", bare)], &[]).len(), 1);
+        assert!(coverage_gaps(&[lc("ops", &marked)], &[]).is_empty());
+        assert!(coverage_gaps(&[lc("ops", bare)], &[suite(&["UC-ops-01"])]).is_empty());
+        let t4 = bare.replace("T2", "T4");
+        assert!(coverage_gaps(&[lc("ops", &t4)], &[]).is_empty());
     }
 
     #[test]

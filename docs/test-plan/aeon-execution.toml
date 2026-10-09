@@ -6,6 +6,11 @@ id = "UC-aeon-execution-01"
 tier = "T3"
 statement = "a bead is worked in a worktree cut from freshly fetched `origin/<landref>`; a stale foreign worktree is moved aside, never removed"
 
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-aeon-execution-02"
 tier = "T3"
@@ -60,6 +65,11 @@ statement = "the thrash wall trips only when the fuse and the session age both c
 id = "UC-aeon-execution-10"
 tier = "T1"
 statement = "session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny"
+
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-aeon-execution-11"
@@ -125,6 +135,11 @@ statement = "attempts are counted from the bd events trail only, never from a la
 id = "UC-aeon-execution-20"
 tier = "T2"
 statement = "claim release is compare-and-swap on the claiming actor; naming the fayth leaves it held"
+
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-aeon-execution-21"
