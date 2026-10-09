@@ -146,11 +146,6 @@ id = "UC-config-store-preflight-25"
 tier = "T2"
 statement = "the bd and Dolt contract the harness relies on holds against a real bd init"
 
-[use_case.uncovered]
-reason = "test-bd-contract.sh (real bd init, breaker ordering) was never written"
-date = "2026-10-08"
-bead = "sp-n071y"
-
 [[use_case]]
 id = "UC-config-store-preflight-26"
 tier = "T1"
