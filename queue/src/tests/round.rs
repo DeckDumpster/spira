@@ -226,6 +226,24 @@ fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     assert!(o.contains("sp-b: conflicts with base — returned to rework") && o.contains("sp-c: conflicts with the round\n"), "{o}");
     assert!(t.lc.has("event bead sp-b CERTIFIED 3 {\"GateRed\":{\"tip\":\"tb\",\"reason\":\"no-rebase\"}}"), "{:?}", t.lc.calls.borrow());
     assert!(!t.lc.has("event bead sp-c"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.lc.bead_state("sp-b").unwrap().0, "REWORK");
+}
+
+#[test]
+fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
+    for ignored in [false, true] {
+        let t = round_world();
+        t.git.merge_fail.borrow_mut().insert("tb".into());
+        t.lib.conflict_with_base.borrow_mut().insert("tb".into());
+        if ignored {
+            t.lc.event_ignored.set(true);
+        } else {
+            t.lc.event_refused.set(Some("refused: IllegalTransition"));
+        }
+        assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "ignored={ignored}: {}", t.err());
+        assert!(!t.out().contains("returned to rework") && t.out().contains("sp-b: conflicts with base ("), "{}", t.out());
+        assert!(t.err().contains("could not be returned to rework") && !t.lc.has("cut") && !t.qfile("round").exists(), "{}", t.err());
+    }
 }
 
 #[test]
