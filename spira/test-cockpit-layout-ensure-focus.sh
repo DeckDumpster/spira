@@ -210,6 +210,8 @@ imp_out="$(ensure_stderr "$_FAKE_RELEASE/bin/layout")"
 is   "ensure untagged the impostor" "" \
     "$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -p -t "$imp" '#{@cockpit}')"
 want "and logged it" "runs no dashboard" "$imp_out"
+is   "ensure sets window-size latest, so the client in use gets a fitted layout" "latest" \
+    "$(TMUX_TMPDIR="$TMUXDIR" tmux show-options -t w3 -v window-size)"
 panes3="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w3:0 -F '#{pane_id}')"
 want "the session pane was not killed"  "$sess3" "$panes3"
 want "the impostor pane was not killed" "$imp"   "$panes3"
