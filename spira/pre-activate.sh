@@ -136,17 +136,21 @@ check_store() {
         return
     fi
     local t="${SPIRA_STORE_CHECK_TIMEOUT:-30}" out rc attempt
+    local conn_re='i/o timeout|connection refused|connection reset|broken pipe|failed to open database|driver: bad connection|packets\.go|dial tcp'
     local -a cmd=(bd)
     [ -n "${SPIRA_DB:-}" ] && cmd+=(-C "$SPIRA_DB")
     for attempt in 1 2; do
         out="$(timeout "$t" "${cmd[@]}" migrate status 2>&1)"
         rc=$?
-        [ "$rc" -ne 124 ] && break
+        [ "$rc" -eq 0 ] && break
+        [ "$rc" -ne 124 ] && ! grep -qiE "$conn_re" <<<"$out" && break
     done
     if [ "$rc" -eq 0 ]; then
         ok store
     elif [ "$rc" -eq 124 ]; then
         fail store "store slow: no answer in ${t} s (2 attempts)"
+    elif grep -qiE "$conn_re" <<<"$out"; then
+        fail store "store slow/unreachable: $out"
     else
         fail store "schema mismatch: $out"
     fi
