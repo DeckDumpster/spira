@@ -111,6 +111,23 @@ pub fn pids_budget() -> u32 {
     PIDS_LIMIT / 100 * PIDS_HEADROOM_PCT
 }
 
+/// The lane whose suites run in a container of their own (`# lane: sim`).
+pub const SIM_LANE: &str = "sim";
+/// The sim container's own `--pids-limit`, `--memory` and slots: a sim world is a dolt server
+/// plus the harness, so its footprint must not draw on the main container's budget.
+pub const SIM_PIDS_LIMIT: u32 = 4096;
+pub const SIM_MEMORY: &str = "12g";
+pub const SIM_SLOTS: u32 = 4;
+
+pub fn is_sim(j: &Job) -> bool {
+    j.exclusive.is_none() && j.lane.as_deref() == Some(SIM_LANE)
+}
+
+/// Splits ordered jobs into (main, sim), each keeping its order.
+pub fn split_sim(jobs: Vec<Job>) -> (Vec<Job>, Vec<Job>) {
+    jobs.into_iter().partition(|j| !is_sim(j))
+}
+
 /// What may start next: the pool's slots, the declared process weight of what is running
 /// against the pids budget, and each lane's own slots. A suite heavier than the whole budget
 /// still runs, alone.
@@ -316,6 +333,24 @@ mod tests {
             peak = peak.max(running.iter().map(|r| r.weight).sum());
         }
         peak
+    }
+
+    #[test]
+    fn sim_lane_jobs_split_off_in_order_and_exclusive_stays() {
+        let mk = |n: &str, lane: Option<&str>, ex: bool| Job {
+            lane: lane.map(String::from),
+            ..Job::new(n, ex.then(|| "x".to_string()))
+        };
+        let jobs = vec![
+            mk("a", Some("sim"), false),
+            mk("b", None, false),
+            mk("c", Some("sim"), true),
+            mk("d", Some("sim"), false),
+        ];
+        let (main, sim) = split_sim(jobs);
+        let names = |v: &[Job]| v.iter().map(|j| j.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&main), ["b", "c"]);
+        assert_eq!(names(&sim), ["a", "d"]);
     }
 
     #[test]

@@ -56,7 +56,7 @@ pub fn reserved_word(requirement: &str) -> Option<&'static str> {
     RESERVED_WORDS.iter().copied().find(|w| low.contains(w))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SkipGate {
     entries: Vec<AllowEntry>,
 }
