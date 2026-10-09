@@ -2,7 +2,7 @@ epoch = 1800000000
 horizon = 1200000
 goal = "sp-hp01:LANDED"
 goal_tag = "spira-release-"
-real_actors = ["sentinel-summon", "sentinel-landing", "gate-worker", "rounds", "publish"]
+real_actors = ["sentinel-summon", "sentinel-landing", "gate-worker", "publish"]
 
 [[step]]
 at = 0
