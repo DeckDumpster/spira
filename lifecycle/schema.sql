@@ -138,7 +138,7 @@ SELECT 'applied' AS kind, from_state, to_state, NULL AS event, NULL AS refusal,
 UNION ALL
 SELECT 'refused', from_state, NULL, event, refusal,
        SUM(at >= UNIX_TIMESTAMP() - 3600), COUNT(*)
-  FROM event FORCE INDEX (event_at_idx)
+  FROM event
  WHERE machine = 'bead' AND applied = 0 AND at >= UNIX_TIMESTAMP() - 86400
  GROUP BY from_state, event, refusal;
 
