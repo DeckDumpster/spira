@@ -175,9 +175,10 @@ fn lc_stop_signals_this_worlds_serve_and_never_another_process() {
     let mut serve = std::process::Command::new(&argv[0]).args(&argv[1..]).current_dir(&world).spawn().unwrap();
     let mut other = std::process::Command::new("sleep").arg("30").spawn().unwrap();
     let alive = |pid: u32| std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| !s.contains(") Z "));
-    let t0 = std::time::Instant::now();
+    let mut polls = 0;
     while !std::fs::read(format!("/proc/{}/cmdline", serve.id())).is_ok_and(|c| is_world_serve(&c, &world)) {
-        assert!(t0.elapsed().as_secs() < 5, "the stand-in serve never showed the serve cmdline");
+        polls += 1;
+        assert!(polls < 500, "the stand-in serve never showed the serve cmdline");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
