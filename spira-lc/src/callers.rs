@@ -546,12 +546,21 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     }
     if !matches!(state.as_str(), "WORKING" | "REWORK" | "CERTIFIED") {
-        return Answer::cert(REFUSED, "skip", format!("resubmit: state={state} not eligible for tip={tip}"));
+        let mut a = Answer::cert(REFUSED, "skip", format!("resubmit: state={state} not eligible for tip={tip}"));
+        a.stderr = format!("spira-lc resubmit: {id} is {state}; resubmit moves the tip of a WORKING or CERTIFIED bead — nothing changed\n");
+        return a;
     }
-    if event(m, "bead", id, &state, &version, actor, &submit_kind(tip)).0 == 0 {
+    let (rc, out) = event(m, "bead", id, &state, &version, actor, &submit_kind(tip));
+    if rc == 0 {
         return Answer::cert(APPLIED, "applied", format!("resubmit tip={tip}"));
     }
-    Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"))
+    let mut a = Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"));
+    a.stderr = format!(
+        "spira-lc resubmit: {id} is {state} and the machine has no Submit from it ({}); claim the bead, then send Submit with `spira-lc event` — nothing changed\n",
+        out.trim()
+    );
+    a
+
 }
 
 /// `renew <id> <holder> <lease-until>` — a working aeon extends its own lease (sp-2jf0a). The
