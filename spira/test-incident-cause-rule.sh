@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-incident-cause-lint.sh — every SPIRA_INCIDENT_REF filing site declares SPIRA_INCIDENT_CAUSE.
+# test-incident-cause-rule.sh — every SPIRA_INCIDENT_REF filing site declares SPIRA_INCIDENT_CAUSE.
 #
 # tier: T0
 # covers: spira-lint/src/rules/incident_cause_lint.rs spira/*.sh UC-ops-detection-remediation-09
@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 
-echo "test-incident-cause-lint.sh"
+echo "test-incident-cause-rule.sh"
 command -v spira-lint >/dev/null 2>&1 || bail "spira-lint is not on PATH"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM

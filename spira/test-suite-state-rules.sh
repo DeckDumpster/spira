@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-suite-state-lint.sh — `testenv suites lint` and the fence over a throwaway suite-state
+# test-suite-state-rules.sh — `testenv suites lint` and the fence over a throwaway suite-state
 # file: each structural violation is refused, bad lines never reach the rows, and an empty or
 # absent file is clean.
 # tier: T1
