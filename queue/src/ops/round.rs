@@ -20,6 +20,7 @@ use crate::records::{self, one_line, write_atomic, Kv};
 pub const FAULT: i32 = 4;
 
 const RECORD: &str = "round";
+const BUILD_RED: &str = "workspace-build";
 const LC_ACTOR: &str = "queue.sh";
 const PASSING: [&str; 2] = ["ok", "skip"];
 pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
@@ -32,7 +33,138 @@ pub fn run(w: &World, r: &Round) -> i32 {
         Round::Land { batch, repo } => land(w, batch, repo.as_deref()),
         Round::Abandon { batch, repo, reason } => abandon(w, batch, repo.as_deref(), reason),
         Round::Status { repo } => status(w, repo.as_deref()),
+        Round::PassStart { batch, repo } => pass_start(w, batch, repo.as_deref()),
+        Round::SuitesStarted { batch, repo } => suites_started_verb(w, batch, repo.as_deref()),
+        Round::PassVerdict { batch, repo, verdict, red_suites, suites_s, build_s, reason } => {
+            pass_verdict(w, batch, repo.as_deref(), verdict, red_suites, Timings { suites_s: *suites_s, build_s: *build_s }, reason)
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+struct Timings {
+    suites_s: u64,
+    build_s: u64,
+}
+
+enum Verdict<'a> {
+    Green(Timings),
+    Red(&'a [String], Timings),
+    Incomplete(&'a str),
+}
+
+/// One batch event chosen from the round's current (state, pass, phase); `None` sends nothing.
+fn pass_event<F>(w: &World, batch: &str, kind: F) -> Result<(), (i32, String)>
+where
+    F: FnOnce(&str, u32, &str) -> Option<String>,
+{
+    lc_cas(w, batch, |s, v| {
+        let (n, phase) = w.lc.batch_pass(batch).ok_or((1, format!("spira-lc cannot say which pass {batch} is on")))?;
+        match kind(s, n, &phase) {
+            Some(k) => w.lc.batch_event(batch, s, v, LC_ACTOR, &k),
+            None => Ok(()),
+        }
+    })
+}
+
+/// `strict` is a hand verb: it always sends the event, so the machine refuses a wrong-phase call
+/// and names the phase. certify is not strict: it resumes a pass already recorded.
+fn start_pass(w: &World, batch: &str, head: &str, strict: bool) -> Result<(), (i32, String)> {
+    let rebuilt = serde_json::json!({"PassRebuilt": {"head": head}}).to_string();
+    pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt))?;
+    pass_event(w, batch, |s, n, _| {
+        (strict || matches!(s, "OPEN" | "REBUILDING")).then(|| serde_json::json!({"PassStarted": {"n": n + 1, "head": head}}).to_string())
+    })
+}
+
+fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, String)> {
+    pass_event(w, batch, |_, n, phase| (strict || phase == "build").then(|| serde_json::json!({"SuitesStarted": {"n": n}}).to_string()))
+}
+
+fn pass_verdict_event(w: &World, batch: &str, verdict: &Verdict, strict: bool) -> Result<(), (i32, String)> {
+    lc_cas(w, batch, |s, v| {
+        if !strict && s != "CI_RUNNING" {
+            return match (verdict, s) {
+                (Verdict::Green(_), "GREEN") | (Verdict::Red(..) | Verdict::Incomplete(_), _) => Ok(()),
+                (Verdict::Green(_), other) => Err((1, format!("the batch is {other}, not CI_RUNNING"))),
+            };
+        }
+        let (n, _) = w.lc.batch_pass(batch).ok_or((1, format!("spira-lc cannot say which pass {batch} is on")))?;
+        let kind = match verdict {
+            Verdict::Green(t) => serde_json::json!({"PassGreen": {"n": n, "suites_s": t.suites_s, "build_s": t.build_s}}),
+            Verdict::Red(red, t) => serde_json::json!({"PassRed": {"n": n, "red_suites": red, "suites_s": t.suites_s, "build_s": t.build_s}}),
+            Verdict::Incomplete(why) => serde_json::json!({"PassIncomplete": {"n": n, "reason": why}}),
+        };
+        w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string())
+    })
+}
+
+fn pass_verb<F>(w: &World, label: &str, batch: &str, repo: Option<&str>, f: F) -> i32
+where
+    F: FnOnce(&Ctx, &Kv) -> Result<(), (i32, String)>,
+{
+    let Ok((c, _)) = local_ctx(w, label, repo) else { return FAIL };
+    if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
+        return FAIL;
+    }
+    let Ok(_g) = lock(w, label, &c) else { return FAIL };
+    let Ok(kv) = load(w, label, &c, batch) else { return FAIL };
+    match f(&c, &kv) {
+        Ok(()) => {
+            w.out(format!("queue.sh {label}: recorded for {batch}"));
+            OK
+        }
+        Err((rc, out)) => {
+            w.err(format!("queue.sh {label}: spira-lc refused for {batch} (rc={rc}): {out}"));
+            FAIL
+        }
+    }
+}
+
+fn pass_start(w: &World, batch: &str, repo: Option<&str>) -> i32 {
+    pass_verb(w, "round pass-start", batch, repo, |_, kv| start_pass(w, batch, kv.get("head").unwrap_or(""), true))
+}
+
+fn suites_started_verb(w: &World, batch: &str, repo: Option<&str>) -> i32 {
+    pass_verb(w, "round suites-started", batch, repo, |_, _| suites_started(w, batch, true))
+}
+
+fn pass_verdict(w: &World, batch: &str, repo: Option<&str>, verdict: &str, red_suites: &str, t: Timings, reason: &Text) -> i32 {
+    let why = read_text(w, reason).unwrap_or_default();
+    let red: Vec<String> = red_suites.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
+    if verdict == "incomplete" && why.trim().is_empty() {
+        w.err("queue.sh round pass-verdict: --reason is required for an incomplete pass".to_string());
+        return USAGE;
+    }
+    if verdict == "red" && red.is_empty() {
+        w.err("queue.sh round pass-verdict: --red-suites is required for a red pass".to_string());
+        return USAGE;
+    }
+    if red.iter().try_for_each(|s| idents(w, "round pass-verdict", &[("suite", s)])).is_err() {
+        return FAIL;
+    }
+    let bounded = bounded_text(&why);
+    let v = match verdict {
+        "green" => Verdict::Green(t),
+        "red" => Verdict::Red(&red, t),
+        _ => Verdict::Incomplete(&bounded),
+    };
+    pass_verb(w, "round pass-verdict", batch, repo, |_, _| pass_verdict_event(w, batch, &v, true))
+}
+
+fn warn_unrecorded(w: &World, label: &str, batch: &str, what: &str, r: Result<(), (i32, String)>) {
+    if let Err((rc, out)) = r {
+        w.err(format!("queue.sh {label}: WARNING — {what} of round {batch} was not recorded on spira-lc (rc={rc}): {out}"));
+    }
+}
+
+/// The build's seconds as the VM's runner reported them; the rest of the wall is the suites.
+fn pass_timings(results: &Path, wall_s: u64) -> Timings {
+    let build_s = fs::read_to_string(results.join("runner.meta"))
+        .ok()
+        .and_then(|t| t.lines().find_map(|l| l.strip_prefix("build_wall_s=").and_then(|v| v.trim().parse::<u64>().ok())))
+        .unwrap_or(0);
+    Timings { build_s, suites_s: wall_s.saturating_sub(build_s) }
 }
 
 fn local_ctx(w: &World, label: &str, repo: Option<&str>) -> Result<(Ctx, PathBuf), i32> {
@@ -394,13 +526,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
             return FAIL;
         }
         let run_id = format!("{batch}-{}", w.clock.now());
-        let started = lc_cas(w, batch, |s, v| {
-            if s == "OPEN" {
-                w.lc.batch_event(batch, s, v, LC_ACTOR, &format!("{{\"CiStarted\":{{\"run\":\"{run_id}\"}}}}"))
-            } else {
-                Ok(())
-            }
-        });
+        let started = start_pass(w, batch, &head, false);
         if let Err((rc, out)) = started {
             w.err(format!("queue.sh {label}: spira-lc refused to start the round {batch} (rc={rc}): {out}"));
             return FAIL;
@@ -415,6 +541,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
     };
 
     let mut reds: Vec<String> = Vec::new();
+    let mut timings = Timings { suites_s: 0, build_s: 0 };
     if attest.is_none() {
         let results = rounds_dir(&c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
@@ -422,20 +549,23 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
             w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} — the round's lint has nothing to judge against", c.r.name));
             return FAIL;
         };
+        let began = w.clock.now();
         let out = w.scripts.round_vm(&wt, &results, &base, c.s.round_wall_secs);
+        timings = pass_timings(&results, w.clock.now().saturating_sub(began));
         let mut found = Vec::new();
         suite_statuses(&results, &mut found, 0);
         let fault = match out.rc {
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
             4 => {
-                reds.push("workspace-build".into());
+                reds.push(BUILD_RED.into());
                 None
             }
             124 | 137 => Some(format!("round-vm exceeded the {}s wall", c.s.round_wall_secs)),
             rc => Some(format!("round-vm exited {rc}")),
         };
         if let Some(why) = fault {
+            warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false));
             let _g = lock(w, label, &c);
             if let Ok(mut kv) = load(w, label, &c, batch) {
                 set_phase(w, &mut kv, "fault");
@@ -456,6 +586,10 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
         return FAIL;
     }
     if !reds.is_empty() {
+        if reds != [BUILD_RED] {
+            warn_unrecorded(w, label, batch, "the suites phase", suites_started(w, batch, false));
+        }
+        warn_unrecorded(w, label, batch, "the red pass", pass_verdict_event(w, batch, &Verdict::Red(&reds, timings), false));
         set(&mut kv, "red", &reds.join(","));
         set_phase(w, &mut kv, "red");
         if save(w, label, &c, &kv).is_err() {
@@ -467,11 +601,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
         return FAIL;
     }
 
-    let greened = lc_cas(w, batch, |s, v| match s {
-        "CI_RUNNING" => w.lc.batch_event(batch, s, v, LC_ACTOR, "\"Green\""),
-        "GREEN" => Ok(()),
-        other => Err((1, format!("the batch is {other}, not CI_RUNNING"))),
-    });
+    let greened = suites_started(w, batch, false).and_then(|()| pass_verdict_event(w, batch, &Verdict::Green(timings), false));
     if let Err((rc, out)) = greened {
         w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out}"));
         return FAIL;
@@ -622,6 +752,8 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         return OK;
     }
 
+    let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
+    warn_unrecorded(w, label, batch, "the rebuilt head", pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)));
     set(&mut kv, "members", &render_members(&survivors));
     set(&mut kv, "head", &new_head);
     kv.remove("red");

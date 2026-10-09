@@ -60,7 +60,7 @@ fn open_certify_land_is_one_round_the_whole_way() {
 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     assert!(t.scripts.calls.borrow().iter().any(|c| c.ends_with("wall=900")), "the corpus runs under the configured cap: {:?}", t.scripts.calls.borrow());
-    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 \"Green\"")));
+    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassGreen\":{{\"n\":1,\"suites_s\":0,\"build_s\":0}}}}")), "{:?}", t.lc.calls.borrow());
     assert!(certified_tree_exists(&t), "the round GREEN certificate is on the head's tree");
     assert_eq!(kv_of(&t, "round")["phase"], "green");
 
@@ -280,7 +280,7 @@ fn certify_never_reads_a_harness_fault_as_green_or_red() {
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
     assert!(t.err().contains("exceeded the 900s wall"), "{}", t.err());
-    assert!(!certified_tree_exists(&t) && !t.lc.has("event batch spira-20260929T010203Z CI_RUNNING 4 \"Green\""));
+    assert!(!certified_tree_exists(&t) && !t.lc.has("event batch spira-20260929T010203Z CI_RUNNING 4 {\"PassGreen\""));
 }
 
 #[test]
@@ -368,4 +368,83 @@ fn eject_also_ejects_the_members_stacked_on_the_ejected_one() {
     assert_eq!((rec["members"].as_str(), rec["head"].as_str()), ("sp-c:tc", "merged-tc"));
     assert_eq!(rec["ejected"].trim(), "sp-a sp-b");
     assert!(!t.lib.has("bead_reopen sp-c eject "), "an independent member stays");
+}
+
+fn events_of(t: &T, batch: &str) -> Vec<String> {
+    let prefix = format!("event batch {batch} ");
+    t.lc.calls.borrow().iter().filter_map(|c| c.strip_prefix(&prefix)).map(|c| c.splitn(3, ' ').nth(2).unwrap_or("").to_string()).collect()
+}
+
+#[test]
+fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    *t.scripts.round_vm_meta.borrow_mut() = "build_wall_s=30\n".into();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert_eq!(
+        events_of(&t, &batch),
+        [
+            "{\"PassStarted\":{\"n\":1,\"head\":\"merged-tc\"}}",
+            "{\"SuitesStarted\":{\"n\":1}}",
+            "{\"PassRed\":{\"n\":1,\"red_suites\":[\"test-b.sh\"],\"suites_s\":0,\"build_s\":30}}",
+        ],
+        "pass 1 is started, enters its suites and ends red, naming the suite"
+    );
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]), 0, "{}", t.err());
+    assert!(events_of(&t, &batch).last().unwrap().starts_with("{\"PassRebuilt\":{\"head\":"), "{:?}", events_of(&t, &batch));
+
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let events = events_of(&t, &batch);
+    assert!(events.iter().any(|e| e.starts_with("{\"PassStarted\":") && e.contains("\"n\":2")), "{events:?}");
+    assert!(events.last().unwrap().starts_with("{\"PassGreen\":{\"n\":2"), "{events:?}");
+}
+
+#[test]
+fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 124, out: String::new(), err: "killed".into() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    let events = events_of(&t, &batch);
+    assert!(events.last().unwrap().starts_with("{\"PassIncomplete\":{\"n\":1,\"reason\":\"round-vm exceeded the 900s wall"), "{events:?}");
+    assert!(!events.iter().any(|e| e.starts_with("{\"PassRed\"") || e.starts_with("{\"PassGreen\"")), "{events:?}");
+}
+
+#[test]
+fn the_pass_verbs_record_a_hand_driven_pass_like_the_batchers() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "pass-verdict", &batch, "--verdict", "red", "--red-suites", "test-x.sh", "--suites-s", "90", "--build-s", "30"]), 0, "{}", t.err());
+    assert_eq!(
+        events_of(&t, &batch),
+        [
+            "{\"PassStarted\":{\"n\":1,\"head\":\"merged-ta\"}}",
+            "{\"SuitesStarted\":{\"n\":1}}",
+            "{\"PassRed\":{\"n\":1,\"red_suites\":[\"test-x.sh\"],\"suites_s\":90,\"build_s\":30}}",
+        ]
+    );
+}
+
+#[test]
+fn a_pass_verb_out_of_phase_is_sent_so_the_machine_can_refuse_it_by_name() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "the fake machine does not refuse; the verb must still have sent the event");
+    assert_eq!(events_of(&t, &batch).iter().filter(|e| e.starts_with("{\"PassStarted\"")).count(), 2, "a strict verb never swallows a wrong-phase call");
+    assert_eq!(t.run(&["round", "pass-verdict", &batch, "--verdict", "incomplete"]), 2, "an incomplete pass names why");
 }
