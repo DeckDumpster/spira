@@ -53,6 +53,7 @@ pub struct Fake {
     pub sccache_show_stats: RefCell<Option<String>>,
     pub sccache_dav_addr: RefCell<Option<String>>,
     pub daemon_bases: RefCell<Vec<String>>,
+    pub hooks_path: RefCell<Option<String>>,
 }
 
 impl Default for Fake {
@@ -99,6 +100,7 @@ impl Default for Fake {
             sccache_show_stats: RefCell::new(None),
             sccache_dav_addr: RefCell::new(None),
             daemon_bases: RefCell::new(Vec::new()),
+            hooks_path: RefCell::new(None),
         }
     }
 }
@@ -229,6 +231,9 @@ impl World for Fake {
     }
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
+    }
+    fn git_hooks_path(&self, _repo: &Path) -> Option<String> {
+        self.hooks_path.borrow().clone()
     }
     fn out(&self, s: &str) {
         self.stdout.borrow_mut().push(s.to_string());
@@ -1176,4 +1181,32 @@ fn doctor_flags_a_passwordless_dolt_root() {
 fn doctor_accepts_a_closed_dolt_root_and_is_silent_when_it_cannot_probe() {
     assert!(check_root_closed(&root_fixture(Some(false))).iter().all(|l| l.level == Level::Ok));
     assert!(check_root_closed(&root_fixture(None)).is_empty());
+}
+
+// ============================================================================ git hooks
+
+fn hooks_fixture(path: Option<&str>) -> Fake {
+    let f = Fake::default();
+    f.set("SPIRA_REPO", "/repo");
+    f.set("SPIRA_HOME", "/repo/spira");
+    *f.hooks_path.borrow_mut() = path.map(String::from);
+    f
+}
+
+#[test]
+fn hooks_path_fails_naming_a_displaced_value() {
+    let out = check_hooks_path(&hooks_fixture(Some("/somewhere/else")));
+    assert_eq!(levels(&out), vec![Level::Fail]);
+    assert!(out[0].msg.contains("/somewhere/else") && out[0].msg.contains("/repo/spira/hooks"), "{:?}", out[0].msg);
+}
+
+#[test]
+fn hooks_path_fails_when_unset() {
+    assert_eq!(levels(&check_hooks_path(&hooks_fixture(None))), vec![Level::Fail]);
+}
+
+#[test]
+fn hooks_path_passes_relative_and_absolute_forms() {
+    assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("spira/hooks")))), vec![Level::Ok]);
+    assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("/repo/spira/hooks/")))), vec![Level::Ok]);
 }
