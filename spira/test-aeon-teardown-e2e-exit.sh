@@ -227,7 +227,7 @@ want "its ask bead carries the work bead's label" "work-bead:sp-ow2" "$(fa_label
 tl_config COCKPIT_DB="$SPIRA_DB"
 resolve "$ow_ask" "moot: the fixture's key never needed rotating" > "$FA_TMP/resolve.out" 2>&1
 is   "resolve closed the ask bead" "0" "$?"
-want "resolve says it withdrew the hold" "withdrew the ask hold on sp-ow2" "$(cat "$FA_TMP/resolve.out")"
+want "resolve reports the ask resolved (close itself lifts the hold)" "resolved" "$(cat "$FA_TMP/resolve.out")"
 is   "the row: READY with no hold" "READY -" "$(ow_row sp-ow2)"
 want "and the lift was a withdraw, not a reply" "AskWithdrawn" "$(spira-lc history sp-ow2 2>/dev/null)"
 

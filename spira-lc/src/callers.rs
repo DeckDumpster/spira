@@ -652,6 +652,8 @@ pub trait Bd {
     /// The store half of a reopen: bd status open, no assignee, no submitted label — so a bead
     /// the machine handed back reads open wherever bd is still read (sp-swh8b8). Idempotent.
     fn reopen(&mut self, id: &str) -> Result<(), String>;
+    /// The work beads an ask names on its `work-bead:<id>` labels; empty for any other bead.
+    fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String>;
 }
 
 /// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
@@ -982,6 +984,10 @@ pub fn close(
     if actor.is_empty() || (landing && by.is_some()) {
         return usage(USE);
     }
+    let asked_about = match bd.work_beads(&id) {
+        Ok(w) => w,
+        Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: its labels are unreadable — nothing closed: {}\n", e.trim()), ..Default::default() },
+    };
     match show(m, &id) {
         Err(NO_ROW) => {}
         Err(rc) => return Answer { code: rc, stderr: format!("spira-lc close: {id}: the lifecycle row is unreadable — nothing closed\n"), ..Default::default() },
@@ -1025,13 +1031,31 @@ pub fn close(
         }
     }
     match bd.close(&id, &reason) {
-        Ok(()) => Answer::code(APPLIED),
+        Ok(()) => withdraw_named_asks(&id, &asked_about, &actor, m),
         Err(e) => Answer {
             code: CANNOT_TELL,
             stderr: format!("spira-lc close: {id}: the lifecycle row is terminal but the store close failed: {}\n", e.trim()),
             ..Default::default()
         },
     }
+}
+
+/// Closing an ask lifts the ask hold on each work bead it names and moves nothing else on
+/// them: a work bead ends only through its own close.
+fn withdraw_named_asks(ask: &str, work_beads: &[String], actor: &str, m: &mut dyn Machine) -> Answer {
+    for w in work_beads {
+        match with_row(m, w, actor, |_| Ok(BeadEventKind::AskWithdrawn)) {
+            Answer { code: APPLIED | NO_ROW | REFUSED, .. } => {}
+            a => {
+                return Answer {
+                    code: CANNOT_TELL,
+                    stderr: format!("spira-lc close: {ask} is closed but the ask hold on {w} was not lifted: {}", a.stderr),
+                    ..Default::default()
+                }
+            }
+        }
+    }
+    Answer::code(APPLIED)
 }
 
 #[cfg(test)]
