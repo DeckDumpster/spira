@@ -263,6 +263,7 @@ QUEUE_CALLS="$T/queue-calls.log"
 : > "$QUEUE_CALLS"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$QUEUE_CALLS" > "$STUB_BIN/queue"
 chmod +x "$STUB_BIN/queue"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/bead"; chmod +x "$STUB_BIN/bead"
 
 # Stub mail: an escalation is one `send concierge` whose body carries "invariant: <key>".
 MAIL_LOG="$T/mail-calls.log"
