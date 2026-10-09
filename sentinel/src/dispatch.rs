@@ -296,6 +296,7 @@ impl<'a> Sentinel<'a> {
             "--release-skew-check",
             "--deploy-fault-check",
             "--sccache-wedge-check",
+            "--load-fence-check",
             "--conditions-check",
             "--slow-query-check",
             "--dolt-drop-check",

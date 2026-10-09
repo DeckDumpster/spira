@@ -897,6 +897,14 @@ fn image_build_declared(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
 }
 
 fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool) -> i32 {
+    let watch = crate::load::Watch::start(&vm.handle);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image);
+    watch.finish();
+    rc
+}
+
+#[allow(clippy::too_many_arguments)]
+fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool) -> i32 {
     let cfg = env.cfg;
     let maxpar = args.maxpar.unwrap_or(cfg.maxpar);
     let reachable = (0..cfg.ssh_tries.max(1)).any(|i| {
