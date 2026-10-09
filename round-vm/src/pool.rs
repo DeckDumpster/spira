@@ -293,9 +293,16 @@ impl Pool {
     /// crash mid-destroy is finished by the next acquire.
     /// Refused, naming the holder, while a live process other than `caller` holds the lease.
     pub fn release(&self, handle: &str, caller: ProcId, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
+        self.release_inner(handle, caller, false, factory)
+    }
+
+    fn release_inner(&self, handle: &str, caller: ProcId, any_lease_holds: bool, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
         let attempt = factory()?;
         self.with_state(|s| {
             if let Some(l) = s.leases.iter().find(|l| l.vm.handle == handle) {
+                if any_lease_holds {
+                    return Err(format!("round-vm: refusing to destroy VM {handle}: leased since {}", l.since));
+                }
                 if let Some(h) = l.owner.filter(|o| *o != caller && o.alive()) {
                     return Err(format!(
                         "round-vm: refusing to release VM {handle}: leased since {} to live run {h} (caller run {caller})",
@@ -330,11 +337,12 @@ impl Pool {
             if let Some(pr) = s.provisioning.take() {
                 h.extend(pr.vmid);
             }
+            h.retain(|id| !s.leases.iter().any(|l| &l.vm.handle == id));
             h
         })?;
         let mut released = 0;
         for h in &handles {
-            match self.release(h, ProcId::current(), factory) {
+            match self.release_inner(h, ProcId::current(), true, factory) {
                 Ok(()) => released += 1,
                 Err(e) => eprintln!("{e}"),
             }
@@ -825,6 +833,26 @@ mod tests {
         assert!(pl.begin_refresh(me).unwrap().unwrap_err().contains("another refresh"));
         pl.end_refresh(me);
         assert!(pl.with_state(|s| s.refreshing).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_recycle_never_destroys_a_vm_another_caller_leases() {
+        let d = TempDir::new();
+        let pl = pool(&d, 3);
+        let fp = FakeProvider::new();
+        let f = || Ok(attempt(&fp));
+        let sp = FakeSpawner::default();
+        let al = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &al, spawner: &sp };
+        let (leased, _) = pl.acquire(&deps, None).unwrap();
+        pl.with_state(|s| {
+            s.ready = Some(leased.clone());
+            s.provisioning = Some(Provisioning { owner: ProcId::current(), vmid: Some(leased.handle.clone()), since: 0 });
+        })
+        .unwrap();
+        assert_eq!(pl.recycle(&f).unwrap(), 0);
+        assert!(fp.name(&leased.handle).is_some(), "the leased VM is untouched");
+        assert!(pl.with_state(|s| s.leases.len()).unwrap() == 1);
     }
 
     #[test]
