@@ -38,7 +38,7 @@ fn json_col(row: &Value, col: &str) -> Value {
 
 pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip FROM bead WHERE bead_id = '{}'",
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -71,6 +71,7 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         disposition: text(row, "disposition").as_deref().and_then(lifecycle::bead::DispositionStatus::from_str),
         disposition_note: text(row, "disposition_note"),
         ejected_red_tip: text(row, "ejected_red_tip"),
+        sifted_tip: text(row, "sifted_tip"),
     }))
 }
 
@@ -78,7 +79,7 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
     let holds_json = Value::Array(row.holds.iter().map(|h| Value::String(h.as_str().to_string())).collect());
     let stack_json = Value::Object(row.stack.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect());
     format!(
-        "state = '{}', tip = {}, gate_key = {}, holder = {}, persona = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, stack = '{}', stack_depth = {}, since = {}, express = {}, aeon_phase = {}, disposition = {}, disposition_note = {}, ejected_red_tip = {}, updated_at = {}",
+        "state = '{}', tip = {}, gate_key = {}, holder = {}, persona = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, stack = '{}', stack_depth = {}, since = {}, express = {}, aeon_phase = {}, disposition = {}, disposition_note = {}, ejected_red_tip = {}, sifted_tip = {}, updated_at = {}",
         row.state.as_str(),
         opt_str(&row.tip),
         opt_str(&row.gate_key),
@@ -96,6 +97,7 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
         row.disposition.map_or_else(|| "NULL".to_string(), |d| format!("'{}'", d.as_str())),
         opt_str(&row.disposition_note),
         opt_str(&row.ejected_red_tip),
+        opt_str(&row.sifted_tip),
         crate::db::now_epoch(),
     )
 }

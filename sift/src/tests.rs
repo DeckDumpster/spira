@@ -93,6 +93,10 @@ impl Acts for Rec {
         self.log.push(format!("supersede {id} by {keeper}"));
         Ok(())
     }
+    fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
+        self.log.push(format!("pass {id} {tip}"));
+        Ok(())
+    }
     fn tell(&mut self, msg: &str) {
         self.log.push(format!("tell {msg}"));
     }
@@ -266,4 +270,71 @@ fn stacked_ids_come_from_land_subjects_and_bare_ids_but_never_the_beads_own() {
     assert_eq!(parse_stacked_id("sp-me: thing", "sp-me"), None);
     assert_eq!(parse_stacked_id("fix the thing", "sp-me"), None);
     assert_eq!(parse_stacked_id("sp-abc", "sp-me"), None);
+}
+
+fn passes(r: &Rec) -> Vec<&String> {
+    r.log.iter().filter(|l| l.starts_with("pass ")).collect()
+}
+
+#[test]
+fn a_clean_candidate_has_its_pass_recorded_at_its_tip_and_a_red_one_has_none() {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    let mut r = Rec::default();
+    let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
+    assert_eq!(passes(&r), ["pass b t-b"]);
+    assert_eq!(o.sifted, ["b"]);
+}
+
+#[test]
+fn a_candidate_the_screen_could_not_judge_records_no_pass() {
+    let mut f = fake();
+    f.broken.push("t-a".into());
+    let mut r = Rec::default();
+    let o = screen(&f, &Mem::default(), &mut r, &[c("a")], &[]);
+    assert!(passes(&r).is_empty() && o.sifted.is_empty(), "{:?}", r.log);
+    let mut none = fake();
+    none.base = None;
+    let mut r = Rec::default();
+    let o = screen(&none, &Mem::default(), &mut r, &[c("a")], &[]);
+    assert!(passes(&r).is_empty() && o.sifted.is_empty());
+}
+
+#[test]
+fn a_moved_tip_is_screened_again_and_judged_on_its_own() {
+    let f = fake();
+    let store = Mem::default();
+    let mut r = Rec::default();
+    screen(&f, &store, &mut r, &[Candidate { id: "a".into(), tip: "t1".into() }], &[]);
+    let after_first = f.merges.get();
+    screen(&f, &store, &mut r, &[Candidate { id: "a".into(), tip: "t1".into() }], &[]);
+    assert_eq!(f.merges.get(), after_first, "the same tip on the same base is not screened twice");
+    screen(&f, &store, &mut r, &[Candidate { id: "a".into(), tip: "t2".into() }], &[]);
+    assert_eq!(f.merges.get(), after_first + 1);
+    assert_eq!(passes(&r), ["pass a t1", "pass a t1", "pass a t2"]);
+}
+
+#[test]
+fn a_pass_the_store_refuses_is_not_a_sifted_candidate() {
+    struct Refusing(Rec);
+    impl Acts for Refusing {
+        fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
+            self.0.note(id, text)
+        }
+        fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
+            self.0.gate_red(id, tip, reason)
+        }
+        fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
+            self.0.supersede(id, keeper)
+        }
+        fn pass(&mut self, _: &str, _: &str) -> Result<(), String> {
+            Err("tip moved".into())
+        }
+        fn tell(&mut self, msg: &str) {
+            self.0.tell(msg)
+        }
+    }
+    let mut acts = Refusing(Rec::default());
+    let o = screen(&fake(), &Mem::default(), &mut acts, &[c("a")], &[]);
+    assert!(o.sifted.is_empty() && o.errors.iter().any(|e| e.contains("stays unscreened")));
 }

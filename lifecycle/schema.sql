@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS bead (
     disposition_note TEXT NULL,
     -- The tip a round last ejected as red; submit refuses it. migrations/0018-ejected-red-tip.sql for an existing database.
     ejected_red_tip VARCHAR(64) NULL,
+    -- The tip the pre-round screen last passed (Sifted event); migrations/0020-sifted-tip.sql for an existing database.
+    sifted_tip  VARCHAR(64) NULL,
     updated_at  BIGINT NOT NULL
 );
 

@@ -1,5 +1,7 @@
-//! The batcher's use of the `sift` screen: what the pool is narrowed to before a round is cut.
+//! The batcher's use of the `sift` screen. `sift_repo` screens the proto-round on its own pass;
+//! `cut_pool` is all a cut does with it: take what already has a pass at its current tip.
 
+use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -11,6 +13,7 @@ use crate::io::{self, Env, OpenBatch, Repo};
 
 struct Live<'a> {
     env: &'a Env,
+    sifted: BTreeMap<String, String>,
 }
 
 impl Acts for Live<'_> {
@@ -23,6 +26,12 @@ impl Acts for Live<'_> {
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         io::lc_supersede(self.env, id, keeper)
     }
+    fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
+        if self.sifted.get(id).map(String::as_str) == Some(tip) {
+            return Ok(());
+        }
+        io::lc_sifted(self.env, id, tip)
+    }
     fn tell(&mut self, msg: &str) {
         println!("batcher: {msg}");
         let line = format!("{} [watch:sift] {msg}\n", io::utc_stamp(spira_config::vtime::now_epoch()));
@@ -34,16 +43,19 @@ impl Acts for Live<'_> {
     }
 }
 
-/// The pool narrowed to what passes the screen. When the screen cannot run, the pool comes
-/// back whole and the error is said.
-pub fn screened(env: &Env, repo: &Repo, pool: Vec<Member>, open: Option<&OpenBatch>) -> Vec<Member> {
+/// The members whose current tip carries a pass. A bead with none is not yet screened and waits
+/// for the next cut.
+pub fn cut_pool(pool: Vec<Member>, sifted: &BTreeMap<String, String>) -> Vec<Member> {
+    pool.into_iter().filter(|m| sifted.get(&m.id).map(String::as_str) == Some(m.tip.as_str())).collect()
+}
+
+/// Screens every SUBMITTED and CERTIFIED bead of `repo`, recording a pass or sending the bead back.
+pub fn sift_repo(env: &Env, repo: &Repo, open: Option<&OpenBatch>) -> Result<sift::Outcome, String> {
+    let pool = io::certified_pool(env, repo)?;
     if pool.is_empty() {
-        return pool;
+        return Ok(sift::Outcome::default());
     }
-    if let Err(e) = io::fetch_base(repo) {
-        eprintln!("batcher {}: sift: base not fetched ({e}); cutting unfiltered", repo.name);
-        return pool;
-    }
+    io::fetch_base(repo).map_err(|e| format!("base not fetched ({e})"))?;
     let work = env.run.join("sift");
     let probe_env = env.clone();
     let probe = GitProbe {
@@ -52,41 +64,29 @@ pub fn screened(env: &Env, repo: &Repo, pool: Vec<Member>, open: Option<&OpenBat
         work: work.clone(),
         state: Box::new(move |id| io::lc_state(&probe_env, id)),
     };
-    let started = std::time::Instant::now();
     let candidates: Vec<Candidate> = pool.iter().map(|m| Candidate { id: m.id.clone(), tip: m.tip.clone() }).collect();
     let open_round: Vec<Candidate> = open.map(|o| o.members.iter().map(|(id, tip)| Candidate { id: id.clone(), tip: tip.clone() }).collect()).unwrap_or_default();
-    let out = sift::screen(&probe, &FileStore::new(work), &mut Live { env }, &candidates, &open_round);
+    let mut live = Live { env, sifted: io::sifted_tips(env)? };
+    let out = sift::screen(&probe, &FileStore::new(work), &mut live, &candidates, &open_round);
     for e in &out.errors {
         eprintln!("batcher {}: {e}", repo.name);
     }
-    println!("batcher {}: sift screened {} in {}s", repo.name, candidates.len(), started.elapsed().as_secs());
-    sift::filter(pool, |m| m.id.as_str(), &out)
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::base_conflict_tests::{fixture, git};
-    use crate::io::Land;
-    use std::path::PathBuf;
+
+    fn member(id: &str, tip: &str) -> Member {
+        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] }
+    }
 
     #[test]
-    fn a_screened_pool_never_spawns_cargo() {
-        let d = testkit::TempDir::new("batcher-cut-screen");
-        let [base, a, _b, _c, _root] = fixture(&d);
-        git(&d, &["checkout", "-q", "--detach", &base]);
-        let bin = d.join("shim");
-        std::fs::create_dir_all(&bin).unwrap();
-        let marker = d.join("cargo-ran");
-        testkit::write_exe(&bin.join("cargo"), &format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()));
-        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
-        let _g = testkit::env(&[("PATH", Some(path.as_str())), ("SIM_WORLD", None), ("SPIRA_CONCIERGE_INBOX", None)]);
-        let mut e = io::lifecycle_tests_env(&d);
-        e.run = d.to_path_buf();
-        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
-        let m = Member { id: "sp-a".into(), tip: a, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: Default::default(), blocked_by: Vec::new() };
-        let kept = screened(&e, &repo, vec![m], None);
-        assert_eq!(kept.len(), 1, "a clean candidate passes the screen");
-        assert!(!marker.exists(), "the screen ran cargo: {}", std::fs::read_to_string(&marker).unwrap_or_default());
+    fn a_cut_takes_only_beads_with_a_pass_at_their_current_tip() {
+        let sifted: BTreeMap<String, String> = [("sp-a", "t1"), ("sp-b", "old")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let pool = vec![member("sp-a", "t1"), member("sp-b", "new"), member("sp-c", "t3")];
+        let ids: Vec<String> = cut_pool(pool, &sifted).into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, ["sp-a"], "a moved tip and an unscreened bead both wait");
     }
 }

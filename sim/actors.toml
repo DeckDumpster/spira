@@ -24,6 +24,12 @@ timer = "spira-sentinel.timer"
 duration = "land.land-local"
 
 [[actor]]
+name = "sift"
+command = "batcher sifts"
+timer = "spira-sift.timer"
+duration = "land.phase.fences"
+
+[[actor]]
 name = "rounds"
 command = "batcher rounds"
 timer = "spira-rounds.timer"

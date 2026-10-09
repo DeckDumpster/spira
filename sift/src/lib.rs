@@ -1,6 +1,7 @@
-//! The screen runs on the pool before a round is cut. Only a passing candidate is cut; a
-//! failing one is sent back (evidence note first, then the GateRed), superseded, or — once the
-//! cap is spent — held out and reported. A screen that cannot run cuts unfiltered.
+//! The screen runs on the proto-round (SUBMITTED and CERTIFIED beads), never inside a cut. A
+//! passing candidate has its pass recorded for its tip; a failing one is sent back (evidence note
+//! first, then the GateRed), superseded, or — once the cap is spent — held out and reported. A
+//! candidate the screen cannot judge records nothing and stays unscreened.
 
 mod git;
 mod store;
@@ -44,6 +45,8 @@ pub trait Acts {
     fn note(&mut self, id: &str, text: &str) -> Result<(), String>;
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String>;
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String>;
+    /// Records that `tip` passed, on the lifecycle store.
+    fn pass(&mut self, id: &str, tip: &str) -> Result<(), String>;
     fn tell(&mut self, msg: &str);
 }
 
@@ -85,6 +88,8 @@ impl Verdict {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Outcome {
     pub pass: Vec<String>,
+    /// Passed on a verdict actually reached, and recorded: the only candidates a cut may take.
+    pub sifted: Vec<String>,
     pub sent_back: Vec<String>,
     pub superseded: Vec<String>,
     pub capped: Vec<String>,
@@ -180,6 +185,10 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
         let findings = v.findings(&state_of);
         if findings.is_empty() {
             out.pass.push(c.id.clone());
+            match acts.pass(&c.id, &c.tip) {
+                Ok(()) => out.sifted.push(c.id.clone()),
+                Err(e) => out.errors.push(format!("sift: {} pass not recorded ({e}); stays unscreened", c.id)),
+            }
             continue;
         }
         let prior = store.send_backs(&c.id);

@@ -859,6 +859,30 @@ pub fn lc_gate_red(env: &Env, id: &str, tip: &str, reason: &str) -> Result<(), S
     lcq(env, &["event", "bead", id, "--expect", state, "--version", &version.to_string(), "--actor", "sift", "--kind", &kind]).map(|_| ())
 }
 
+/// Records the screen's pass for `tip`; the machine refuses it unless `id` is still SUBMITTED or
+/// CERTIFIED at that tip.
+pub fn lc_sifted(env: &Env, id: &str, tip: &str) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    let bead = v.get("bead").cloned().unwrap_or_default();
+    let state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("");
+    let version = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).ok_or("show: no version")?;
+    let kind = serde_json::json!({"Sifted": {"tip": tip}}).to_string();
+    lcq(env, &["event", "bead", id, "--expect", state, "--version", &version.to_string(), "--actor", "sift", "--kind", &kind]).map(|_| ())
+}
+
+/// Bead id -> the tip the screen last passed, for every SUBMITTED and CERTIFIED bead that has one.
+pub fn sifted_tips(env: &Env) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    for state in ["CERTIFIED", "SUBMITTED"] {
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(env, &["list", "--state", state])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+        for r in rows {
+            let (Some(id), Some(tip)) = (r.get("bead_id").and_then(|x| x.as_str()), r.get("sifted_tip").and_then(|x| x.as_str())) else { continue };
+            out.insert(id.to_string(), tip.to_string());
+        }
+    }
+    Ok(out)
+}
+
 pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
     let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
     let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
