@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS bead (
     stack_depth BIGINT NOT NULL DEFAULT 0,
     -- Epoch seconds the row last entered LANDED or CERTIFIED; migrations/0002-since.sql for an existing database.
     since       BIGINT NULL,
+    -- Mirrored from bd by bead.sh file/amend so the ops views never join to bd; migrations/0007.
+    title       VARCHAR(512) NULL,
+    priority    TINYINT NULL,
     updated_at  BIGINT NOT NULL
 );
 
@@ -93,3 +96,32 @@ CREATE TABLE IF NOT EXISTS event (
 CREATE INDEX IF NOT EXISTS event_lc_key_idx ON event (machine, lc_key);
 CREATE INDEX IF NOT EXISTS event_since_idx ON event (machine, applied, lc_key, to_state, at);
 CREATE INDEX IF NOT EXISTS event_history_idx ON event (lc_key, machine);
+CREATE INDEX IF NOT EXISTS bead_state_since_idx ON bead (state, since);
+CREATE INDEX IF NOT EXISTS batch_state_idx ON batch (state);
+
+-- The ops read model; migrations/0007-ops-read-model.sql makes the same views on an existing
+-- database, and the two are asserted identical by test-ops-read-model.sh.
+-- Each view takes its keys from the covering (state, since) index, then reads the rows by
+-- primary key: with the hint the plan is the same whether or not the optimizer has table
+-- statistics, which on a mostly-terminal table would otherwise choose a scan.
+CREATE OR REPLACE VIEW ops_live AS
+SELECT /*+ JOIN_ORDER(r,t) LOOKUP_JOIN(r,t) */
+       t.bead_id, t.state, t.holds, t.holder, t.lease_until, t.since, t.updated_at, t.priority, t.title
+  FROM (SELECT bead_id FROM bead
+         WHERE state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK')) r
+  JOIN bead t ON t.bead_id = r.bead_id;
+
+CREATE OR REPLACE VIEW ops_round AS
+SELECT /*+ JOIN_ORDER(b,m,t) LOOKUP_JOIN(b,m) LOOKUP_JOIN(m,t) */
+       b.batch_id, b.repo, b.state AS batch_state, b.head, b.base, b.opened_at,
+       m.bead_id, m.tip, m.outcome, t.title, t.priority
+  FROM batch b
+  JOIN batch_member m ON m.batch_id = b.batch_id
+  LEFT JOIN bead t ON t.bead_id = m.bead_id
+ WHERE b.state IN ('OPEN', 'CI_RUNNING', 'GREEN', 'ATTRIBUTING', 'REBUILDING');
+
+CREATE OR REPLACE VIEW ops_recent AS
+SELECT /*+ JOIN_ORDER(r,t) LOOKUP_JOIN(r,t) */
+       t.bead_id, t.state, t.since, t.updated_at, t.priority, t.title
+  FROM (SELECT bead_id FROM bead WHERE state = 'LANDED' AND since >= UNIX_TIMESTAMP() - 86400) r
+  JOIN bead t ON t.bead_id = r.bead_id;

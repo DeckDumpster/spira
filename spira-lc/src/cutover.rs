@@ -62,11 +62,26 @@ fn is_row_key(x: &str) -> bool {
 }
 
 /// One point-keyed statement: `bead_id` is the primary key, so a duplicate is ignored by the
-/// engine rather than probed for by a second read inside the write.
-fn create_bead_script(id: &str, at: i64) -> String {
-    format!("INSERT IGNORE INTO bead (bead_id, state, holds, version, updated_at) VALUES ({}, 'READY', '[]', 0, {at});\n", q(id))
+/// engine rather than probed for by a second read inside the write. With a title or priority
+/// the duplicate instead updates just those mirrored columns — a value not given is kept — and
+/// never touches `version`, so a mirror write cannot lose a transition's CAS.
+fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i64>) -> String {
+    if title.is_none() && priority.is_none() {
+        return format!("INSERT IGNORE INTO bead (bead_id, state, holds, version, updated_at) VALUES ({}, 'READY', '[]', 0, {at});\n", q(id));
+    }
+    let title_sql = title.map_or("NULL".to_string(), |t| q(&t.chars().take(MIRROR_TITLE_CHARS).collect::<String>()));
+    let priority_sql = priority.map_or("NULL".to_string(), |p| p.to_string());
+    format!(
+        "INSERT INTO bead (bead_id, state, holds, version, updated_at, title, priority) VALUES ({}, 'READY', '[]', 0, {at}, {title_sql}, {priority_sql}) \
+         ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), priority = COALESCE(VALUES(priority), priority);\n",
+        q(id)
+    )
 }
 
+/// `bead.title` is VARCHAR(512).
+const MIRROR_TITLE_CHARS: usize = 512;
+
+/// `create-bead <bead-id> [--title T] [--priority 0..4]`.
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
@@ -74,8 +89,15 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     if !is_row_key(id) {
         return (CANNOT_TELL, format!("create-bead: {id:?} is not a bead id"));
     }
+    let priority = match flag(args, "--priority") {
+        None => None,
+        Some(p) => match p.parse::<i64>() {
+            Ok(n) if (0..=4).contains(&n) => Some(n),
+            _ => return (CANNOT_TELL, format!("create-bead: --priority takes 0..4, got {p:?}")),
+        },
+    };
     let at = crate::db::now_epoch();
-    let script = create_bead_script(id, at);
+    let script = create_bead_script(id, at, flag(args, "--title").as_deref(), priority);
     match conn.run_plain(&script) {
         Ok(()) => (0, String::new()),
         Err(e) => cannot_tell(e),
@@ -1061,10 +1083,21 @@ mod tests {
 
     #[test]
     fn create_bead_is_one_ignoring_insert() {
-        let s = create_bead_script("sp-a'b", 7);
+        let s = create_bead_script("sp-a'b", 7, None, None);
         assert!(s.starts_with("INSERT IGNORE INTO bead"), "{s}");
         assert!(!s.contains("NOT EXISTS"), "{s}");
         assert_eq!(s.matches(';').count(), 1);
+    }
+
+    #[test]
+    fn a_mirrored_create_updates_only_the_mirror_columns_and_never_the_version() {
+        let s = create_bead_script("sp-a", 7, Some("it's a title"), Some(1));
+        assert!(s.contains("it\\'s a title") && s.contains("ON DUPLICATE KEY UPDATE title = COALESCE"), "{s}");
+        assert!(!s.contains("version ="), "{s}");
+        let only_priority = create_bead_script("sp-a", 7, None, Some(0));
+        assert!(only_priority.contains("VALUES ('sp-a', 'READY', '[]', 0, 7, NULL, 0)"), "{only_priority}");
+        let long = create_bead_script("sp-a", 7, Some(&"é".repeat(600)), None);
+        assert_eq!(long.matches('é').count(), MIRROR_TITLE_CHARS, "cut at the column width by chars, not bytes");
     }
 
     fn stacked(id: &str, prereq: &str, prereq_tip: &str) -> (String, bead::BeadRow) {

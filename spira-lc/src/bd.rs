@@ -13,7 +13,7 @@ fn bd_bin() -> Result<String, String> {
     spira_config::process::cfg("SPIRA_BD").map(|b| if b.trim().is_empty() { "bd".to_string() } else { b })
 }
 
-fn run(args: &[&str]) -> Result<String, String> {
+pub fn run(args: &[&str]) -> Result<String, String> {
     let mut cmd = spira_config::bounded::bounded(bd_bin()?);
     let db = spira_config::process::cfg("SPIRA_DB")?;
     if !db.is_empty() {

@@ -37,3 +37,13 @@ GRANT SELECT ON spira_lifecycle.delivery TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.batch TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.batch_member TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.`event` TO 'spira_lc_ro'@'%';
+
+-- The ops read model (migrations/0007-ops-read-model.sql): the views the panes read. spira_lc
+-- serves them (`spira-lc ops-view`) and must see them in information_schema for the
+-- migration probe to find them applied.
+GRANT SELECT ON spira_lifecycle.ops_live TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.ops_round TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.ops_recent TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.ops_live TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.ops_round TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.ops_recent TO 'spira_lc_ro'@'%';
