@@ -64,7 +64,7 @@ for i in range(12000):
     rows.append("('sp-b%d','%s',NULL,NULL,NULL,NULL,'[]',NULL,1,%s,%s,%s,5,0)" % (i, state, since, title, 2 if i < 30 else "NULL"))
 print("INSERT INTO bead (bead_id,state,tip,gate_key,holder,lease_until,holds,reason,version,since,title,priority,updated_at,stack_depth) VALUES")
 print(",\n".join(rows) + ";")
-ev = ",\n".join("('bead','sp-b%d','Claim','READY','READY','WORKING',1,NULL,'{}','fixture',%d)" % (i % 12000, now) for i in range(100000))
+ev = ",\n".join("('bead','sp-b%d','Claim','READY','READY','WORKING',1,NULL,'{}','fixture',%d)" % (i % 12000, now if i % 20 == 0 else now - 20 * 86400) for i in range(100000))
 print("INSERT INTO event (machine,lc_key,event,expect,from_state,to_state,applied,refusal,evidence,actor,at) VALUES")
 print(ev + ";")
 print("INSERT INTO batch (batch_id,repo,state,head,base,version,opened_at) VALUES ('b-open','r','OPEN','h','b',1,%d),('b-old','r','LANDED','h','b',1,%d);" % (now, now - 9 * 86400))
