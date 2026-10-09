@@ -48,6 +48,12 @@ fn first_bead_labels(v: &serde_json::Value) -> Vec<String> {
     bead.and_then(|b| b.get("labels")).and_then(|l| l.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }
 
+/// A bead whose row is already terminal takes no further write; an unreadable or absent row
+/// is not proof of it, so the write goes on and the machine decides.
+fn terminal(bd: &dyn Bd, id: &str) -> bool {
+    bd.lifecycle_terminal(id).unwrap_or(false)
+}
+
 /// `supersede <id> --with <successor>`.
 pub fn supersede(bd: &dyn Bd, id: &str, with: &str) -> CmdResult {
     if id.is_empty() {
@@ -55,6 +61,9 @@ pub fn supersede(bd: &dyn Bd, id: &str, with: &str) -> CmdResult {
     }
     if with.is_empty() {
         return usage_err("supersede: --with <successor> required");
+    }
+    if terminal(bd, id) {
+        return Ok(String::new());
     }
     bd.supersede(id, with).map_err(|e| (1, e))?;
     Ok(String::new())
@@ -70,6 +79,9 @@ pub fn close(bd: &dyn Bd, id: &str, evidence: &str) -> CmdResult {
         return usage_err(
             "close: --evidence <text> is required\ngroomer: a close without evidence may be an unwanted-close in disguise;\ngroomer: use the escalation path for that (law-escalate-decisions-not-problems)",
         );
+    }
+    if terminal(bd, id) {
+        return Ok(String::new());
     }
     bd.close(id, evidence).map_err(|e| (1, e))?;
     Ok(String::new())
@@ -125,6 +137,9 @@ pub fn triage_poison(bd: &dyn Bd, seam: &dyn Seam, id: &str, verdict: &str, evid
     }
 
     if verdict == "drop" {
+        if terminal(bd, id) {
+            return Ok(format!("DROPPED {id}\n"));
+        }
         // The close records DROPPED on the row (sp-3fue0j); no label stands in for it.
         bd.close(id, &format!("GROOM: Poison triage — DROP. {evidence}")).map_err(|e| (1, e))?;
         return Ok(format!("DROPPED {id}\n"));
@@ -204,6 +219,19 @@ mod cmds_tests {
         assert_eq!(err.0, 1);
         assert!(err.1.contains("--evidence"));
         assert!(bd.log().is_empty());
+    }
+
+    #[test]
+    fn a_terminal_bead_takes_no_close_supersede_or_drop_write() {
+        let seam = FakeSeam::new();
+        for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+            let bd = FakeBd::new();
+            bd.set_lifecycle("sp-1", state);
+            close(&bd, "sp-1", "premise gone").unwrap();
+            supersede(&bd, "sp-1", "sp-2").unwrap();
+            triage_poison(&bd, &seam, "sp-1", "drop", "work fault").unwrap();
+            assert!(!bd.log().iter().any(|c| c.starts_with("close") || c.starts_with("supersede")), "{state}: {:?}", bd.log());
+        }
     }
 
     #[test]

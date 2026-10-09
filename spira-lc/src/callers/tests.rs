@@ -72,9 +72,11 @@ impl Machine for Fake {
             "list" => {
                 let st = flag(args, "--state");
                 let hold = flag(args, "--hold");
+                let live = args.iter().any(|a| a == "--live");
                 let rows: Vec<Value> = self
                     .beads
                     .values()
+                    .filter(|r| !live || !r.state.is_terminal())
                     .filter(|r| st.as_deref().is_none_or(|s| r.state.as_str() == s))
                     .filter(|r| hold.as_deref().is_none_or(|h| r.holds.iter().any(|x| x.as_str() == h)))
                     .map(Self::row_json)
@@ -314,6 +316,16 @@ fn state_and_the_bulk_lists_keep_their_line_shapes() {
     assert_eq!(go(&mut f, "list-held", &["poison"]).stdout, "sp-1\nsp-2");
     assert_eq!(go(&mut f, "list-state", &["WORKING"]).stdout, "sp-1\t1700000000\tpoison,wait\nsp-3\t\t");
     assert_eq!(go(&mut f, "list-all", &[]).stdout, "sp-1\tWORKING\taeon-1\nsp-2\tREADY\t\nsp-3\tWORKING\t");
+}
+
+#[test]
+fn list_held_never_names_a_terminal_bead() {
+    let mut f = Fake::default();
+    f.bead("sp-live", BeadState::Ready).holds.insert(HoldKind::Manual);
+    for (id, st) in [("sp-l", BeadState::Landed), ("sp-s", BeadState::Superseded), ("sp-d", BeadState::Dropped), ("sp-n", BeadState::Done)] {
+        f.bead(id, st).holds.insert(HoldKind::Manual);
+    }
+    assert_eq!(go(&mut f, "list-held", &["manual"]).stdout, "sp-live");
 }
 
 // ---- delivery exits --------------------------------------------------------------------

@@ -63,13 +63,9 @@ _sd_retry() {
 _sd_adjudicate() {
     local id="$1" succ="$2" st own
     own="$(timeout 5 spira-lc state "$id" 2>/dev/null)"
+    [ -n "$own" ] || return 0
     case "$own" in
-        LANDED|SUPERSEDED|DROPPED|DONE)
-            _sd_settled "$id" && return 0
-            timeout 5 spira-lc unhold "$id" manual "$ACTOR" >/dev/null 2>&1
-            _sd_settle "$id"
-            _sd_say "SUPERSEDE REQUEST $id: already $own; nothing to do"
-            return 0 ;;
+        LANDED|SUPERSEDED|DROPPED|DONE) return 0 ;;
     esac
     _sd_settled "$id.failed" || _sd_say "SUPERSEDE REQUEST $id: successor $succ"
     st="$(timeout 5 spira-lc state "$succ" 2>/dev/null)"

@@ -40,6 +40,11 @@ pub fn lift_ask(lc: &dyn Lc, work_bead: &str, how: Lift, actor: &str) -> Option<
     if work_bead.is_empty() {
         return None;
     }
+    if let (0, state) = lc.call(&["state".into(), work_bead.into()]) {
+        if spira_config::lc_state::is_terminal(state.trim()) {
+            return None;
+        }
+    }
     let args: Vec<String> = match how {
         Lift::Reply { message_id } => vec!["reply".into(), work_bead.into(), message_id.into(), actor.into()],
         Lift::Withdraw => vec!["withdraw-ask".into(), work_bead.into(), actor.into()],
@@ -66,15 +71,16 @@ pub mod fake {
     use super::Lc;
     use std::sync::Mutex;
 
-    /// Records every call; answers each with `code`.
+    /// Records every write; answers each with `code`, and a `state` read with `state`.
     pub struct FakeLc {
         pub code: i32,
+        pub state: String,
         calls: Mutex<Vec<Vec<String>>>,
     }
 
     impl FakeLc {
         pub fn new(code: i32) -> FakeLc {
-            FakeLc { code, calls: Mutex::new(Vec::new()) }
+            FakeLc { code, state: "READY".into(), calls: Mutex::new(Vec::new()) }
         }
         pub fn calls(&self) -> Vec<Vec<String>> {
             self.calls.lock().unwrap().clone()
@@ -83,6 +89,9 @@ pub mod fake {
 
     impl Lc for FakeLc {
         fn call(&self, args: &[String]) -> (i32, String) {
+            if args[0] == "state" {
+                return (0, self.state.clone());
+            }
             self.calls.lock().unwrap().push(args.to_vec());
             (self.code, String::new())
         }
@@ -99,6 +108,17 @@ mod tests {
         let lc = FakeLc::new(0);
         assert_eq!(lift_ask(&lc, "sp-w1", Lift::Reply { message_id: "m-1@spira" }, "operator"), None);
         assert_eq!(lc.calls(), vec![vec!["reply", "sp-w1", "m-1@spira", "operator"]]);
+    }
+
+    #[test]
+    fn a_terminal_work_bead_is_never_written() {
+        for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+            let mut lc = FakeLc::new(0);
+            lc.state = state.into();
+            assert_eq!(lift_ask(&lc, "sp-w1", Lift::Reply { message_id: "m-1@spira" }, "operator"), None);
+            assert_eq!(lift_ask(&lc, "sp-w1", Lift::Withdraw, "operator"), None);
+            assert!(lc.calls().is_empty(), "{state}: {:?}", lc.calls());
+        }
     }
 
     #[test]

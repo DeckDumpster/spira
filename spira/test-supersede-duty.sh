@@ -111,6 +111,8 @@ want "each request is surfaced to the Concierge" "[watch:supersede-duty] SUPERSE
 is "an already-SUPERSEDED target stays SUPERSEDED" SUPERSEDED "$(state_of sp-done)"
 nowant "a terminal target is never written to bd" "sp-done" "$(cat "$TMP/calls.log")"
 nowant "a terminal target is never retried" "will retry" "$out"
+is "a terminal target is never written to the lifecycle, so nothing is refused" 0 \
+    "$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) FROM event WHERE machine='bead' AND lc_key='sp-done' AND applied=0" -r csv 2>/dev/null | tail -1)"
 
 : > "$TMP/calls.log"
 out2="$(run pass)"

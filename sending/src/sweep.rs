@@ -336,7 +336,7 @@ impl<'a> Sweep<'a> {
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
                     return;
                 }
-                if ahead > 0 {
+                if ahead > 0 && !self.w.lc_terminal(id) {
                     let proof = format!("merge-tree:{}", g.rev_parse(lr).unwrap_or_default());
                     self.w.content_on_base(id, &proof);
                 }
