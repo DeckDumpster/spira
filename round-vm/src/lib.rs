@@ -8,6 +8,7 @@ pub mod load;
 pub mod lpt;
 pub mod pool;
 pub mod procs;
+pub mod progress;
 pub mod provider;
 pub mod pve;
 pub mod run;

@@ -932,6 +932,8 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
     let t0 = Instant::now();
     let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
+    let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
+    let mut progress = crate::progress::Progress::start(&cfg.run_dir, &results_dir, commit_sha, tree_sha, total, cfg.cap_secs);
     let Some(spool_dir) = args.attr_spool.clone() else {
         let streamed = std::thread::scope(|sc| {
             let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
@@ -939,6 +941,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
             while !batch.is_finished() {
                 if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
                     stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                    progress.update(&results_dir);
                     last = Some(Instant::now());
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -949,15 +952,19 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
         let remote_rc = match streamed {
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                progress.finish(&results_dir, 2);
                 return 2;
             }
             Ok(rc) => rc,
             Err(e) => {
                 eprintln!("round-vm run: {e}");
+                progress.finish(&results_dir, 2);
                 return 2;
             }
         };
-        return after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        progress.finish(&results_dir, code);
+        return code;
     };
 
     // DESIGN.md §2.2a: stream results while the corpus runs; serve attribution reruns on this
@@ -985,6 +992,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
         while !batch.is_finished() {
             if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
                 stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                progress.update(&results_dir);
                 last = Some(Instant::now());
             }
             server.serve(sc, false);
@@ -1006,6 +1014,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
                 (2, false)
             }
         };
+        progress.finish(&results_dir, code);
         if let Err(e) = server.spool.corpus_done(code) {
             eprintln!("round-vm run: {e}");
         }
@@ -1720,6 +1729,7 @@ mod tests {
             ssh_tries: 2,
             stream_every_secs: 10,
             attr_linger_secs: 3600,
+            cap_secs: 1234,
         });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
@@ -2011,6 +2021,28 @@ mod tests {
         assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
         assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
         assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
+    }
+
+    #[test]
+    fn a_run_publishes_its_progress_and_leaves_it_done_with_the_verdict() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 0);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("green")));
+        assert_eq!((v["done"].as_u64(), v["total"].as_u64(), v["cap"].as_u64()), (Some(2), Some(2), Some(1234)));
+        assert!(v["suites_started"].as_u64().is_some());
+    }
+
+    #[test]
+    fn a_run_whose_ssh_fails_is_left_done_with_a_fault() {
+        let fx = fixture();
+        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 2);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("fault")));
     }
 
     #[test]

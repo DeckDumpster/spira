@@ -209,12 +209,14 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let sig_pool = pool_for(&cfg);
             let sig_remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
             let sig_results = run_args.as_ref().and_then(|a| a.results_dir.clone()).unwrap_or_else(|| cfg.run_dir.join("batch-results"));
+            let sig_run_dir = cfg.run_dir.clone();
             let sig_scratch = cfg.state_dir.join(format!(".salvage.{}", me.pid));
             block_termination_signals(move |sig| {
                 for vm in sig_pool.leased_to(me) {
                     let n = salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6));
                     eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle);
                 }
+                crate::progress::mark_killed(&sig_run_dir);
                 eprintln!("round-vm run: signal {sig}: releasing this run's VM");
                 sig_pool.release_owned_by(me, &real_attempt);
                 std::process::exit(128 + sig);
@@ -436,6 +438,7 @@ mod tests {
             ssh_tries: 1,
             stream_every_secs: 1,
             attr_linger_secs: 1,
+            cap_secs: 1,
         });
         let a = crate::template::TemplateArgs { tree_dir: tree, rev: None, toolchain: None };
         let pool = pool_for(&cfg);
