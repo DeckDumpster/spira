@@ -165,6 +165,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         id_prefix: g("id_prefix"),
         land_maxsec: num("land_maxsec", 3600),
         gate_reserve: num("gate_reserve", 1200),
+        gate_timeout: num("gate_timeout", 2700),
         gate_lock_wait: kv.get("gate_lock_wait").filter(|v| !v.is_empty()).cloned(),
         certify_par: certify_par(kv.get("certify_par").map(String::as_str)),
         gate_worker: num("gate_worker", 1) != 0,

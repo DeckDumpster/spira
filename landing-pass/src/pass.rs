@@ -627,7 +627,7 @@ impl<'a> Pass<'a> {
                         break;
                     }
                 };
-                let (wait, note) = gate_lock_wait(self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
+                let (wait, note) = gate_lock_wait(self.s.gate_timeout, self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
                 if let Some(n) = note {
                     self.log(&n);
                 }
@@ -747,7 +747,7 @@ impl<'a> Pass<'a> {
 
     pub(crate) fn run_gate(&self, name: &str, br: &str, id: &str) -> GateRun {
         self.set_run(name, br, "gate");
-        let (wait, note) = gate_lock_wait(self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
+        let (wait, note) = gate_lock_wait(self.s.gate_timeout, self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
         if let Some(n) = note {
             self.log(&n);
         }

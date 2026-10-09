@@ -71,6 +71,7 @@ pub struct Settings {
     pub id_prefix: String,
     pub land_maxsec: i64,
     pub gate_reserve: i64,
+    pub gate_timeout: i64,
     pub gate_lock_wait: Option<String>,
     /// `SPIRA_CERTIFY_PAR`: how many certification gates the queued walk runs at once
     /// (DESIGN.md §8 D14). 1 is the serial walk.
@@ -138,6 +139,7 @@ impl Settings {
             id_prefix: "sp".into(),
             land_maxsec: 0,
             gate_reserve: 2700,
+            gate_timeout: 2700,
             gate_lock_wait: None,
             certify_par: 1,
             gate_worker: false,
