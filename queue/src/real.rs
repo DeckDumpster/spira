@@ -606,7 +606,7 @@ impl Scripts for RealScripts {
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run release: {e}") },
         }
     }
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64, handle: &Path) -> RunOut {
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
         // batch-job: the round's lint and suites, bounded by the caller's wall budget
         let spawned = Command::new("timeout")
             .args(["-k", "5", &wall_secs.to_string(), "round-vm", "run"])
@@ -615,6 +615,7 @@ impl Scripts for RealScripts {
             .arg(results)
             .arg("--base")
             .arg(base)
+            .args(["--round-batch", round.0, "--round-repo", round.1])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

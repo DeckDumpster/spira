@@ -61,7 +61,7 @@ pub struct Run {
 }
 
 /// Flags the batcher passes that say how a real VM runs, and mean nothing to a stub.
-const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool", "--base"];
+const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool", "--base", "--round-batch", "--round-repo"];
 
 pub fn parse_args(args: &[String]) -> Result<Run, String> {
     let Some((verb, rest)) = args.split_first() else { return Err("usage: round-vm run <tree> --results-dir <dir>".into()) };

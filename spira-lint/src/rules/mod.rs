@@ -3,6 +3,7 @@ pub mod bd_stdin_lint;
 pub mod call_deadline;
 pub mod chmod_exec_leak;
 pub mod cockpit_no_bd;
+pub mod cockpit_no_round_files;
 pub mod env_set_var_leak;
 pub mod conf_key_registry;
 pub mod config_env_read;

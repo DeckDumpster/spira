@@ -335,8 +335,8 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("restart {batch} {repo}"));
         !self.restart_fails.get()
     }
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64, handle: &Path) -> RunOut {
-        self.calls.borrow_mut().push(format!("round-vm {} base={base} wall={wall_secs}", tree.display()));
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
+        self.calls.borrow_mut().push(format!("round-vm {} base={base} round={}/{} wall={wall_secs}", tree.display(), round.0, round.1));
         fs::write(handle, "777").unwrap();
         if self.preempted_during_vm.get() {
             fs::write(handle.with_extension("preempt"), "why").unwrap();
@@ -425,6 +425,8 @@ struct FLc {
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
+    /// A batch event whose kind names this is refused.
+    batch_event_refused: Cell<Option<&'static str>>,
     /// Bead events report success and change nothing.
     event_ignored: Cell<bool>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
@@ -436,7 +438,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -489,6 +491,9 @@ impl Lc for FLc {
     }
     fn batch_event(&self, id: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("event batch {id} {s} {v} {kind}"));
+        if self.batch_event_refused.get().is_some_and(|k| kind.contains(k)) {
+            return Err((1, "refused: IllegalTransition".into()));
+        }
         if let Some(view) = self.batch_view.borrow_mut().as_mut() {
             let n: u32 = kind.split("\"n\":").nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|d| d.parse().ok()).unwrap_or(view.2);
             let (state, pass, phase) = match kind.trim_start_matches("{\"").split('"').next().unwrap_or("") {

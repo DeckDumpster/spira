@@ -439,6 +439,30 @@ fn events_of(t: &T, batch: &str) -> Vec<String> {
 }
 
 #[test]
+fn a_red_pass_the_batch_row_refuses_is_a_fault_not_a_local_red() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.lc.batch_event_refused.set(Some("PassRed"));
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert!(t.err().contains("REFUSED") && t.err().contains("IllegalTransition"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["phase"], "fault");
+}
+
+#[test]
+fn certify_hands_the_batch_and_repo_to_round_vm_to_record_its_boundaries() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("round-vm ") && c.contains(&format!("round={batch}/"))), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test]
 fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));

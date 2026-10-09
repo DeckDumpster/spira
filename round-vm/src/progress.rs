@@ -25,6 +25,7 @@ pub struct Progress {
     baseline: HashSet<String>,
     build_started: u64,
     suites_started: Option<u64>,
+    suites_reported: bool,
     last: Option<Value>,
 }
 
@@ -55,6 +56,7 @@ impl Progress {
             baseline: result_names(results_dir).into_iter().map(|(n, _)| n).collect(),
             build_started: now_secs(),
             suites_started: None,
+            suites_reported: false,
             last: None,
         };
         p.write(results_dir, "build", None);
@@ -89,6 +91,13 @@ impl Progress {
         if let Err(e) = write_atomic(&self.path, &format!("{body}\n")) {
             eprintln!("round-vm run: progress: {e}");
         }
+    }
+
+    /// True once, the first time the pass is seen past its build.
+    pub fn take_suites_began(&mut self) -> bool {
+        let began = self.suites_started.is_some() && !self.suites_reported;
+        self.suites_reported |= began;
+        began
     }
 
     /// Called after each streaming pull.
