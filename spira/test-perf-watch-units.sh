@@ -5,7 +5,7 @@
 # names only commands that exist.
 #
 # tier: T0
-# covers: systemd/spira-perf-watch.service systemd/spira-perf-watch.timer spira/perf-probes spira/watchers install/src/manifest.rs perf-watch/*
+# covers: systemd/spira-perf-watch.service systemd/spira-perf-watch.timer systemd/spira-perf-happy-path.* spira/perf-probes spira/watchers install/src/manifest.rs perf-watch/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -46,5 +46,18 @@ probes="$(grep -v '^#' "$HERE/perf-probes" | grep .)"
 is "the probe file names five hot paths" "5" "$(printf '%s\n' "$probes" | wc -l | tr -d ' ')"
 bad_lines="$(printf '%s\n' "$probes" | grep -vP '^[a-z-]+\t\S+' )"
 is "every probe is <name><TAB><command>" "" "$bad_lines"
+
+echo "=== happy-path watcher ==="
+HSVC="$UNIT_DIR/spira-perf-happy-path.service"
+HTMR="$UNIT_DIR/spira-perf-happy-path.timer"
+want "the happy-path watcher is a CPU-fenced oneshot" "Type=oneshot" "$(grep '^Type=' "$HSVC" 2>/dev/null)"
+is "it is CPU-fenced" "1" "$(grep -cE "$_quota_re" "$HSVC" 2>/dev/null)"
+want "it runs the happy subcommand" "perf-watch happy" "$(grep '^ExecStart=' "$HSVC" 2>/dev/null)"
+want "it starts from the repo, which the sim world is built from" "WorkingDirectory=@SPIRA_REPO@" "$(grep '^WorkingDirectory=' "$HSVC" 2>/dev/null)"
+want "its alarms land in the watched log" "@SPIRA_RUN@/perf-watch.log" "$(grep '^StandardOutput=' "$HSVC" 2>/dev/null)"
+want "its timer repeats" "OnUnitActiveSec=" "$(grep '^OnUnitActiveSec=' "$HTMR" 2>/dev/null)"
+want "its timer names the service" "spira-perf-happy-path.service" "$(grep '^Unit=' "$HTMR" 2>/dev/null)"
+want "its service is in UNITS" "spira-perf-happy-path.service" "$units_block"
+want "its timer is enabled" "spira-perf-happy-path.timer" "$enable_block"
 
 tl_summary

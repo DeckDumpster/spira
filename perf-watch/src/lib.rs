@@ -4,6 +4,8 @@
 
 use std::collections::BTreeMap;
 
+pub mod happy;
+
 pub struct Probe {
     pub name: String,
     pub argv: Vec<String>,

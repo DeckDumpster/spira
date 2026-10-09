@@ -146,6 +146,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-escape-census.timer", true));
     m.units.push(t("spira-perf-watch.service", false));
     m.units.push(t("spira-perf-watch.timer", true));
+    m.units.push(t("spira-perf-happy-path.service", false));
+    m.units.push(t("spira-perf-happy-path.timer", true));
     m.units.push(t("spira-reclaim.service", false));
     m.units.push(t("spira-reclaim.timer", true));
     m.units.push(t("spira-target-reap.service", false));

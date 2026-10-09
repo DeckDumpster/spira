@@ -1,0 +1,15 @@
+[Unit]
+Description=Time the sim happy path hourly
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+Unit=spira-perf-happy-path.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
