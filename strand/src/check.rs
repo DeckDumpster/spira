@@ -116,6 +116,21 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         };
         rows.extend(p.classify().into_iter().map(|row| PartRow { part: labels.clone(), row }));
     }
+    if cfg.labels.is_none() {
+        let claimable: std::collections::HashSet<String> = lc_rows
+            .iter()
+            .filter(|r| r.claimable() && !r.held("ask") && !r.held("poison"))
+            .map(|r| r.bead_id.clone())
+            .collect();
+        match crate::unrostered::personas(cfg) {
+            Ok(ps) => rows.extend(
+                crate::unrostered::rows(&claimable, &store, &ps, &cfg.lanes, &cfg.shared_exclude())
+                    .into_iter()
+                    .map(|row| PartRow { part: crate::unrostered::PART.to_string(), row }),
+            ),
+            Err(e) => warn(&format!("WARN the persona chamber could not be read ({e}) — unrostered READY beads are not checked")),
+        }
+    }
     Ok(Classified { rows, watching })
 }
 
