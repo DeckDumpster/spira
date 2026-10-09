@@ -196,6 +196,11 @@ id = "UC-cockpit-observability-33"
 tier = "T1"
 statement = "Loom `model.js` derives components/depth/width, excludes closed/provenance/dangling edges and collapses duplicates, honours configured labels, groups by repo and epic, uses a 14-day arrivals flow, and parses real bd JSON; the shipped page carries no embedded payload"
 
+[use_case.uncovered]
+reason = "loom's old list view retired (sp-5disbg): model.js, its node suite test-loom-page.sh and the embedded page are gone; the stuck page renders server-side from the lifecycle read model, covered by loom/tests/endpoint.rs"
+date = "2026-10-09"
+bead = "sp-5disbg"
+
 [[use_case]]
 id = "UC-cockpit-observability-34"
 tier = "T1"
