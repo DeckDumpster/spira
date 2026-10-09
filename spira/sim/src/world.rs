@@ -20,8 +20,10 @@ const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
 /// The world's lifecycle service socket, under the world dir (sp-hq1v76).
 const LC_SOCKET: &str = "lc.sock";
 const HOME: &str = "home";
-/// An empty file for the one config key that must name a readable file; the registry is `repo.*`.
-const NO_LEGACY_MAP: &str = "no-legacy-map";
+/// The file the legacy bash readers still require, with the one row the world registers.
+const REGISTRY_ROWS: &str = "registry-rows";
+/// The name the world's one repository is registered under (`repo.<name>` in its config).
+const REPO_NAME: &str = "sim";
 /// The home every path in the complete fixture config is rooted at (spira-config/tests/fixtures).
 const FIXTURE_HOME: &str = "/fixture/userhome";
 /// The PID world up recorded for the world's `spira-lc serve`; world down signals only it.
@@ -451,7 +453,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
     let home = dir.join(HOME);
     std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
-    std::fs::write(home.join(NO_LEGACY_MAP), "").map_err(|e| e.to_string())?;
+    std::fs::write(home.join(REGISTRY_ROWS), registry_rows(&work)).map_err(|e| e.to_string())?;
     std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
     for (k, v) in config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, &fixture)) {
         steps.config_set(&release, &file, &k, &v)?;
@@ -485,6 +487,11 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     steps.lc_serve(dir, &fixture)
 }
 
+/// The one registry row of a world: `name|path|land|base|format|gate|lanes`.
+pub fn registry_rows(work: &Path) -> String {
+    format!("{REPO_NAME}|{}|queue.local|{LANDING_BASE}|||plan\n", work.display())
+}
+
 /// The complete base with every path of the fixture's home moved under the world's `home`,
 /// and without the fixture's own `repo.spira`: a world registers only the repository it built.
 pub fn base_config(home: &Path) -> String {
@@ -511,7 +518,8 @@ pub fn home_settings(world: &Path, fixture: &str) -> Vec<(String, String)> {
         ("spira.prod".to_string(), spira.display().to_string()),
         ("spira.chamber".to_string(), spira.join("chamber").display().to_string()),
         ("spira.db".to_string(), fixture.trim().to_string()),
-        ("spira.repo_map".to_string(), world.join(HOME).join(NO_LEGACY_MAP).display().to_string()),
+        ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
+        ("spira.home_repo".to_string(), REPO_NAME.to_string()),
     ]
 }
 
@@ -539,7 +547,7 @@ pub fn probe_command(sim: &Path, world: &Path) -> String {
 pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
     let repo = serde_json::json!({ "path": work.display().to_string(), "mode": "queue.local", "base": LANDING_BASE });
     vec![
-        ("repo.sim".to_string(), repo.to_string()),
+        (format!("repo.{REPO_NAME}"), repo.to_string()),
         ("spira.gh".to_string(), gh.display().to_string()),
         ("spira.batcher_enable".to_string(), "1".to_string()),
     ]

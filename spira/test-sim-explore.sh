@@ -24,24 +24,12 @@ in_world() {
 }
 show() { echo "   state: $(in_world spira-lc show "$1" 2>&1 | tr -d '\n ' | grep -o '"state":"[A-Z_]*"' | head -1)"; }
 run() { local o rc; o="$(in_world "$@" 2>&1)"; rc=$?; echo "## $* rc=$rc :: $(printf '%s' "$o" | tail -${TN:-3} | tr '\n' '|' | tr -s ' ' | cut -c1-${CW:-300})"; }
-B=sp-h1
-run spira-lc create-bead $B
-run spira-lc event bead $B --expect READY --version 0 --actor sim --kind '{"Claim":{"holder":"aeon-1","lease_until":4102444800}}'
-git -C "$W/work" worktree add -q -b spira/$B "$W/wt-$B" local/main
-echo hi > "$W/wt-$B/h.txt"; git -C "$W/wt-$B" add h.txt
-git -C "$W/wt-$B" -c user.name=a -c user.email=a@a commit -q -m "$B: sim commit"
-run bash -c "cd $W/wt-$B && SPIRA_WORK_BEAD_ID=$B work submit"
-show $B
-TN=14 CW=1500 run landing-pass land
-for i in 1; do
-for cmd in "landing-pass land" "gate-worker run" "batcher rounds" "queue step --all" "queue publish-settle"; do
-  run $cmd
-  show $B
-done
-done
-run git -C $W/work branch -a -v
-run git -C $W/work tag
-run queue round status sim
-run ls $W/run $W/gh
+FX="$(cat $W/db.fixture)"
+echo "fixture=$FX; bd=$(command -v bd); $(ls $FX | tr '\n' ' ')"
+run bd --version
+run bash -c "cd $FX && bd create 'sim t' --id sp-h1 -l branch:spira/sp-h1 -l repo:sim -l spira -t task -p 2 --json"
+run bash -c "cd $FX && bd list --json | head -c 300"
+TN=6 CW=700 run bead file "sim title" --for builder --repo sim --json
+run spira-lc list
 bad "dump" "forced"
 tl_summary
