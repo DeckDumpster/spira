@@ -248,61 +248,21 @@ pub fn render_bead(now: i64, id: &str, detail: &Value) -> String {
         }
         b.push_str("</div>");
     }
-    b.push_str("</div>");
-    // Newest first. An applied move that stays in its state (a lease Renew, a note) is detail of
-    // the move that entered the state, so it folds under it; a refusal stays on its own line.
-    let mut evs: Vec<&Value> = detail["events"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
-    evs.sort_by_key(|e| num(&e["seq"]).unwrap_or(0));
-    let mut groups: Vec<(&Value, Vec<&Value>)> = Vec::new();
-    let mut last_entry: Option<usize> = None;
-    for e in evs {
-        let applied = num(&e["applied"]) != Some(0);
-        let stays = text(&e["from_state"]) == text(&e["to_state"]);
-        match last_entry {
-            Some(g) if applied && stays => groups[g].1.push(e),
-            _ => {
-                groups.push((e, Vec::new()));
-                if applied {
-                    last_entry = Some(groups.len() - 1);
-                }
-            }
-        }
-    }
-    let event_row = |e: &Value| {
+    b.push_str("</div><table>");
+    for e in detail["events"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let refused = num(&e["applied"]) == Some(0);
-        format!(
+        let at = num(&e["at"]).unwrap_or(0);
+        let refusal = text(&e["refusal"]);
+        b.push_str(&format!(
             "<tr class=\"{}\"><td class=dim>{} ago</td><td>{}<br><span class=dim>{}</span></td><td>{} → {}{}</td></tr>",
             if refused { "refused" } else { "" },
-            dur(now - num(&e["at"]).unwrap_or(0)),
+            dur(now - at),
             esc(&text(&e["event"])),
             esc(&text(&e["actor"])),
             esc(&text(&e["from_state"])),
             esc(&text(&e["to_state"])),
-            if refused { format!("<br>refused: {}", esc(&text(&e["refusal"]))) } else { String::new() },
-        )
-    };
-    b.push_str("<table>");
-    for (head, kids) in groups.iter().rev() {
-        b.push_str(&event_row(head));
-        if kids.is_empty() {
-            continue;
-        }
-        let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
-        for k in kids {
-            *kinds.entry(text(&k["event"])).or_default() += 1;
-        }
-        let what = kinds.iter().map(|(k, n)| format!("{}×{n}", esc(k))).collect::<Vec<_>>().join(" · ");
-        let latest = kids.iter().filter_map(|k| num(&k["at"])).max().unwrap_or(0);
-        b.push_str(&format!(
-            "<tr class=stay><td></td><td colspan=2><details><summary class=dim>{} update(s) in {} — {what}, latest {} ago</summary><table>",
-            kids.len(),
-            esc(&text(&head["to_state"])),
-            dur(now - latest)
+            if refused { format!("<br>refused: {}", esc(&refusal)) } else { String::new() },
         ));
-        for k in kids.iter().rev() {
-            b.push_str(&event_row(k));
-        }
-        b.push_str("</table></details></td></tr>");
     }
     b.push_str("</table>");
     shell(id, 30, &b)
@@ -381,20 +341,5 @@ mod tests {
         assert!(html.contains("tr class=\"refused\"") && html.contains("refused: wrong-state"));
         assert!(html.contains("LEASE EXPIRED 10m ago"));
         assert!(html.contains("href=\"/stuck/sp-abcd12\""));
-    }
-
-    #[test]
-    fn same_state_moves_fold_under_their_entry_and_the_newest_comes_first() {
-        let e = |seq: i64, event: &str, from: &str, to: &str, applied: i64| {
-            json!({"seq": seq, "event": event, "from_state": from, "to_state": to, "applied": applied, "actor": "a", "at": NOW - 1000 + seq * 10})
-        };
-        let d = json!({"bead": {"state": "SUBMITTED", "holds": "[]", "title": "x"},
-            "events": [e(1, "Claim", "READY", "WORKING", 1), e(2, "Renew", "WORKING", "WORKING", 1), e(3, "Renew", "WORKING", "WORKING", 1),
-                       e(4, "Certify", "WORKING", "WORKING", 0), e(5, "Renew", "WORKING", "WORKING", 1), e(6, "Submit", "WORKING", "SUBMITTED", 1)]});
-        let html = render_bead(NOW, "sp-fold1", &d);
-        assert!(html.contains("3 update(s) in WORKING — Renew×3"), "{html}");
-        let (submit, refusal, claim) = (html.find(">Submit<").unwrap(), html.find(">Certify<").unwrap(), html.find(">Claim<").unwrap());
-        assert!(submit < refusal && refusal < claim, "newest first, with the refusal on its own line");
-        assert!(html.find("update(s) in WORKING").unwrap() > claim, "the folded renews sit under the Claim that entered WORKING");
     }
 }
