@@ -511,3 +511,94 @@ fn a_pass_verb_out_of_phase_is_sent_so_the_machine_can_refuse_it_by_name() {
     assert_eq!(events_of(&t, &batch).iter().filter(|e| e.starts_with("{\"PassStarted\"")).count(), 2, "a strict verb never swallows a wrong-phase call");
     assert_eq!(t.run(&["round", "pass-verdict", &batch, "--verdict", "incomplete"]), 2, "an incomplete pass names why");
 }
+
+fn preempt_world() -> (T, String) {
+    let t = round_world();
+    t.git.anc.borrow_mut().remove(&("tb".to_string(), "merged-tc".to_string()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 4, 1, "suites".into()));
+    let spira = t.s().run.join("worktree").join(".round-spira").join("spira");
+    fs::create_dir_all(&spira).unwrap();
+    for s in ["test-a.sh", "test-b.sh", "test-c.sh"] {
+        fs::write(spira.join(s), "").unwrap();
+    }
+    let results = marker(&t, &batch, "results");
+    fs::create_dir_all(&results).unwrap();
+    fs::write(results.join("test-a.sh.result"), "ok\n").unwrap();
+    fs::write(results.join("test-b.sh.result"), "red 1 2 fp p e 1\n").unwrap();
+    let mut rec = kv_of(&t, "round");
+    rec.insert("phase".into(), "certifying".into());
+    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    fs::write(marker(&t, &batch, "pass"), "777").unwrap();
+    t.scripts.pass_alive.set(true);
+    (t, batch)
+}
+
+#[test]
+fn preempting_a_running_pass_salvages_ejects_rebuilds_and_restarts() {
+    let (t, batch) = preempt_world();
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red on test-b.sh at 2/3", "--suites", "test-b.sh"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == "terminate 777"), "TERM to the run's handle, never a kill: {:?}", t.scripts.calls.borrow());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("round-vm")), "a pass is stopped, not re-run, by the verb");
+    let results = marker(&t, &batch, "results");
+    assert!(results.join("test-a.sh.result").exists() && results.join("test-b.sh.result").exists(), "the finished suites' results stay");
+    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassPreempted\":{{\"n\":1,\"done\":2,\"total\":3,\"red_suites\":[\"test-b.sh\"]}}}}")), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.has(&format!("eject-member {batch} sp-b ")) && t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
+    let rec = kv_of(&t, "round");
+    assert_eq!((rec["members"].as_str(), rec["head"].as_str(), rec["phase"].as_str()), ("sp-a:ta sp-c:tc", "merged-tc", "opened"));
+    assert!(t.out().contains("stopped at 2/3 suites") && t.out().contains("verified no ejected tip remains"), "{}", t.out());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
+    assert!(!marker(&t, &batch, "preempt").exists(), "the marker is spent once the pass is recorded");
+}
+
+#[test]
+fn preempt_refuses_without_a_running_pass_and_names_the_phase() {
+    let (t, batch) = preempt_world();
+    let mut rec = kv_of(&t, "round");
+    rec.insert("phase".into(), "red".into());
+    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]), 1);
+    assert!(t.err().contains(&format!("round {batch} is red, with no pass running")), "{}", t.err());
+
+    rec.insert("phase".into(), "certifying".into());
+    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    t.scripts.pass_alive.set(false);
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]), 1);
+    assert!(t.err().contains("is certifying, with no pass running"), "a recorded phase without a live handle is not a running pass: {}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("terminate") || c.starts_with("restart")));
+    assert!(!t.lc.has("PassPreempted") && !t.lib.has("bead_reopen"));
+}
+
+#[test]
+fn preempt_does_not_restart_while_an_ejected_tip_is_still_in_the_head() {
+    let (t, batch) = preempt_world();
+    t.git.ancestor("tb", "merged-tc");
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red"]), 1);
+    assert!(t.err().contains("still holds the tip of sp-b") && t.err().contains("next pass was not started"), "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("restart")));
+}
+
+#[test]
+fn preempt_names_the_stuck_pass_when_it_will_not_stop() {
+    let (t, batch) = preempt_world();
+    t.scripts.pass_alive.set(true);
+    t.scripts.calls.borrow_mut().clear();
+    t.scripts.survives_term.set(true);
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red"]), 1);
+    assert!(t.err().contains("did not stop") && t.err().contains("not killed"), "{}", t.err());
+    assert!(!marker(&t, &batch, "preempt").exists() && !t.lc.has("PassPreempted") && !t.lib.has("bead_reopen"));
+}
+
+#[test]
+fn a_preempted_certify_leaves_the_record_to_the_verb() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.scripts.preempted_during_vm.set(true);
+    assert_eq!(t.run(&["round", "certify", &batch]), crate::ops::round::PREEMPTED, "{}", t.err());
+    assert!(!marker(&t, &batch, "pass").exists(), "the handle goes with the run");
+    assert_eq!(kv_of(&t, "round")["phase"], "certifying");
+    assert!(!t.lc.has("PassIncomplete") && !t.lc.has("PassRed"), "{:?}", t.lc.calls.borrow());
+}

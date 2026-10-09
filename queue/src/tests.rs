@@ -293,6 +293,12 @@ struct FScripts {
     round_vm_results: RefCell<Vec<(String, String)>>,
     /// The `runner.meta` it leaves beside them (empty = none).
     round_vm_meta: RefCell<String>,
+    /// A pass `round preempt` can address: its pid is alive until it is sent TERM.
+    pass_alive: Cell<bool>,
+    /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
+    preempted_during_vm: Cell<bool>,
+    restart_fails: Cell<bool>,
+    survives_term: Cell<bool>,
 }
 
 impl Scripts for FScripts {
@@ -318,8 +324,23 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
     }
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut {
+    fn pass_terminate(&self, pid: u32) {
+        self.calls.borrow_mut().push(format!("terminate {pid}"));
+        self.pass_alive.set(self.survives_term.get());
+    }
+    fn pass_alive(&self, _: u32) -> bool {
+        self.pass_alive.get()
+    }
+    fn pass_restart(&self, batch: &str, repo: &str) -> bool {
+        self.calls.borrow_mut().push(format!("restart {batch} {repo}"));
+        !self.restart_fails.get()
+    }
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64, handle: &Path) -> RunOut {
         self.calls.borrow_mut().push(format!("round-vm {} base={base} wall={wall_secs}", tree.display()));
+        fs::write(handle, "777").unwrap();
+        if self.preempted_during_vm.get() {
+            fs::write(handle.with_extension("preempt"), "why").unwrap();
+        }
         fs::create_dir_all(results).unwrap();
         for (suite, status) in self.round_vm_results.borrow().iter() {
             fs::write(results.join(format!("{suite}.result")), format!("{status}\n")).unwrap();
@@ -474,7 +495,7 @@ impl Lc for FLc {
                 "PassStarted" => ("CI_RUNNING", n, "build"),
                 "SuitesStarted" => ("CI_RUNNING", view.2, "suites"),
                 "PassGreen" => ("GREEN", view.2, ""),
-                "PassRed" | "PassIncomplete" => ("ATTRIBUTING", view.2, ""),
+                "PassRed" | "PassIncomplete" | "PassPreempted" => ("ATTRIBUTING", view.2, ""),
                 "PassRebuilt" => ("OPEN", view.2, ""),
                 _ => (view.0.as_str(), view.2, view.3.as_str()),
             };

@@ -217,7 +217,14 @@ pub trait Scripts {
     /// `round-vm run <tree> --results-dir <results> --base <base>` under `timeout <wall_secs>`: the full
     /// corpus of `tree` on the round VM. Exit 0/1 ran (the results say which suites are red);
     /// 124/137 hit the wall; anything else is the harness's fault.
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut;
+    /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
+    /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64, handle: &Path) -> RunOut;
+    /// SIGTERM to a run's pid: round-vm salvages the finished suites' results and releases the VM.
+    fn pass_terminate(&self, pid: u32);
+    fn pass_alive(&self, pid: u32) -> bool;
+    /// Start `queue round certify <batch> <repo>` detached, so the next pass outlives the caller.
+    fn pass_restart(&self, batch: &str, repo: &str) -> bool;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.
