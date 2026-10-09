@@ -1948,3 +1948,23 @@ fn config_for_resolution_has_the_delta_applied_without_touching_the_files_in_for
     let _ = fs::remove_dir_all(dir);
     assert!(config_delta::staged_for_resolution(&spec, Some(&w.cfg.releases), A).unwrap().is_none(), "no release, no delta, nothing to stage");
 }
+
+#[test]
+fn dolt_renders_from_the_install_locations_when_path_omits_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new("dolt-home");
+    let home = tmp.path().to_path_buf();
+    let bin = home.join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let dolt = bin.join("dolt");
+    std::fs::write(&dolt, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&dolt, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = Env::new();
+    env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
+    env.insert("PATH".into(), "/nonexistent-scrubbed".into());
+    env.insert("HOME".into(), home.display().to_string());
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
+    let got = cfg.host_values().unwrap().remove("DOLT").unwrap();
+    assert_eq!(got, dolt.display().to_string());
+}
