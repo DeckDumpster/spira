@@ -50,7 +50,7 @@ dump() {  # dump — what the world did, for a red run (exec.log was copied out 
     [ -f "$w/exec.log" ] || return 0
     grep -c '^=== ' "$w/exec.log" | sed 's/^/# commands run: /'
     grep -A8 'pr=$(gh' "$w/exec.log" | grep -v 'probe' | grep '^===\|^sim\|^gh\|rror\|usage' | cut -c1-200 | tail -8 | sed 's/^/# step: /'
-    grep '^=== ' "$w/exec.log" | grep -v '(probe)' | awk '{print $3,$4,$5,$6,$7}' | tail -10 | sed 's/^/# ran: /'
+    grep '^=== ' "$w/exec.log" | sed -E 's/^=== t=([0-9]+) (.{0,44}).*(exit status: [0-9]+ in [0-9]+ms)$/\3 t=\1 \2/' | tail -14 | sed 's/^/# ran: /'
 }
 
 # --- 1. the happy path, timed ----------------------------------------------------------------
