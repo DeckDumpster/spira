@@ -16,7 +16,7 @@ CREATE INDEX bead_dep_target_idx ON bead_dep (depends_on);
 -- migration probing reads it to tell this replacement has been applied.
 CREATE OR REPLACE VIEW ops_live AS
 SELECT /*+ JOIN_ORDER(r,t,x) LOOKUP_JOIN(r,t) */
-       t.bead_id, t.state, t.holds, t.holder, t.lease_until, t.since, t.updated_at, t.priority, t.title,
+       t.bead_id, t.state, t.holds, t.holder, t.persona, (t.state = 'REWORK') AS rework, t.lease_until, t.since, t.updated_at, t.priority, t.title,
        (t.state = 'READY' AND JSON_LENGTH(t.holds) = 0 AND x.blocker IS NULL) AS claimable,
        x.blocker AS blocker
   FROM (SELECT bead_id FROM bead
