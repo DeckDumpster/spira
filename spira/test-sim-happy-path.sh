@@ -36,7 +36,7 @@ if [ "$rc" != 0 ]; then
     if [ -f "$W/exec.log" ]; then
         grep -c '^===' "$W/exec.log" | sed 's/^/# commands run: /'
         grep '^=== ' "$W/exec.log" | tail -14 | cut -c1-160 | sed 's/^/# ran: /'
-        grep -v '^$' "$W/exec.log" | grep -v 'target-reap\|^=== \|bd \|beads' | tail -8 | cut -c1-260 | sed 's/^/# log: /'
+        awk '/^=== t=[0-9]+ landing-pass land/{p=1;next} /^=== /{p=0} p' "$W/exec.log" | grep -v 'target-reap\|^$\|beads\|bd:' | cut -c12-230 | head -30 | sed 's/^/# land: /'
         for f in "$W"/run/gate-worker/output/*.out; do [ -f "$f" ] && head -12 "$f" | cut -c1-220 | sed 's/^/# gate: /'; done
         grep '^=== ' "$W/exec.log" | awk '{print $3,$4}' | sort | uniq -c | sort -rn | head -8 | sed 's/^/# by command: /'
     fi
