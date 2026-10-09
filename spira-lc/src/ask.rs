@@ -195,3 +195,59 @@ pub fn migrate_asks(args: &[String], m: &mut dyn Machine, src: &mut dyn AskSourc
     lines.push(format!("migrate-asks: {} open asks{}", asks.len(), if apply { "" } else { " (dry run; --apply to write)" }));
     Answer { code, stdout: lines.join("\n"), ..Default::default() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Src(Vec<(String, Vec<String>)>);
+    impl AskSource for Src {
+        fn open_asks(&mut self, label: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+            assert_eq!(label, "ask-label");
+            Ok(self.0.clone())
+        }
+    }
+
+    /// `sp-rowed` has a bead row (READY, v4) from the days an ask was created as a bead.
+    #[derive(Default)]
+    struct M {
+        calls: Vec<Vec<String>>,
+    }
+    impl Machine for M {
+        fn call(&mut self, args: &[String]) -> (i32, String) {
+            self.calls.push(args.to_vec());
+            match args[0].as_str() {
+                "show" if args[1] == "sp-rowed" => (0, r#"{"bead":{"state":"READY","version":"4"}}"#.into()),
+                "show" => (1, "{}".into()),
+                _ => (0, String::new()),
+            }
+        }
+    }
+
+    fn v(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn migration_moves_each_open_ask_onto_the_ask_machine_and_retires_only_existing_bead_rows() {
+        let mut src = Src(vec![("sp-rowed".into(), vec!["sp-w".into()]), ("sp-rowless".into(), vec![])]);
+        let mut m = M::default();
+        let a = migrate_asks(&v(&["--ask-label", "ask-label", "--apply"]), &mut m, &mut src);
+        assert_eq!(a.code, 0, "{}", a.stdout);
+        assert_eq!(m.calls[0], v(&["create-ask", "sp-rowed", "--work-bead", "sp-w"]));
+        let drop = &m.calls[2];
+        assert_eq!(&drop[..9], &v(&["event", "bead", "sp-rowed", "--expect", "READY", "--version", "4", "--actor", "migrate-asks"])[..]);
+        assert!(drop[10].contains("Drop"), "{drop:?}");
+        assert_eq!(m.calls[3], v(&["create-ask", "sp-rowless"]));
+        assert_eq!(m.calls.iter().filter(|c| c[0] == "event").count(), 1, "a rowless ask has no row to retire");
+    }
+
+    #[test]
+    fn a_dry_run_writes_nothing_and_a_missing_label_is_refused() {
+        let mut m = M::default();
+        let a = migrate_asks(&v(&["--ask-label", "ask-label"]), &mut m, &mut Src(vec![("sp-rowed".into(), vec![])]));
+        assert!(m.calls.is_empty());
+        assert!(a.stdout.contains("would move sp-rowed"), "{}", a.stdout);
+        assert_eq!(migrate_asks(&v(&["--apply"]), &mut m, &mut Src(vec![])).code, CANNOT_TELL);
+    }
+}
