@@ -7,6 +7,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::events::{self, EventRow};
+use lifecycle::bead::BeadState;
+
 use crate::rank::{self, LifecycleRow, ReadyRow};
 
 /// Ids per `bd sql` events query and per `bd list --id` call: keeps the argv bounded.
@@ -188,10 +190,15 @@ impl Store {
         spira_config::lifecycle_row::reopen_with(&self.lc, id, cause, actor)
     }
 
-    /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. A row not WORKING
-    /// has no claim to hand back (the machine refuses it, exit 3); that is not a failure.
+    /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. Only a WORKING
+    /// row has a claim to hand back; any other state is left unwritten, because the machine
+    /// would refuse the Release and record the refusal on the bead's timeline.
     pub fn release_claim(&self, id: &str, actor: &str) -> Result<(), String> {
-        self.lc_verb(&["release", id, actor], &[0, 1, 3])
+        let rows = self.lifecycle_of(&[id.to_string()])?;
+        if rows.get(id).is_some_and(|r| r.state == BeadState::Working) {
+            return self.lc_verb(&["release", id, actor], &[0, 1, 3]);
+        }
+        Ok(())
     }
 
     fn lc_verb(&self, args: &[&str], ok: &[i32]) -> Result<(), String> {
