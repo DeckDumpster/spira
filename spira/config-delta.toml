@@ -31,4 +31,3 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.read_watch_interval" = 300
 "spira.read_watch_remind" = 3600
 "spira.lc_timeout" = "30"
-"spira.czar_stage_reconciler_stale" = "shadow"
