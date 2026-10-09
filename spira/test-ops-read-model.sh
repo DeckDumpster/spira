@@ -163,8 +163,8 @@ bd_out="$(spira-lc backfill-deps 2>&1)"
 wantrc "the dependency backfill completes" 0 $?
 is "the backfill mirrors the edges bd lists, every type" 2 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM bead_dep' | sed -n 2p)"
 is "a blocks edge to a live bead makes the dependent unclaimable and names the blocker" "0 sp-b8" "$(live_row sp-b9)"
-lcfix_sql -q "DELETE FROM bead_dep" >/dev/null; spira-lc backfill-deps >/dev/null 2>&1
-is "a second backfill finds edges mirrored and leaves the store alone" 0 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM bead_dep' | sed -n 2p)"
+lcfix_sql -q "DELETE FROM bead_dep WHERE depends_on = 'sp-b3'" >/dev/null; spira-lc backfill-deps >/dev/null 2>&1
+is "a second backfill finds edges mirrored and leaves the store alone" 1 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM bead_dep' | sed -n 2p)"
 spira-lc backfill-deps --force >/dev/null 2>&1
 is "--force reads bd again" 2 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM bead_dep' | sed -n 2p)"
 
