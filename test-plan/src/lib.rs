@@ -284,6 +284,25 @@ pub fn orphan_violations(
     out
 }
 
+/// T0-T3 use cases no suite covers and no `[use_case.uncovered]` marker explains.
+pub fn coverage_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -> Vec<String> {
+    let covered: BTreeSet<&str> = suites.iter().flat_map(|s| s.uc_ids()).collect();
+    let mut out = Vec::new();
+    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+        if !matches!(uc.tier, Tier::T0 | Tier::T1 | Tier::T2 | Tier::T3) {
+            continue;
+        }
+        if uc.uncovered.is_none() && !covered.contains(uc.id.as_str()) {
+            out.push(format!(
+                "gap: {} [{}] has no covering suite and no [use_case.uncovered] marker",
+                uc.id,
+                uc.tier.as_str()
+            ));
+        }
+    }
+    out
+}
+
 /// Launchers no suite covers. An `[use_case.uncovered]` marker does not silence this: it
 /// explains the gap, the launcher is still a launcher nobody has started the way its
 /// launcher starts it.

@@ -6,10 +6,20 @@ id = "UC-instance-lifecycle-01"
 tier = "T1"
 statement = "`build.sh` builds loom, panel, broker, czar-pass and spira-supervise in order to `SPIRA_*_BIN`; with no cargo it exits 0 naming the lost features, and `--skip-build` never invokes cargo"
 
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-instance-lifecycle-02"
 tier = "T2"
 statement = "`build-tarball.sh` produces a same-named `spira-YYYYMMDDTHHMMSSZ.tar.gz`/dir pair from a clean checkout; MANIFEST records the source SHA and `--name` pins stem and timestamp"
+
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-instance-lifecycle-03"
@@ -20,6 +30,11 @@ statement = "the tarball ships every `@*_BIN@` binary a non-optional unit's Exec
 id = "UC-instance-lifecycle-04"
 tier = "T2"
 statement = "`build-tarball.sh verify` accepts a MANIFEST whose commit exists in the source repo and refuses one that does not"
+
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-instance-lifecycle-05"
@@ -90,6 +105,11 @@ statement = "`deploy.sh` drains first (a refusal blocks the deploy, `--force` sl
 id = "UC-instance-lifecycle-14"
 tier = "T2"
 statement = "a post-activation health failure rolls back to the prior release and restores spira.conf; on a first deploy it removes `current` and re-renders on the checkout, and never re-enables ctrl-suspended units"
+
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-instance-lifecycle-15"
@@ -210,6 +230,11 @@ statement = "`cadence.sh` changes a timer's cadence via a revertible drop-in and
 id = "UC-instance-lifecycle-33"
 tier = "T2"
 statement = "`owned.sh list` emits every artefact kind in 5-field rows, with unit rows equal to `install.sh --render` for that instance; `check` reports absent, present or drifted per artefact"
+
+[use_case.uncovered]
+reason = "no covering suite when plan-lint --gaps became a hard failure"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-instance-lifecycle-34"

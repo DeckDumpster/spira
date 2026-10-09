@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-plan-lint.sh — the test-plan lint's own fence: every suite declares its tier and UC
-# coverage, every UC id it names exists in the typed catalogue, a gap in T0-T3 coverage is
-# reported without failing the lint, and a suite deletion that orphans a use case's last
+# coverage, every UC id it names exists in the typed catalogue, a T0-T3 use case with no cover
+# and no uncovered marker fails the lint, and a suite deletion that orphans a use case's last
 # cover is refused unless the catalogue marks it uncovered.
 #
 # THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control): a
@@ -133,14 +133,23 @@ isnz "--check: a standalone suite missing headers fails" "$rc"
 # it — reported, but the lint's own exit code stays 0 (report, not fail).
 # ==========================================================================
 out="$(lint --gaps)"; rc=$?
-isz "--gaps never fails the lint" "$rc"
+isnz "SEEN RED: --gaps fails on an uncovered T2 use case" "$rc"
 want "--gaps reports the uncovered T2 use case" "UC-dispatch-02" "$out"
+out="$(lint)"; rc=$?
+isnz "SEEN RED: the default lint fails on an uncovered T2 use case" "$rc"
+want "and names it" "UC-dispatch-02" "$out"
+
+cp "$ROOT/docs/test-plan/dispatch.toml" "$TMP/dispatch.toml.orig"
+printf '\n[use_case.uncovered]\nreason = "r"\ndate = "2026-10-08"\nbead = "sp-x"\n' >> "$ROOT/docs/test-plan/dispatch.toml"
+out="$(lint --gaps)"; rc=$?
+isz "SEEN GREEN: an uncovered marker clears the gap" "$rc"
+cp "$TMP/dispatch.toml.orig" "$ROOT/docs/test-plan/dispatch.toml"
 
 # Cover it, then the gap must clear.
 printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/dispatch.sh UC-dispatch-02\necho hi\n' \
     > "$ROOT/spira/test-covers-02.sh"
 out="$(lint --gaps)"; rc=$?
-isz "--gaps still exits 0 once covered" "$rc"
+isz "--gaps exits 0 once covered" "$rc"
 [[ "$out" != *"UC-dispatch-02"* ]] && ok "--gaps: covering a use case clears its gap" \
     || bad "--gaps: covering a use case clears its gap" "still reported: $out"
 rm "$ROOT/spira/test-covers-02.sh"
@@ -167,7 +176,7 @@ EOF
 mkdir -p "$ROOT/somewhere"
 echo 'fn status_cmd() {}' > "$ROOT/somewhere/registers.rs"
 out="$(lint --gaps)"; rc=$?
-isz "--gaps with a launcher never fails" "$rc"
+isz "--gaps with a launcher still exits 0 (launcher gaps are reported)" "$rc"
 want "an uncovered launcher is reported even with an uncovered marker" "launcher gap: UC-launch-01" "$out"
 printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/x.sh UC-launch-01\necho hi\n' > "$ROOT/spira/test-launch.sh"
 out="$(lint --gaps)"

@@ -49,7 +49,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use test_plan::{
-    build_matrix, catalogue_json_schema, launcher_gaps, launcher_site_violations, load_catalogues, matrix_json_schema, orphan_violations,
+    build_matrix, catalogue_json_schema, coverage_gaps, launcher_gaps, launcher_site_violations, load_catalogues, matrix_json_schema, orphan_violations,
     render_markdown, tier_budget_flags, unknown_uc_violations, LoadedCatalogue, MatrixDoc,
     SuiteCoverage,
 };
@@ -265,6 +265,40 @@ fn cmd_orphans(rest: &[String]) -> ExitCode {
     } else {
         println!("ok");
         ExitCode::SUCCESS
+    }
+}
+
+fn cmd_gaps(rest: &[String]) -> ExitCode {
+    let a = match parse_args(rest) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("test-plan gaps: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (Some(dir), Some(suites_spec)) = (a.catalogue_dir, a.suites) else {
+        eprintln!("usage: test-plan gaps --catalogue-dir DIR --suites FILE|-");
+        return ExitCode::FAILURE;
+    };
+    let cats = match load_or_report(&dir) {
+        Ok(c) => c,
+        Err(rc) => return rc,
+    };
+    let suites = match load_suites(&suites_spec) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("test-plan: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let gaps = coverage_gaps(&cats, &suites);
+    for g in &gaps {
+        println!("{g}");
+    }
+    if gaps.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -495,11 +529,12 @@ fn cmd_schema(which: Option<&str>) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: test-plan <catalogue-ids|validate|orphans|launcher-gaps|launcher-sites|matrix|render|write-matrix|schema> ...\n\
+        "usage: test-plan <catalogue-ids|validate|orphans|gaps|launcher-gaps|launcher-sites|matrix|render|write-matrix|schema> ...\n\
          \n\
          \x20 catalogue-ids --catalogue-dir DIR\n\
          \x20 validate --catalogue-dir DIR [--suites FILE|-] [--prev-suites FILE|-]\n\
          \x20 orphans --catalogue-dir DIR --suites FILE|- --prev-suites FILE|-\n\
+         \x20 gaps --catalogue-dir DIR --suites FILE|-\n\
          \x20 launcher-gaps --catalogue-dir DIR --suites FILE|-\n\
          \x20 launcher-sites --catalogue-dir DIR --root DIR\n\
          \x20 matrix --catalogue-dir DIR --suites FILE|- [--timings FILE]\n\
@@ -516,6 +551,7 @@ fn main() -> ExitCode {
         Some("catalogue-ids") => cmd_catalogue_ids(&args[1..]),
         Some("validate") => cmd_validate(&args[1..]),
         Some("orphans") => cmd_orphans(&args[1..]),
+        Some("gaps") => cmd_gaps(&args[1..]),
         Some("launcher-gaps") => cmd_launcher_gaps(&args[1..]),
         Some("launcher-sites") => cmd_launcher_sites(&args[1..]),
         Some("matrix") => cmd_matrix(&args[1..]),

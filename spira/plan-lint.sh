@@ -5,7 +5,7 @@
 #
 #   plan-lint.sh                    check every suite; exit 1 naming each violation
 #   plan-lint.sh --check <file>     check one suite
-#   plan-lint.sh --gaps             list T0-T3 UC ids with no covering suite
+#   plan-lint.sh --gaps             list T0-T3 UC ids with no covering suite or marker; exit 1 if any
 #   plan-lint.sh --orphans <ref>    fail on a UC whose last cover was deleted since <ref>
 #   plan-lint.sh --help             this text
 #
@@ -21,12 +21,12 @@
 #   - a launcher (a use case with a `launcher` table) whose site file is gone or no longer
 #     contains its needle
 #
-# REPORTED, NOT FAILED (--gaps; exits 0 regardless of what it finds)
+#   - a UC declared at tier T0-T3 with no suite naming it on a # covers: line and no
+#     [use_case.uncovered] marker (`gap:` lines; also --gaps' exit 1)
+#
+# REPORTED, NOT FAILED (--gaps)
 #   - a launcher with no covering suite, marker or not (`launcher gap:` lines)
-#   - a UC id declared at tier T0-T3 with no suite naming it on a # covers:
-#     line and no [use_case.uncovered] marker
-# This becomes a hard failure once the area beads land their pages — see
-# docs/test-plan/README.md for the schema and the tier table.
+# See docs/test-plan/README.md for the schema and the tier table.
 #
 # THE CATALOGUE IS TYPED (docs/test-plan/*.toml, test-plan/src/lib.rs), so id
 # existence and catalogue well-formedness are answered by the test-plan
@@ -96,29 +96,12 @@ case "${1:-}" in
     exit $?
     ;;
 --gaps)
-    _cat="$(mktemp)"; trap 'rm -f "$_cat"' EXIT
-    catalogue_ucs > "$_cat" || exit 1
-    shopt -s nullglob
-    suites=("$HERE"/test-*.sh)
-    _covered_ucs=""
-    for f in "${suites[@]}"; do
-        _covered_ucs="$_covered_ucs $(suite-select header uc "$f")"
-    done
-    _gaps=0
-    while read -r _uc _tier; do
-        [ -n "$_uc" ] || continue
-        case "$_tier" in T0|T1|T2|T3) ;; *) continue ;; esac
-        case " $_covered_ucs " in
-            *" $_uc "*) ;;
-            *) printf 'gap: %s [%s] has no covering suite\n' "$_uc" "$_tier"; _gaps=$((_gaps+1)) ;;
-        esac
-    done < "$_cat"
-    printf 'plan-lint: %d T0-T3 use case(s) with no covering suite\n' "$_gaps"
-    _suites_json="$(mktemp)"
-    bash "$HERE/suite-coverage-json.sh" > "$_suites_json" \
-        && test-plan launcher-gaps --catalogue-dir "$DOCS_DIR" --suites "$_suites_json"
-    rm -f "$_suites_json"
-    exit 0
+    _suites_json="$(mktemp)"; trap 'rm -f "$_suites_json"' EXIT
+    bash "$HERE/suite-coverage-json.sh" > "$_suites_json" || exit 1
+    _rc=0
+    test-plan gaps --catalogue-dir "$DOCS_DIR" --suites "$_suites_json" || _rc=1
+    test-plan launcher-gaps --catalogue-dir "$DOCS_DIR" --suites "$_suites_json" || _rc=1
+    exit "$_rc"
     ;;
 ""|--lint)
     _cat="$(mktemp)"; trap 'rm -f "$_cat"' EXIT
@@ -138,6 +121,13 @@ case "${1:-}" in
         rel="${f#"$ROOT"/}"
         lint_one "$f" "$rel" "$_cat" || bad=1
     done
+    _suites_json="$(mktemp)"
+    if bash "$HERE/suite-coverage-json.sh" > "$_suites_json"; then
+        test-plan gaps --catalogue-dir "$DOCS_DIR" --suites "$_suites_json" || bad=1
+    else
+        bad=1
+    fi
+    rm -f "$_suites_json"
     if [ "$bad" = 0 ]; then
         printf 'plan-lint: clean — all %d suite(s) declare # tier: and # covers:, every UC id known\n' \
             "${#suites[@]}"
