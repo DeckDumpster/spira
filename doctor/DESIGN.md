@@ -142,7 +142,7 @@ orphans no use case under `plan-matrix`'s rule.
 
 `test-deploy.sh`, `test-deploy-preflight-new-unit.sh`, `test-aeon-chamber-overlay.sh`,
 `test-aeon-launch-grammar.sh`, `test-fayth.sh`, `test-freshclone.sh`, `test-pr-stall.sh`,
-`test-repo-lanes.sh`, `test-unit-name.sh`, `test-watchtower-failed-units.sh`,
+`test-repo-map.sh`, `test-unit-name.sh`, `test-watchtower-failed-units.sh`,
 `test-bd-lock-retry.sh`, `bd-pin.sh`, `test-overrides.sh` are **kept**, repointed: each
 exercises `doctor` as a fixture dependency for a different subject (deploy's own flow, the
 chamber overlay mechanism, fayth dispatch, a fresh clone, etc.), not `doctor`'s own decision

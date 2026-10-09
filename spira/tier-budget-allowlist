@@ -293,8 +293,7 @@ test-release.sh	T1	2.0
 test-released-defects.sh	T1	7.5
 test-render-memories.sh	T1	9.0
 test-reopen-queue-eject.sh	T1	3.0
-test-repo-label.sh	T1	2.5
-test-repo-lanes.sh	T1	2.0
+test-repo-map.sh	T1	4.5
 test-requeue.sh	T1	30.5
 test-review.sh	T1	10.5
 test-rollback.sh	T1	2.0
