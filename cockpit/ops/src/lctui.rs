@@ -33,12 +33,14 @@ const R_REFUSED_ALL: u16 = 15;
 const R_BLOCKED_SOME: u16 = 16;
 const R_BLOCKED_ALL: u16 = 17;
 const R_DRIFT: u16 = 18;
-const R_STATE_BEADS_MORE: u16 = 9;
-const R_STATE_BEADS: u16 = 19;
+// The state machine gives up, in order (per Ryan 2026-10-09): idle transitions, beads past each
+// state's oldest three, empty states, the oldest three, then folds each state's transitions.
 const R_IDLE_EDGE: u16 = 20;
-const R_EMPTY_STATE: u16 = 21;
-const R_STATE_FOLD: u16 = 22;
-const R_TERMINAL: u16 = 23;
+const R_STATE_BEADS_MORE: u16 = 21;
+const R_EMPTY_STATE: u16 = 22;
+const R_STATE_BEADS: u16 = 23;
+const R_STATE_FOLD: u16 = 24;
+const R_TERMINAL: u16 = 25;
 const R_NEXT_SOME: u16 = 30;
 const R_NEXT_FEW: u16 = 31;
 const R_REWORK_SOME: u16 = 32;
@@ -285,8 +287,7 @@ pub fn tree(v: &View) -> Vec<Node> {
         if st.no_rework_exit {
             moves.push(Node::new(format!("{sk}/no-rework-exit"), format!("{RED}└▶ (no exit to REWORK)  ●{R}")));
         }
-        // The beads themselves, under their state (per Ryan 2026-10-09, replacing PIPE): the
-        // first five go only when the machine itself must shrink, the rest go first of all.
+        // The beads themselves, under their state (per Ryan 2026-10-09, replacing PIPE).
         let beads = st
             .beads
             .iter()
@@ -295,7 +296,7 @@ pub fn tree(v: &View) -> Vec<Node> {
                 Node::new(format!("{sk}/{}", i.id), format!("{:<12} {D}{:>4}{R} {} {}{note}", i.id, i.age, i.prio, i.title))
             })
             .collect();
-        moves.extend(ranked(beads, &[(5, R_STATE_BEADS_MORE), (0, R_STATE_BEADS)]));
+        moves.extend(ranked(beads, &[(3, R_STATE_BEADS_MORE), (0, R_STATE_BEADS)]));
         let c = if st.name == "REWORK" { YEL } else { "" };
         let detail = if st.detail.is_empty() { String::new() } else { format!("  {}", st.detail) };
         let mut n = Node::new(sk, format!("{c}{B}{:<12}{R}{B}{:>4}{R}{detail}{}", st.name, st.count, dot(st.red))).kids(moves).fold(R_STATE_FOLD);
@@ -782,8 +783,17 @@ mod tests {
         let mut v = busy_view();
         let item = |id: &str| Item { id: id.into(), prio: "P1".into(), title: format!("t {id}"), age: "3m".into(), ..Default::default() };
         v.machine.iter_mut().find(|s| s.name == "SUBMITTED").unwrap().beads = (0..8).map(|k| item(&format!("sp-sub{k}"))).collect();
-        let short = text(&layout(&v, &Ui::default(), 70, 40));
-        assert!(!has(&short, "sp-sub0"), "beads give way first on a short pane: {short:#?}");
+        v.machine.iter_mut().find(|s| s.name == "SUBMITTED").unwrap().count = 8;
+        let mut saw_three = false;
+        for h in (12..=120).rev() {
+            let t = text(&layout(&v, &Ui::default(), 80, h));
+            let idle = t.iter().any(|l| l.trim_end().ends_with(" 0/h"));
+            let (first, fourth) = (has(&t, "sp-sub0"), has(&t, "sp-sub3"));
+            assert!(!(idle && !fourth && state_line(&t, "SUBMITTED")), "a bead went before an idle transition (h={h}): {t:#?}");
+            assert!(!(fourth && !first), "a later bead outlived the oldest (h={h})");
+            saw_three |= first && has(&t, "sp-sub2") && !fourth && !idle;
+        }
+        assert!(saw_three, "some height shows a state's oldest three beads without the rest or any idle transition");
         let mut ui = Ui::default();
         ui.set("state/SUBMITTED", Mode::Open);
         let t = text(&layout(&v, &ui, 70, 200));
