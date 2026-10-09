@@ -2196,7 +2196,7 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
-            vec![("sp-j".to_string(), "jjjj".to_string(), 4), ("sp-s".into(), "ssss".into(), 3)]
+            vec![("sp-j".to_string(), "jjjj".to_string(), 4, false), ("sp-s".into(), "ssss".into(), 3, false)]
         );
     }
 
