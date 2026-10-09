@@ -380,6 +380,7 @@ pub(crate) mod tests {
             base_fix: false,
             certified_at: 0,
             stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
         }
     }
 

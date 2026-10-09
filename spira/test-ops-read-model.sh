@@ -177,6 +177,14 @@ lcfix_sql -q "UPDATE bead SET state='LANDED', since=UNIX_TIMESTAMP() WHERE bead_
 is "when A lands, B becomes claimable with no blocker" "1 None" "$(live_row sp-B)"
 lcfix_sql -q "UPDATE bead SET state='READY', since=NULL WHERE bead_id='sp-A'" >/dev/null
 is "positive control: a blocker that is live again blocks again" "0 sp-A" "$(live_row sp-B)"
+lc_blocked() { spira-lc list --ids "$1" | python3 -I -c 'import json,sys; print(",".join(json.load(sys.stdin)[0]["blocked_by"]) or "none")'; }
+lc_show_blocked() { spira-lc show "$1" | python3 -I -c 'import json,sys; print(",".join(json.load(sys.stdin)["bead"]["blocked_by"]) or "none")'; }
+is "list carries the unlanded blocker as blocked_by" "sp-A" "$(lc_blocked sp-B)"
+is "show carries the same blocked_by" "sp-A" "$(lc_show_blocked sp-B)"
+is "a bead nothing blocks has an empty blocked_by" "none" "$(lc_blocked sp-A)"
+lcfix_sql -q "UPDATE bead SET state='LANDED' WHERE bead_id='sp-A'" >/dev/null
+is "a landed blocker drops out of blocked_by" "none" "$(lc_blocked sp-B)"
+lcfix_sql -q "UPDATE bead SET state='READY' WHERE bead_id='sp-A'" >/dev/null
 spira-lc dep-remove sp-B sp-A >/dev/null; wantrc "dep-remove drops the edge" 0 $?
 is "a removed edge no longer blocks" "1 None" "$(live_row sp-B)"
 spira-lc dep-add sp-B sp-A --type relates-to >/dev/null

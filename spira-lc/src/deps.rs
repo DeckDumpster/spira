@@ -9,7 +9,7 @@ use crate::cutover::{flag, is_row_key, q};
 use crate::db::Conn;
 
 const CANNOT_TELL: i32 = 2;
-const LIVE_STATES: &str = "'OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK'";
+pub(crate) const LIVE_STATES: &str = "'OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK'";
 
 fn edge_script(id: &str, dep: &str, dep_type: &str) -> String {
     format!(

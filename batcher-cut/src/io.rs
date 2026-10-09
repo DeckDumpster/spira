@@ -250,8 +250,10 @@ fn holds_empty(r: &serde_json::Value) -> bool {
     }
 }
 
-fn read_pool(env: &Env) -> Result<Vec<(String, String, u64, bool)>, String> {
-    let mut pool: Vec<(String, String, u64, bool)> = Vec::new();
+type PoolRow = (String, String, u64, bool, Vec<String>);
+
+fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
+    let mut pool: Vec<PoolRow> = Vec::new();
     for state in ["CERTIFIED", "SUBMITTED"] {
         let out = lcq(env, &["list", "--state", state])?;
         let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
@@ -273,7 +275,12 @@ fn read_pool(env: &Env) -> Result<Vec<(String, String, u64, bool)>, String> {
                 Some(serde_json::Value::String(t)) => matches!(t.as_str(), "1" | "true"),
                 _ => false,
             };
-            Some((id, tip, epoch, express))
+            let blocked_by = r
+                .get("blocked_by")
+                .and_then(|b| b.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            Some((id, tip, epoch, express, blocked_by))
         }));
     }
     pool.sort();
@@ -336,8 +343,8 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let certified = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
-    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, _, _)| tip_current(tip, id, &branches)).collect();
-    let ids: Vec<String> = certified.iter().map(|(id, _, _, _)| id.clone()).collect();
+    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, ..)| tip_current(tip, id, &branches)).collect();
+    let ids: Vec<String> = certified.iter().map(|(id, ..)| id.clone()).collect();
     let v = bd_show(env, &ids)?;
     let items = match v {
         serde_json::Value::Array(a) => a,
@@ -356,12 +363,12 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     }
     let fixes = base_fix_ids(env, repo, &texts);
     let mut out = Vec::new();
-    for (id, tip, epoch, express) in certified {
+    for (id, tip, epoch, express, blocked_by) in certified {
         let Some((priority, title)) = by_id.get(&id) else { continue };
         let stack = read_stack(env, &id);
         let base_fix = fixes.contains(&id);
         let priority = if base_fix { Some(0) } else { *priority };
-        out.push(Member { id, tip, title: title.clone(), priority, express, base_fix, certified_at: epoch, stack });
+        out.push(Member { id, tip, title: title.clone(), priority, express, base_fix, certified_at: epoch, stack, blocked_by });
     }
     Ok(out)
 }
@@ -1879,7 +1886,7 @@ case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
         let tip = g(d, &["rev-parse", "HEAD"]);
         g(d, &["checkout", "-q", "main"]);
         let r = Repo { name: "r".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
-        let m = Member { id: "m1".into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default() };
+        let m = Member { id: "m1".into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: Vec::new() };
         (r, base, m)
     }
 
@@ -2181,7 +2188,7 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
-            vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001, false), ("sp-b".into(), "bbbb".into(), 1790000002, true), ("sp-n".into(), "none".into(), 0, false)]
+            vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001, false, vec![]), ("sp-b".into(), "bbbb".into(), 1790000002, true, vec![]), ("sp-n".into(), "none".into(), 0, false, vec![])]
         );
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
         assert!(log.contains("list --state CERTIFIED") && log.contains("list --state SUBMITTED"), "{log}");
@@ -2196,7 +2203,7 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
-            vec![("sp-j".to_string(), "jjjj".to_string(), 4, false), ("sp-s".into(), "ssss".into(), 3, false)]
+            vec![("sp-j".to_string(), "jjjj".to_string(), 4, false, vec![]), ("sp-s".into(), "ssss".into(), 3, false, vec![])]
         );
     }
 
@@ -2508,7 +2515,7 @@ mod land_exit_tests {
     }
 
     fn member(id: &str) -> Member {
-        Member { id: id.into(), tip: "t".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default() }
+        Member { id: id.into(), tip: "t".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: Vec::new() }
     }
 
     #[test]
@@ -2585,7 +2592,7 @@ mod integration_tests {
     }
 
     fn member(id: &str) -> Member {
-        Member { id: id.into(), tip: String::new(), title: String::new(), priority: None, express: false, certified_at: 0, stack: BTreeMap::new(), base_fix: false }
+        Member { id: id.into(), tip: String::new(), title: String::new(), priority: None, express: false, certified_at: 0, stack: BTreeMap::new(), base_fix: false, blocked_by: Vec::new() }
     }
 
     // Two members that are each fine alone: the merged tree carries a stale matrix and a

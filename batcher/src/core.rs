@@ -23,6 +23,9 @@ pub struct Member {
     /// stacked-dependents-2026-09-28 §1). Empty for an unstacked member — the pool's default,
     /// and byte-identical to today's behaviour wherever a caller never populates it.
     pub stack: BTreeMap<Id, String>,
+    /// Blocks-type prerequisites of this bead that have not landed (`spira-lc list`'s
+    /// `blocked_by`): admitted only with each of them merged ahead of it in the same round.
+    pub blocked_by: Vec<Id>,
 }
 
 /// Lowest number is most urgent; an unknown priority sorts last so it never manufactures an
@@ -61,7 +64,7 @@ pub fn topo_order(members: &[Member]) -> Vec<Member> {
         let ready: Vec<usize> = remaining
             .iter()
             .enumerate()
-            .filter(|(_, m)| m.stack.keys().all(|p| !ids.contains(p) || placed.contains(p)))
+            .filter(|(_, m)| m.stack.keys().chain(m.blocked_by.iter()).all(|p| !ids.contains(p) || placed.contains(p)))
             .map(|(i, _)| i)
             .collect();
         let idx = if ready.is_empty() {
@@ -165,6 +168,25 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
     Some(TriggerReason::PoolFull(t.pool.len() as u32))
 }
 
+/// Drops every member with a `blocked_by` prerequisite that is not itself a surviving member
+/// (so it merges ahead of it, `topo_order`), to a fixed point. The refusals name the blocker.
+pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
+    let mut kept = pool;
+    let mut refusals = Vec::new();
+    loop {
+        let ids: std::collections::BTreeSet<Id> = kept.iter().map(|m| m.id.clone()).collect();
+        let (ok, blocked): (Vec<Member>, Vec<Member>) = kept.into_iter().partition(|m| m.blocked_by.iter().all(|b| ids.contains(b)));
+        if blocked.is_empty() {
+            return (ok, refusals);
+        }
+        for m in &blocked {
+            let b = m.blocked_by.iter().find(|b| !ids.contains(*b)).expect("a blocked member has an absent blocker");
+            refusals.push(format!("{}: blocked by {b}, which has not landed and is not in this round — not cut", m.id));
+        }
+        kept = ok;
+    }
+}
+
 /// What kind of round `select_round` cut from the pool.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoundKind {
@@ -195,8 +217,8 @@ pub fn select_round(pool: Vec<Member>) -> (Vec<Member>, RoundKind) {
     loop {
         let before = keep.len();
         for m in &pool {
-            let needs_kept = m.stack.keys().any(|p| keep.contains(p));
-            let needed_by_kept = pool.iter().any(|o| keep.contains(&o.id) && o.stack.contains_key(&m.id));
+            let needs_kept = m.stack.keys().chain(m.blocked_by.iter()).any(|p| keep.contains(p));
+            let needed_by_kept = pool.iter().any(|o| keep.contains(&o.id) && (o.stack.contains_key(&m.id) || o.blocked_by.contains(&m.id)));
             if needs_kept || needed_by_kept {
                 keep.insert(m.id.clone());
             }

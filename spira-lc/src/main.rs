@@ -294,6 +294,24 @@ fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
+/// Derived table `blockers(waiting, blocked_by)`: per bead, the comma-joined ids of its
+/// blocks-type prerequisites that are still live (the same rule `ops_live` applies).
+fn blockers_join() -> String {
+    format!(
+        "(SELECT d.bead_id AS waiting, GROUP_CONCAT(d.depends_on ORDER BY d.depends_on SEPARATOR ',') AS blocked_by \
+         FROM bead_dep d JOIN bead p ON p.bead_id = d.depends_on WHERE d.dep_type = 'blocks' AND p.state IN ({}) GROUP BY d.bead_id) blockers",
+        deps::LIVE_STATES
+    )
+}
+
+/// Turns the joined `blocked_by` string into an array of ids (empty when nothing blocks).
+fn split_blocked_by(row: &mut Value) {
+    if let Some(o) = row.as_object_mut() {
+        let ids: Vec<Value> = o.get("blocked_by").and_then(Value::as_str).unwrap_or_default().split(',').filter(|x| !x.is_empty()).map(|x| Value::String(x.to_string())).collect();
+        o.insert("blocked_by".into(), Value::Array(ids));
+    }
+}
+
 pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(bead_id) = args.first() else {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
@@ -307,6 +325,16 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     };
     if bead_rows.is_empty() {
         return (1, "{}".to_string());
+    }
+    let mut bead_rows = bead_rows;
+    match conn.query(&format!("SELECT blockers.blocked_by FROM {} WHERE blockers.waiting = '{}'", blockers_join(), rows::escape(bead_id))) {
+        Ok(r) => {
+            if let Some(o) = bead_rows[0].as_object_mut() {
+                o.insert("blocked_by".into(), r.first().and_then(|x| x.get("blocked_by")).cloned().unwrap_or(Value::Null));
+            }
+            split_blocked_by(&mut bead_rows[0]);
+        }
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
     let delivery_rows = conn
         .query(&format!(
@@ -356,7 +384,9 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express FROM bead{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express, blockers.blocked_by FROM bead \
+         LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
+        blockers_join()
     );
     let mut beads = match conn.query(&sql) {
         Ok(r) => r,
@@ -381,6 +411,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
     for b in beads.iter_mut() {
+        split_blocked_by(b);
         let key = (
             b.get("bead_id").and_then(Value::as_str).unwrap_or_default().to_string(),
             b.get("state").and_then(Value::as_str).unwrap_or_default().to_string(),

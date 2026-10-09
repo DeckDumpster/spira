@@ -169,7 +169,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         write(&repo_dir.join(path), body);
         commit(&repo_dir, id);
         let tip = git(&repo_dir, &["rev-parse", "HEAD"]);
-        members.push(Member { id: id.into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new() });
+        members.push(Member { id: id.into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() });
     }
     git(&repo_dir, &["checkout", "-q", "main"]);
 

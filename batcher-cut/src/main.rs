@@ -215,6 +215,10 @@ fn cut(o: &Opts) -> Result<(), String> {
     };
 
     let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?));
+    let (pool, refused) = batcher::core::refuse_blocked(pool);
+    for r in &refused {
+        println!("batcher {}: {r}", repo.name);
+    }
     if let batcher::core::RoundKind::Feature(root) = &kind {
         println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
     }
@@ -1060,7 +1064,7 @@ mod base_conflict_handling {
     use std::fs;
 
     fn member(id: &str, tip: &str) -> Member {
-        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new() }
+        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new(), blocked_by: Vec::new() }
     }
 
     #[test]
