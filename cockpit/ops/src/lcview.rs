@@ -173,6 +173,8 @@ pub struct Snapshot {
     /// know rather than guess, since a guess listed a blocked bead as claimable.
     #[serde(default)]
     pub claimable: Option<Vec<String>>,
+    #[serde(default)]
+    pub progress: Option<PassProgress>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
     #[serde(default)]
@@ -308,6 +310,32 @@ pub struct RoundView {
     pub members: Vec<RoundMember>,
 }
 
+/// A certification pass's live progress, from the progress file the cert path writes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PassProgress {
+    pub round: String,
+    pub pass: u32,
+    /// build | suites | done
+    pub phase: String,
+    #[serde(default)]
+    pub verdict: String,
+    pub done: u32,
+    pub total: u32,
+    #[serde(default)]
+    pub red: Vec<String>,
+    pub build_started: i64,
+    pub suites_started: i64,
+    pub cap: i64,
+    pub updated_at: i64,
+}
+
+impl PassProgress {
+    /// A pass is running while it is building or testing and its writer is still fresh.
+    pub fn running(&self, now: i64) -> bool {
+        matches!(self.phase.as_str(), "build" | "suites") && now - self.updated_at <= 90
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RoundMember {
     pub id: String,
@@ -352,6 +380,8 @@ pub struct View {
     pub refused: Vec<SmRefusal>,
     pub batch: Vec<SmBatch>,
     pub round: Option<RoundView>,
+    pub progress: Option<PassProgress>,
+    pub now: i64,
     /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
     pub decide: Vec<Item>,
 }
@@ -641,6 +671,8 @@ pub fn view(s: &Snapshot) -> View {
         .collect::<Vec<_>>()
         .join(" · ");
     v.refused = refusals(s);
+    v.progress = s.progress.clone();
+    v.now = s.now;
     v.batch = batch_block(s);
     // The newest round, open or not: when none is running the pane says how the last one ended.
     v.round = s

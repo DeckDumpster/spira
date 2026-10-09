@@ -187,7 +187,7 @@ fn banner(v: &View) -> Vec<String> {
 }
 
 /// The whole pane as a tree, in Ryan's order: DECIDE, ROUND, NOW, STATE MACHINE (with each state's
-/// beads under it; PIPE and REWORK retired 2026-10-09), NEXT,
+/// beads under it; PIPE and REWORK retired 2026-10-09), NEXT, and DRIFT only as an alarm,
 /// BLOCKED, DRIFT, REFUSED, HOLDS, RECENT.
 pub fn tree(v: &View) -> Vec<Node> {
     let mut out = Vec::new();
@@ -202,6 +202,17 @@ pub fn tree(v: &View) -> Vec<Node> {
         .kids(asks),
     );
 
+    // DRIFT is an alarm, not a section (per Ryan 2026-10-09): beads whose own commit is on the
+    // base while the lifecycle still says READY/REWORK. The content-on-base reconciler closes
+    // these within a pass, so a line here means it is behind or down.
+    if !v.drift.is_empty() {
+        let drift = v.drift.iter().map(|d| Node::new(format!("drift/{d}"), format!("{RED}{d}{R}"))).collect();
+        out.push(
+            Node::new("drift", format!("{RED}{B}DRIFT{R} {RED}{} READY/REWORK bead(s) already on {} — the content-on-base reconciler is behind{R}", v.drift.len(), v.base))
+                .kids(ranked(drift, &[(3, R_DRIFT)])),
+        );
+    }
+
     out.push(match &v.round {
         None => Node::new("round", format!("{B}ROUND{R}  {D}none open{R}")),
         Some(r) => {
@@ -215,6 +226,9 @@ pub fn tree(v: &View) -> Vec<Node> {
                 .collect();
             if !r.ejected.is_empty() {
                 kids.push(Node::new("round/ejected", format!("{D}ejected this round: {}{R}", r.ejected.join(" "))));
+            }
+            if let Some(p) = v.progress.as_ref().filter(|p| r.name.starts_with(&p.round)) {
+                kids.insert(0, pass_node(p, v.now));
             }
             Node::new(
                 "round",
@@ -332,19 +346,6 @@ pub fn tree(v: &View) -> Vec<Node> {
             .kids(ranked(blocked, &[(3, R_BLOCKED_SOME), (0, R_BLOCKED_ALL)])),
     );
 
-    let drift = v.drift.iter().map(|d| Node::new(format!("drift/{d}"), format!("{RED}{d}{R}"))).collect();
-    out.push(
-        Node::new(
-            "drift",
-            if v.drift.is_empty() {
-                format!("{B}DRIFT{R}  {D}none{R}")
-            } else {
-                format!("{RED}{B}DRIFT{R} {RED}{} READY/REWORK bead(s) whose commit is already on {}{R}", v.drift.len(), v.base)
-            },
-        )
-        .kids(ranked(drift, &[(0, R_DRIFT)])),
-    );
-
     let refused = v
         .refused
         .iter()
@@ -381,6 +382,36 @@ pub fn tree(v: &View) -> Vec<Node> {
         .collect();
     out.push(Node::new("recent", format!("{B}RECENT{R} {D}last transitions{R}")).kids(ranked(recent, &[(3, R_RECENT_SOME), (0, R_RECENT_ALL)])));
     out
+}
+
+/// The current pass, as a subsection of ROUND: open by default while it runs (per Ryan
+/// 2026-10-09), folded once it is over; its bar and its red suites are the children.
+fn pass_node(p: &crate::lcview::PassProgress, now: i64) -> Node {
+    let running = p.running(now);
+    let head = match (running, p.phase.as_str()) {
+        (true, "build") => format!("{B}pass {}{R} {CYN}building{R} {D}{}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
+        (true, _) => format!("{B}pass {}{R} {CYN}suites running{R}", p.pass),
+        (false, "done") => {
+            let c = if p.verdict == "green" { GRN } else { RED };
+            format!("{B}pass {}{R} {c}{}{R} {D}{} ago{R}", p.pass, p.verdict, crate::lcview::age(now - p.updated_at))
+        }
+        _ => format!("{B}pass {}{R} {D}no word from the pass for {}{R}", p.pass, crate::lcview::age(now - p.updated_at)),
+    };
+    let mut kids = Vec::new();
+    if p.suites_started > 0 {
+        let total = p.total.max(1);
+        let w = 24usize;
+        let fill = (w as u32 * p.done.min(total) / total) as usize;
+        let el = if running { now - p.suites_started } else { p.updated_at - p.suites_started };
+        let tc = if el > p.cap { RED } else if el > 720 { YEL } else { "" };
+        kids.push(Node::new(
+            "round/pass/bar",
+            format!("▕{}{}▏ {}/{} · {} red · {tc}{}m{:02}s of {}m{R}", "█".repeat(fill), "░".repeat(w - fill), p.done, p.total, p.red.len(), el / 60, el % 60, p.cap / 60),
+        ));
+    }
+    kids.extend(p.red.iter().map(|s| Node::new(format!("round/pass/{s}"), format!("{RED}{s}{R}"))));
+    let n = Node::new("round/pass", head).kids(kids);
+    if running { n } else { n.closed() }
 }
 
 /// Visible width of a line, ignoring ANSI escapes.
@@ -812,6 +843,33 @@ mod tests {
         let mut ui = Ui::default();
         ui.set("state/REWORK/sp-rw1", Mode::Open);
         assert!(has(&text(&layout(&v, &ui, 100, 200)), "wanted 1 got 0"), "opening the bead shows why");
+    }
+
+    #[test]
+    fn drift_is_an_alarm_line_only_when_there_is_drift() {
+        let mut v = busy_view();
+        assert!(!has(&text(&layout(&v, &Ui::default(), 100, 200)), "DRIFT"), "no drift, no line");
+        v.drift = vec!["sp-landed1".into()];
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        let at = t.iter().position(|l| l.contains("DRIFT")).expect("a drift line");
+        assert!(at < t.iter().position(|l| l.contains("ROUND")).unwrap(), "the alarm sits above ROUND: {t:#?}");
+        assert!(has(&t, "sp-landed1"));
+    }
+
+    #[test]
+    fn a_running_pass_shows_its_progress_open_under_round_and_folds_when_done() {
+        use crate::lcview::PassProgress;
+        let mut v = busy_view();
+        v.now = 10_000;
+        v.progress = Some(PassProgress { round: "r-auto-96".into(), pass: 2, phase: "suites".into(), done: 226, total: 452, red: vec!["test-x.sh".into()], build_started: 9_000, suites_started: 9_400, cap: 900, updated_at: 9_995, ..Default::default() });
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        let at = |s: &str| t.iter().position(|l| l.contains(s));
+        assert!(has(&t, "pass 2") && has(&t, "226/452") && has(&t, "test-x.sh"), "{t:#?}");
+        assert!(at("pass 2").unwrap() < at("sp-m0").unwrap(), "the pass comes first under ROUND");
+        v.progress.as_mut().unwrap().phase = "done".into();
+        v.progress.as_mut().unwrap().verdict = "red".into();
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        assert!(has(&t, "pass 2") && !has(&t, "226/452"), "a finished pass folds: {t:#?}");
     }
 
     #[test]
