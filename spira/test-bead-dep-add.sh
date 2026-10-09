@@ -127,7 +127,7 @@ run_dep_add sp-dep-work-a sp-dep-epic --type parent-child
 wantrc "a parent-child edge onto the epic is accepted" "0" "$DA_RC"
 run_dep_remove sp-dep-work-a sp-dep-epic
 
-timeout 10 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep add sp-dep-work-b sp-dep-epic --type blocks >/dev/null 2>&1
+timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep add sp-dep-work-b sp-dep-epic --type blocks >/dev/null 2>&1
 is "the planted pre-existing edge is present" "sp-dep-epic" "$(blocks_of sp-dep-work-b)"
 
 run_dep_cmd() {            # run_dep_cmd <args...> -> sets DA_OUT and DA_RC from ONE call
