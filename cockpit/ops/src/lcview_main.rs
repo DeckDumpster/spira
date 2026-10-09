@@ -153,15 +153,24 @@ fn gather_state_machine(s: &mut Snapshot) {
     }
 }
 
-/// The claim tool's own claimable ids, refreshed at most once a minute (it costs seconds):
+/// A short-lived pane never spawns the claim tool: a cockpit started and torn down inside a suite
+/// would otherwise add its process fan-out to every suite sharing the container.
+const CLAIM_WARMUP_SECS: u64 = 120;
+const CLAIM_REFRESH_SECS: u64 = 300;
+
+/// The claim tool's own claimable ids, refreshed at most every `CLAIM_REFRESH_SECS` (it costs seconds):
 /// `bulk-ready-by-fayth` names the personas with anything ready, then `fayth-ready <p> --json`
 /// lists each one's rows. Interim until sp-cuyg5f gives the claim tool and this pane one read.
 fn claimable_ids() -> Option<Vec<String>> {
     use std::sync::Mutex;
     static CACHE: Mutex<Option<(std::time::Instant, Vec<String>)>> = Mutex::new(None);
+    static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    if STARTED.get_or_init(std::time::Instant::now).elapsed() < Duration::from_secs(CLAIM_WARMUP_SECS) {
+        return None;
+    }
     let last = CACHE.lock().ok().and_then(|c| c.clone());
     if let Some((at, ids)) = &last {
-        if at.elapsed() < Duration::from_secs(60) {
+        if at.elapsed() < Duration::from_secs(CLAIM_REFRESH_SECS) {
             return Some(ids.clone());
         }
     }
