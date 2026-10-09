@@ -1,0 +1,15 @@
+[Unit]
+Description=Time the hot read paths every five minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=spira-perf-watch.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
