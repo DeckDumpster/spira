@@ -23,7 +23,7 @@
 #   SPIRA_INSTALL_DOLT_CLOSE_WAIT — max seconds to wait for port close (default 30)
 #
 # tier: T1
-# covers: install/src/bin/install.rs
+# covers: install/src/bin/install.rs UC-config-store-preflight-24
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

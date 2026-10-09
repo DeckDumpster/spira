@@ -10,7 +10,7 @@
 # detector fires before trusting the negative case.
 #
 # tier: T1
-# covers: spira/lib.sh landing-pass/src/*
+# covers: spira/lib.sh landing-pass/src/* UC-config-store-preflight-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

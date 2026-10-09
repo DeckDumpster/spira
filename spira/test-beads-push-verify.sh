@@ -34,7 +34,7 @@
 #      make the job always red.
 #
 # tier: T1
-# covers: beads-push.sh beads-store/*
+# covers: beads-push.sh beads-store/* UC-config-store-preflight-26
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

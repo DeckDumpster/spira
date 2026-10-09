@@ -16,7 +16,7 @@
 # (law-absence-needs-a-positive-control).
 #
 # tier: T1
-# covers: spira/lib.sh doctor/src/*
+# covers: spira/lib.sh doctor/src/* UC-config-store-preflight-12
 # defect: sp-5q5mi
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

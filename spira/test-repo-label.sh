@@ -18,7 +18,7 @@
 #
 # defect: sp-f9vu sp-s42p
 # tier: T1
-# covers: spira/lib.sh
+# covers: spira/lib.sh UC-config-store-preflight-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

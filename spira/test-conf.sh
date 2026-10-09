@@ -27,7 +27,7 @@
 #
 # defect: sp-gsmx.2, sp-0v26
 # tier: T1
-# covers: spira/conf.sh
+# covers: spira/conf.sh UC-config-store-preflight-01 UC-config-store-preflight-03 UC-config-store-preflight-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

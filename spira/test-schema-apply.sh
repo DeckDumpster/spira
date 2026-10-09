@@ -33,7 +33,7 @@
 # positive control that it changes something, the second that it changes nothing.
 #
 # tier: T2
-# covers: spira/schema.sh spira/schema-apply.sh
+# covers: spira/schema.sh spira/schema-apply.sh UC-config-store-preflight-20 UC-config-store-preflight-21
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

@@ -10,7 +10,7 @@
 # sets themselves, which must resolve outside the (potentially read-only) harness checkout.
 #
 # tier: T1
-# covers: spira/conf.sh
+# covers: spira/conf.sh UC-config-store-preflight-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
