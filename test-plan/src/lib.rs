@@ -546,6 +546,17 @@ mod tests {
     }
 
     #[test]
+    fn an_unmarked_uncovered_uc_is_a_gap_and_a_marker_or_cover_clears_it() {
+        let bare = "api_version = \"test-plan/v1\"\narea = \"ops\"\n\n[[use_case]]\nid = \"UC-ops-01\"\ntier = \"T2\"\nstatement = \"s\"\n";
+        let marked = format!("{bare}\n[use_case.uncovered]\nreason = \"r\"\ndate = \"2026-10-08\"\nbead = \"sp-x\"\n");
+        assert_eq!(coverage_gaps(&[lc("ops", bare)], &[]).len(), 1);
+        assert!(coverage_gaps(&[lc("ops", &marked)], &[]).is_empty());
+        assert!(coverage_gaps(&[lc("ops", bare)], &[suite(&["UC-ops-01"])]).is_empty());
+        let t4 = bare.replace("T2", "T4");
+        assert!(coverage_gaps(&[lc("ops", &t4)], &[]).is_empty());
+    }
+
+    #[test]
     fn an_uncovered_launcher_is_a_gap_even_with_an_uncovered_marker() {
         let cats = [lc("ops", LAUNCHER_CAT)];
         let gaps = launcher_gaps(&cats, &[suite(&["spira/x.sh"])]);
