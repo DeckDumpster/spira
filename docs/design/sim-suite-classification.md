@@ -299,7 +299,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | gh-run-gate | no | - | 12 | static, configuration or single-tool contract: no hand-off between loop actors |
 | git-env-isolation | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | git-push-app | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
-| governor-deleted | no | - | 3 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
+| retired-component-absence | no | - | 3 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | groom-escalation-check | no | - | 43 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | groom-trigger | no | - | 6 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | groomer-conf | no | - | 7 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
