@@ -52,6 +52,15 @@ use crate::{discover, load, SpiraToml};
 /// against another test's `std::env::set_var`), and holding that lock here while a caller
 /// above is ALSO holding it to drive its own env mutation would deadlock (`std::sync::Mutex`
 /// is not reentrant) — so this half takes no lock and touches no env at all.
+fn process_env() -> BTreeMap<String, String> {
+    #[cfg(test)]
+    let _held = testkit::env_read();
+    #[cfg(test)]
+    return std::env::vars().filter(|(k, _)| k != "SPIRA_TOML").collect();
+    #[cfg(not(test))]
+    std::env::vars().collect()
+}
+
 fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String, String> {
     resolved.values.clone()
 }
@@ -71,7 +80,7 @@ fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String
 /// re-resolving the whole config (~100 ms), 19 s of a pass. A process pins the config it
 /// started with (law-long-lived-processes-pin-their-config).
 fn fayth_label_overlay(home: &Path) -> BTreeMap<String, String> {
-    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let env = process_env();
     memo(&OVERLAY, home, &env, || fayth_label_overlay_uncached(home, &env))
 }
 
@@ -103,7 +112,7 @@ fn fayth_label_overlay_uncached(home: &Path, env: &BTreeMap<String, String>) -> 
 /// one directory every function here resolves a fayth against. `SPIRA_CHAMBER` is never
 /// exported, so a bare caller only sees it by resolving the config in-process.
 pub fn chamber_dir(home: &Path) -> PathBuf {
-    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let env = process_env();
     memo(&CHAMBER, home, &env, || chamber_dir_with(home, &env))
 }
 

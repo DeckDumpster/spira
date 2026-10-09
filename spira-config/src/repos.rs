@@ -776,7 +776,7 @@ mod tests {
     #[test]
     fn registry_env_ignores_the_environments_copy_of_a_registered_key() {
         let mut env = std::collections::BTreeMap::new();
-        for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0")] {
+        for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0"), ("SPIRA_TOML", "/nonexistent/spira.toml")] {
             env.insert(k.to_string(), v.to_string());
         }
         let home = std::path::Path::new("/nonexistent/spira");

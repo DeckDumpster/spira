@@ -106,6 +106,12 @@ fn extract_braced(s: &str, start: usize) -> Option<&str> {
 /// is the one place that is fatal, since it would otherwise regenerate an empty allowlist);
 /// only a directory `read_dir` cannot open at all — missing, or something else wrong with it —
 /// is refused.
+pub fn embedded() -> Result<BTreeMap<String, RegistryKey>, String> {
+    EMBEDDED_CONF_D.iter().map(|(name, text)| Ok((name.to_string(), parse_one(name, text)?))).collect()
+}
+
+include!(concat!(env!("OUT_DIR"), "/embedded_conf_d.rs"));
+
 pub fn load(dir: &Path) -> Result<BTreeMap<String, RegistryKey>, String> {
     let mut out = BTreeMap::new();
     let entries = fs::read_dir(dir).map_err(|_| format!("no config registry at {}", dir.display()))?;
@@ -206,6 +212,24 @@ pub fn topo_order(registry: &BTreeMap<String, RegistryKey>) -> Result<Vec<String
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_embedded_registry_is_conf_d_itself() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        assert_eq!(super::embedded().unwrap(), super::load(&dir).unwrap());
+    }
+
+    #[test]
+    fn a_key_added_to_conf_d_is_known_to_the_embedded_registry() {
+        let dir = testkit::TempDir::new("spira-config-registry-drift");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        for e in std::fs::read_dir(&src).unwrap().flatten() {
+            std::fs::copy(e.path(), dir.join(e.file_name())).unwrap();
+        }
+        assert_eq!(super::embedded().unwrap(), super::load(dir.path()).unwrap());
+        std::fs::write(dir.join("SPIRA_DRIFT_PROBE"), "TYPE=string\nGROUP=test\nDOC=x\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT.\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        assert_ne!(super::embedded().unwrap(), super::load(dir.path()).unwrap(), "the comparison must be able to see a key conf.d gained");
+    }
+
     use super::*;
     use std::collections::BTreeMap;
 
