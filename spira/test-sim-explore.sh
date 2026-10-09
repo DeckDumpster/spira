@@ -25,11 +25,14 @@ in_world() {
 show() { echo "   state: $(in_world spira-lc show "$1" 2>&1 | tr -d '\n ' | grep -o '"state":"[A-Z_]*"' | head -1)"; }
 run() { local o rc; o="$(in_world "$@" 2>&1)"; rc=$?; echo "## $* rc=$rc :: $(printf '%s' "$o" | tail -${TN:-3} | tr '\n' '|' | tr -s ' ' | cut -c1-${CW:-300})"; }
 FX="$(cat $W/db.fixture)"
-echo "fixture=$FX; bd=$(command -v bd); $(ls $FX | tr '\n' ' ')"
-run bd --version
-run bash -c "cd $FX && bd create 'sim t' --id sp-h1 -l branch:spira/sp-h1 -l repo:sim -l spira -t task -p 2 --json"
-run bash -c "cd $FX && bd list --json | head -c 300"
-TN=6 CW=700 run bead file "sim title" --for builder --repo sim --json
+export PATH="$W/release/spira:$PATH"
+bdx() { (cd "$FX/ws" && env SPIRA_DB="$FX" "$@" 2>&1); }
+run bash -c "cd $FX/ws && ls -a | tr '\n' ' '; cat .beads/metadata.json 2>&1 | head -c 300"
+run bash -c "cd $FX/ws && bd create 'sim t' --id sp-h1 -l branch:spira/sp-h1 -l repo:sim -l spira -t task -p 2 --json"
+run bash -c "cd $FX/ws && bd create 'sim t2' --id B1 -l spira --json"
+run bash -c "cd $FX/ws && bd list --json | head -c 500"
+TN=6 CW=700 run bash -c "cd $FX/ws && bead.sh file 'sim title' --for builder --repo sim --json"
+run bash -c "cd $FX/ws && bd list --json | grep -o '\"id\": *\"[^\"]*\"' | tr '\n' ' '"
 run spira-lc list
 bad "dump" "forced"
 tl_summary
