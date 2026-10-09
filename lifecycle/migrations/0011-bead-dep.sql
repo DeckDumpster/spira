@@ -15,15 +15,15 @@ CREATE INDEX bead_dep_target_idx ON bead_dep (depends_on);
 -- blocker is the lowest-id live bead it waits on. Keep the last select alias `blocker`:
 -- migration probing reads it to tell this replacement has been applied.
 CREATE OR REPLACE VIEW ops_live AS
-SELECT /*+ JOIN_ORDER(r,t) LOOKUP_JOIN(r,t) */
+SELECT /*+ JOIN_ORDER(r,t,x) LOOKUP_JOIN(r,t) */
        t.bead_id, t.state, t.holds, t.holder, t.lease_until, t.since, t.updated_at, t.priority, t.title,
-       (t.state = 'READY' AND JSON_LENGTH(t.holds) = 0 AND NOT EXISTS
-           (SELECT 1 FROM bead_dep d JOIN bead b ON b.bead_id = d.depends_on
-             WHERE d.bead_id = t.bead_id AND d.dep_type = 'blocks'
-               AND b.state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK'))) AS claimable,
-       (SELECT MIN(d.depends_on) FROM bead_dep d JOIN bead b ON b.bead_id = d.depends_on
-         WHERE d.bead_id = t.bead_id AND d.dep_type = 'blocks'
-           AND b.state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK')) AS blocker
+       (t.state = 'READY' AND JSON_LENGTH(t.holds) = 0 AND x.blocker IS NULL) AS claimable,
+       x.blocker AS blocker
   FROM (SELECT bead_id FROM bead
          WHERE state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK')) r
-  JOIN bead t ON t.bead_id = r.bead_id;
+  JOIN bead t ON t.bead_id = r.bead_id
+  LEFT JOIN (SELECT /*+ JOIN_ORDER(b,d) LOOKUP_JOIN(b,d) */ d.bead_id, MIN(d.depends_on) AS blocker
+               FROM bead b JOIN bead_dep d ON d.depends_on = b.bead_id
+              WHERE b.state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK')
+                AND d.dep_type = 'blocks'
+              GROUP BY d.bead_id) x ON x.bead_id = t.bead_id;
