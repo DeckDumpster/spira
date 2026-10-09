@@ -105,6 +105,7 @@ check_stuck_plans() {
     done
     p="$(plan_of "SELECT * FROM ops_edges")"
     want "ops_edges takes its window from the event time index ($when)" "$window_index" "$p"
+    PLANDUMP="$when: $p"
     nowant "ops_edges does not walk a bead's whole history ($when)" "event.lc_key" "$p"
     p="$(plan_of "SELECT * FROM ops_dwell_p95")"
     want "the p95 helper takes its window from the event time index ($when)" "$window_index" "$p"
@@ -248,4 +249,5 @@ is "the graph has the gate edge" True "$(gedge SUBMITTED GatePass CERTIFIED)"
 is "the graph carries the legal exit from CERTIFIED to REWORK on a red gate" True "$(gedge CERTIFIED GateRed REWORK)"
 is "the graph has no exit from a terminal state" 0 "$(python3 -I -c 'import json,sys; print(sum(x["from"] in ("LANDED","DROPPED","SUPERSEDED","DONE") for x in json.loads(sys.argv[1])))' "$graph")"
 
+printf "# plandump %s\n" "$PLANDUMP"
 tl_summary
