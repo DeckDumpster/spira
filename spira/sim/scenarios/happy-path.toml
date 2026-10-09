@@ -16,7 +16,7 @@ script = ["commit out/happy.txt", "submit"]
 # Real GitHub finishes the publish PR's checks, merges it, and the release workflow tags the
 # merge; here each is one explicit act, retried until the publish PR exists.
 [[step]]
-at = 600000
+at = 340000
 command = """
 pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
 sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
@@ -26,7 +26,7 @@ sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
 """
 
 [[step]]
-at = 900000
+at = 420000
 command = """
 pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
 sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
