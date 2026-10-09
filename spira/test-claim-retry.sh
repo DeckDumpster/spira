@@ -12,7 +12,7 @@
 #
 # WHAT THIS SUITE DOES NOT USE. No real bd, no testdb: the defect is entirely about how a bd
 # FAILURE is threaded through the shell, which a real database cannot be made to produce on
-# demand — the same reasoning that has test-bd-lock-retry.sh stub bd directly rather than
+# demand — the same reasoning that has test-conf.sh stub bd directly rather than
 # reaching for a fixture that cannot inject a lock error deterministically.
 #
 # defect: sp-3ntca
