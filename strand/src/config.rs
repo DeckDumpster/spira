@@ -49,6 +49,8 @@ pub struct Config {
     /// `SPIRA_FAYTHS` — `aeons_live_lanes`' override onto `spira_lane_fayths`'s own chamber
     /// scan. Read here, once, so that pure probe logic never reads the environment itself.
     pub fayths_override: Option<String>,
+    /// `SPIRA_LANES` — the declared lane names a lane persona must be listed in to be summoned.
+    pub lanes: Vec<String>,
 }
 
 /// The remaining, NOT-registered lookups `resolve` still makes: a test-only knob, a seam
@@ -128,6 +130,7 @@ impl Config {
             work_close_types: "task bug feature".into(),
             id_prefix: "sp".into(),
             fayths_override: None,
+            lanes: Vec::new(),
         }
     }
 }
@@ -224,6 +227,7 @@ impl Config {
             work_close_types: cfg("SPIRA_WORK_CLOSE_TYPES")?,
             id_prefix: cfg("SPIRA_ID_PREFIX")?,
             fayths_override: nonempty(cfg("SPIRA_FAYTHS")?),
+            lanes: cfg("SPIRA_LANES")?.split_whitespace().map(str::to_string).collect(),
         })
     }
 
