@@ -13,6 +13,7 @@ pub struct BdRecord {
     pub labels: BTreeSet<String>,
     pub supersedes: Option<String>,
     pub is_epic: bool,
+    pub external: bool,
 }
 
 /// Runs `bd -C <db> show <id> --json` and extracts exactly the fields the classifier reads.
@@ -54,7 +55,8 @@ fn parse(text: &str, id: &str) -> Result<BdRecord, String> {
         .and_then(|v| v.as_str())
         .map(str::to_string);
     let is_epic = item.get("issue_type").and_then(|v| v.as_str()) == Some("epic");
-    Ok(BdRecord { status, labels, supersedes, is_epic })
+    let external = item.get("external_ref").and_then(|v| v.as_str()).is_some_and(|r| !r.trim().is_empty());
+    Ok(BdRecord { status, labels, supersedes, is_epic, external })
 }
 
 /// Lists every bead id labelled `repo:<name>` via `bd list --json --all`, scoped exactly the
@@ -164,6 +166,13 @@ mod tests {
         assert_eq!(rec.status, BdStatus::Closed);
         assert!(rec.labels.contains("spira-dropped"));
         assert_eq!(rec.supersedes.as_deref(), Some("sp-2"));
+    }
+
+    #[test]
+    fn an_external_ref_marks_the_record_external() {
+        let rec = parse(r#"[{"id": "sp-1", "status": "closed", "external_ref": "github:o/r#4"}]"#, "sp-1").unwrap();
+        assert!(rec.external);
+        assert!(!parse(r#"[{"id": "sp-1", "status": "closed"}]"#, "sp-1").unwrap().external);
     }
 
     #[test]

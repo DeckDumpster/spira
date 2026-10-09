@@ -91,6 +91,15 @@ impl crate::callers::Bd for LiveBd {
         let labels = doc.get("labels").and_then(|l| l.as_array()).cloned().unwrap_or_default();
         Ok(labels.iter().filter_map(|l| l.as_str()).filter_map(|l| l.strip_prefix("work-bead:").map(str::to_string)).collect())
     }
+    fn external(&mut self, id: &str) -> Result<bool, String> {
+        let out = run(&["show", id, "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+        let doc = match &parsed {
+            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+            v => v.clone(),
+        };
+        Ok(doc.get("external_ref").and_then(|r| r.as_str()).is_some_and(|r| !r.trim().is_empty()))
+    }
     fn reopen(&mut self, id: &str) -> Result<(), String> {
         // The store follows the row the door just moved: open, unassigned, and no longer wearing
         // the submitted label (a legacy state label; best effort, it may not be there).

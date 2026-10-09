@@ -20,6 +20,9 @@ fn usage() -> ExitCode {
     println!("  gh-intake closeout <bead-id> <sha> <repo-path>");
     println!("  gh-intake unlanded-scan");
     println!("  gh-intake backfill [--dry-run]");
+    println!("  gh-intake provenance [--check]");
+    println!("  gh-intake provenance watch [--interval SECS]");
+    println!("  gh-intake provenance health");
     ExitCode::from(0)
 }
 
@@ -147,6 +150,85 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
     ExitCode::from(0)
 }
 
+
+/// `gh-intake provenance` — every external issue, its bead, the outcome that settles it.
+/// `--check` exits 1 when any trail is broken, 2 when the trail could not be read.
+/// `watch` is the watcher row: one line per newly broken trail. `health` exits 0 when the read works.
+fn provenance_cmd(args: &[String]) -> ExitCode {
+    let mode = args.first().map(String::as_str);
+    let (db, bd_bin, home, _run) = match closeout_env() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
+    let lc = RealLifecycle::default();
+    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+    match mode {
+        None | Some("--check") => match closeout::provenance_read(&d) {
+            Ok(rows) => {
+                for r in &rows {
+                    println!("{}", r.line());
+                }
+                ExitCode::from(if mode.is_some() && rows.iter().any(|r| r.is_broken()) { 1 } else { 0 })
+            }
+            Err(e) => {
+                eprintln!("gh-intake provenance: {e}");
+                ExitCode::from(2)
+            }
+        },
+        Some("health") => match closeout::provenance_read(&d) {
+            Ok(_) => ExitCode::from(0),
+            Err(e) => {
+                eprintln!("gh-intake provenance: {e}");
+                ExitCode::from(1)
+            }
+        },
+        Some("watch") => {
+            let mut interval = 600u64;
+            if let [flag, secs] = &args[1..] {
+                match (flag.as_str(), secs.parse::<u64>()) {
+                    ("--interval", Ok(n)) if n > 0 => interval = n,
+                    _ => {
+                        eprintln!("usage: gh-intake provenance watch [--interval SECS]");
+                        return ExitCode::from(2);
+                    }
+                }
+            } else if args.len() != 1 {
+                eprintln!("usage: gh-intake provenance watch [--interval SECS]");
+                return ExitCode::from(2);
+            }
+            let mut told: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut blind = false;
+            loop {
+                match closeout::provenance_read(&d) {
+                    Ok(rows) => {
+                        blind = false;
+                        for r in rows.iter().filter(|r| r.is_broken()) {
+                            let line = r.line();
+                            if told.insert(line.clone()) {
+                                println!("gh-provenance: {line}");
+                            }
+                        }
+                    }
+                    Err(e) if !blind => {
+                        blind = true;
+                        println!("gh-provenance: cannot read the trails — {e}");
+                    }
+                    Err(_) => {}
+                }
+                std::thread::sleep(std::time::Duration::from_secs(interval));
+            }
+        }
+        Some(other) => {
+            eprintln!("gh-intake provenance: unknown argument: {other}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn ports(db: String, bd_bin: String, home: String) -> (RealBd, RealGh, RealGit, RealRepo, RealMail) {
     let mail_bin = env_nonempty("SPIRA_MAIL_BIN").unwrap_or_else(|| "mail".to_string());
@@ -165,6 +247,7 @@ fn main() -> ExitCode {
         Some("closeout") => return closeout_cmd(&all_args[1..]),
         Some("unlanded-scan") => return unlanded_scan_cmd(&all_args[1..]),
         Some("backfill") => return backfill_cmd(&all_args[1..]),
+        Some("provenance") => return provenance_cmd(&all_args[1..]),
         _ => {}
     }
 

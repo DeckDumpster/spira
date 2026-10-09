@@ -363,7 +363,11 @@ fn classify_one(
         is_epic: bd.is_epic,
     };
 
-    let outcome = classify::classify(&facts);
+    let mut outcome = classify::classify(&facts);
+    if bd.external && outcome.rule == lifecycle::bead::RESIDUE_RULE {
+        outcome.state = lifecycle::bead::BeadState::Ready;
+        outcome.rule = EXTERNAL_RESIDUE_RULE;
+    }
 
     if let Some(row) = existing {
         if !correctable(&row, &outcome) {
@@ -406,6 +410,9 @@ fn classify_one(
 /// A re-run corrects an existing row only by the rules that were missing when it was written,
 /// and only where the row is the classifier's own guess: recomputing every other rule would
 /// overwrite what the machine has since decided.
+/// An external bead closed with no evidence is unresolved work, not a drop (law-a-learned-failure-mode-becomes-a-state).
+pub const EXTERNAL_RESIDUE_RULE: &str = "external-closed-no-outcome";
+
 fn correctable(row: &lifecycle::bead::BeadRow, outcome: &classify::Classification) -> bool {
     use lifecycle::bead::BeadState::*;
     if outcome.rule.starts_with("epic-") {

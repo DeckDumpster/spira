@@ -156,3 +156,4 @@ supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_
 # it waits: it blocks until a line survives the drop and dedup rules, prints it and exits, with
 # the unread count and cursor kept here like any other row.
 concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
+gh-provenance|daemon|gh-intake provenance watch --interval 900|gh-intake provenance health

@@ -475,6 +475,7 @@ dependencies = [
 name = "gh-intake"
 version = "1.0.0"
 dependencies = [
+ "lifecycle",
  "serde_json",
  "sha2",
  "spira-config",
