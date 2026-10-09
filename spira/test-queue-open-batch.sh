@@ -10,7 +10,7 @@
 # since it only ever called `queue open-batch`, never batch.sh itself.
 #
 # tier: T1
-# covers: queue/src/* spira/lib.sh
+# covers: queue/src/* spira/lib.sh UC-landing-merge-queue-41
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -154,6 +154,7 @@ is   "1. one PR created"                "1"           "$(wc -l < "$FORGE_LOG")"
 body1="$(cat "$BODY_LOG")"
 want "1. body lists sp-a"  "sp-a" "$body1"
 want "1. body lists sp-b"  "sp-b" "$body1"
+want "1. body lists id — title" "- sp-a — bead for sp-a" "$body1"
 rec1="$(cat "$(open_batch_file)" 2>/dev/null)"
 want "1. record names pr=1"       "pr=1"     "$rec1"
 want "1. record lists sp-a:"      "sp-a:"    "$rec1"

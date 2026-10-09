@@ -22,7 +22,7 @@
 #
 # defect: sp-imqd4
 # tier: T1
-# covers: spira/pve.sh spira/conf.sh
+# covers: spira/pve.sh spira/conf.sh UC-landing-merge-queue-56
 # hermetic-ok: mocks curl; no network calls, no systemd, no database
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

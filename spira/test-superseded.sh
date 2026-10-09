@@ -18,7 +18,7 @@
 #
 # defect: sp-amac
 # tier: T2
-# covers: landing-pass/* sending/src/* spira/lib.sh
+# covers: landing-pass/* sending/src/* spira/lib.sh UC-landing-merge-queue-21
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

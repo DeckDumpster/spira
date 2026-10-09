@@ -28,7 +28,7 @@
 #
 # defect: sp-sc3 sp-qd2ul
 # tier: T2
-# covers: spira/*.sh
+# covers: spira/*.sh UC-aeon-execution-20
 set -uo pipefail
 CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd)"

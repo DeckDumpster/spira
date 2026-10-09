@@ -32,7 +32,7 @@
 #
 # defect: sp-dupland
 # tier: T2
-# covers: landing-pass/* spira/lib.sh
+# covers: landing-pass/* spira/lib.sh UC-landing-merge-queue-14
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

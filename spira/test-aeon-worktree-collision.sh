@@ -32,7 +32,7 @@
 #
 # defect: sp-om71s
 # tier: T2
-# covers: aeon/src/* spira/lib.sh
+# covers: aeon/src/* spira/lib.sh UC-aeon-execution-01
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

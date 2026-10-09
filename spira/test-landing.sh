@@ -38,7 +38,7 @@
 #
 # defect: sp-q9i sp-9194o
 # tier: T3
-# covers: landing-pass/* spira/lib.sh
+# covers: landing-pass/* spira/lib.sh UC-landing-merge-queue-13 UC-landing-merge-queue-15 UC-landing-merge-queue-17 UC-landing-merge-queue-22 UC-landing-merge-queue-23
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

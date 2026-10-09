@@ -12,8 +12,8 @@
 # suite-state transition is a change bead on spira/<id> like any other — the bead-less
 # `spira-suite-state/*` route is refused.
 #
-# tier: T3
-# covers: queue/src/* testenv/src/suites/* spira/conf.sh
+# tier: T2
+# covers: queue/src/* testenv/src/suites/* spira/conf.sh UC-landing-merge-queue-27
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

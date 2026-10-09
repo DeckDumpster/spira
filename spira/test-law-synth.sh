@@ -20,7 +20,7 @@
 # case so silence from the negative case looks like failure, not peace.
 #
 # tier: T2
-# covers: rule.sh spira/law-synth.sh cockpit-collect/src/* UC-operator-channel-43
+# covers: rule.sh spira/law-synth.sh cockpit-collect/src/* UC-operator-channel-43 UC-cockpit-observability-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -132,6 +132,11 @@ done
 out_ok=$(run_statute_keys)
 want   "statute_keys: counts match → SP_STATUTE_SKEW=OK"   "SKEW=OK"  "$out_ok"
 nowant "statute_keys: counts match → not MISMATCH"          "MISMATCH" "$out_ok"
+
+out_nowiki=$( tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI=""; cockpit-collect probe statute 2>/dev/null )
+want   "statute_keys: no wiki → SP_STATUTE_SKEW is ?"       "SKEW=?"   "$out_nowiki"
+want   "statute_keys: no wiki → SP_STATUTE_DB_N is ?"       "DB_N=?"   "$out_nowiki"
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP"
 
 db_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_DB_N=' | cut -d= -f2)"
 page_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_PAGE_N=' | cut -d= -f2)"

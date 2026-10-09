@@ -7,7 +7,7 @@ tier = "T1"
 statement = "Every exit goes through `verdict()`, which prints exactly one anchored `gate: VERDICT=<PASS|FAIL|BASE_FAIL|NO_VERDICT> reason=<slug> branch= repo= suite=` line and exits 0/1/76/75 to match."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "verdict() and its exit mapping live in the gate crate and are verified by gate::tests::a_fail_with_no_message_is_downgraded and the verdict-line assertions beside it; the Rust seam is not drivable from bash"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -17,7 +17,7 @@ tier = "T1"
 statement = "A FAIL that carries no message is downgraded to NO_VERDICT with `reason=no-evidence:<orig>` (sp-io5j backstop)."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the no-evidence downgrade is gate::engine::settle, verified by gate::tests::a_fail_with_no_message_is_downgraded; no bash-reachable path yields an empty-message FAIL"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -81,11 +81,6 @@ id = "UC-gate-verdict-12"
 tier = "T1"
 statement = "Base-trial attribution. Branch red and base green gives FAIL `branch-red`. The same suite red on both gives BASE_FAIL `base-red`, naming the suite and carrying the base output. Base reds that are all timeouts give NO_VERDICT `base-timeout`. Genuine reds plus timeouts give BASE_FAIL. Suites red only on the branch give FAIL even when the base is red elsewhere. An unnamed red on both gives `suite=-`. A base trial that exits 75/124 or cannot check out gives NO_VERDICT `base-untestable`."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-gate-verdict-13"
 tier = "T2"
@@ -100,11 +95,6 @@ statement = "A red verdict carries the command's full early diagnostics, not a `
 id = "UC-gate-verdict-15"
 tier = "T1"
 statement = "Verdict cache. The key is repo + tree + changed files + command + harness bytes (gate.sh, exclude.sh, skew.sh) + `SPIRA_GATE_SUITES`. Only PASS is cached. Reuse is metered `rc=0 cached`. A landing on the base does not invalidate an un-rebased branch. A restored command finds its old entry. A verdict older than `SPIRA_VERDICT_TTL` is refused, as is an entry without `at=` or a non-numeric TTL. (sp-0v8)"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-gate-verdict-16"
@@ -137,7 +127,7 @@ tier = "T3"
 statement = "Under contention (N aeon gates plus a landing pass with a small lock wait), every gate reaches a verdict. None is starved to 75, no tree is crossed, landing verdicts come from the cache, and the whole soak finishes inside its deadline."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the contention soak needs N concurrent gate processes against a shared gate worktree and lock; no suite drives it since the bash gate was replaced"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 

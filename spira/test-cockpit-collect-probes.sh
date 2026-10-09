@@ -17,7 +17,7 @@
 # (cluster 6, docs/test-plan/cockpit-observability.md).
 #
 # tier: T1
-# covers: cockpit-collect/src/supervisor.rs UC-cockpit-observability-03
+# covers: cockpit-collect/src/supervisor.rs UC-cockpit-observability-02 UC-cockpit-observability-03 UC-cockpit-observability-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -73,6 +73,36 @@ run_merge
 snap="$(cat "$SNAP" 2>/dev/null)"
 want "after merge: SP_QUEUE_DEPTH=2 in cockpit.env" "SP_QUEUE_DEPTH='2'" "$snap"
 want "after merge: SP_QUEUE_EJECTED in cockpit.env"  "SP_QUEUE_EJECTED="   "$snap"
+want "after merge: SP_COLLECTOR_REV is always emitted" "SP_COLLECTOR_REV=" "$snap"
+
+# ============================================================
+echo
+echo "fragment statuses decide which keys reach cockpit.env:"
+
+rm -f "$FRAG_DIR"/*.env
+frag() {   # frag <name> <status> [KEY=value ...]
+    local n="$1" st="$2"; shift 2
+    { printf '_PROBE_AT=100\n_PROBE_STATUS=%s\n_PROBE_KILLED=0\n' "$st"; printf '%s\n' "$@"; } > "$FRAG_DIR/$n.env"
+}
+frag aok ok SP_A_OK=1 SP_SHARED=first
+frag bnever never SP_B_NEVER=9
+frag ctimeout timeout SP_C_TIMEOUT=9
+frag derror error SP_D_ERROR=9
+frag estale stale SP_E_STALE=5
+frag zok ok SP_SHARED=last
+run_merge
+snap="$(cat "$SNAP" 2>/dev/null)"
+want   "ok: contributes its keys"                  "SP_A_OK='1'"                  "$snap"
+want   "ok: and its probe status"                  "_PROBE_STATUS_aok='ok'"       "$snap"
+want   "never: records only its status"            "_PROBE_STATUS_bnever='never'" "$snap"
+nowant "never: contributes no value key"           "SP_B_NEVER"                   "$snap"
+want   "timeout: records only its status"          "_PROBE_STATUS_ctimeout='timeout'" "$snap"
+nowant "timeout: contributes no value key"         "SP_C_TIMEOUT"                 "$snap"
+want   "error: records only its status"            "_PROBE_STATUS_derror='error'" "$snap"
+nowant "error: contributes no value key"           "SP_D_ERROR"                   "$snap"
+want   "stale: keeps its last-known-good value"    "SP_E_STALE='5'"               "$snap"
+want   "a key clash picks the alphabetically first" "SP_SHARED='first'"           "$snap"
+nowant "and not the later fragment"                "SP_SHARED='last'"             "$snap"
 
 # ============================================================
 echo

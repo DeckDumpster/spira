@@ -36,7 +36,7 @@
 # a stub that emits controlled output with a non-default prefix is the right dependency.
 #
 # tier: T1
-# covers: spira/gate-check.sh
+# covers: spira/gate-check.sh UC-landing-merge-queue-52
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

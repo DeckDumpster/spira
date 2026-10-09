@@ -6,70 +6,35 @@ id = "UC-test-infrastructure-01"
 tier = "T1"
 statement = "The header parser extracts `# covers:` (first line), `# requires:` (comma or space separated), `# exclusive:`, `# timeout:`, `# priority:` and `# selects-on:`, and returns empty with no declaration or a missing file."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-test-infrastructure-02"
 tier = "T0"
-statement = "Every declared `# covers:` token (every line, not only the first) resolves to an existing file, and every suite metadata key is well-formed."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "Every path token in a suite's `# covers:` declaration, continuation lines included, resolves to something in the tree. Use-case and gap ids are not paths."
 
 [[use_case]]
 id = "UC-test-infrastructure-03"
 tier = "T1"
 statement = "Selection over a changed-file set works as follows. A covered file selects its covering suites plus the always-run suites. An unmapped file selects all suites (`mode=all`) unless `--no-all-fallback` is set. An empty diff selects only the always-run suites. Inert files select nothing. `selects-on: added,mode` fires only on A or mode changes. `--files` and `--base/--head` give identical output."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-test-infrastructure-04"
 tier = "T2"
 statement = "`file#func` covers narrow selection to hunks inside that function. A global hunk selects all of the file's suites. `--files` mode is conservative."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-test-infrastructure-05"
 tier = "T1"
 statement = "A changed file matching `SPIRA_SELECT_SOURCE` that no suite claims makes selection fail, naming the file. `--report-file` lists unclaimed and unplaced files."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-test-infrastructure-06"
 tier = "T2"
 statement = "A queue-branch diff selects the union of its members' suites and falls back to all if any member is unmapped."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-test-infrastructure-07"
 tier = "T0"
-statement = "The landing gate string (`suite-select gate`), `testenv` (linked), `batcher-cut`, `verdict.sh` and gate.yml all select through the `suite-select` crate. There is one selector with no private copy. (gate-spira.sh, once also named here, is retired: no caller since sp-b99nj, deleted by sp-hyc3a.)"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "The landing gate string (`suite-select gate`), the `testenv`, `batcher-cut` and `gate` crates, and gate.yml all select through the `suite-select` crate. There is one selector with no private copy."
 
 [[use_case]]
 id = "UC-test-infrastructure-08"
@@ -77,7 +42,7 @@ tier = "T1"
 statement = "The image tag is a content hash of the build closure (Containerfile, doctor.sh program list, bd pin). It is path-independent and unchanged by unrelated files."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "image tag derivation is testenv's container module (testenv/src/container/tests.rs cargo tests); no bash suite drives it without podman"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -87,7 +52,7 @@ tier = "T1"
 statement = "Image acquisition pulls the closure tag from the registry when one is configured. It builds on a miss (not an error) and builds with no registry configured. Publish pushes exactly the closure tag and never `:latest`. Callers get one `localhost/` ref regardless of source."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "image acquisition and publish are testenv's container module, driven by cargo tests against a fake podman; no bash suite reaches them without a registry or podman"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -97,7 +62,7 @@ tier = "T1"
 statement = "Batch argument contract: an unknown `--mode` or a missing branch exits 2. `--mode=x` is accepted and the default is parallel. `--suites a,b` and `--suites -` run exactly the named suites (`producer=explicit`). An unknown name exits non-zero and names it. Empty stdin means \"nothing to run\" and exits 0. With no `--suites`, `producer=diff`, or `all` on fallback."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "batch argument contract lives in testenv's run module (testenv/src/run/tests.rs cargo tests); the explicit/diff producers need a repository and container and no bash seam exists"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -107,7 +72,7 @@ tier = "T2"
 statement = "The batch runs the suites **as they exist on the named branch**, not the caller's working tree."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "branch-as-committed checkout is testenv's worktree module, covered by cargo tests; a bash check needs a real container run"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -117,7 +82,7 @@ tier = "T2"
 statement = "Exit contract: all green exits 0. Any red exits 1 (branch fault). A container death, start failure or exec storm exits 2 (harness fault), recording unrun suites as `unreached` without overwriting completed results. gate.yml maps 2 to 75."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "batch exit contract and harness-fault mapping are covered by testenv's run cargo tests; a bash check needs a container death, which needs podman"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -127,7 +92,7 @@ tier = "T2"
 statement = "Liveness: one failed `podman inspect` is not death. `Running=false` is death and the container is removed. Zero-second empty exec failures with a live container are a harness fault, not reds. On parallel death, in-flight reds become unreached."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "container liveness handling is testenv's fixture module (cargo tests with a fake runtime); a bash check needs a real container to kill"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -137,7 +102,7 @@ tier = "T2"
 statement = "Isolation: in parallel mode each suite gets a distinct HOME, SPIRA_INSTANCE and SPIRA_RUN (in serial mode they share). No suite inherits `$TMUX`. Runner-injected vars are stripped from the primary launch. A suite cannot read host files."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "per-suite isolation env is built in testenv's run module (cargo tests); asserting real containment needs a container"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -147,7 +112,7 @@ tier = "T1"
 statement = "`# exclusive:` suites drain the parallel pool before starting. Maxpar = min(nproc, ⌊(MemAvailable−reserve)/per-suite⌋) and names its binding resource. `SPIRA_BATCH_MAXPAR` is a ceiling only."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "exclusive draining and maxpar arithmetic are testenv's schedule and settings modules, covered by cargo tests; no bash seam exposes them"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -162,7 +127,7 @@ tier = "T2"
 statement = "Per-suite `SPIRA_SUITE_TIMEOUT` reaps a suite as `timeout` (fingerprint `timeout:*`). Later suites continue, the batch exits non-zero, and 0 disables the limit."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "per-suite timeout reaping is testenv's run module (cargo tests); a bash check needs a real container exec to reap"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -172,7 +137,7 @@ tier = "T2"
 statement = "Verdict cache: a repeat attempt at the same (branch, sha, mode, selection) key after red is refused with exit 2 unless the override carries a reason of at least 10 characters, which is recorded. A refusal files one incident per branch (deduplicated)."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "verdict cache and repeat refusal are testenv's verdict module (cargo tests); the refusal path is not reachable from bash without a container-capable run"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -182,7 +147,7 @@ tier = "T0"
 statement = "Constants mirrored from `testenv container` (testenv/src/container.rs) match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the shell constants and trap this described are gone; the cleanup of fixture home and owner file is testenv's run module, covered by cargo tests (testenv/src/run/tests.rs)"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -212,7 +177,7 @@ tier = "T1"
 statement = "Discovery is the `test-*.sh` glob. Gated suites are not re-run and the pass says so. Suites without covers are named as omissions and still run. Every real suite is claimed by the gate or the timed run. The real `gate-suites` names only suites that exist, and an unreadable gate list refuses with rc 1, runs nothing and shows status `?`."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "discovery and the gate-list refusal are testenv's suites module (cargo tests); the gate-list path comes only from the operator's spira.toml, so a bash fixture cannot pin it hermetically"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -247,16 +212,6 @@ date = "2026-09-26"
 bead = "sp-b99nj"
 
 [[use_case]]
-id = "UC-test-infrastructure-28"
-tier = "T2"
-statement = "Environment confirmation: a red under the runner is re-run with the runner vars stripped. It is confirmed red (suite-defect bead), passes (environment-finding bead via `file_env_red`), or is recorded red-unconfirmed with nothing filed when the budget is short."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
 id = "UC-test-infrastructure-29"
 tier = "T1"
 statement = "Budget is a wall. `MAXSEC` caps the budget (MAXSEC−60) and never raises it. A suite whose last runtime exceeds the remaining budget, or whose `# timeout:` exceeds it, is `unreached` (not TIMEOUT). The cursor names where the next pass starts. Unreached never overwrites the last verdict or runtime and is cleared when the suite is next reached."
@@ -271,6 +226,10 @@ id = "UC-test-infrastructure-30"
 tier = "T2"
 statement = "The per-suite watchdog kills a hung suite at its limit. The runner continues. A leaky background child does not wedge the pass."
 
+[use_case.uncovered]
+reason = "the per-suite watchdog is testenv's batch, record and runtime modules, covered by cargo tests tagged with this id; a bash check needs a real container exec"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-test-infrastructure-31"
@@ -278,7 +237,7 @@ tier = "T1"
 statement = "Quarantine lifecycle. Two distinct flake runs inside the window, with a run_id counted once, quarantine the suite on a change bead's `spira/<bead>` branch submitted to the queue, never in the checkout. Reactivation needs both bead LANDED and N clean runs. The max-age mail is sent once per period. A nonexistent suite is refused."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "quarantine lifecycle is testenv's suites module (cargo tests); it files a change bead and commits to the queue, which no hermetic bash suite can stand up"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -286,11 +245,6 @@ bead = "sp-94lbj.2"
 id = "UC-test-infrastructure-32"
 tier = "T1"
 statement = "The suite-state file parser, `state_of`, write, clear and lint behave as specified: replace never duplicates, `active` stores nothing, and bad lines are ignored. The fence refuses a quarantine that has no bead, no reason, a missing suite or a **CLOSED** bead, and passes an empty file."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-test-infrastructure-33"
@@ -305,12 +259,7 @@ bead = "sp-b99nj"
 [[use_case]]
 id = "UC-test-infrastructure-34"
 tier = "T1"
-statement = "**One report grammar.** Every suite emits `ok`/`FAIL` lines in one format and an `ASSERTIONS n` trailer through `suite-assert.sh`. The runner writes one `.result` schema (`status ts secs fp mode producer rc`) and one `suite-times.tsv` row per suite (run_id, suite, rc, wall, bd_calls, and — new — pass/fail/skip counts). The row is persisted to `refs/notes/suite-times`. `suite-times.sh` reports the Top 20 slowest, the sum and wall time, and movers above 25%."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "**One report grammar.** Every suite emits `ok`/`FAIL` lines in one format and an `ASSERTIONS n` trailer through `suite-assert.sh`, including on an early exit."
 
 [[use_case]]
 id = "UC-test-infrastructure-35"
@@ -346,11 +295,6 @@ statement = "The citation report classifies each suite's `# defect:` as resolved
 id = "UC-test-infrastructure-41"
 tier = "T0"
 statement = "Every non-test, non-sourced operator script is executable."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-test-infrastructure-42"

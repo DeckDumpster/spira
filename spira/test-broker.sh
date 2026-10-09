@@ -17,7 +17,7 @@
 # asserted below, on the real path, with a real refusal.
 #
 # tier: T1
-# covers: broker/* spira/broker.sh
+# covers: broker/* spira/broker.sh UC-landing-merge-queue-55
 # hermetic-ok: no database required; gh is a stub; czar-fence.sh runs against a fixture env
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

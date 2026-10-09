@@ -10,7 +10,7 @@
 # path that flaked: every seam below is a deterministic stub, never a real network probe.
 #
 # tier: T2
-# covers: spira/ready.sh
+# covers: spira/ready.sh UC-cockpit-observability-35
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -80,7 +80,11 @@ chmod +x "$BIN/bd"
 
 cat > "$FAKE_SPIRA_HOME/seed.sh" <<'MOCK'
 #!/usr/bin/env bash
-[ "${1:-}" = "--list" ] && printf 'law-always-present + \n'
+[ -n "${FAKE_SEED_FAIL:-}" ] && exit 1
+if [ "${1:-}" = "--list" ]; then
+    printf 'law-always-present + \n'
+    [ -n "${FAKE_SEED_MISSING:-}" ] && printf 'law-not-in-db -\n'
+fi
 exit 0
 MOCK
 chmod +x "$FAKE_SPIRA_HOME/seed.sh"
@@ -100,7 +104,7 @@ chmod +x "$BIN/sentinel"
 # loop (that loop, not this check, is what flaked test-ready.sh in round 96).
 cat > "$BIN/loom-probe" <<'MOCK'
 #!/usr/bin/env bash
-printf '200 42ms\n'
+printf '%s\n' "${FAKE_LOOM:-200 42ms}"
 MOCK
 chmod +x "$BIN/loom-probe"
 
@@ -187,5 +191,44 @@ echo "exit 0 when every active timer is still scheduled"
 run_ready -- >/dev/null 2>&1 \
     && ok "exit-pass: exits 0 when every timer is scheduled" \
     || bad "exit-pass: should exit 0 when every timer is scheduled" "exited non-zero"
+
+echo ""
+echo "--- one outcome per check, and the exit code that follows ---"
+
+rm -f "$UNIT_DIR"/spira-*-prod.timer
+printf '[Timer]\nOnBootSec=2min\n' > "$UNIT_DIR/spira-sentinel-prod.timer"
+
+out="$(run_ready --)"; rc=$?
+want   "healthy fixture: sentinel timer passes"   "  pass  sentinel timer active" "$out"
+want   "healthy fixture: loom passes"             "  pass  loom answers 200"      "$out"
+want   "healthy fixture: fresh snapshot passes"   "  pass  cockpit snapshot fresh" "$out"
+want   "agent row warns by design"                "  WARN  agent present"         "$out"
+is     "pass and WARN alone exit 0"               0                               "$rc"
+
+out="$(run_ready "FAKE_SC_ACTIVE=" -- )"; rc=$?
+want   "inactive sentinel timer: FAIL"            "  FAIL  sentinel timer not active" "$out"
+is     "a FAIL exits 1"                           1                               "$rc"
+
+out="$(run_ready "FAKE_SEED_MISSING=1" -- )"; rc=$?
+want   "a statute missing from the db: WARN"      "  WARN  1 shipped statute(s) not in this database" "$out"
+is     "a WARN alone exits 0"                     0                               "$rc"
+
+out="$(run_ready "FAKE_SEED_FAIL=1" -- )"; rc=$?
+want   "statutes unverifiable: ? line"            "  ?     statutes"              "$out"
+is     "a ? exits 1"                              1                               "$rc"
+
+out="$(run_ready "FAKE_LOOM=ERR 5ms refused" -- )"; rc=$?
+want   "loom that does not answer: FAIL"          "  FAIL  loom does not answer"   "$out"
+is     "loom FAIL exits 1"                        1                               "$rc"
+
+out="$(run_ready "FAKE_LOOM=200 9999ms" -- )"; rc=$?
+want   "loom over budget: WARN"                   "  WARN  loom answers 200 but over budget" "$out"
+is     "loom WARN alone exits 0"                  0                               "$rc"
+
+touch -d '2 hours ago' "$RUN/cockpit.env"
+out="$(run_ready --)"; rc=$?
+want   "stale cockpit snapshot: FAIL"             "  FAIL  cockpit snapshot stale" "$out"
+is     "stale snapshot exits 1"                   1                               "$rc"
+touch "$RUN/cockpit.env"
 
 tl_summary

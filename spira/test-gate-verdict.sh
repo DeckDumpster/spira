@@ -26,7 +26,7 @@
 #
 # defect: sp-0v8 sp-p4rl
 # tier: T1
-# covers: spira/gate.sh spira/conf.sh UC-gate-verdict-13
+# covers: spira/gate.sh spira/conf.sh UC-gate-verdict-13 UC-gate-verdict-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

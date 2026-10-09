@@ -12,7 +12,7 @@
 # trusting the passing case (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T2
-# covers: landing-pass/* spira/lib.sh
+# covers: landing-pass/* spira/lib.sh UC-landing-merge-queue-24
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
