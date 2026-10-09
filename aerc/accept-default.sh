@@ -12,8 +12,12 @@ msg="$(cat)"
 _hdr() {
     local name="$1"
     printf '%s\n' "$msg" | awk -v h="$name" '
-        /^[[:space:]]*$/ { exit }
-        tolower($0) ~ "^" tolower(h) ":" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+        { sub(/\r$/, "") }
+        $0 == "" { exit }
+        found && /^[ \t]/ { val = val $0; next }
+        found { exit }
+        tolower($0) ~ "^" tolower(h) ":" { found = 1; val = $0; sub(/^[^:]*:[ \t]*/, "", val) }
+        END { if (found) print val }
     '
 }
 

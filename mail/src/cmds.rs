@@ -139,6 +139,9 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     }
 
     let from = args.from.map(str::to_string).or_else(|| env.mail_from.clone()).unwrap_or_default();
+    for (name, value) in [("From", from.as_str()), ("Subject", args.subject), ("X-Spira-Kind", args.kind), ("X-Spira-Default", args.default)] {
+        message::header(name, value)?;
+    }
 
     let is_operator = mailbox == "operator";
     if is_operator && !args.dry_run && !env.db.is_empty() && !env.ask_label.is_empty() {
@@ -230,13 +233,13 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     let msgid = maildir::mint_msgid();
 
     let mut msg = String::new();
-    msg.push_str(&format!("From: {from}\n"));
-    msg.push_str(&format!("Subject: {}\n", args.subject));
+    msg.push_str(&message::header("From", &from)?);
+    msg.push_str(&message::header("Subject", args.subject)?);
     if !args.kind.is_empty() {
-        msg.push_str(&format!("X-Spira-Kind: {}\n", args.kind));
+        msg.push_str(&message::header("X-Spira-Kind", args.kind)?);
     }
     if !args.default.is_empty() {
-        msg.push_str(&format!("X-Spira-Default: {}\n", args.default));
+        msg.push_str(&message::header("X-Spira-Default", args.default)?);
     }
     if args.urgent {
         msg.push_str("X-Spira-Urgent: yes\n");
@@ -245,7 +248,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
         msg.push_str("X-Spira-Digest: yes\n");
     }
     if !x_bead.is_empty() {
-        msg.push_str(&format!("X-Spira-Bead: {x_bead}\n"));
+        msg.push_str(&message::header("X-Spira-Bead", &x_bead)?);
     }
     if !work_bead.is_empty() {
         msg.push_str(&format!("X-Spira-Work-Bead: {work_bead}\n"));
@@ -642,6 +645,38 @@ mod probe_tests {
             assert_eq!(root_mailbox_entries(t.path(), "operator"), 0, "{kind}/{default}/{class}");
             assert_eq!(root_mailbox_entries(t.path(), "concierge"), 1, "{kind}/{default}/{class}");
         }
+    }
+
+    const THREE_PARAS: &str = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
+
+    fn written_message(root: &Path) -> String {
+        let new = root.join("mail/operator/new");
+        let f = std::fs::read_dir(new).unwrap().next().unwrap().unwrap().path();
+        std::fs::read_to_string(f).unwrap()
+    }
+
+    #[test]
+    fn multi_line_headers_are_written_folded_and_read_back_whole() {
+        let t = testkit::TempDir::new("mail-fold");
+        let a = SendArgs { default: THREE_PARAS, ..args("line one\nline two", false) };
+        send(&FakeBd::new(vec![]), &env(t.path()), &a, "## Class basis\nit is policy\n".into()).unwrap();
+        let text = written_message(t.path());
+        let (head, _) = message::split_headers_body(&text);
+        for line in head.lines() {
+            assert!(line.starts_with(' ') || line.starts_with('\t') || line.split_once(':').is_some_and(|(n, _)| !n.is_empty() && !n.contains(' ')), "illegal header line {line:?}");
+        }
+        assert_eq!(message::header_ci_before_blank(&text, "x-spira-default"), THREE_PARAS.replace('\n', " "));
+        assert_eq!(message::header_ci_before_blank(&text, "subject"), "line one line two");
+    }
+
+    #[test]
+    fn a_header_value_that_cannot_be_made_legal_is_refused_before_anything_is_filed() {
+        let t = testkit::TempDir::new("mail-fold-refused");
+        let bd = FakeBd::new(vec![]);
+        let a = SendArgs { default: "a\rb", ..args("Rotate the key?", false) };
+        let e = send(&bd, &env(t.path()), &a, "## Class basis\nit is policy\n".into()).unwrap_err();
+        assert!(e.contains("X-Spira-Default"), "{e}");
+        assert!(bd.calls().is_empty() && mailbox_entries(t.path()) == 0);
     }
 
     #[test]
