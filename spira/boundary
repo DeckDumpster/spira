@@ -58,6 +58,7 @@ spira   | spira/build.sh                | builds Loom and the cockpit panel; a c
 spira   | spira/configure.sh            | bootstraps ~/.config/spira/spira.toml on first install; never overwrites an existing file
 spira   | testenv/src/container.rs      | rootless podman container with user systemd for the install-rehearsal suite tier
 spira   | docs/                         | spike investigations and evidence files from the harness's own development
+spira   | docs/reinstall-runbook.md    | replacing an existing instance with a release tarball: stop and wipe, verify, answers file, install, launchers, one bead to landing, rollback
 spira   | concierge.sh                  | one named Remote Control session, so a phone can reach the harness
 spira   | rule.sh                       | enacting a statute writes the beads KV store, which is the harness's substrate
 spira   | spira/archive.sh              | keeps every session transcript and indexes it by time range and by the lineage id that survives a clear. The mechanism ships; the transcripts and the store they land in are the operator's own and stay out of every repository
