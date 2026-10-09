@@ -471,7 +471,7 @@ mod tests {
         std::fs::write(&out, "[spira]\nid_prefix = \"zz\"\n").unwrap();
         assert_eq!(ensure(&out, full(), None, &reg()).unwrap(), Outcome::Existing(out.clone()));
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "[spira]\nid_prefix = \"zz\"\n");
-        std::fs::write(&out, "[spira]\nnot_a_key = 1\n").unwrap();
+        std::fs::write(&out, "[spira]\nmax_aeons = true\n").unwrap();
         assert!(ensure(&out, full(), None, &reg()).is_err());
     }
 
