@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="692" height="428" viewBox="0 0 692.0 428.0" font-family="DejaVu Sans Mono,Menlo,monospace" font-size="14.0">
+<rect width="100%" height="100%" fill="#101010"/>
+<text x="10.0" y="21.2" fill="#00cdcd" font-weight="bold" xml:space="preserve">SPIRA</text>
+<text x="52.0" y="21.2" fill="#d0d0d0" xml:space="preserve"> 12:00   sentinel </text>
+<text x="203.2" y="21.2" fill="#00cd00" xml:space="preserve">●</text>
+<text x="211.6" y="21.2" fill="#d0d0d0" xml:space="preserve"> ?s  ops </text>
+<text x="287.2" y="21.2" fill="#00cd00" xml:space="preserve">●</text>
+<text x="295.6" y="21.2" fill="#d0d0d0" xml:space="preserve"> ?s  auron </text>
+<text x="388.0" y="21.2" fill="#00cd00" xml:space="preserve">●</text>
+<text x="404.8" y="21.2" fill="#cd0000" font-weight="bold" xml:space="preserve">?</text>
+<text x="413.2" y="21.2" fill="#d0d0d0" xml:space="preserve">  ▾14</text>
+<text x="10.0" y="38.2" fill="#d0d0d0" xml:space="preserve"> SLOTS   </text>
+<text x="85.6" y="38.2" fill="#ffffff" font-weight="bold" xml:space="preserve">?/?</text>
+<text x="127.6" y="38.2" fill="#cd0000" font-weight="bold" xml:space="preserve">? free</text>
+<text x="10.0" y="55.2" fill="#d0d0d0" xml:space="preserve"> TOKENS/?h  </text>
+<text x="110.8" y="55.2" fill="#ffffff" font-weight="bold" xml:space="preserve">?</text>
+<text x="119.2" y="55.2" fill="#d0d0d0" xml:space="preserve"> billed  </text>
+<text x="10.0" y="72.2" fill="#d0d0d0" xml:space="preserve">        aeons    ?    ?t · ? ctx/turn</text>
+<text x="10.0" y="89.2" fill="#d0d0d0" xml:space="preserve">        archivist ?    ?t · ? ctx/turn</text>
+<text x="10.0" y="106.2" fill="#d0d0d0" xml:space="preserve">        session  ?    ?t · ? ctx/turn</text>
+<text x="10.0" y="123.2" fill="#d0d0d0" xml:space="preserve"> WIN    5h </text>
+<text x="102.4" y="123.2" fill="#00cd00" xml:space="preserve">?</text>
+<text x="110.8" y="123.2" fill="#d0d0d0" xml:space="preserve">  reset ?</text>
+<text x="10.0" y="140.2" fill="#d0d0d0" xml:space="preserve">        7d </text>
+<text x="102.4" y="140.2" fill="#00cd00" xml:space="preserve">?</text>
+<text x="110.8" y="140.2" fill="#d0d0d0" xml:space="preserve">  reset ?</text>
+<text x="10.0" y="157.2" fill="#d0d0d0" xml:space="preserve"> ROUND  </text>
+<text x="77.2" y="157.2" fill="#cd0000" xml:space="preserve">?</text>
+<text x="85.6" y="157.2" fill="#d0d0d0" xml:space="preserve"> cannot read the round</text>
+<text x="10.0" y="174.2" fill="#d0d0d0" xml:space="preserve"> WHERE  WORKING 1 (30m) · SUBMITTED 1 (1h) · REWORK 1 (2h)</text>
+<text x="10.0" y="191.2" fill="#d0d0d0" xml:space="preserve"> REWORK 3 reopened / 2 landed  gate-red 2, ejected 1</text>
+<text x="10.0" y="208.2" fill="#d0d0d0" xml:space="preserve"> NOW    no aeon working</text>
+<text x="10.0" y="225.2" fill="#d0d0d0" xml:space="preserve"> NEXT   </text>
+<text x="77.2" y="225.2" fill="#ffffff" font-weight="bold" xml:space="preserve">1 ready · ? reachable</text>
+<text x="253.6" y="225.2" fill="#d0d0d0" xml:space="preserve"> — across all partitions:</text>
+<text x="10.0" y="242.2" fill="#d0d0d0" xml:space="preserve"> QUEUE  </text>
+<text x="77.2" y="242.2" fill="#cd0000" font-weight="bold" xml:space="preserve">?</text>
+<text x="85.6" y="242.2" fill="#d0d0d0" xml:space="preserve"> cannot read the queue</text>
+<text x="10.0" y="259.2" fill="#d0d0d0" xml:space="preserve"> RECENT nothing in the window</text>
+<text x="10.0" y="276.2" fill="#d0d0d0" xml:space="preserve"> INFLOW </text>
+<text x="77.2" y="276.2" fill="#cd0000" font-weight="bold" xml:space="preserve">?</text>
+<text x="85.6" y="276.2" fill="#d0d0d0" xml:space="preserve"> cannot read what is being cut</text>
+<text x="10.0" y="293.2" fill="#d0d0d0" xml:space="preserve"> CI     </text>
+<text x="77.2" y="293.2" fill="#cd0000" font-weight="bold" xml:space="preserve">?</text>
+<text x="85.6" y="293.2" fill="#d0d0d0" xml:space="preserve"> cannot read what is parked on CI</text>
+<text x="10.0" y="310.2" fill="#d0d0d0" xml:space="preserve"> ATTN   waiting on you </text>
+<text x="203.2" y="310.2" fill="#ffffff" font-weight="bold" xml:space="preserve">?</text>
+<text x="10.0" y="327.2" fill="#d0d0d0" xml:space="preserve"> SEND   </text>
+<text x="77.2" y="327.2" fill="#ffffff" font-weight="bold" xml:space="preserve">? branches unsent</text>
+<text x="220.0" y="327.2" fill="#d0d0d0" xml:space="preserve"> · ? awaiting rites · oldest ?h</text>
+<text x="77.2" y="344.2" fill="#00cd00" xml:space="preserve">0 fiends</text>
+<text x="144.4" y="344.2" fill="#d0d0d0" xml:space="preserve"> — unsent work that came back</text>
+<text x="10.0" y="361.2" fill="#d0d0d0" xml:space="preserve"> POOLS  compile </text>
+<text x="144.4" y="361.2" fill="#ffffff" font-weight="bold" xml:space="preserve">?/?</text>
+<text x="178.0" y="361.2" fill="#cd0000" xml:space="preserve">? waiting ?s</text>
+<text x="278.8" y="361.2" fill="#d0d0d0" xml:space="preserve"> · test </text>
+<text x="346.0" y="361.2" fill="#ffffff" font-weight="bold" xml:space="preserve">?/?</text>
+<text x="379.6" y="361.2" fill="#cd0000" xml:space="preserve">? waiting ?s</text>
+<text x="480.4" y="361.2" fill="#d0d0d0" xml:space="preserve"> · gate </text>
+<text x="547.6" y="361.2" fill="#ffffff" font-weight="bold" xml:space="preserve">?/?</text>
+<text x="581.2" y="361.2" fill="#cd0000" xml:space="preserve">? waiting ?s</text>
+<text x="10.0" y="378.2" fill="#d0d0d0" xml:space="preserve"> BEADS  24h  closed ? · opened ?</text>
+<text x="10.0" y="395.2" fill="#d0d0d0" xml:space="preserve">        opened ?  closed ?</text>
+<text x="10.0" y="412.2" fill="#d0d0d0" xml:space="preserve">        landed ?  ? in 24h</text>
+</svg>

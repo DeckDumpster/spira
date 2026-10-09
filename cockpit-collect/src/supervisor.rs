@@ -27,6 +27,7 @@ pub const PROBES: &[Probe] = &[
     Probe { name: "now", interval_s: 5, timeout_s: 30, subcommand: "now" },
     Probe { name: "slots", interval_s: 60, timeout_s: 20, subcommand: "slots" },
     Probe { name: "admission", interval_s: 60, timeout_s: 20, subcommand: "admission" },
+    Probe { name: "tsd", interval_s: 60, timeout_s: 30, subcommand: "tsd" },
     Probe { name: "reachable", interval_s: 60, timeout_s: 120, subcommand: "reachable" },
     Probe { name: "sphere", interval_s: 60, timeout_s: 90, subcommand: "sphere" },
     Probe { name: "repo_labels", interval_s: 60, timeout_s: 90, subcommand: "repo_labels" },
@@ -597,7 +598,7 @@ mod tests {
     // properties are asserted directly against it, no extraction needed.
     #[test]
     fn probes_registry_is_well_formed() {
-        assert_eq!(PROBES.len(), 21, "21 probes registered");
+        assert_eq!(PROBES.len(), 22, "22 probes registered");
         let mut seen = std::collections::HashSet::new();
         let mut shorter_timeout = 0;
         for p in PROBES {
