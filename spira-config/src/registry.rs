@@ -86,6 +86,12 @@ fn extract_braced(s: &str, start: usize) -> Option<&str> {
     None
 }
 
+pub fn embedded() -> Result<BTreeMap<String, RegistryKey>, String> {
+    EMBEDDED_CONF_D.iter().map(|(name, text)| Ok((name.to_string(), parse_one(name, text)?))).collect()
+}
+
+include!(concat!(env!("OUT_DIR"), "/embedded_conf_d.rs"));
+
 /// Parses every file directly inside `dir` the way `conf-gen.sh`'s `parse_one` does: `TYPE=`,
 /// `GROUP=`, `DOC=` lines, then a `DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'` heredoc closed by a line
 /// that is exactly `SPIRA_CONF_DEFAULT_EOF`. A filename that is not an uppercase `KEY` (no
@@ -106,12 +112,6 @@ fn extract_braced(s: &str, start: usize) -> Option<&str> {
 /// is the one place that is fatal, since it would otherwise regenerate an empty allowlist);
 /// only a directory `read_dir` cannot open at all — missing, or something else wrong with it —
 /// is refused.
-pub fn embedded() -> Result<BTreeMap<String, RegistryKey>, String> {
-    EMBEDDED_CONF_D.iter().map(|(name, text)| Ok((name.to_string(), parse_one(name, text)?))).collect()
-}
-
-include!(concat!(env!("OUT_DIR"), "/embedded_conf_d.rs"));
-
 pub fn load(dir: &Path) -> Result<BTreeMap<String, RegistryKey>, String> {
     let mut out = BTreeMap::new();
     let entries = fs::read_dir(dir).map_err(|_| format!("no config registry at {}", dir.display()))?;
