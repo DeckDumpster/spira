@@ -230,6 +230,15 @@ impl ProcessProbe {
 
 impl Probe for ProcessProbe {
     fn snapshot(&mut self) -> Result<Snapshot, String> {
+        let started = std::time::Instant::now();
+        let snap = self.take();
+        self.exec.log("(probe)", 0, &format!("in {}ms", started.elapsed().as_millis()), "", "");
+        snap
+    }
+}
+
+impl ProcessProbe {
+    fn take(&mut self) -> Result<Snapshot, String> {
         let work = self.exec.world.join("work");
         let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&work).args(args), COMMAND_DEADLINE);
         let mut snap = Snapshot::default();
