@@ -60,6 +60,7 @@ fn file_incident(title: &str, body: &str) -> Result<(), String> {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "incident.sh".into());
+    // batch-job: the filer opens a bead and runs for as long as that takes
     let mut child = Command::new(bin)
         .args(["file", title, "-"])
         .stdin(Stdio::piped())
