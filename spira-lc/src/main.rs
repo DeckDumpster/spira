@@ -416,7 +416,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
          LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
         blockers_join()
     );
-    let beads = match conn.query(&sql) {
+    let mut beads = match conn.query(&sql) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
