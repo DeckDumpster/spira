@@ -206,6 +206,42 @@ pub struct Snapshot {
     pub batches: Vec<BatchRow>,
 }
 
+/// A source that failed this pass keeps its last good read instead of drawing an empty
+/// section: one timed-out `spira-lc list` made ROUND read "none open" and NOW "?" for a
+/// refresh (per Ryan 2026-10-09: "i just collapsed it ... and then it just disappeared").
+/// The failure is still named in the frame, with how old the data shown is.
+pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
+    if new.errors.is_empty() {
+        return;
+    }
+    let mut kept = false;
+    macro_rules! keep {
+        ($f:ident) => {
+            if new.$f.is_empty() && !last.$f.is_empty() {
+                new.$f = last.$f.clone();
+                kept = true;
+            }
+        };
+    }
+    keep!(rows);
+    keep!(meta);
+    keep!(graph);
+    keep!(edges);
+    keep!(dwell);
+    keep!(batches);
+    if new.live.is_none() && last.live.is_some() {
+        new.live = last.live.clone();
+        kept = true;
+    }
+    if new.claimable.is_none() && last.claimable.is_some() {
+        new.claimable = last.claimable.clone();
+        kept = true;
+    }
+    if kept {
+        new.errors.push(format!("showing the last good read from {} ago", age(new.now - last.now)));
+    }
+}
+
 /// The ids a commit subject names as its own work: `sp-x: …` or `… merge sp-x (…`.
 pub fn own_ids(subject: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -349,6 +385,27 @@ pub struct PassProgress {
 }
 
 impl PassProgress {
+    /// Read the progress file in either writer's shape. round-vm (sp-3feiym) writes `round`
+    /// as the head sha, `pass` as a sha and `verdict: null`; the Concierge's interim writer
+    /// wrote a round name and a pass number. A strict parse of the one shape dropped the
+    /// other, and the pass row vanished whenever round-vm had written last (2026-10-09).
+    pub fn from_json(v: &serde_json::Value) -> Option<PassProgress> {
+        let n = |k: &str| v[k].as_i64();
+        Some(PassProgress {
+            round: v["round"].as_str()?.to_string(),
+            pass: v["pass"].as_u64().map(|p| p as u32).unwrap_or(0),
+            phase: v["phase"].as_str()?.to_string(),
+            verdict: v["verdict"].as_str().unwrap_or("").to_string(),
+            done: n("done").unwrap_or(0) as u32,
+            total: n("total").unwrap_or(0) as u32,
+            red: v["red"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
+            build_started: n("build_started").unwrap_or(0),
+            suites_started: n("suites_started").unwrap_or(0),
+            cap: n("cap").unwrap_or(900),
+            updated_at: n("updated_at")?,
+        })
+    }
+
     /// A pass is running while it is building or testing and its writer is still fresh.
     pub fn running(&self, now: i64) -> bool {
         // fences and build write no progress between their start and their end, so a quiet
@@ -735,6 +792,16 @@ pub fn view(s: &Snapshot) -> View {
                     .collect(),
             }
         });
+    // round-vm's writer names the round by its head sha and the pass by a sha: one VM round
+    // runs at a time, so a sha-named pass is the open round's current pass.
+    if let (Some(p), Some(r)) = (v.progress.as_mut(), v.round.as_ref()) {
+        if p.round.len() == 40 && p.round.chars().all(|c| c.is_ascii_hexdigit()) {
+            p.round = r.name.clone();
+            if p.pass == 0 {
+                p.pass = r.passes as u32;
+            }
+        }
+    }
 
     let mut by_kind: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for r in s.rows.iter().filter(|r| !r.holds.is_empty() && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED")) {
@@ -1159,6 +1226,30 @@ mod tests {
         // READY/REWORK bead is claimable.
         let claimable = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && r.holds.is_empty()).map(|r| r.id.clone()).collect();
         Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, claimable: Some(claimable), ..Default::default() }
+    }
+
+    #[test]
+    fn the_progress_file_reads_in_round_vms_shape_and_the_interim_one() {
+        let rvm = serde_json::json!({"round":"dfd19c066c083a9d27e5c96a5eb2d287ab3ec5fc","pass":"a8fed047ab22f7b53f78603e3a54657c6c921c8e","phase":"suites","verdict":null,"done":299,"total":451,"red":["test-x.sh"],"build_started":1,"suites_started":2,"cap":900,"updated_at":3});
+        let p = PassProgress::from_json(&rvm).expect("round-vm's shape parses");
+        assert_eq!((p.done, p.total, p.pass, p.verdict.as_str()), (299, 451, 0, ""));
+        let old = serde_json::json!({"round":"r-auto-102","pass":4,"phase":"done","verdict":"green","done":451,"total":451,"red":[],"build_started":1,"suites_started":2,"cap":900,"updated_at":3});
+        assert_eq!(PassProgress::from_json(&old).unwrap().pass, 4);
+    }
+
+    #[test]
+    fn a_failed_source_keeps_its_last_good_read_and_says_so() {
+        let mut last = Snapshot { now: 100, ..Default::default() };
+        last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
+        last.batches.push(BatchRow { id: "r-1".into(), state: "OPEN".into(), ..Default::default() });
+        let mut new = Snapshot { now: 160, errors: vec!["spira-lc list: exit 124".into()], ..Default::default() };
+        carry_forward(&mut new, &last);
+        assert_eq!(new.rows.len(), 1);
+        assert_eq!(new.batches.len(), 1);
+        assert!(new.errors.iter().any(|e| e.contains("last good read")), "{:?}", new.errors);
+        let mut clean = Snapshot { now: 160, ..Default::default() };
+        carry_forward(&mut clean, &last);
+        assert!(clean.rows.is_empty(), "with no failure an empty read is the truth");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{holder_pid, own_ids, render, tail_lines, view, LiveAeon, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{carry_forward, holder_pid, own_ids, render, tail_lines, view, LiveAeon, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -328,7 +328,8 @@ fn gather() -> Snapshot {
     s.progress = spira_config::process::cfg("SPIRA_RUN")
         .ok()
         .and_then(|run| std::fs::read(std::path::Path::new(run.trim()).join("round-progress.json")).ok())
-        .and_then(|b| serde_json::from_slice(&b).ok());
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| cockpit_ops::lcview::PassProgress::from_json(&v));
     s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s
@@ -382,8 +383,13 @@ fn interactive(secs: u64) -> std::io::Result<()> {
     use std::sync::mpsc;
 
     let (tx, rx) = mpsc::channel::<Snapshot>();
+    let mut last: Option<Snapshot> = None;
     std::thread::spawn(move || loop {
-        let snap = gather();
+        let mut snap = gather();
+        if let Some(l) = last.as_ref() {
+            carry_forward(&mut snap, l);
+        }
+        last = Some(snap.clone());
         publish(&snap);
         if tx.send(snap).is_err() {
             return;

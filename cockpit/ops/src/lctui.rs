@@ -418,33 +418,31 @@ fn pass_line(p: &crate::lcview::PassProgress, now: i64) -> String {
     }
 }
 
-/// The current pass, as a subsection of ROUND: open by default while it runs (per Ryan
-/// 2026-10-09), folded once it is over; its bar and its red suites are the children.
+/// The current pass, as a subsection of ROUND, its bar on its own line so it shows without
+/// opening anything (per Ryan 2026-10-09); its red suites are the children, open while it runs.
 fn pass_node(p: &crate::lcview::PassProgress, now: i64) -> Node {
     let running = p.running(now);
-    let head = match (running, p.phase.as_str()) {
-        (true, "fences") => format!("{B}pass {}{R} {CYN}fences{R} {D}on the merged head, {}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
-        (true, "build") => format!("{B}pass {}{R} {CYN}building{R} {D}{}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
-        (true, _) => format!("{B}pass {}{R} {CYN}suites running{R}", p.pass),
-        (false, "done") => {
-            let c = if p.verdict == "green" { GRN } else { RED };
-            format!("{B}pass {}{R} {c}{}{R} {D}{} ago{R}", p.pass, p.verdict, crate::lcview::age(now - p.updated_at))
-        }
-        _ => format!("{B}pass {}{R} {D}no word from the pass for {}{R}", p.pass, crate::lcview::age(now - p.updated_at)),
-    };
-    let mut kids = Vec::new();
-    if p.suites_started > 0 {
+    let bar = || {
         let total = p.total.max(1);
-        let w = 24usize;
+        let w = 20usize;
         let fill = (w as u32 * p.done.min(total) / total) as usize;
         let el = if running { now - p.suites_started } else { p.updated_at - p.suites_started };
         let tc = if el > p.cap { RED } else if el > 720 { YEL } else { "" };
-        kids.push(Node::new(
-            "round/pass/bar",
-            format!("▕{}{}▏ {}/{} · {} red · {tc}{}m{:02}s of {}m{R}", "█".repeat(fill), "░".repeat(w - fill), p.done, p.total, p.red.len(), el / 60, el % 60, p.cap / 60),
-        ));
-    }
-    kids.extend(p.red.iter().map(|s| Node::new(format!("round/pass/{s}"), format!("{RED}{s}{R}"))));
+        let red = if p.red.is_empty() { "0 red".to_string() } else { format!("{RED}{} red{R}", p.red.len()) };
+        format!("▕{}{}▏ {}/{} · {red} · {tc}{}m{:02}s of {}m{R}", "█".repeat(fill), "░".repeat(w - fill), p.done, p.total, el / 60, el % 60, p.cap / 60)
+    };
+    let head = match (running, p.phase.as_str()) {
+        (true, "fences") => format!("{B}pass {}{R} {CYN}fences{R} {D}on the merged head, {}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
+        (true, "build") => format!("{B}pass {}{R} {CYN}building{R} {D}{}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
+        (true, _) => format!("{B}pass {}{R} {}", p.pass, bar()),
+        (false, "done") => {
+            let c = if p.verdict == "green" { GRN } else { RED };
+            let tail = if p.suites_started > 0 { format!(" {}", bar()) } else { String::new() };
+            format!("{B}pass {}{R} {c}{}{R}{tail} {D}{} ago{R}", p.pass, p.verdict, crate::lcview::age(now - p.updated_at))
+        }
+        _ => format!("{B}pass {}{R} {D}no word from the pass for {}{R}", p.pass, crate::lcview::age(now - p.updated_at)),
+    };
+    let kids = p.red.iter().map(|s| Node::new(format!("round/pass/{s}"), format!("{RED}{s}{R}"))).collect();
     let n = Node::new("round/pass", head).kids(kids);
     if running { n } else { n.closed() }
 }
@@ -918,10 +916,15 @@ mod tests {
         let all_collapsed = Ui { modes: [("round".to_string(), Mode::Collapsed)].into_iter().collect(), ..Default::default() };
         let pinned = text(&layout(&v, &all_collapsed, 100, 40));
         assert!(pinned[1].contains("⟳ r-auto-96 pass 2") && pinned[1].contains("226/452"), "pinned under the banner even with ROUND collapsed: {pinned:#?}");
+        let pass_folded = Ui { modes: [("round/pass".to_string(), Mode::Collapsed)].into_iter().collect(), ..Default::default() };
+        let t = text(&layout(&v, &pass_folded, 100, 200));
+        let row = t.iter().find(|l| l.trim_start().starts_with("▸ pass 2")).expect("the pass row stays when collapsed");
+        assert!(row.contains("226/452") && row.contains("▕"), "the bar is on the pass row itself, no expansion needed: {t:#?}");
+        assert!(!has(&t, "test-x.sh"), "collapsing hides only the reds");
         v.progress.as_mut().unwrap().phase = "done".into();
         v.progress.as_mut().unwrap().verdict = "red".into();
         let t = text(&layout(&v, &Ui::default(), 100, 200));
-        assert!(has(&t, "pass 2") && !has(&t, "226/452"), "a finished pass folds: {t:#?}");
+        assert!(has(&t, "pass 2") && has(&t, "226/452") && !has(&t, "test-x.sh"), "a finished pass folds its reds and keeps its bar: {t:#?}");
         assert!(!t[1].contains("⟳"), "no pinned line once the pass is over");
     }
 
