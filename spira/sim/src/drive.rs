@@ -29,7 +29,42 @@ pub struct ActorDef {
 #[derive(Debug, Deserialize)]
 pub struct StepDef {
     pub at: u64,
-    pub command: String,
+    pub command: Option<String>,
+    /// File this bead: a READY lifecycle row the world's summon can claim.
+    pub file: Option<String>,
+    /// Script the stub agent for this bead (`script` lines are `agent::parse` steps); the
+    /// world's summon claims the bead and plays them.
+    pub claim: Option<String>,
+    #[serde(default)]
+    pub script: Vec<String>,
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn bead_id(s: &str) -> Result<&str, String> {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+        Ok(s)
+    } else {
+        Err(format!("scenario: {s:?} is not a bead id"))
+    }
+}
+
+impl StepDef {
+    /// The shell command this step runs in the world.
+    pub fn shell(&self) -> Result<String, String> {
+        match (&self.command, &self.file, &self.claim) {
+            (Some(c), None, None) if self.script.is_empty() => Ok(c.clone()),
+            (None, Some(b), None) if self.script.is_empty() => Ok(format!("spira-lc create-bead {}", bead_id(b)?)),
+            (None, None, Some(b)) if !self.script.is_empty() => {
+                let b = bead_id(b)?;
+                let lines: Vec<String> = self.script.iter().map(|l| shell_quote(&format!("{b} {l}"))).collect();
+                Ok(format!("printf '%s\\n' {} >> \"${}\"", lines.join(" "), crate::agent::SCENARIO_VAR))
+            }
+            _ => Err(format!("scenario: step at {} needs exactly one of command, file, or claim with a script", self.at)),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,14 +74,24 @@ pub struct Scenario {
     pub goal: Option<String>,
     #[serde(default, rename = "actor")]
     pub actors: Vec<ActorDef>,
+    /// Actors taken by name from the release's `sim/actors.toml`: cadence from its real timer
+    /// units, durations from its fitted series.
+    #[serde(default)]
+    pub real_actors: Vec<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<StepDef>,
+    /// The release `real_actors` resolve against; the world's `release` link.
+    #[serde(skip)]
+    pub release: Option<PathBuf>,
 }
 
 pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
     let sc: Scenario = toml::from_str(text).map_err(|e| format!("scenario: {e}"))?;
     if let Some(g) = &sc.goal {
         parse_bead_state(g)?;
+    }
+    for st in &sc.steps {
+        st.shell()?;
     }
     for a in &sc.actors {
         if a.duration_min > a.duration_max {
@@ -64,6 +109,21 @@ pub fn parse_bead_state(spec: &str) -> Result<(String, String), String> {
         Some((b, s)) if !b.is_empty() && !s.is_empty() => Ok((b.to_string(), s.to_string())),
         _ => Err(format!("{spec:?} is not <bead>:<STATE>")),
     }
+}
+
+fn read(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn load_specs(release: &Path, names: &[String]) -> Result<Vec<sim::actors::ActorSpec>, String> {
+    let mut all = sim::actors::parse_specs(&read(&release.join("sim/actors.toml"))?)?;
+    names
+        .iter()
+        .map(|n| match all.iter().position(|a| &a.name == n) {
+            Some(i) => Ok(all.remove(i)),
+            None => Err(format!("scenario: no actor {n:?} in the release's sim/actors.toml")),
+        })
+        .collect()
 }
 
 pub trait Exec {
@@ -239,8 +299,28 @@ pub fn drive(
             }
         }
     }
+    if !sc.real_actors.is_empty() {
+        let release = sc.release.as_deref().ok_or("scenario names real_actors but no release to read them from")?;
+        let specs = load_specs(release, &sc.real_actors)?;
+        let durations = sim::fit::Durations::parse(&read(&release.join("sim/durations.toml"))?)?;
+        for spec in &specs {
+            let timer = read(&release.join("systemd").join(&spec.timer))?;
+            let service = sim::units::timer_target(&spec.timer, &timer);
+            sim::units::require_oneshot(&service, &read(&release.join("systemd").join(&service))?)?;
+            let schedule = sim::units::parse_timer(&timer).map_err(|e| format!("{}: {e}", spec.timer))?;
+            let model = durations.series.get(&spec.duration).ok_or_else(|| format!("{}: no fitted series {:?}", spec.name, spec.duration))?.clone();
+            let (command, call) = (spec.command.clone(), call.clone());
+            sim.add_actor(&spec.name, spec.staged, Box::new(move |_, rng| {
+                call(&command);
+                Outcome { writes: Vec::new(), duration: model.sample_ms(rng) }
+            }));
+            for at in schedule.fire_times(sc.epoch, sc.horizon, &mut sim.rng) {
+                sim.schedule_due(at, &spec.name);
+            }
+        }
+    }
     for (i, s) in sc.steps.iter().enumerate() {
-        let (command, call) = (s.command.clone(), call.clone());
+        let (command, call) = (s.shell()?, call.clone());
         let name = format!("step{}", i + 1);
         sim.add_scenario(&name, Box::new(move |_| call(&command)));
         sim.schedule_step(s.at, &name);

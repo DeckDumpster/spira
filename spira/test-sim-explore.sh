@@ -16,9 +16,6 @@ git -C "$REPO" init -q --initial-branch=main && git -C "$REPO" add -A && git -C 
 NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
 W="$T/w"
 (cd "$REPO" && env "${NOLOC[@]}" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" world up "$W") 2>&1 | tail -3
-sed -i '/SPIRA_LIFECYCLE_ENFORCE/d' "$W/config/sim.env"
-echo "SPIRA_HOME=$W/release/spira" >> "$W/config/sim.env"
-env "${NOLOC[@]}" "$SPIRA_RELEASE/bin/spira-config" set spira.batcher_enable 1 "$W/config/sim.toml"
 in_world() {
     local -a kv=()
     local line

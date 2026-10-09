@@ -2,7 +2,8 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>";
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+       sim summon";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
@@ -36,6 +37,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("run") => return run_main(&cwd, &args[1..], &env),
         Some("step") => return step_main(&args[1..]),
         Some("replay") => return replay_main(&args[1..]),
+        Some("summon") => return summon_main(&env),
         Some("probe") => {
             let [dir] = &args[1..] else { return Err(USAGE.to_string()) };
             print!("{}", spira_sim::probe::probe(&PathBuf::from(dir), &env)?);
@@ -69,6 +71,17 @@ fn round_vm_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Resul
     let (code, err) = roundvm::run(&PathBuf::from(world), args, env, now);
     eprint!("{err}");
     std::process::exit(code);
+}
+
+fn summon_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
+    use spira_sim::agent::{SCENARIO_VAR, STATE_VAR};
+    let need = |k: &str| env(k).filter(|v| !v.is_empty()).ok_or(format!("{k} is not set: sim summon answers only inside a world"));
+    let world = need(spira_sim::roundvm::WORLD_ENV)?;
+    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?))?;
+    for id in ran {
+        println!("sim summon: ran the stub agent for {id}");
+    }
+    Ok(())
 }
 
 fn flags(args: &[String], known: &[&str], bare: &[&str]) -> Result<(Vec<String>, std::collections::BTreeMap<String, String>), String> {
