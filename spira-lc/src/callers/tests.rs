@@ -454,6 +454,15 @@ fn resubmit_records_a_moved_tip_with_no_verdict() {
 }
 
 #[test]
+fn resubmit_on_a_rework_bead_names_its_refusal() {
+    let mut f = Fake::default();
+    f.bead("sp-rw", BeadState::Rework);
+    let a = go(&mut f, "resubmit", &["sp-rw", "ddd"]);
+    assert_eq!((a.code, f.state("sp-rw")), (REFUSED, "REWORK"));
+    assert!(a.stderr.contains("sp-rw is REWORK") && a.stderr.contains("spira-lc event"), "{}", a.stderr);
+}
+
+#[test]
 fn every_event_verb_needs_its_arguments() {
     let mut f = Fake::default();
     for (verb, args) in [("hold", vec!["sp-a"]), ("drop", vec!["sp-a"]), ("returned", vec!["sp-a"]), ("content-on-base", vec!["sp-a"]), ("certify", vec!["sp-a", "t"]), ("deliver", vec!["push-delivered", "sp-a"]), ("state", vec![])] {
