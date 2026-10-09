@@ -384,6 +384,14 @@ pub fn incident_blocks_refusal(id: &str, depid: &str, incident_label: &str) -> S
     )
 }
 
+/// The refusal for a `blocks` edge onto an epic: an epic closes only when its children
+/// close, so the child could never become ready.
+pub fn epic_blocks_refusal(id: &str, depid: &str) -> String {
+    format!(
+        "bead: dep add: refusing — {depid} is an epic, which closes only when its children close; a blocks edge onto it deadlocks {id}. Use: bead.sh dep add {id} {depid} --type parent-child"
+    )
+}
+
 // ---------------------------------------------------------------------------------------
 // `contract` — formatting only; the three sections' data comes from main.rs's subprocess
 // calls (`fayth_names`/`fayth_get`, `schema.sh kinds`, `repos_by_name`).
@@ -722,6 +730,13 @@ mod tests {
         assert!(is_blocks_type(Some("blocked-by")));
         assert!(is_blocks_type(Some("depends-on")));
         assert!(!is_blocks_type(Some("relates-to")));
+    }
+
+    #[test]
+    fn epic_blocks_refusal_names_parent_child() {
+        let msg = epic_blocks_refusal("sp-a", "sp-e");
+        assert!(msg.contains("--type parent-child"));
+        assert!(msg.contains("sp-e"));
     }
 
     #[test]
