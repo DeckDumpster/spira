@@ -19,6 +19,7 @@ target/
 # stage_spira_config, Containerfile). Removed right after the build either way it went —
 # this entry is only insurance against a crash leaving it behind.
 /spira/testenv/.doctor-check-spira-config
+/spira/testenv/.doctor-check.toml
 
 # Python bytecode.
 __pycache__/

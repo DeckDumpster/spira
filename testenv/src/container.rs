@@ -198,6 +198,12 @@ const DEPS_TIERS_DOCTOR_CHECK_READS: &[&str] = &["runtime", "optional", "operato
 /// Named so a missing one is a loud `COPY` failure, not a silent absence.
 pub const DOCTOR_CHECK_SPIRA_CONFIG: &str = "testenv/.doctor-check-spira-config";
 
+/// The complete config the image build's two conf.sh-sourcing steps name as `SPIRA_TOML`
+/// (conf.sh refuses without one), staged from the repository's own fixture at
+/// [`DOCTOR_CHECK_FIXTURE`]. The build context is `spira/`, which holds neither.
+pub const DOCTOR_CHECK_TOML: &str = "testenv/.doctor-check.toml";
+const DOCTOR_CHECK_FIXTURE: &str = "spira-config/tests/fixtures/complete.toml";
+
 /// The build closure's share of deps.toml: `<name> <tier>\n` for every entry whose tier
 /// doctor-check.sh checks, sorted by name so the text is independent of the manifest's own
 /// ordering. Unset tier defaults to "optional" (conf.sh's `spira_bin_tier` does the same).
@@ -420,6 +426,20 @@ impl Driver<'_> {
         }
     }
 
+    fn stage_doctor_check_toml(&self, dir: &Path, context: &Path) -> bool {
+        let Some(root) = dir.parent() else {
+            self.err("testenv: cannot find the repository root above the harness — no config to stage for doctor-check");
+            return false;
+        };
+        match self.host.copy_file(&root.join(DOCTOR_CHECK_FIXTURE), &context.join(DOCTOR_CHECK_TOML)) {
+            Ok(()) => true,
+            Err(why) => {
+                self.err(&format!("testenv: could not stage {DOCTOR_CHECK_FIXTURE} into the build context: {why}"));
+                false
+            }
+        }
+    }
+
     fn build_image(&self, img: &str) -> bool {
         let Some(dir) = self.need_harness("image") else {
             return false;
@@ -450,6 +470,11 @@ impl Driver<'_> {
             self.err("testenv: refusing the image build — no spira-config to stage for doctor-check (see above)");
             return false;
         };
+        if !self.stage_doctor_check_toml(&dir, &context) {
+            self.host.remove_tree(&context);
+            self.err("testenv: refusing the image build — no config to stage for doctor-check (see above)");
+            return false;
+        }
         let log = self.host.temp_log();
         let start = self.host.now();
         let args = vec![
