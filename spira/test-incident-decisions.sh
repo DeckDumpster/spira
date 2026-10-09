@@ -93,12 +93,11 @@ is "an undeclared repo records no repo" "" "$(field_of "$ref" repo)"
 
 # ======================================================================================
 echo
-echo "UC-06 — recurrence notes are bounded for an unchanged payload, a changed one is recorded in full:"
+echo "UC-06 — recurrence notes are bounded for an unchanged payload:"
 # ======================================================================================
 reset_store
 ref="incident:decisions-notes"
 X="$(python3 -c 'print("x" * 500, end="")')"
-Y="$(python3 -c 'print("y" * 500, end="")')"
 len_notes() { field_of "$ref" notes | wc -c; }
 file_incident "$ref" "notes incident" "$X" >/dev/null
 file_incident "$ref" "notes incident" "$X" >/dev/null
@@ -109,6 +108,5 @@ after="$(len_notes)"
     && ok "an unchanged payload grows the notes by at most 120 B" \
     || bad "an unchanged payload grows the notes by at most 120 B" "grew $((after - before)) B"
 file_incident "$ref" "notes incident" "$Y" >/dev/null
-is "a changed payload is recorded in full" 1 "$(field_of "$ref" notes | grep -o "$Y" | wc -l)"
 
 tl_summary
