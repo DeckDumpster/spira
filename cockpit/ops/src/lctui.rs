@@ -178,6 +178,11 @@ fn banner(v: &View) -> Vec<String> {
         v.working,
         v.ceiling
     )];
+    // The running pass, pinned under the banner so it is visible whatever is collapsed or
+    // scrolled (per Ryan 2026-10-09); ROUND's pass subsection keeps the detail.
+    if let Some(p) = v.progress.as_ref().filter(|p| p.running(v.now)) {
+        out.push(pass_line(p, v.now));
+    }
     if !v.errors.is_empty() {
         let first = v.errors.first().cloned().unwrap_or_default();
         let more = if v.errors.len() > 1 { format!(" (+{} more)", v.errors.len() - 1) } else { String::new() };
@@ -384,11 +389,31 @@ pub fn tree(v: &View) -> Vec<Node> {
     out
 }
 
+/// One line for a running pass: the round, the phase, and in suites a bar of suites done of
+/// total, the reds, and the time against the cap (yellow past the 12-minute goal, red past it).
+fn pass_line(p: &crate::lcview::PassProgress, now: i64) -> String {
+    let head = format!("{CYN}⟳{R} {B}{}{R} pass {}", p.round, p.pass);
+    match p.phase.as_str() {
+        "fences" => format!("{head} · fences on the merged head {D}{}m, outside the cap{R}", (now - p.build_started) / 60),
+        "build" => format!("{head} · building {D}{}m, outside the cap{R}", (now - p.build_started) / 60),
+        _ => {
+            let total = p.total.max(1);
+            let w = 20usize;
+            let fill = (w as u32 * p.done.min(total) / total) as usize;
+            let el = now - p.suites_started;
+            let tc = if el > p.cap { RED } else if el > 720 { YEL } else { "" };
+            let red = if p.red.is_empty() { "0 red".to_string() } else { format!("{RED}{} red{R}", p.red.len()) };
+            format!("{head} · suites ▕{}{}▏ {}/{} · {red} · {tc}{}m{:02}s of {}m{R}", "█".repeat(fill), "░".repeat(w - fill), p.done, p.total, el / 60, el % 60, p.cap / 60)
+        }
+    }
+}
+
 /// The current pass, as a subsection of ROUND: open by default while it runs (per Ryan
 /// 2026-10-09), folded once it is over; its bar and its red suites are the children.
 fn pass_node(p: &crate::lcview::PassProgress, now: i64) -> Node {
     let running = p.running(now);
     let head = match (running, p.phase.as_str()) {
+        (true, "fences") => format!("{B}pass {}{R} {CYN}fences{R} {D}on the merged head, {}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
         (true, "build") => format!("{B}pass {}{R} {CYN}building{R} {D}{}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
         (true, _) => format!("{B}pass {}{R} {CYN}suites running{R}", p.pass),
         (false, "done") => {
@@ -866,10 +891,14 @@ mod tests {
         let at = |s: &str| t.iter().position(|l| l.contains(s));
         assert!(has(&t, "pass 2") && has(&t, "226/452") && has(&t, "test-x.sh"), "{t:#?}");
         assert!(at("pass 2").unwrap() < at("sp-m0").unwrap(), "the pass comes first under ROUND");
+        let all_collapsed = Ui { modes: [("round".to_string(), Mode::Collapsed)].into_iter().collect(), ..Default::default() };
+        let pinned = text(&layout(&v, &all_collapsed, 100, 40));
+        assert!(pinned[1].contains("⟳ r-auto-96 pass 2") && pinned[1].contains("226/452"), "pinned under the banner even with ROUND collapsed: {pinned:#?}");
         v.progress.as_mut().unwrap().phase = "done".into();
         v.progress.as_mut().unwrap().verdict = "red".into();
         let t = text(&layout(&v, &Ui::default(), 100, 200));
         assert!(has(&t, "pass 2") && !has(&t, "226/452"), "a finished pass folds: {t:#?}");
+        assert!(!t[1].contains("⟳"), "no pinned line once the pass is over");
     }
 
     #[test]

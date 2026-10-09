@@ -315,7 +315,7 @@ pub struct RoundView {
 pub struct PassProgress {
     pub round: String,
     pub pass: u32,
-    /// build | suites | done
+    /// fences | build | suites | done
     pub phase: String,
     #[serde(default)]
     pub verdict: String,
@@ -332,7 +332,13 @@ pub struct PassProgress {
 impl PassProgress {
     /// A pass is running while it is building or testing and its writer is still fresh.
     pub fn running(&self, now: i64) -> bool {
-        matches!(self.phase.as_str(), "build" | "suites") && now - self.updated_at <= 90
+        // fences and build write no progress between their start and their end, so a quiet
+        // writer is only stale after 15 minutes there; suites update every 5 s.
+        match self.phase.as_str() {
+            "fences" | "build" => now - self.updated_at <= 900,
+            "suites" => now - self.updated_at <= 90,
+            _ => false,
+        }
     }
 }
 
@@ -430,10 +436,15 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
         let mut parts: Vec<String> = Vec::new();
         let mut red = false;
         if matches!(name, "READY" | "REWORK") {
-            let (mut claimable, mut blocked, mut held, mut poison) = (0, 0, 0, 0);
+            // Every bead in exactly one bucket, so the parts sum to the count, and "claimable"
+            // is the claim tool's own set, the same NEXT reads (per Ryan 2026-10-09).
+            let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.iter().any(|l| *l == s.ask_label));
+            let (mut claimable, mut ask, mut blocked, mut held, mut poison, mut landed, mut unclaimable) = (0, 0, 0, 0, 0, 0, 0);
             let mut blockers: BTreeMap<String, usize> = BTreeMap::new();
             for r in &rows {
-                if r.holds.iter().any(|h| h == "poison") {
+                if is_ask(&r.id) {
+                    ask += 1;
+                } else if r.holds.iter().any(|h| h == "poison") {
                     poison += 1;
                 } else if r.holds.iter().any(|h| h == "wait") {
                     blocked += 1;
@@ -442,18 +453,27 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
                     }
                 } else if !r.holds.is_empty() {
                     held += 1;
-                } else if !on_base(&r.id) {
+                } else if on_base(&r.id) {
+                    landed += 1;
+                } else if s.claimable.as_ref().is_some_and(|ids| ids.iter().any(|i| *i == r.id)) {
                     claimable += 1;
+                } else {
+                    unclaimable += 1;
                 }
             }
-            parts.push(format!("claimable {claimable}"));
+            if s.claimable.is_some() {
+                parts.push(format!("claimable {claimable}"));
+            } else {
+                parts.push("claimable unknown".into());
+            }
             if blocked > 0 {
                 let mut top: Vec<(usize, String)> = blockers.into_iter().map(|(b, n)| (n, b)).collect();
                 top.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
                 let names = top.iter().take(2).map(|(_, b)| b.clone()).collect::<Vec<_>>().join(" ");
                 parts.push(if names.is_empty() { format!("blocked {blocked}") } else { format!("blocked {blocked} ← {names}") });
             }
-            for (label, n) in [("held", held), ("poison", poison)] {
+            let not_taken = if s.claimable.is_some() { "unclaimable" } else { "unheld" };
+            for (label, n) in [("held", held), ("poison", poison), ("ask", ask), ("drift", landed), (not_taken, unclaimable)] {
                 if n > 0 {
                     parts.push(format!("{label} {n}"));
                 }
@@ -771,7 +791,9 @@ pub fn view(s: &Snapshot) -> View {
         .iter()
         .copied()
         .filter(|r| match &s.claimable {
-            Some(ids) => ids.iter().any(|i| *i == r.id) && !is_ask(&r.id),
+            // Drift (its commit already on the base) is never NEXT, even if the claim tool,
+            // which cannot see the base, would take it; it shows under DRIFT instead.
+            Some(ids) => ids.iter().any(|i| *i == r.id) && !is_ask(&r.id) && !s.on_base.contains_key(&r.id),
             None => false,
         })
         .collect();
@@ -1088,7 +1110,30 @@ mod tests {
     }
 
     fn snap(rows: Vec<Row>) -> Snapshot {
-        Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, ..Default::default() }
+        // The claim tool's answer a fixture assumes unless it says otherwise: every unheld
+        // READY/REWORK bead is claimable.
+        let claimable = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && r.holds.is_empty()).map(|r| r.id.clone()).collect();
+        Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, claimable: Some(claimable), ..Default::default() }
+    }
+
+    #[test]
+    fn ready_buckets_sum_to_its_count_and_claimable_is_the_claim_tools_set() {
+        let mut held = row("sp-held", "READY", 3);
+        held.holds = vec!["manual".into()];
+        let mut waiting = row("sp-wait", "READY", 4);
+        waiting.holds = vec!["wait".into()];
+        let mut s = snap(vec![row("sp-free", "READY", 1), row("sp-dep", "READY", 2), held, waiting, row("sp-ask", "READY", 5)]);
+        s.ask_label = "fixture-ask-label".into();
+        s.meta.insert("sp-ask".into(), Meta { labels: vec![s.ask_label.clone()], ..Default::default() });
+        s.claimable = Some(vec!["sp-free".into()]);
+        let st = state_machine(&s, &|_| false).into_iter().find(|x| x.name == "READY").unwrap();
+        assert_eq!(st.count, 5);
+        for part in ["claimable 1", "blocked 1", "held 1", "ask 1", "unclaimable 1"] {
+            assert!(st.detail.contains(part), "{part} in {}", st.detail);
+        }
+        s.claimable = None;
+        let st = state_machine(&s, &|_| false).into_iter().find(|x| x.name == "READY").unwrap();
+        assert!(st.detail.contains("claimable unknown"), "{}", st.detail);
     }
 
     #[test]
