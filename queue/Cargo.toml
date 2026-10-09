@@ -11,6 +11,7 @@ libc = "0.2"
 spira-config = { path = "../spira-config" }
 gate = { path = "../gate" }
 release = { path = "../release" }
+landing-pass = { path = "../landing-pass" }
 
 [[bin]]
 name = "queue"

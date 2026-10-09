@@ -465,6 +465,27 @@ fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
 }
 
 #[test]
+fn certify_records_a_red_verdict_for_a_bead_already_in_delivery_and_ignores_the_rest() {
+    let mut f = Fake::default();
+    f.bead("sp-d", BeadState::InDelivery).tip = Some("ddd".into());
+    let a = go(&mut f, "certify", &["sp-d", "ddd", "red", "branch-red"]);
+    assert_eq!(a.code, APPLIED, "{:?}", a.cert_log);
+    assert_eq!(f.events.last().unwrap().2, "IN_DELIVERY");
+    assert_eq!(f.state("sp-d"), "IN_DELIVERY");
+    assert_eq!(f.beads["sp-d"].reason.as_deref(), Some("gate-red: suites-failed"));
+
+    f.bead("sp-m", BeadState::InDelivery).tip = Some("new".into());
+    let a = go(&mut f, "certify", &["sp-m", "old", "red", "branch-red"]);
+    assert_eq!(a.code, REFUSED, "a red at a superseded tip is refused");
+    assert_eq!(f.beads["sp-m"].reason, None);
+
+    f.bead("sp-p", BeadState::InDelivery).tip = Some("ppp".into());
+    let n = f.events.len();
+    let a = go(&mut f, "certify", &["sp-p", "ppp", "pass", "k"]);
+    assert_eq!((a.code, f.events.len()), (REFUSED, n), "a pass in delivery changes nothing");
+}
+
+#[test]
 fn resubmit_records_a_moved_tip_with_no_verdict() {
     let mut f = Fake::default();
     let r = f.bead("sp-m", BeadState::Certified);

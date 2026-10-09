@@ -137,6 +137,12 @@ impl GateQueue {
         Ok(true)
     }
 
+    /// The verdict for this branch at this tip, left in place for the pass that will judge it.
+    pub fn peek_done(&self, repo: &str, branch: &str, tip: &str) -> Option<Done> {
+        let p = self.dir(Where::Done).join(Job::new(repo, branch, "", tip, false).file());
+        serde_json::from_str(&fs::read_to_string(p).ok()?).ok()
+    }
+
     /// The verdict for this branch at this tip, consumed.
     pub fn take_done(&self, repo: &str, branch: &str, tip: &str) -> Option<Done> {
         let p = self.dir(Where::Done).join(Job::new(repo, branch, "", tip, false).file());

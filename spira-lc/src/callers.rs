@@ -534,7 +534,8 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     if state == "CERTIFIED" && outcome == "pass" {
         return Answer::cert(APPLIED, "already", format!("pass tip={tip} — already CERTIFIED"));
     }
-    if state != "SUBMITTED" {
+    let in_round = state == "IN_DELIVERY" && outcome == "red";
+    if state != "SUBMITTED" && !in_round {
         return Answer::cert(REFUSED, "skip", format!("state={state} tip={tip} outcome={outcome} — not SUBMITTED"));
     }
     let kind = match outcome {
@@ -543,8 +544,9 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
         "infra" => BeadEventKind::GateInfra { tip: tip.into() },
         other => return Answer::cert(CANNOT_TELL, "cannot-tell", format!("unknown outcome {other}")),
     };
-    if event(m, "bead", id, "SUBMITTED", &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0 == 0 {
-        return Answer::cert(APPLIED, "applied", format!("{outcome} tip={tip}"));
+    if event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0 == 0 {
+        let marked = if in_round { " (in delivery — marked for eject)" } else { "" };
+        return Answer::cert(APPLIED, "applied", format!("{outcome} tip={tip}{marked}"));
     }
     Answer::cert(REFUSED, "refused", format!("{outcome} tip={tip}"))
 }

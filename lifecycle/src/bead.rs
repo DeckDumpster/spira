@@ -157,6 +157,8 @@ impl BeadRow {
 /// Recorded in `reason` when a SUBMITTED bead enters delivery, so a requeue returns it to
 /// SUBMITTED and never promotes it to CERTIFIED.
 pub const FROM_SUBMITTED: &str = "delivered-from-submitted";
+/// Prefix of the reason an IN_DELIVERY row carries once a red gate verdict at its tip arrived.
+pub const GATE_RED_MARK: &str = "gate-red: ";
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BeadEventKind {
@@ -771,8 +773,19 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            // A red verdict that lands while the bead is already in a round is recorded, not
+            // dropped: the row stays IN_DELIVERY and its reason marks the member for eject.
+            GateRed { tip, reason } => {
+                if row.tip.as_deref() != Some(tip.as_str()) {
+                    return tip_mismatch(row, tip);
+                }
+                let mut new = row.clone();
+                new.reason = Some(format!("{GATE_RED_MARK}{}", reason.as_str()));
+                new.version += 1;
+                Outcome::applied(new)
+            }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
-            | GateRed { .. } | GateInfra { .. } | Deliver
+            | GateInfra { .. } | Deliver
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
         },
 
@@ -1894,6 +1907,29 @@ mod tests {
         let out = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "t1".into() }));
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::InDelivery);
+    }
+
+    #[test]
+    fn a_red_verdict_at_the_tip_is_recorded_on_an_in_delivery_row_and_marks_it_for_eject() {
+        let mut r = claimed_row(BeadState::InDelivery, "sp-a", "t1");
+        r.tip = Some("t1".into());
+        let red = BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed };
+        let out = apply(&r, &ev(BeadState::InDelivery, r.version, red));
+        assert!(out.applied, "{:?}", out.refusal);
+        assert_eq!(out.row.state, BeadState::InDelivery);
+        assert_eq!(out.row.reason.as_deref(), Some("gate-red: suites-failed"));
+        assert_eq!(out.row.version, r.version + 1);
+    }
+
+    #[test]
+    fn a_red_verdict_at_a_superseded_tip_changes_nothing_on_an_in_delivery_row() {
+        let mut r = claimed_row(BeadState::InDelivery, "sp-a", "t2");
+        r.tip = Some("t2".into());
+        let red = BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed };
+        let out = apply(&r, &ev(BeadState::InDelivery, r.version, red));
+        assert!(!out.applied);
+        assert!(matches!(out.refusal, Some(Refusal::TipMismatch { .. })), "{:?}", out.refusal);
+        assert_eq!(out.row, r);
     }
 
     #[test]

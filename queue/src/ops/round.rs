@@ -11,6 +11,8 @@ use super::batch::lc_return;
 use super::land::land_local_with;
 use super::{actor, czar_ok, idents, landing_log, lc_cas, lock_held_by_caller, read_text, repo_path, require_lc, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::{Round, Text};
+use landing_pass::gateq::GateQueue;
+use landing_pass::model::GateOutcome;
 use crate::ident::bounded_text;
 use crate::lock::Guard;
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
@@ -289,6 +291,13 @@ fn return_to_rework(w: &World, m: &Member) -> Result<(), String> {
     }
 }
 
+/// The gate-worker's recorded FAIL for `spira/<id>` at exactly `tip`, as the gate's own reason.
+/// BASE_FAIL and NO_VERDICT are not the branch's fault and a missing verdict says nothing.
+fn gate_red_at(c: &Ctx, id: &str, tip: &str) -> Option<String> {
+    let done = GateQueue::new(&c.s.run).peek_done(&c.r.name, &format!("spira/{id}"), tip)?;
+    (done.run.outcome == GateOutcome::Fail).then(|| done.run.reason_or("unspecified").to_string())
+}
+
 fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, worktree: Option<&Path>) -> i32 {
     let label = "round open";
     let text = match read_text(w, members_arg) {
@@ -355,10 +364,13 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
                 skips.push(format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state))
             }
             Some(r) => match r.tip.filter(|t| !t.is_empty()) {
-                Some(tip) if tip.starts_with(&m.tip) => {
-                    blocked_by.insert(m.id.clone(), r.blocked_by);
-                    admitted.push(Member { id: m.id, tip })
-                }
+                Some(tip) if tip.starts_with(&m.tip) => match gate_red_at(&c, &m.id, &tip) {
+                    Some(why) => skips.push(format!("{}: its gate is FAIL at {tip} ({why}) — not admitted", m.id)),
+                    None => {
+                        blocked_by.insert(m.id.clone(), r.blocked_by);
+                        admitted.push(Member { id: m.id, tip })
+                    }
+                },
                 Some(tip) => skips.push(format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip)),
                 None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
             },

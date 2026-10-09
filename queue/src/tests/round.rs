@@ -296,6 +296,30 @@ fn open_admits_a_submitted_member_its_full_suite_certifies() {
     assert!(t.lc.has("cut"), "the round is recorded as a batch");
 }
 
+fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
+    use landing_pass::gateq::{Done, GateQueue, Job};
+    let job = Job::new("spira", &format!("spira/{id}"), id, tip, false);
+    let run = landing_pass::model::GateRun::parse(rc, "gate: VERDICT=FAIL reason=branch-red suite=test-x.sh".into());
+    GateQueue::new(&t.s().run).complete(0, &Done { job, run, started_ms: 1, finished_ms: 2 }).unwrap();
+}
+
+#[test]
+fn open_skips_a_submitted_member_whose_gate_is_fail_at_its_current_tip_and_only_that() {
+    let t = round_world();
+    for id in ["sp-f", "sp-old", "sp-base", "sp-nov"] {
+        t.lc_row(id, "SUBMITTED", &format!("t{id}"), 100);
+    }
+    file_gate_verdict(&t, "sp-f", "tsp-f", 1);
+    file_gate_verdict(&t, "sp-old", "an-older-tip", 1);
+    file_gate_verdict(&t, "sp-base", "tsp-base", landing_pass::model::GATE_BASEFAIL);
+    file_gate_verdict(&t, "sp-nov", "tsp-nov", landing_pass::model::GATE_NOVERDICT);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-f,sp-old,sp-base,sp-nov"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("sp-f: its gate is FAIL at tsp-f (branch-red)"), "{o}");
+    let members = o.lines().find_map(|l| l.strip_prefix("members=")).unwrap();
+    assert!(members.contains("sp-a:") && members.contains("sp-old:") && members.contains("sp-base:") && members.contains("sp-nov:") && !members.contains("sp-f:"), "{o}");
+}
+
 #[test]
 fn a_second_round_is_refused_until_the_first_is_closed() {
     let t = round_world();
