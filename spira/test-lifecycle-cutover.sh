@@ -200,7 +200,7 @@ is "a delivery row that did not exist is enqueued from NONE" "NONE" "$(ev_field 
 is "...and cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-sub Cut from_state)"
 
 certify sp-lc-bx tipBX
-root_sql --use-db spira_lifecycle sql -q "UPDATE delivery SET state = 'BATCHED', batch_id = 'batch-elsewhere' WHERE bead_id = 'sp-lc-bx'" >/dev/null
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, batch_id, version) VALUES ('sp-lc-bx', 'queue', 'BATCHED', 'batch-elsewhere', 1)" >/dev/null
 out="$(lc cut batch-bx --repo spira --head HX --base BX --members "sp-lc-bx:tipBX" --actor test 2>&1)"
 wantrc "a cut over a member BATCHED in another batch is refused" 3 $?
 want "...naming that batch" "batch-elsewhere" "$out"
