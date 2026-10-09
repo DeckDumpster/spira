@@ -226,8 +226,9 @@ pub enum Probe {
     /// `CREATE VIEW v`: applied when `information_schema.tables` lists it as a VIEW (the `views`
     /// table needs SHOW VIEW, which the service user does not hold).
     View(String),
-    /// `CREATE OR REPLACE VIEW v AS SELECT ... AS c FROM ...`: applied when `v` lists the
-    /// column `c`, the last alias of its select list — the replacement's own marker.
+    /// `CREATE OR REPLACE VIEW v AS SELECT ... AS c FROM ...`: applied when `SHOW COLUMNS FROM v`
+    /// lists `c`, the last alias of its select list (information_schema.columns does not show
+    /// a view's columns to the service user).
     ViewColumn { view: String, column: String },
     /// No read can tell (an UPDATE with no WHERE, an INSERT, ...): always pending, so a
     /// migration of that shape needs the admin on every activation — write it guarded.
@@ -364,7 +365,7 @@ pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
         Probe::NoRowMatches(q) => Ok(db.rows(&q)?.is_empty()),
         Probe::Table(t) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&t)))?.is_empty()),
         Probe::View(v) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_type = 'VIEW' AND table_name = {}", quote(&v)))?.is_empty()),
-        Probe::ViewColumn { view, column } => Ok(any_cell_is(&db.rows(&table_columns_sql(&view))?, &column)),
+        Probe::ViewColumn { view, column } => Ok(any_cell_is(&db.rows(&format!("SHOW COLUMNS FROM {view}"))?, &column)),
         Probe::Index { table, index } => Ok(!db
             .rows(&format!("SELECT index_name FROM information_schema.statistics WHERE table_schema = 'spira_lifecycle' AND table_name = {} AND index_name = {}", quote(&table), quote(&index)))?
             .is_empty()),
@@ -730,6 +731,9 @@ mod tests {
                 return Err(format!("Access denied for user '{}'", self.user));
             }
             let st = self.state.borrow();
+            if let Some(view) = sql.strip_prefix("SHOW COLUMNS FROM ") {
+                return Ok(st.columns.iter().filter(|(t, _)| t == view).map(|(_, c)| serde_json::json!({ "Field": c })).collect());
+            }
             if sql.contains("information_schema.columns") {
                 let table = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(st.columns.iter().filter(|(t, _)| t == table).map(|(_, c)| serde_json::json!({ "COLUMN_NAME": c })).collect());
