@@ -83,7 +83,13 @@ install_fixture_build() {
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
     printf '# empty\n' > "$fixture/spira/repo-map.example"
     install_fixture_release_stub "$fixture/spira"
+    install_fixture_compose_stub "$fixture/spira"
     install_fixture_release_bins "$fixture"
+}
+
+install_fixture_compose_stub() {
+    printf '#!/usr/bin/env bash\ncase "${1:-}" in compose) printf "spira compose: stub\\n" ;; esac\nexit 0\n' > "$1/spira"
+    chmod +x "$1/spira"
 }
 
 install_fixture_release_stub() {
@@ -213,6 +219,7 @@ mk_install_fixture() {
     [ -e "$spira/conf.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.d" "$spira/conf.d"
     printf '# empty\n' > "$spira/watchers"
     printf '# empty\n' > "$spira/repo-map.example"
+    install_fixture_compose_stub "$spira"
     # Root/spira/cockpit exec targets outside bin/ (concierge.sh, mail.sh, moot-sweep.sh, ...)
     # are stubbed by install_fixture_release_bins (sp-m6ow8), which every caller of this
     # fixture also calls — not duplicated here.

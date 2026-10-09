@@ -82,6 +82,8 @@ struct Config {
     lock_path: PathBuf,
     reconciler_state: PathBuf,
     reconciler_status_log: PathBuf,
+    reconciler_stamp: PathBuf,
+    reconciler_grace_secs: u64,
     round_min_n: u32,
     round_stall_secs: u64,
     spira_db: String,
@@ -102,7 +104,7 @@ struct Config {
 /// `SPIRA_CZAR_STAGE_*` registrations exactly — a class here with no registered key is a
 /// config-registry bug, not a defaulting decision).
 const CZAR_STAGE_CLASSES: &[&str] =
-    &["ATTRIBUTION_FAILED", "BASE_RED", "CI_RED", "CI_STALLED", "DEADLOCK", "LOOP_STALLED", "POOL_IDLE", "SORT_FAILED", "STARVED"];
+    &["ATTRIBUTION_FAILED", "BASE_RED", "CI_RED", "CI_STALLED", "DEADLOCK", "LOOP_STALLED", "POOL_IDLE", "RECONCILER_STALE", "SORT_FAILED", "STARVED"];
 
 /// One source of config (per Ryan 2026-10-05): a registered key's value comes from
 /// `spira_config::process::cfg`, resolved from `$SPIRA_TOML` — never from this process's
@@ -164,6 +166,8 @@ impl Config {
             lock_path: spira_run.join("czar-pass.lock"),
             reconciler_state: paths::state(&spira_run),
             reconciler_status_log: paths::status_log(&spira_run),
+            reconciler_stamp: paths::pass_stamp(&spira_run),
+            reconciler_grace_secs: must_cfg_parse("SPIRA_RECONCILER_GRACE_SECS"),
             // Batcher's own adaptive_n floor (batcher/src/core.rs: raw.clamp(4.0, 30.0)) — a
             // pool below this can never be a PoolFull trigger, whatever the adaptive ceiling
             // turns out to be, so it is the one threshold this detector can check without
@@ -591,6 +595,9 @@ fn run_pass() -> Result<(), String> {
     // ── DETECTOR: pool-idle (certified pool full, no batch open, no round cut) ──
     let (pi_v, pi_rem, pi_tier) = detect_pool_idle(&cfg, &mut state);
 
+    // ── DETECTOR: reconciler-stale (the reconciler's own pass stamp) ─────────
+    let (rs_v, rs_rem, rs_tier) = detect_reconciler_stale(&cfg, &mut state);
+
     // Telemetry — one line per class per pass.
     telem(&cfg, "deadlock",           &dl_v,  dl_rem,  dl_tier);
     telem(&cfg, "attribution-failed", &af_v,  af_rem,  af_tier);
@@ -600,6 +607,7 @@ fn run_pass() -> Result<(), String> {
     telem(&cfg, "ci-red",             &cir_v, cir_rem, cir_tier);
     telem(&cfg, "base-red",           &br_v,  br_rem,  br_tier);
     telem(&cfg, "pool-idle",          &pi_v,  pi_rem,  pi_tier);
+    telem(&cfg, "reconciler-stale",   &rs_v,  rs_rem,  rs_tier);
 
     let _ = save_state(&cfg.reconciler_state, &state);
 
@@ -1266,6 +1274,42 @@ fn queue_repo_names(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
 /// already have cut, whatever its ceiling turns out to be) with no batch open, for longer
 /// than `round_stall_secs`. A batch already open is deliberate back-pressure
 /// (law-queue-back-pressure-is-an-open-pr), not a stall: silent there, whatever the depth.
+fn detect_reconciler_stale(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str) {
+    let stamp = fs::read_to_string(&cfg.reconciler_stamp).ok().map(|s| s.trim().to_string());
+    let raw = match stamp.as_deref().map(str::parse::<u64>) {
+        None => RawStatus::Gap {
+            desired: format!("a reconciler pass within {}s", cfg.reconciler_grace_secs),
+            observed: format!("no pass stamp at {}", cfg.reconciler_stamp.display()),
+            since_hint: None,
+        },
+        Some(Err(_)) => RawStatus::Unobservable { reason: format!("{} unparseable", cfg.reconciler_stamp.display()) },
+        Some(Ok(at)) => {
+            let age = cfg.now_secs.saturating_sub(at);
+            if age > cfg.reconciler_grace_secs {
+                RawStatus::Gap {
+                    desired: format!("a reconciler pass within {}s", cfg.reconciler_grace_secs),
+                    observed: format!("last pass {}s ago", age),
+                    since_hint: Some(at),
+                }
+            } else {
+                RawStatus::Satisfied
+            }
+        }
+    };
+    let verdict = evaluate(cfg, state, "reconciler-stale", raw, cfg.reconciler_grace_secs);
+    if !verdict.is_gap || matches!(verdict.status, RawStatus::Unobservable { .. }) {
+        return (verdict, "none", "det");
+    }
+    let body = format!(
+        "The reconciler has not completed a pass within {}s.\n\nCheck: spira-reconciler.timer is enabled and active, \
+         and {} is being written.\n",
+        cfg.reconciler_grace_secs,
+        cfg.reconciler_stamp.display()
+    );
+    infer(cfg, "reconciler-stale", "reconciler-stale", "RECONCILER: no pass completed — reconciler is not running", &body);
+    (verdict, "inference", "inf")
+}
+
 fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str) {
     let mut remedy: &'static str = "none";
     let mut tier: &'static str = "det";
@@ -1552,6 +1596,8 @@ mod tests {
             lock_path: dir.join("czar-pass.lock"),
             reconciler_state: dir.join("reconciler-state.json"),
             reconciler_status_log: dir.join("reconciler-status.jsonl"),
+            reconciler_stamp: dir.join("reconciler-pass.stamp"),
+            reconciler_grace_secs: 300,
             round_min_n: 4,
             round_stall_secs: 900,
             spira_db: String::new(),
@@ -1889,6 +1935,29 @@ mod tests {
         assert!(!v.is_gap, "3 certified members must not fire against the floor of 4");
         assert_eq!(remedy, "none");
         assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_reconciler_stale_fires_on_a_planted_stale_stamp_and_is_silent_when_fresh() {
+        let dir = scratch_dir("reconciler-stale");
+        let cfg = test_config(&dir, KNOWN_EPOCH + 10_000);
+
+        fs::write(&cfg.reconciler_stamp, format!("{}\n", KNOWN_EPOCH + 10_000 - 30)).unwrap();
+        let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
+        assert!(!v.is_gap, "a pass 30s ago is live");
+
+        fs::write(&cfg.reconciler_stamp, format!("{}\n", KNOWN_EPOCH)).unwrap();
+        let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
+        assert!(v.is_gap, "a stamp older than the grace must be a gap");
+        assert!(matches!(v.status, RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn detect_reconciler_stale_missing_stamp_is_a_gap() {
+        let dir = scratch_dir("reconciler-stale-missing");
+        let cfg = test_config(&dir, KNOWN_EPOCH);
+        let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
+        assert!(matches!(v.status, RawStatus::Gap { .. }));
     }
 
     #[test]

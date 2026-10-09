@@ -1,0 +1,6 @@
+TYPE=czar_stage
+GROUP=czar
+DOC=SPIRA_CZAR_STAGE_RECONCILER_STALE — Shadow: the czar notes a stale reconciler status; it mutates nothing until an operator sets act.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CZAR_STAGE_RECONCILER_STALE:=shadow}"
+SPIRA_CONF_DEFAULT_EOF

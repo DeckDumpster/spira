@@ -59,3 +59,23 @@ fn applying_the_default_document_bootstraps_a_fresh_install() {
 
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn the_default_document_declares_the_reconciler_timer_enabled_and_active() {
+    let text = fs::read_to_string(manifest_path("examples/default.toml")).unwrap();
+    let doc: toml::Value = toml::from_str(&text).unwrap();
+    let units = doc["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["kind"].as_str() == Some("Units"))
+        .expect("a Units resource");
+    let row = units["spec"]["units"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["name"].as_str() == Some("spira-reconciler.timer"))
+        .expect("the reconciler timer is declared");
+    assert_eq!(row["enabled"].as_bool(), Some(true));
+    assert_eq!(row["active"].as_bool(), Some(true));
+}

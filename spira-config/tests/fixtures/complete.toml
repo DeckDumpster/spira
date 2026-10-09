@@ -90,6 +90,7 @@ czar_stage_ci_stalled = "shadow"
 czar_stage_deadlock = "shadow"
 czar_stage_loop_stalled = "shadow"
 czar_stage_pool_idle = "shadow"
+czar_stage_reconciler_stale = "shadow"
 czar_stage_sort_failed = "shadow"
 czar_stage_starved = "shadow"
 czar_unclaimed_mins = 10
