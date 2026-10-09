@@ -37,6 +37,28 @@ pub fn cmd_ops_gantt(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// Refused bead events inside the last `window_secs`, one row per (actor, event, from_state,
+/// refusal) with the count, the span and the newest five `bead@epoch` examples.
+pub fn refusals_sql(window_secs: u64) -> String {
+    format!(
+        "SELECT actor, event, from_state, refusal, COUNT(*) AS n, MIN(at) AS first_at, MAX(at) AS last_at, \
+         SUBSTRING_INDEX(GROUP_CONCAT(CONCAT(lc_key, '@', at) ORDER BY at DESC SEPARATOR ','), ',', 5) AS examples \
+         FROM event WHERE machine = 'bead' AND applied = 0 AND at >= UNIX_TIMESTAMP() - {window_secs} \
+         GROUP BY actor, event, from_state, refusal"
+    )
+}
+
+/// `ops-refusals <window-secs>`: the refused bead events of the window, grouped by who asked.
+pub fn cmd_ops_refusals(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(window) = args.first().and_then(|a| a.parse::<u64>().ok()).filter(|w| *w > 0) else {
+        return (2, "ops-refusals: takes one positive <window-secs>".into());
+    };
+    match conn.query(&refusals_sql(window)) {
+        Ok(rows) => (0, serde_json::json!({ "now": crate::db::now_epoch(), "classes": rows }).to_string()),
+        Err(e) => (2, format!("cannot tell: {e:?}")),
+    }
+}
+
 /// One bead's whole timeline, refused events included, with the row that says who holds it.
 pub fn cmd_ops_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
@@ -111,6 +133,13 @@ mod tests {
         assert_eq!(title_priority(r#"{"title":"t","priority":0}"#), Some(("t".into(), 0)));
         assert_eq!(title_priority(r#"{"title":"t"}"#), None);
         assert_eq!(title_priority("not json"), None);
+    }
+
+    #[test]
+    fn the_refusal_query_reads_only_refused_bead_events_of_the_window() {
+        let q = refusals_sql(86400);
+        assert!(q.contains("machine = 'bead' AND applied = 0") && q.contains("UNIX_TIMESTAMP() - 86400"), "{q}");
+        assert!(q.contains("GROUP BY actor, event, from_state, refusal"), "{q}");
     }
 
     #[test]

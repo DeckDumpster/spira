@@ -49,7 +49,7 @@ fn a_timer_and_its_service_share_a_plane() {
 
 #[test]
 fn detectors_are_observability_and_the_loop_is_work() {
-    for d in ["auron", "watchtower", "skew", "notify", "refresh", "verify-asks", "gate-check", "cert-sweep-full", "cert-sweep-sample"] {
+    for d in ["auron", "watchtower", "skew", "notify", "refresh", "verify-asks", "gate-check", "cert-sweep-full", "cert-sweep-sample", "refusal-watch"] {
         assert_eq!(plane_of_shipped(&format!("spira-{d}.timer")), Some(Plane::Observability), "{d}");
     }
     for w in ["summon", "sentinel", "landing-pass", "verdict", "publish", "reconciler", "reconciler-flow", "groom", "gh-intake", "ops", "czar-pass", "maechen", "straggler-sweep", "reap-terminal"] {
