@@ -48,6 +48,8 @@ pub enum Mode {
     /// lib.sh `park_branch_collisions`'s shim target; stdin is detect's output
     /// (wave 4.28, sp-fbqsv).
     ParkCollisions,
+    /// `detect_file_overlaps`'s shim target (sp-aeiv2).
+    DetectOverlaps,
 }
 
 impl Mode {
@@ -65,6 +67,7 @@ impl Mode {
             Some("--file-unclaimable") => Mode::FileUnclaimable,
             Some("--detect-collisions") => Mode::DetectCollisions,
             Some("--park-collisions") => Mode::ParkCollisions,
+            Some("--detect-overlaps") => Mode::DetectOverlaps,
             _ => Mode::Pass,
         }
     }
@@ -402,6 +405,11 @@ impl<'a> Sentinel<'a> {
                 self.h.print(&text.join("\n"));
                 0
             }
+            Mode::DetectOverlaps => {
+                let text: Vec<String> = self.detect_file_overlaps().iter().map(crate::detect::Overlap::line).collect();
+                self.h.print(&text.join("\n"));
+                0
+            }
             _ => self.full(),
         }
     }
@@ -573,6 +581,7 @@ impl<'a> Sentinel<'a> {
         if !self.cfg.skip_reclaim {
             self.check7c(snap);
             self.check7d();
+            self.check7e();
         }
         let _ = std::fs::write(
             self.cfg.run.join("audit.status"),

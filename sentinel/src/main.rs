@@ -16,6 +16,7 @@
 //!   sentinel --detect-unclaimable / --file-unclaimable
 //!                            CHECK 7c alone; --file-unclaimable reads detect's output
 //!                            on stdin (wave 4.28, sp-fbqsv)
+//!   sentinel --detect-overlaps    CHECK 7e's detector alone (file-set overlap between open beads)
 //!   sentinel --detect-collisions / --park-collisions
 //!                            CHECK 7d alone; --park-collisions reads detect's output
 //!                            on stdin (wave 4.28, sp-fbqsv)

@@ -50,6 +50,8 @@ pub struct Config {
     pub queue_wait_label: String,
     /// `spira.open_children_label` — ditto.
     pub open_children_label: String,
+    /// `spira.overlap_defer_label` — ditto.
+    pub overlap_defer_label: String,
     /// `spira.claim_retries` — `SPIRA_CLAIM_RETRIES`.
     pub claim_retries: u32,
     /// `spira.claim_retry_delay_s` — `SPIRA_CLAIM_RETRY_DELAY_S`.
@@ -79,6 +81,7 @@ pub fn load_config() -> Result<Config, String> {
         no_loop_label: spira_config::process::cfg("SPIRA_NO_LOOP_LABEL")?,
         queue_wait_label: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
         open_children_label: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
+        overlap_defer_label: spira_config::process::cfg("SPIRA_OVERLAP_DEFER_LABEL")?,
         claim_retries: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRIES")?,
         claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
         fayths: spira_config::process::cfg("SPIRA_FAYTHS")?,

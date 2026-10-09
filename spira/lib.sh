@@ -378,7 +378,7 @@ ready_count() {
 # `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
 # through bulk_ready_by_fayth, plus ready_shared_exclude) — same pattern
 # `_spira_config_fayth`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
-# `SPIRA_OPEN_CHILDREN_LABEL` are threaded explicitly because conf.sh never exports them
+# `SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_OVERLAP_DEFER_LABEL` are threaded explicitly because conf.sh never exports them
 # (the exec-boundary trap); `SPIRA_NO_LOOP_LABEL` is exported but threaded anyway for
 # defence in depth. `SPIRA_SCOPE_LABEL` is threaded too: it is an unexported shell var for callers that source
 # conf without export (sp-jr2fm). `SPIRA_CLAIM_RETRIES`/`SPIRA_CLAIM_RETRY_DELAY_S`/
@@ -387,7 +387,7 @@ ready_count() {
 _spira_claim() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
     SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
-    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
+    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" SPIRA_OVERLAP_DEFER_LABEL="${SPIRA_OVERLAP_DEFER_LABEL:-}" \
     SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         spira-claim "$@"
 }
@@ -415,7 +415,7 @@ epic_rank_rows() {
 # claim_retry, fayth_exclude, fayth_ready, bulk_ready_by_fayth, ready_shared_exclude ->
 # moved to spira-claim (wave 4.25, sp-obhv6). `ready_shared_exclude`'s only caller besides
 # `fayth_exclude` is test-dispatch-open-children.sh, which calls it directly — kept as its
-# own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude3`) rather than
+# own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude4`) rather than
 # deleted. `express_ready_in_task_pool` has had no live caller since sentinel.sh (the only
 # thing that ever called it) was retired for the Rust sentinel crate — deleted outright
 # rather than ported (see `test-express-lane.sh`, trimmed to match).
@@ -1528,6 +1528,9 @@ detect_branch_collisions() {
 }
 park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions output>
     sentinel --park-collisions <<< "$1"
+}
+detect_file_overlaps() {   # -> one OVERLAP line per open bead whose branch shares a file with an earlier one
+    sentinel --detect-overlaps
 }
 
 # detect_livelocked -> one LIVELOCK line per open bead that cannot make progress.

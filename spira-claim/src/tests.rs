@@ -772,7 +772,7 @@ fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
         &[("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
         &[("SPIRA_HOME", Some(home.as_str()))],
     );
-    assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-open-children,fayth:ops");
+    assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-open-children,file-overlap-defer,fayth:ops");
     assert_eq!(o.code, 0);
 }
 
@@ -816,7 +816,7 @@ fn shared_exclude_cli_the_three_labels_ready_shared_exclude_carried() {
     // declared values (spira-queue-waiting/spira-submitted/spira-open-children) are what
     // conf.sh's derivation would hold once it ran; no override needed.
     let o = run(&["shared-exclude"], "");
-    assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-open-children"));
+    assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-open-children,file-overlap-defer"));
 }
 
 /// All three shared labels declared empty (a legitimate, resolved "no restriction" — not
@@ -827,7 +827,7 @@ fn shared_exclude_cli_empty_when_every_label_is_declared_empty() {
     let o = run_cfg(
         &["shared-exclude"],
         "",
-        &[("SPIRA_QUEUE_WAIT_LABEL", ""), ("SPIRA_SUBMITTED_LABEL", ""), ("SPIRA_OPEN_CHILDREN_LABEL", "")],
+        &[("SPIRA_QUEUE_WAIT_LABEL", ""), ("SPIRA_SUBMITTED_LABEL", ""), ("SPIRA_OPEN_CHILDREN_LABEL", ""), ("SPIRA_OVERLAP_DEFER_LABEL", "")],
         &[],
     );
     assert_eq!((o.code, o.out.as_str()), (0, ""));
