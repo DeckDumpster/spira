@@ -119,6 +119,7 @@ struct Seams {
     systemctl: String,
     tmux: String,
     git: String,
+    forge: String,
     mail: String,
     units_install: String,
     spira_config: String,
@@ -145,6 +146,7 @@ impl Seams {
             systemctl: name("systemctl"),
             tmux: name("tmux"),
             git: name("git"),
+            forge: name("forge"),
             mail: name("mail"),
             units_install: name("units-install"),
             spira_config: name("spira-config"),
@@ -1050,6 +1052,42 @@ fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
     checks
 }
 
+const STRANDED_RUN_PREFIX: &str = "queue-stranded-run:";
+
+fn stranded_runs(out: &str) -> Vec<(String, String)> {
+    let mut runs: Vec<(String, String)> = Vec::new();
+    for line in out.lines().filter(|l| l.starts_with("STRANDED ")) {
+        let field = |name: &str| line.split_whitespace().find_map(|w| w.strip_prefix(name)).map(str::to_string);
+        let Some(run) = field("run=") else { continue };
+        if runs.iter().any(|(r, _)| *r == run) {
+            continue;
+        }
+        runs.push((run, field("label=").unwrap_or_default()));
+    }
+    runs
+}
+
+fn observe_queue_stranded_runs(cfg: &Config) -> Vec<Check> {
+    let mut checks = Vec::new();
+    for repo_name in queue_repo_names(&cfg.queue_dir) {
+        let Some(repo_path) = repo_root(&repo_name, &cfg.repo_map) else { continue };
+        let repo_str = repo_path.to_string_lossy().to_string();
+        let out = run_cmd(&cfg.seams.forge, &["stranded-runners", &repo_str]);
+        for (run, label) in stranded_runs(&out) {
+            checks.push(Check {
+                key: format!("{STRANDED_RUN_PREFIX}{repo_name}:{run}"),
+                raw: RawStatus::Gap {
+                    desired: "every queued job's runner label is carried by an online runner".into(),
+                    observed: format!("run {run} queued on {label}, runner gone"),
+                    since_hint: None,
+                },
+                remedy: Remedy::Command { program: cfg.seams.forge.clone(), args: vec!["workflow-rerun".into(), repo_str.clone(), run] },
+            });
+        }
+    }
+    checks
+}
+
 fn orphan_reading(out: &str) -> RawStatus {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(out.trim()) else {
         return RawStatus::Unobservable { reason: "spira-lc requeue-orphans gave no readable answer".into() };
@@ -1489,6 +1527,9 @@ fn run_pass() -> Result<(), String> {
     checks.extend(observe_disk(&cfg));
     checks.extend(observe_queue_mergeable(&cfg));
     checks.extend(observe_queue_lock_age(&cfg));
+    let stranded = observe_queue_stranded_runs(&cfg);
+    state.retain(|k, _| !k.starts_with(STRANDED_RUN_PREFIX) || stranded.iter().any(|c| &c.key == k));
+    checks.extend(stranded);
     checks.push(observe_lc_orphans(&cfg));
     let junk = observe_junk_rows(&cfg);
     state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
@@ -1768,6 +1809,38 @@ mod tests {
         let other = Config { shadow_kinds: vec!["units-timer".into()], ..cfg.clone() };
         evaluate(&other, &mut state, &mut pending, &mut alerted, Check { key: "disk:/w".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
         assert!(ran.exists(), "a kind the switch does not name still acts");
+    }
+
+    #[test]
+    fn stranded_runs_reads_one_entry_per_run_and_ignores_other_lines() {
+        let out = "STRANDED run=77 job=\"a\" label=ci-r-77-1 queued=700s runner=none vmid=?\n\
+                   STRANDED run=77 job=\"b\" label=ci-r-77-1 queued=700s runner=none vmid=?\n\
+                   STRANDED run=78 job=\"a\" label=ci-r-78-2 queued=900s runner=x vmid=3\n\
+                   noise run=99\n";
+        assert_eq!(stranded_runs(out), vec![("77".to_string(), "ci-r-77-1".to_string()), ("78".to_string(), "ci-r-78-2".to_string())]);
+        assert!(stranded_runs("").is_empty());
+    }
+
+    #[test]
+    fn a_stranded_run_is_a_gap_remedied_by_a_whole_workflow_rerun() {
+        let dir = scratch_dir("stranded");
+        fs::create_dir_all(dir.join("queue/r")).unwrap();
+        let forge = dir.join("forge");
+        testkit::write_exe(&forge, "#!/bin/sh\ncase \"$1\" in stranded-runners) echo 'STRANDED run=55 job=\"j\" label=ci-r-55-2 queued=900s runner=none vmid=?' ;; esac\n");
+        let map = dir.join("map");
+        fs::write(&map, "r|/srv/r-checkout\n").unwrap();
+        let cfg = Config {
+            seams: Seams { forge: forge.to_string_lossy().to_string(), ..Seams::production() },
+            queue_dir: dir.join("queue"),
+            repo_map: Some(map),
+            ..test_config()
+        };
+        let probe = observe_queue_stranded_runs(&cfg);
+        assert_eq!(probe.len(), 1);
+        assert_eq!(probe[0].key, "queue-stranded-run:r:55");
+        assert!(matches!(probe[0].raw, RawStatus::Gap { .. }));
+        let steps = probe[0].remedy.steps();
+        assert_eq!(steps[0].1, vec!["workflow-rerun", "/srv/r-checkout", "55"]);
     }
 
     #[test]
