@@ -359,10 +359,9 @@ fn record_answer(item: &Item, reason: &str, actor: &str, cfg: &Cfg) {
     let mut c = Command::new(crate::store::bin("spira-lc", cfg));
     c.args(["close-ask", &item.id, "--exit", "answered", "--quote", reason, "--actor", actor, "--channel", "pane", "--message-id", &item.id])
         .env("PATH", crate::store::child_path(cfg));
-    if let (code, out) = spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT) {
-        if !matches!(code, 0 | 1 | 3) {
-            let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[answer not recorded on the ask machine: exit {code}: {}]", out.trim())], Some(actor), cfg);
-        }
+    let (code, out) = spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT);
+    if !matches!(code, 0 | 1 | 3) {
+        let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[answer not recorded on the ask machine: exit {code}: {}]", out.trim())], Some(actor), cfg);
     }
 }
 
