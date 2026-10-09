@@ -27,22 +27,23 @@ pub fn send(
     if let Some(c) = class {
         cmd.arg("--class").arg(c);
     }
+    let err_path = std::env::temp_dir().join(format!("mail-send-{}-{}.err", std::process::id(), mailbox));
+    let err_file = std::fs::File::create(&err_path).map_err(|e| format!("{}: {e}", err_path.display()))?;
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(err_file)
         .spawn()
         .map_err(|e| format!("{mail_bin}: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(body.as_bytes());
     }
-    let out = child.wait_with_output().map_err(|e| format!("{mail_bin}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "{mail_bin} send {mailbox}: exit {}: {}",
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+    let status = child.wait().map_err(|e| format!("{mail_bin}: {e}"));
+    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&err_path);
+    let status = status?;
+    if !status.success() {
+        return Err(format!("{mail_bin} send {mailbox}: exit {}: {}", status.code().unwrap_or(-1), stderr.trim()));
     }
     Ok(())
 }

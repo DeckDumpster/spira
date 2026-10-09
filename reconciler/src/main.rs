@@ -279,8 +279,12 @@ impl Config {
 }
 
 fn log_print(cfg: &Config, msg: &str) {
-    let line = format!("{} spira: {}\n", cfg.now_iso, msg);
-    print!("{}", line);
+    let line = format!("{} spira: {}\n", clock::now_iso(&cfg.seams.date), msg);
+    {
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(line.as_bytes());
+        let _ = out.flush();
+    }
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&cfg.log) {
         let _ = f.write_all(line.as_bytes());
     }
@@ -1629,25 +1633,62 @@ fn run_pass() -> Result<(), String> {
     let mut pending = load_pending(&cfg.effect_state);
     let mut alerted = load_alerted(&cfg.alerted_path);
 
+    type Job<'a> = (&'static str, Box<dyn FnOnce() -> Vec<Check> + Send + 'a>);
+    let jobs: Vec<Job> = vec![
+        ("units", Box::new(|| observe_units(&cfg))),
+        ("fleet", Box::new(|| observe_fleet(&cfg))),
+        ("cockpit", Box::new(|| vec![observe_cockpit(&cfg)])),
+        ("release", Box::new(|| vec![observe_release(&cfg)])),
+        ("disk", Box::new(|| observe_disk(&cfg))),
+        ("queue-mergeable", Box::new(|| observe_queue_mergeable(&cfg))),
+        ("queue-lock-age", Box::new(|| observe_queue_lock_age(&cfg))),
+        ("queue-stranded-runs", Box::new(|| observe_queue_stranded_runs(&cfg))),
+        ("lc-orphans", Box::new(|| vec![observe_lc_orphans(&cfg)])),
+        ("junk-row", Box::new(|| observe_junk_rows(&cfg))),
+        ("epic-edges", Box::new(|| observe_epic_edges(&cfg))),
+        ("main-health", Box::new(|| observe_main_health(&cfg))),
+    ];
+    let mut by_name: std::collections::BTreeMap<&'static str, Vec<Check>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = jobs
+            .into_iter()
+            .map(|(name, job)| {
+                let cfg = &cfg;
+                (name, scope.spawn(move || observed(cfg, name, job)))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|(name, h)| match h.join() {
+                Ok(checks) => (name, checks),
+                Err(_) => {
+                    log_print(&cfg, &format!("reconciler: invariant {name}: panicked"));
+                    (
+                        name,
+                        vec![Check {
+                            key: format!("invariant:{name}"),
+                            raw: RawStatus::Unobservable { reason: format!("the {name} observer panicked") },
+                            remedy: Remedy::Escalate,
+                        }],
+                    )
+                }
+            })
+            .collect()
+    });
+    for (name, prefix) in [
+        ("queue-stranded-runs", STRANDED_RUN_PREFIX),
+        ("junk-row", JUNK_ROW_PREFIX),
+        ("epic-edges", EPIC_EDGE_PREFIX),
+    ] {
+        let seen = &by_name[name];
+        state.retain(|k, _| !k.starts_with(prefix) || seen.iter().any(|c| &c.key == k));
+    }
     let mut checks = Vec::new();
-    checks.extend(observed(&cfg, "units", || observe_units(&cfg)));
-    checks.extend(observed(&cfg, "fleet", || observe_fleet(&cfg)));
-    checks.extend(observed(&cfg, "cockpit", || vec![observe_cockpit(&cfg)]));
-    checks.extend(observed(&cfg, "release", || vec![observe_release(&cfg)]));
-    checks.extend(observed(&cfg, "disk", || observe_disk(&cfg)));
-    checks.extend(observed(&cfg, "queue-mergeable", || observe_queue_mergeable(&cfg)));
-    checks.extend(observed(&cfg, "queue-lock-age", || observe_queue_lock_age(&cfg)));
-    let stranded = observed(&cfg, "queue-stranded-runs", || observe_queue_stranded_runs(&cfg));
-    state.retain(|k, _| !k.starts_with(STRANDED_RUN_PREFIX) || stranded.iter().any(|c| &c.key == k));
-    checks.extend(stranded);
-    checks.extend(observed(&cfg, "lc-orphans", || vec![observe_lc_orphans(&cfg)]));
-    let junk = observed(&cfg, "junk-row", || observe_junk_rows(&cfg));
-    state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
-    checks.extend(junk);
-    let epic_edges = observed(&cfg, "epic-edges", || observe_epic_edges(&cfg));
-    state.retain(|k, _| !k.starts_with(EPIC_EDGE_PREFIX) || epic_edges.iter().any(|c| &c.key == k));
-    checks.extend(epic_edges);
-    checks.extend(observed(&cfg, "main-health", || observe_main_health(&cfg)));
+    for name in [
+        "units", "fleet", "cockpit", "release", "disk", "queue-mergeable", "queue-lock-age",
+        "queue-stranded-runs", "lc-orphans", "junk-row", "epic-edges", "main-health",
+    ] {
+        checks.extend(by_name.remove(name).unwrap_or_default());
+    }
 
     remind_due_suspensions(&cfg, &load_ctrl(&cfg));
 
