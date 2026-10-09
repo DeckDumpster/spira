@@ -75,6 +75,8 @@ pub struct Node {
     pub elide: Option<u16>,
     pub fold: Option<u16>,
     pub auto_open: bool,
+    /// The line drawn instead of `line` while the node is showing its children.
+    pub open_line: Option<String>,
 }
 
 impl Node {
@@ -91,6 +93,10 @@ impl Node {
     }
     fn fold(mut self, r: u16) -> Node {
         self.fold = Some(r);
+        self
+    }
+    fn open_line(mut self, l: impl Into<String>) -> Node {
+        self.open_line = Some(l.into());
         self
     }
     fn closed(mut self) -> Node {
@@ -257,16 +263,21 @@ pub fn tree(v: &View) -> Vec<Node> {
                 _ => D,
             };
             let age = if i.out_age.is_empty() { String::new() } else { format!(" {} ago", i.out_age) };
-            let out = i
+            // The bead's title is the first line of the expanded view, whole: on the aeon's own
+            // line it was cut short by everything else there (per Ryan 2026-10-09).
+            let title = Node::new(format!("now/{}/title", i.id), format!("{B}{}{R}", i.title));
+            let out = std::iter::once(title).chain(i
                 .out
                 .iter()
                 .enumerate()
                 .map(|(k, l)| {
                     let tail = if k + 1 == i.out.len() { age.as_str() } else { "" };
                     Node::new(format!("now/{}/{k}", i.id), format!("{c}{l}{tail}{R}"))
-                })
+                }))
                 .collect();
-            Node::new(format!("now/{}", i.id), format!("{CYN}{:<14}{R} {:<12} {tag}{} {D}{} · {}{R} {}", cut(&who, 14), i.id, i.prio, i.age, i.note, i.title))
+            let head = format!("{CYN}{:<14}{R} {:<12} {tag}{} {D}{} · {}{R}", cut(&who, 14), i.id, i.prio, i.age, i.note);
+            Node::new(format!("now/{}", i.id), format!("{head} {}", i.title))
+                .open_line(head)
                 .kids(out)
                 .fold(R_NOW_FOLD)
         })
@@ -497,13 +508,14 @@ struct Flat {
     elide: Option<u16>,
     fold: Option<u16>,
     auto_open: bool,
+    open_line: Option<String>,
 }
 
 fn flatten(level: Vec<Node>, depth: usize, parent: Option<usize>, out: &mut Vec<Flat>) -> Vec<usize> {
     let mut ids = Vec::new();
     for n in level {
         let i = out.len();
-        out.push(Flat { key: n.key, line: n.line, depth, parent, kids: Vec::new(), elide: n.elide, fold: n.fold, auto_open: n.auto_open });
+        out.push(Flat { key: n.key, line: n.line, depth, parent, kids: Vec::new(), elide: n.elide, fold: n.fold, auto_open: n.auto_open, open_line: n.open_line });
         let kids = flatten(n.kids, depth + 1, Some(i), out);
         out[i].kids = kids;
         ids.push(i);
@@ -621,7 +633,11 @@ pub fn layout(v: &View, ui: &Ui, w: usize, h: usize) -> Frame {
             _ => f.kids.len(),
         };
         let note = if hidden > 0 { format!(" {D}(+{hidden}){R}") } else { String::new() };
-        let line = format!("{}{marker} {}{note}", "  ".repeat(f.depth), f.line);
+        let text = match (&f.open_line, show[i]) {
+            (Some(l), Show::Open) => l,
+            _ => &f.line,
+        };
+        let line = format!("{}{marker} {}{note}", "  ".repeat(f.depth), text);
         if Some(i) == sel {
             sel_row = body.len();
             body.push(format!("{REV}{}", clip(&line, w)));
@@ -940,6 +956,23 @@ mod tests {
             assert!(f.all_keys.contains(key), "{key}");
             assert!(*row < f.lines.len());
         }
+    }
+
+    #[test]
+    fn an_expanded_aeon_puts_its_bead_title_first_and_whole() {
+        let mut ui = Ui::default();
+        ui.set("now", Mode::Open);
+        ui.set("now/sp-w0", Mode::Open);
+        let f = layout(&busy_view(), &ui, 200, 80);
+        let row = |key: &str| f.rows.iter().find(|(_, k)| k == key).map(|(r, _)| strip(&f.lines[*r])).expect(key);
+        assert!(!row("now/sp-w0").contains("title of sp-w0"), "the open aeon line drops the title");
+        assert!(row("now/sp-w0/title").contains("title of sp-w0"));
+        let (r0, _) = f.rows.iter().find(|(_, k)| k == "now/sp-w0").unwrap();
+        assert_eq!(f.rows.iter().find(|(r, _)| r == &(r0 + 1)).map(|(_, k)| k.as_str()), Some("now/sp-w0/title"));
+        ui.set("now/sp-w0", Mode::Collapsed);
+        let f = layout(&busy_view(), &ui, 200, 80);
+        let (r, _) = f.rows.iter().find(|(_, k)| k == "now/sp-w0").unwrap();
+        assert!(strip(&f.lines[*r]).contains("title of sp-w0"), "a folded aeon keeps the title on its line");
     }
 
     #[test]
