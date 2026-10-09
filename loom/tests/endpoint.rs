@@ -117,7 +117,6 @@ fn cfg(lc: &str, budget_ms: u64, cache_s: u64) -> Config {
         run: String::new(),
         instance: "test".to_string(),
         systemctl: "systemctl".to_string(),
-        lc: "spira-lc".to_string(),
     }
 }
 
@@ -316,7 +315,6 @@ fn ops_cfg(run: &str) -> Config {
         run: run.to_string(),
         instance: "test".to_string(),
         systemctl: "systemctl".to_string(),
-        lc: "spira-lc".to_string(),
     }
 }
 

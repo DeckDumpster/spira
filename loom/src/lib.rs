@@ -65,8 +65,6 @@ pub struct Config {
     pub instance: String,
     /// The `systemctl` binary to use for sentinel-active checks. Overridable in tests.
     pub systemctl: String,
-    /// The `spira-lc` the stuck page reads the lifecycle read model through.
-    pub lc: String,
 }
 
 impl Config {
@@ -92,8 +90,6 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
-            // SPIRA_LC_BIN is not a registered config key — a bare binary found on PATH.
-            lc: std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".to_string()),
         })
     }
 }
