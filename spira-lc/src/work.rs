@@ -866,8 +866,31 @@ fn uncited_bead(args: &[String], conn: &Conn) -> Option<(i32, String)> {
     }
 }
 
+/// A `.live` marker in the archivist's state dir is written for the length of a sweep of a
+/// session still being written to; a marker left by a crashed sweep refuses too, which is
+/// the safe direction.
+fn live_session_refusal(verb: &str, call: &Call, arc: &std::path::Path) -> Option<(i32, String)> {
+    if verb != "file" || call.actor.as_deref() != Some("archivist") || !call.args.iter().any(|x| x == "--for") {
+        return None;
+    }
+    let live = std::fs::read_dir(arc).ok()?.flatten().any(|e| e.file_name().to_string_lossy().ends_with(".live"));
+    live.then(|| {
+        (
+            REFUSED,
+            "refused: work file --for: the session being swept is still live and will file its own work (law-archivist-does-not-file-live-work); \
+             note the nearest bead with `work note-on`, or send `work ask`"
+                .to_string(),
+        )
+    })
+}
+
 fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, String) {
     let call = split_reserved(rest);
+    if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
+        if let Some(refusal) = live_session_refusal(verb, &call, &std::path::Path::new(&run).join("archivist")) {
+            return refusal;
+        }
+    }
     let steps = match plan(verb, bound, &call) {
         Ok(p) => p,
         Err(e) => return e,
@@ -1142,6 +1165,22 @@ mod tests {
         );
         let rec = plan("file", "-", &call(&["a finding", "--kind", "insight", "--repo", "spira"], "archivist")).unwrap();
         assert_eq!(rec.len(), 1, "a record is no work: no lifecycle row");
+    }
+
+    #[test]
+    fn the_archivist_files_no_work_bead_while_a_swept_session_is_live() {
+        let dir = testkit::TempDir::new("lc-live");
+        let work = call(&["t", "--for", "builder", "--repo", "spira"], "archivist");
+        let record = call(&["t", "--kind", "insight", "--repo", "spira"], "archivist");
+        let other = call(&["t", "--for", "builder", "--repo", "spira"], "ops");
+        assert!(live_session_refusal("file", &work, &dir).is_none(), "no live marker: no refusal");
+        std::fs::write(dir.join("sess-1.live"), "").unwrap();
+        let (code, msg) = live_session_refusal("file", &work, &dir).expect("a live sweep must refuse a work bead");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("work note-on") && msg.contains("work ask"), "names its exit: {msg}");
+        assert!(live_session_refusal("file", &record, &dir).is_none(), "a record is not work");
+        assert!(live_session_refusal("file", &other, &dir).is_none(), "only the archivist is bound");
+        assert!(live_session_refusal("note-on", &work, &dir).is_none());
     }
 
     #[test]
