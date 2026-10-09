@@ -1167,7 +1167,9 @@ fn main() -> ExitCode {
     phase("phase 4.7: desired state");
     let release_root = nonempty_env("SPIRA_HOME").map(|h| PathBuf::from(h).parent().map(Path::to_path_buf).unwrap_or_default()).unwrap_or_default();
     let default_doc = release_root.join("desired-state/examples/default.toml");
-    if opts.dry {
+    if !opts.dry && !default_doc.is_file() {
+        skip(&format!("no default desired state at {} — this install carries none to compose", default_doc.display()));
+    } else if opts.dry {
         would(&format!("run: spira compose {} + every *.toml in SPIRA_DESIRED_FRAGMENTS_DIR", default_doc.display()));
     } else {
         let mut docs = vec![default_doc.to_string_lossy().into_owned()];
