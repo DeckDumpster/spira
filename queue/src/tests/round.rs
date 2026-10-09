@@ -120,6 +120,19 @@ fn eject_then_land_rebuilds_the_head_without_the_member() {
 }
 
 #[test]
+fn a_refused_lifecycle_eject_changes_nothing() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let before = kv_of(&t, "round");
+    t.lc.eject_refused.set(true);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "late"]), 1);
+    assert!(t.err().contains("nothing changed"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round"), before, "the git head and member list stay as they were");
+    assert!(!t.lib.has("bead_reopen"), "the bead is not reopened for an eject the machine refused");
+}
+
+#[test]
 fn ejecting_the_last_member_closes_the_round() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());

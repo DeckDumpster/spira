@@ -98,8 +98,8 @@ pub enum BatchEventKind {
     Attributed { bead_id: String, outcome: String },
     Settle,
     Abandon { reason: String },
-    /// A manual, operator/czar-initiated single-member eject, valid only while OPEN or
-    /// CI_RUNNING — before any Red event exists. Distinct from the CI-driven
+    /// A manual, operator/czar-initiated single-member eject, valid while OPEN, CI_RUNNING or
+    /// GREEN (which returns to OPEN: the head changed) — before any Red event exists. Distinct from the CI-driven
     /// Red->Attributing->Settle path: that path's per-member exit is logged only once CI
     /// has actually run, so a live-batch eject cannot reuse it without fabricating a Red
     /// that never happened (design: the event log is the record of what happened).
@@ -229,8 +229,13 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 new.version += 1;
                 Outcome::applied(new)
             }
-            MemberAdded { .. } | CiStarted { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. }
-            | Eject { .. } => illegal(row, kind),
+            Eject { .. } => {
+                let mut new = row.clone();
+                new.state = BatchState::Open;
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            MemberAdded { .. } | CiStarted { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. } => illegal(row, kind),
         },
 
         BatchState::Rebuilding => match kind {
@@ -399,8 +404,22 @@ mod tests {
     }
 
     #[test]
+    fn eject_from_green_voids_the_certification_and_reopens_the_batch() {
+        let r = row(BatchState::Green);
+        let out = apply(&r, &ev(BatchState::Green, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BatchState::Open);
+        assert_eq!(out.row.version, r.version + 1);
+        let out = apply(&out.row, &ev(BatchState::Open, 1, BatchEventKind::CiStarted { run: "r".into() }));
+        let out = apply(&out.row, &ev(BatchState::CiRunning, 2, BatchEventKind::Green));
+        let out = apply(&out.row, &ev(BatchState::Green, 3, BatchEventKind::FastForward { sha: "abc".into() }));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BatchState::Landed);
+    }
+
+    #[test]
     fn eject_refused_outside_open_and_ci_running() {
-        for &state in &[BatchState::Green, BatchState::Rebuilding, BatchState::Attributing, BatchState::Landed, BatchState::Settled, BatchState::Abandoned] {
+        for &state in &[BatchState::Rebuilding, BatchState::Attributing, BatchState::Landed, BatchState::Settled, BatchState::Abandoned] {
             let r = row(state);
             let out = apply(&r, &ev(state, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
             assert!(!out.applied, "{state:?} must refuse eject");

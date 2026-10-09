@@ -492,7 +492,7 @@ rc=$?
 wantrc "_lc_cut_batch refuses a member that is not CERTIFIED there" 3 $rc
 is "a refused cut leaves no batch row behind" "" "$(batch_field batch-q-refuse state)"
 
-# _lc_eject_member: legal from OPEN/CI_RUNNING, returns only the named member to
+# _lc_eject_member: legal from OPEN/CI_RUNNING/GREEN, returns only the named member to
 # CERTIFIED, and does not move the batch or touch survivors — distinct from settle's own
 # CI-driven eject, which only runs after a real Red (design: the event log is the record
 # of what happened, and no Red ever fired here).
@@ -507,14 +507,23 @@ is "batch stays OPEN — eject does not move it" "OPEN" "$(batch_field batch-q-e
 is "ejected member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-e1 bead state)"
 is "survivor is left alone in the batch" "IN_DELIVERY" "$(member_field sp-lc-q-e2 bead state)"
 
-# POSITIVE CONTROL: eject-member refuses once CI has moved the batch past OPEN/CI_RUNNING.
+# Eject from GREEN is legal: the head changes, so the certification is void and the batch
+# returns to OPEN with the member back at CERTIFIED.
 v="$(batch_field batch-q-eject version)"
 lc event batch batch-q-eject --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-q-eject version)"
 lc event batch batch-q-eject --expect CI_RUNNING --version "$v" --actor test --kind '"Green"' >/dev/null
+is "batch reaches GREEN before the eject" "GREEN" "$(batch_field batch-q-eject state)"
+out="$(_lc_eject_member batch-q-eject sp-lc-q-e2 queue "eject after green")"
+wantrc "_lc_eject_member applies from GREEN" 0 $?
+is "an eject from GREEN returns the batch to OPEN" "OPEN" "$(batch_field batch-q-eject state)"
+is "the member ejected from GREEN returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-e2 bead state)"
+
+# POSITIVE CONTROL: eject-member still refuses once the batch is terminal.
+out="$(_lc_abandon_batch batch-q-eject queue "close it")"
 out="$(_lc_eject_member batch-q-eject sp-lc-q-e2 queue "too late")"
 rc=$?
-wantrc "_lc_eject_member refuses once the batch has moved past CI (GREEN)" 3 $rc
+wantrc "_lc_eject_member refuses once the batch is terminal (ABANDONED)" 3 $rc
 
 # _lc_abandon_batch: accepts from any non-terminal state, returns every member.
 certify sp-lc-q-a1 tipQA1

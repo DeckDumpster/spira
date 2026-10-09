@@ -396,6 +396,7 @@ struct FLc {
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
+    eject_refused: Cell<bool>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
     calls: RefCell<Vec<String>>,
@@ -403,7 +404,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), row_fails: Cell::new(false), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), row_fails: Cell::new(false), calls: RefCell::default() }
     }
 }
 
@@ -439,6 +440,9 @@ impl Lc for FLc {
     }
     fn eject_member(&self, id: &str, bead: &str, s: &str, v: &str, _: &str, r: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("eject-member {id} {bead} {s} {v} {r}"));
+        if self.eject_refused.get() {
+            return Err((3, "IllegalTransition".into()));
+        }
         Ok(())
     }
     fn batch_event(&self, id: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
