@@ -391,7 +391,7 @@ mod tests {
         // ambient default, /root/.cargo, silently used in place of the template's actual
         // one). Only this binary's own key, env or spira.toml, ever sets cache_home.
         let got = {
-            let _env = testkit::env(&[("SPIRA_ROUND_VM_CACHE_HOME", None), ("CARGO_HOME", Some("/opt/spira/cargo"))]);
+            let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_ROUND_VM_CACHE_HOME", None), ("CARGO_HOME", Some("/opt/spira/cargo"))]);
             cache_home_from_env_or_toml()
         };
         assert!(got.is_none(), "a bare CARGO_HOME must never be read");

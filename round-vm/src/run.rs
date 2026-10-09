@@ -1404,11 +1404,15 @@ mod tests {
         {
             return;
         }
+        let d = TempDir::new();
+        let cache_home = d.path().join("cargo-home");
         let out = Command::new("bash")
             .arg("-c")
             .arg(REMOTE_SCRIPT)
             .arg("round-vm-test")
-            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home", "", "60"])
+            .args(["host", "9430", "", "16", ""])
+            .arg(&cache_home)
+            .args(["", "60", "", ""])
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent-home")
             .output()
