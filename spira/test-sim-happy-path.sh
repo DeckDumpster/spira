@@ -2,6 +2,8 @@
 # tier: T2
 # requires: testenv
 # covers: spira/sim/** sim/actors.toml sim/durations.toml systemd/spira-sentinel.* systemd/spira-rounds.* systemd/spira-publish.* systemd/spira-gate-worker.*
+# lane: sim
+# pids: 400
 #
 # test-sim-happy-path.sh — one bead walked from filed to LANDED, published and tagged, in a
 # sim world: `sim run` of spira/sim/scenarios/happy-path.toml (file and claim steps, the real

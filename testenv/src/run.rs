@@ -1461,8 +1461,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let jobs: Vec<Job> = runnable
         .iter()
         .map(|n| Job {
-            name: n.clone(),
-            exclusive: headers[n].exclusive.clone(),
+            weight: headers[n].pids.unwrap_or(schedule::DEFAULT_PIDS_WEIGHT),
+            lane: headers[n].lane.clone(),
+            ..Job::new(n, headers[n].exclusive.clone())
         })
         .collect();
     // Order is never implicit (per Ryan 2026-10-03, sp-kitrt). An explicit --suites list is the
