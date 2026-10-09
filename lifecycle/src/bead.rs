@@ -31,8 +31,10 @@ impl BeadState {
     /// Terminal states have no outgoing transitions, for every actor, the operator
     /// included (design: "Terminal means terminal").
     pub fn is_terminal(self) -> bool {
-        matches!(self, BeadState::Landed | BeadState::Superseded | BeadState::Dropped | BeadState::Done)
+        Self::TERMINAL.contains(&self)
     }
+
+    pub const TERMINAL: [BeadState; 4] = [BeadState::Landed, BeadState::Superseded, BeadState::Dropped, BeadState::Done];
 
     pub fn as_str(self) -> &'static str {
         match self {

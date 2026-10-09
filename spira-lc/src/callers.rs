@@ -206,7 +206,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             if !need(1) {
                 return usage("list-held <kind>");
             }
-            list(m, &["list".into(), "--hold".into(), a(0)], |r| s(r, "bead_id"))
+            list(m, &["list".into(), "--live".into(), "--hold".into(), a(0)], |r| s(r, "bead_id"))
         }
         "list-state" => {
             if !need(1) {
