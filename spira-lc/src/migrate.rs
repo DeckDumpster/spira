@@ -226,6 +226,10 @@ pub enum Probe {
     /// `CREATE VIEW v`: applied when `information_schema.tables` lists it as a VIEW (the `views`
     /// table needs SHOW VIEW, which the service user does not hold).
     View(String),
+    /// `CREATE OR REPLACE VIEW v AS SELECT ... AS c FROM ...`: applied when `SHOW COLUMNS FROM v`
+    /// lists `c`, the last alias of its select list (information_schema.columns does not show
+    /// a view's columns to the service user).
+    ViewColumn { view: String, column: String },
     /// No read can tell (an UPDATE with no WHERE, an INSERT, ...): always pending, so a
     /// migration of that shape needs the admin on every activation — write it guarded.
     Unprobeable,
@@ -260,6 +264,44 @@ fn where_at(sql: &str) -> Option<usize> {
     None
 }
 
+/// The identifier after the last top-level `AS` of the select list (before the first top-level
+/// `FROM`), skipping quotes and parenthesised subqueries.
+fn last_select_alias(sql: &str) -> Option<String> {
+    let (mut depth, mut quote, mut alias) = (0i32, None::<char>, None);
+    let mut word = String::new();
+    let mut prev = String::new();
+    for c in sql.chars().chain(std::iter::once(' ')) {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+            continue;
+        }
+        if !word.is_empty() && depth == 0 {
+            if word.eq_ignore_ascii_case("FROM") {
+                return alias;
+            }
+            if prev.eq_ignore_ascii_case("AS") {
+                alias = Some(word.clone());
+            }
+        }
+        if !word.is_empty() {
+            prev = std::mem::take(&mut word);
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
 fn plain_ident(tok: &str) -> Option<String> {
     let t = ident(tok);
     (!t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(t)
@@ -285,6 +327,10 @@ pub fn probe_for(st: &Stmt) -> Probe {
             let at = if up(2) == "IF" && up(3) == "NOT" && up(4) == "EXISTS" { 5 } else { 2 };
             toks.get(at).map(|t| t.split('(').next().unwrap_or("")).and_then(plain_ident).map_or(Probe::Unprobeable, Probe::Table)
         }
+        ("CREATE", "OR") if up(2) == "REPLACE" && up(3) == "VIEW" => match (toks.get(4).and_then(|t| plain_ident(t)), last_select_alias(sql)) {
+            (Some(view), Some(column)) => Probe::ViewColumn { view, column },
+            _ => Probe::Unprobeable,
+        },
         ("CREATE", "VIEW") => toks.get(2).and_then(|t| plain_ident(t)).map_or(Probe::Unprobeable, Probe::View),
         ("CREATE", "INDEX") | ("CREATE", "UNIQUE") => {
             let at = if up(1) == "UNIQUE" { 3 } else { 2 };
@@ -319,6 +365,7 @@ pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
         Probe::NoRowMatches(q) => Ok(db.rows(&q)?.is_empty()),
         Probe::Table(t) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&t)))?.is_empty()),
         Probe::View(v) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_type = 'VIEW' AND table_name = {}", quote(&v)))?.is_empty()),
+        Probe::ViewColumn { view, column } => Ok(any_cell_is(&db.rows(&format!("SHOW COLUMNS FROM {view}"))?, &column)),
         Probe::Index { table, index } => Ok(!db
             .rows(&format!("SELECT index_name FROM information_schema.statistics WHERE table_schema = 'spira_lifecycle' AND table_name = {} AND index_name = {}", quote(&table), quote(&index)))?
             .is_empty()),
@@ -333,6 +380,7 @@ fn what(st: &Stmt, applied: bool) -> String {
         Probe::NoRowMatches(_) => ("no row left for it to change".into(), "rows it still has to change".into()),
         Probe::Table(t) => (format!("table {t} present"), format!("table {t} absent")),
         Probe::View(v) => (format!("view {v} present"), format!("view {v} absent")),
+        Probe::ViewColumn { view, column } => (format!("view {view}.{column} present"), format!("view {view}.{column} absent")),
         Probe::Index { table, index } => (format!("index {table}.{index} present"), format!("index {table}.{index} absent")),
         Probe::Unprobeable => (String::new(), "a statement no read can confirm".into()),
     };
@@ -601,7 +649,7 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
         let files = ordered_files(&[dir.to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
-        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql", "0007-ops-read-model.sql", "0008-event-history-idx.sql", "0009-where-stuck.sql", "0010-express.sql"]);
+        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql", "0007-ops-read-model.sql", "0008-event-history-idx.sql", "0009-where-stuck.sql", "0010-express.sql", "0011-bead-dep.sql"]);
         let steps = plan(&texts).unwrap();
         let adds: Vec<(String, String)> = steps
             .iter()
@@ -612,9 +660,10 @@ mod tests {
             .collect();
         assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into()), ("bead".into(), "persona".into()), ("bead".into(), "title".into()), ("bead".into(), "priority".into()), ("bead".into(), "express".into())]);
         let plain = steps.iter().filter(|(_, s)| matches!(s, Stmt::Plain(_))).count();
-        assert_eq!(plain, 14, "the guarded UPDATEs, four indexes and the six views of 0007 and 0009 run as written");
+        assert_eq!(plain, 17, "the guarded UPDATEs, four indexes, the six views of 0007 and 0009, and 0011's table, index and replaced view run as written");
         let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
         assert_eq!(views, [Probe::View("ops_live".into()), Probe::View("ops_round".into()), Probe::View("ops_recent".into()), Probe::View("ops_edges".into()), Probe::View("ops_dwell_p95".into()), Probe::View("ops_dwell".into())], "a view is probed, never always-pending");
+        assert!(steps.iter().any(|(_, s)| probe_for(s) == Probe::ViewColumn { view: "ops_live".into(), column: "blocker".into() }), "0011 replaces ops_live and is probed by its last alias");
         assert!(steps.iter().all(|(_, s)| probe_for(s) != Probe::Unprobeable), "every shipped step can be probed read-only");
     }
 
@@ -658,6 +707,7 @@ mod tests {
         columns: std::collections::BTreeSet<(String, String)>,
         indexes: std::collections::BTreeSet<String>,
         views: std::collections::BTreeSet<String>,
+        tables: std::collections::BTreeSet<String>,
         /// Terminal rows still carrying a holder (what 0003's guarded UPDATE corrects).
         stale_terminal_rows: bool,
         /// Every statement that changed something, as `<user>: <sql>`.
@@ -681,6 +731,9 @@ mod tests {
                 return Err(format!("Access denied for user '{}'", self.user));
             }
             let st = self.state.borrow();
+            if let Some(view) = sql.strip_prefix("SHOW COLUMNS FROM ") {
+                return Ok(st.columns.iter().filter(|(t, _)| t == view).map(|(_, c)| serde_json::json!({ "Field": c })).collect());
+            }
             if sql.contains("information_schema.columns") {
                 let table = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(st.columns.iter().filter(|(t, _)| t == table).map(|(_, c)| serde_json::json!({ "COLUMN_NAME": c })).collect());
@@ -688,6 +741,10 @@ mod tests {
             if sql.contains("information_schema.statistics") {
                 let index = sql.split("index_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(if st.indexes.contains(index) { vec![serde_json::json!({ "INDEX_NAME": index })] } else { vec![] });
+            }
+            if sql.contains("information_schema.tables") && !sql.contains("table_type") {
+                let table = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.tables.contains(table) { vec![serde_json::json!({ "TABLE_NAME": table })] } else { vec![] });
             }
             if sql.contains("table_type = 'VIEW'") {
                 let view = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
@@ -718,6 +775,14 @@ mod tests {
                 Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE INDEX") => {
                     st.indexes.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
                 }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE TABLE") => {
+                    st.tables.insert(p.split_whitespace().nth(5).unwrap_or("").to_string());
+                }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE OR REPLACE VIEW") => {
+                    if let Probe::ViewColumn { view, column } = probe_for(&Stmt::Plain(p.clone())) {
+                        st.columns.insert((view, column));
+                    }
+                }
                 Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE VIEW") => {
                     st.views.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
                 }
@@ -746,6 +811,9 @@ mod tests {
         for v in ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell_p95", "ops_dwell"] {
             st.views.insert(v.into());
         }
+        st.tables.insert("bead_dep".into());
+        st.indexes.insert("bead_dep_target_idx".into());
+        st.columns.insert(("ops_live".into(), "blocker".into()));
         Rc::new(RefCell::new(st))
     }
 
@@ -880,6 +948,10 @@ mod tests {
         assert_eq!(probe_for(&Stmt::Plain("DELETE FROM t WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE TABLE IF NOT EXISTS t2 (a INT)".into())), Probe::Table("t2".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE VIEW v1 AS SELECT 1".into())), Probe::View("v1".into()));
+        assert_eq!(
+            probe_for(&Stmt::Plain("CREATE OR REPLACE VIEW v1 AS SELECT a AS x, (SELECT 1 FROM t) AS y FROM u JOIN (SELECT 2 AS z) q".into())),
+            Probe::ViewColumn { view: "v1".into(), column: "y".into() }
+        );
         assert_eq!(probe_for(&Stmt::Plain("CREATE UNIQUE INDEX i ON bead (state)".into())), Probe::Index { table: "bead".into(), index: "i".into() });
         assert_eq!(probe_for(&Stmt::Plain("INSERT INTO t VALUES (1)".into())), Probe::Unprobeable);
     }

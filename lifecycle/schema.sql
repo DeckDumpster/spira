@@ -102,17 +102,33 @@ CREATE INDEX IF NOT EXISTS bead_state_since_idx ON bead (state, since);
 CREATE INDEX IF NOT EXISTS batch_state_idx ON batch (state);
 CREATE INDEX IF NOT EXISTS event_at_idx ON event (machine, applied, at, from_state, to_state, event, refusal);
 
+-- Dependency edges mirrored from bd (migrations/0011-bead-dep.sql for an existing database).
+CREATE TABLE IF NOT EXISTS bead_dep (
+    bead_id    VARCHAR(64) NOT NULL,
+    depends_on VARCHAR(64) NOT NULL,
+    dep_type   VARCHAR(32) NOT NULL,
+    PRIMARY KEY (bead_id, depends_on)
+);
+CREATE INDEX IF NOT EXISTS bead_dep_target_idx ON bead_dep (depends_on);
+
 -- The ops read model; migrations/0007-ops-read-model.sql makes the same views on an existing
--- database, and the two are asserted identical by test-ops-read-model.sh.
+-- database (ops_live as replaced by 0009), and the two are asserted identical by test-ops-read-model.sh.
 -- Each view takes its keys from the covering (state, since) index, then reads the rows by
 -- primary key: with the hint the plan is the same whether or not the optimizer has table
 -- statistics, which on a mostly-terminal table would otherwise choose a scan.
 CREATE OR REPLACE VIEW ops_live AS
-SELECT /*+ JOIN_ORDER(r,t) LOOKUP_JOIN(r,t) */
-       t.bead_id, t.state, t.holds, t.holder, t.persona, (t.state = 'REWORK') AS rework, t.lease_until, t.since, t.updated_at, t.priority, t.title
+SELECT /*+ JOIN_ORDER(r,t,x) LOOKUP_JOIN(r,t) */
+       t.bead_id, t.state, t.holds, t.holder, t.persona, (t.state = 'REWORK') AS rework, t.lease_until, t.since, t.updated_at, t.priority, t.title,
+       (t.state = 'READY' AND JSON_LENGTH(t.holds) = 0 AND x.blocker IS NULL) AS claimable,
+       x.blocker AS blocker
   FROM (SELECT bead_id FROM bead
          WHERE state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK')) r
-  JOIN bead t ON t.bead_id = r.bead_id;
+  JOIN bead t ON t.bead_id = r.bead_id
+  LEFT JOIN (SELECT /*+ JOIN_ORDER(b,d) LOOKUP_JOIN(b,d) */ d.bead_id, MIN(d.depends_on) AS blocker
+               FROM bead b JOIN bead_dep d ON d.depends_on = b.bead_id
+              WHERE b.state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK')
+                AND d.dep_type = 'blocks'
+              GROUP BY d.bead_id) x ON x.bead_id = t.bead_id;
 
 CREATE OR REPLACE VIEW ops_round AS
 SELECT /*+ JOIN_ORDER(b,m,t) LOOKUP_JOIN(b,m) LOOKUP_JOIN(m,t) */

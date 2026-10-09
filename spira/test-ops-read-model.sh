@@ -34,7 +34,7 @@ export SPIRA_LC_ADMIN_USER=root SPIRA_LC_ADMIN_PASSWORD=""
 views="SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_type = 'VIEW' ORDER BY 1"
 ALL_VIEWS="ops_dwell ops_dwell_p95 ops_edges ops_live ops_recent ops_round"
 is "a fresh database (schema.sql alone) already has every view" "$ALL_VIEWS" "$(lcfix_sql -r csv -q "$views" | sed 1d | paste -sd' ')"
-lcfix_sql -q "DROP VIEW ops_dwell; DROP VIEW ops_dwell_p95; DROP VIEW ops_edges; DROP INDEX event_at_idx ON event; DROP VIEW ops_live; DROP VIEW ops_round; DROP VIEW ops_recent; DROP INDEX bead_state_since_idx ON bead; DROP INDEX batch_state_idx ON batch; ALTER TABLE bead DROP COLUMN title; ALTER TABLE bead DROP COLUMN priority" >/dev/null 2>&1 || bail "could not rebuild the pre-0007 shape"
+lcfix_sql -q "DROP VIEW ops_dwell; DROP VIEW ops_dwell_p95; DROP VIEW ops_edges; DROP INDEX event_at_idx ON event; DROP VIEW ops_live; DROP TABLE bead_dep; DROP VIEW ops_round; DROP VIEW ops_recent; DROP INDEX bead_state_since_idx ON bead; DROP INDEX batch_state_idx ON batch; ALTER TABLE bead DROP COLUMN title; ALTER TABLE bead DROP COLUMN priority" >/dev/null 2>&1 || bail "could not rebuild the pre-0007 shape"
 is "positive control: the pre-0007 store has no views" 0 "$(lcfix_sql -r csv -q "$views" | sed 1d | wc -l)"
 out="$(spira-lc admin-migrate "$LC_DIR/migrations" 2>&1)" || bail "admin-migrate failed: $out"
 is "migrating the pre-0007 store makes every view" "$ALL_VIEWS" "$(lcfix_sql -r csv -q "$views" | sed 1d | paste -sd' ')"
@@ -44,7 +44,8 @@ wantrc "a second migrate run is a no-op" 0 $?
 want "the second run finds nothing pending" "already applied" "$again"
 
 views_of() { python3 -I -c 'import re,sys; t=re.sub(r"--[^\n]*","",open(sys.argv[1]).read()); print(re.sub(r"\s+"," ",t[t.index("CREATE "+sys.argv[2]+"VIEW "+sys.argv[3]):]).replace("CREATE OR REPLACE VIEW","CREATE VIEW").strip())' "$1" "$2" "$3"; }
-is "schema.sql and migrations 0007 and 0009 define the same views" "$(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_live) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_edges)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
+is "schema.sql and migrations 0007, 0009 and 0011 define the same views" "$(views_of "$LC_DIR/migrations/0011-bead-dep.sql" "OR REPLACE " ops_live) $(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_round) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_edges)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
+is "migrating the pre-0007 store gives ops_live its claimable and blocker" "blocker claimable" "$(lcfix_sql -r csv -q "SELECT column_name FROM information_schema.columns WHERE table_name = 'ops_live' AND column_name IN ('claimable','blocker') ORDER BY 1" | sed 1d | paste -sd' ')"
 
 cols="SELECT column_name FROM information_schema.columns WHERE table_schema = 'spira_lifecycle' AND table_name = 'ops_live' AND column_name IN ('persona','rework') ORDER BY 1"
 is "ops_live carries the persona and rework columns the NOW rows render" "persona rework" "$(lcfix_sql -r csv -q "$cols" | sed 1d | paste -sd' ')"
@@ -95,6 +96,7 @@ check_plans() {
     for t in bead; do
         for v in ops_live ops_recent; do reads "$(plan_of "SELECT * FROM $v")" $t && ok "$v reads $t by index ($when)" || bad "$v reads $t by index ($when)" "$(plan_of "SELECT * FROM $v")"; done
     done
+    reads "$(plan_of "SELECT * FROM ops_live")" bead_dep && ok "ops_live reads bead_dep by index ($when)" || bad "ops_live reads bead_dep by index ($when)" "$(plan_of "SELECT * FROM ops_live")"
     p="$(plan_of "SELECT * FROM ops_round")"
     for t in batch batch_member bead; do reads "$p" $t && ok "ops_round reads $t by index ($when)" || bad "ops_round reads $t by index ($when)" "$p"; done
 }
@@ -142,6 +144,9 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/bd" <<'STUB'
 #!/usr/bin/env bash
 [ "$1" = show ] && printf '[{"id":"%s","title":"from bd %s","priority":3}]\n' "$2" "$2"
+[ "$1 $2 $3" = "dep list sp-b9" ] && printf '[{"depends_on_id":"sp-b8","type":"blocks"},{"depends_on_id":"sp-b3","type":"parent-child"}]\n'
+[ "$1 $2" = "dep list" ] && [ "$3" != sp-b9 ] && echo '[]'
+exit 0
 STUB
 chmod +x "$TMP/bin/bd"
 tl_config SPIRA_BD="$TMP/bin/bd" SPIRA_DB="" || bail "cannot declare the stub bd"
@@ -151,6 +156,34 @@ is "the backfill leaves no live row untitled" 0 "$(untitled)"
 is "the backfill leaves no recent landing untitled" 0 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM ops_recent WHERE title IS NULL' | sed -n 2p)"
 want "the backfill wrote bd's title" "from bd sp-b40" "$(lcfix_sql -r csv -q "SELECT title FROM bead WHERE bead_id='sp-b40'")"
 is "the backfill keeps an existing title" "t0" "$(lcfix_sql -r csv -q "SELECT title FROM bead WHERE bead_id='sp-b0'" | sed -n 2p)"
+
+live_row() { spira-lc ops-view ops_live | python3 -I -c 'import json,sys; r=[x for x in json.load(sys.stdin) if x["bead_id"]==sys.argv[1]]; print(r[0]["claimable"], r[0]["blocker"]) if r else print("absent")' "$1"; }
+is "positive control: no edges before the backfill, so a READY bead is claimable" "1 None" "$(live_row sp-b1)"
+bd_out="$(spira-lc backfill-deps 2>&1)"
+wantrc "the dependency backfill completes" 0 $?
+is "the backfill mirrors the edges bd lists, every type" 2 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM bead_dep' | sed -n 2p)"
+is "a blocks edge to a live bead makes the dependent unclaimable and names the blocker" "0 sp-b8" "$(live_row sp-b9)"
+lcfix_sql -q "DELETE FROM bead_dep WHERE depends_on = 'sp-b3'" >/dev/null; spira-lc backfill-deps >/dev/null 2>&1
+is "a second backfill finds edges mirrored and leaves the store alone" 1 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM bead_dep' | sed -n 2p)"
+spira-lc backfill-deps --force >/dev/null 2>&1
+is "--force reads bd again" 2 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM bead_dep' | sed -n 2p)"
+
+spira-lc create-bead sp-A --priority 1 >/dev/null; spira-lc create-bead sp-B --priority 1 >/dev/null
+spira-lc dep-add sp-B sp-A >/dev/null; wantrc "dep-add mirrors an edge" 0 $?
+is "A blocks B: B is blocked by A and not claimable" "0 sp-A" "$(live_row sp-B)"
+is "A itself stays claimable" "1 None" "$(live_row sp-A)"
+spira-lc dep-add sp-B sp-A >/dev/null; wantrc "dep-add is idempotent" 0 $?
+lcfix_sql -q "UPDATE bead SET state='LANDED', since=UNIX_TIMESTAMP() WHERE bead_id='sp-A'" >/dev/null
+is "when A lands, B becomes claimable with no blocker" "1 None" "$(live_row sp-B)"
+lcfix_sql -q "UPDATE bead SET state='READY', since=NULL WHERE bead_id='sp-A'" >/dev/null
+is "positive control: a blocker that is live again blocks again" "0 sp-A" "$(live_row sp-B)"
+spira-lc dep-remove sp-B sp-A >/dev/null; wantrc "dep-remove drops the edge" 0 $?
+is "a removed edge no longer blocks" "1 None" "$(live_row sp-B)"
+spira-lc dep-add sp-B sp-A --type relates-to >/dev/null
+is "a non-blocks edge is recorded and never blocks" "1 None" "$(live_row sp-B)"
+lcfix_sql -q "UPDATE bead SET holds='[\"ask\"]' WHERE bead_id='sp-B'" >/dev/null
+is "a held bead is not claimable" "0 None" "$(live_row sp-B)"
+spira-lc dep-add sp-B "not a key" >/dev/null 2>&1; wantrc "dep-add refuses a non-key" 2 $?
 
 spira-lc create-bead sp-mirror --title "it's mine" --priority 1 >/dev/null
 spira-lc create-bead sp-mirror --priority 0 >/dev/null
