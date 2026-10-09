@@ -243,7 +243,7 @@ fn parse_repo_row(line: &str) -> Option<RepoRow> {
 /// (law-fail-closed-at-the-source). Empty means "no restriction": every lane.
 fn parse_lanes(row_name: &str, raw: &str) -> Result<Vec<Lane>, String> {
     if raw.is_empty() {
-        return Ok(vec![Lane::Plan]);
+        return Ok(expand_lane_mode("self"));
     }
     let expanded = expand_lane_mode(raw);
     if !expanded.is_empty() {

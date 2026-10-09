@@ -167,6 +167,28 @@ fn valid_lane_mode_and_label_convert() {
 }
 
 #[test]
+fn an_empty_lanes_column_admits_every_lane() {
+    let repo_map = "blank | /tmp/blank | push | origin/main | | true |\n\
+                     short | /tmp/short | push | origin/main | | true\n";
+    let (doc, _warnings) = convert("", "/opt/fixture-home", repo_map, &[]).expect("converts");
+    let every = vec![
+        Lane::Plan,
+        Lane::Incident,
+        Lane::Groom,
+        Lane::Spike,
+        Lane::MaechenSweep,
+        Lane::CzarTrigger,
+    ];
+    for name in ["blank", "short"] {
+        let mut got = doc.repo.get(name).expect(name).lanes.clone();
+        got.sort();
+        let mut want = every.clone();
+        want.sort();
+        assert_eq!(got, want, "{name}");
+    }
+}
+
+#[test]
 fn unknown_lane_mode_is_refused_not_warned() {
     let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | fullaccess\n";
     let errors = convert("", "/opt/fixture-home", repo_map, &[])
