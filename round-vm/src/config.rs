@@ -56,6 +56,8 @@ pub struct Config {
     pub stream_every: Duration,
     /// `run --attr-spool`: how long the VM waits for the spool's `close` after the corpus.
     pub attr_linger: Duration,
+    /// SPIRA_ROUND_CERTIFY_WALL_SECS: the cap the live progress file measures the suites' clock against.
+    pub cap_secs: u64,
 }
 
 /// Every value `Config::build` needs, already resolved by the caller — `cfg`/`cfg_parse` for
@@ -88,6 +90,7 @@ pub(crate) struct Fields {
     pub ssh_tries: u32,
     pub stream_every_secs: u64,
     pub attr_linger_secs: u64,
+    pub cap_secs: u64,
 }
 
 /// [`cfg`], refused with this binary's own "round-vm: " prefix (its existing error idiom —
@@ -192,6 +195,7 @@ impl Config {
             ssh_tries: num_env("SPIRA_ROUND_VM_SSH_TRIES", 30)?,
             stream_every_secs: num_env("SPIRA_ROUND_VM_STREAM_SECS", 10)?,
             attr_linger_secs: num_env("SPIRA_ROUND_VM_ATTR_LINGER", 3600)?,
+            cap_secs: must_cfg_parse("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
         }))
     }
 
@@ -225,6 +229,7 @@ impl Config {
             wait_poll: Duration::from_secs(1),
             stream_every: Duration::from_secs(f.stream_every_secs),
             attr_linger: Duration::from_secs(f.attr_linger_secs),
+            cap_secs: f.cap_secs,
         }
     }
 }
@@ -349,6 +354,7 @@ mod tests {
             ssh_tries: 30,
             stream_every_secs: 10,
             attr_linger_secs: 3600,
+            cap_secs: 900,
         }
     }
 
