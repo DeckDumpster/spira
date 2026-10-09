@@ -10,7 +10,7 @@ use crate::ports::ref_branch;
 use crate::records::{self, one_line, write_atomic, Kv};
 
 /// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED (Returned is
-/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK. The refusal is
+/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK; a row already in REWORK is the target state, not a refusal. The refusal is
 /// reported here and handed back: an eject that leaves the row where it was must exit non-zero.
 pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
     let fail = |why: String| {
@@ -19,6 +19,9 @@ pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
     };
     let Some((mut state, version)) = w.lc.bead_state(id) else { return fail("no lifecycle row".into()) };
     let Ok(mut v) = version.trim().parse::<u64>() else { return fail(format!("unreadable version {version:?}")) };
+    if state == "REWORK" {
+        return Ok(());
+    }
     let who = "queue.sh";
     if state == "CERTIFIED" {
         if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "\"Deliver\"") {
