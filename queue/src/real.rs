@@ -606,9 +606,9 @@ impl Scripts for RealScripts {
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run release: {e}") },
         }
     }
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut {
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64, handle: &Path) -> RunOut {
         // batch-job: the round's lint and suites, bounded by the caller's wall budget
-        match Command::new("timeout")
+        let spawned = Command::new("timeout")
             .args(["-k", "5", &wall_secs.to_string(), "round-vm", "run"])
             .arg(tree)
             .arg("--results-dir")
@@ -616,8 +616,15 @@ impl Scripts for RealScripts {
             .arg("--base")
             .arg(base)
             .stdin(Stdio::null())
-            .output()
-        {
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        let child = match spawned {
+            Ok(c) => c,
+            Err(e) => return RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
+        };
+        let _ = fs::write(handle, child.id().to_string());
+        match child.wait_with_output() {
             Ok(o) => RunOut {
                 rc: o.status.code().unwrap_or(127),
                 out: String::from_utf8_lossy(&o.stdout).to_string(),
@@ -625,6 +632,26 @@ impl Scripts for RealScripts {
             },
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
         }
+    }
+    fn pass_terminate(&self, pid: u32) {
+        // SAFETY: a plain SIGTERM to the pid the run wrote to its handle.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    }
+    fn pass_alive(&self, pid: u32) -> bool {
+        // SAFETY: signal 0 only checks existence.
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+    fn pass_restart(&self, batch: &str, repo: &str) -> bool {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        // batch-job: the next pass runs as long as its round-vm wall allows, detached from this verb
+        Command::new(exe)
+            .args(["round", "certify", batch, repo])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .is_ok()
     }
 }
 

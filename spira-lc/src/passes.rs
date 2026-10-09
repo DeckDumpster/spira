@@ -2,9 +2,9 @@
 
 use serde_json::{json, Value};
 
-const PASS_EVENTS: [&str; 6] = ["PassStarted", "SuitesStarted", "PassGreen", "PassRed", "PassIncomplete", "PassRebuilt"];
+const PASS_EVENTS: [&str; 7] = ["PassStarted", "SuitesStarted", "PassGreen", "PassRed", "PassIncomplete", "PassPreempted", "PassRebuilt"];
 
-pub const FETCHED: &str = "'PassStarted','SuitesStarted','PassGreen','PassRed','PassIncomplete','PassRebuilt','Eject'";
+pub const FETCHED: &str = "'PassStarted','SuitesStarted','PassGreen','PassRed','PassIncomplete','PassPreempted','PassRebuilt','Eject'";
 
 /// `events`: one batch's applied events in `seq` order, as rows of `event`, `evidence` and `at`.
 /// Returns the passes (with their timings, verdict and ejects) and when the batch last changed
@@ -39,6 +39,13 @@ pub fn fold(events: &[Value]) -> (Vec<Value>, Option<i64>) {
             "PassIncomplete" => set(&mut passes, n, |p| {
                 p["verdict"] = json!("incomplete");
                 p["reason"] = body["reason"].clone();
+                p["ended_at"] = json!(at);
+            }),
+            "PassPreempted" => set(&mut passes, n, |p| {
+                p["verdict"] = json!("preempted");
+                p["done"] = body["done"].clone();
+                p["total"] = body["total"].clone();
+                p["red_suites"] = body["red_suites"].clone();
                 p["ended_at"] = json!(at);
             }),
             "Eject" => {
@@ -105,6 +112,19 @@ mod tests {
         let (passes, _) = fold(&events);
         assert_eq!(passes[0]["verdict"], "incomplete");
         assert_eq!(passes[0]["reason"], "over the cap");
+    }
+
+    #[test]
+    fn a_preempted_pass_keeps_how_far_it_got() {
+        let events = vec![
+            ev("PassStarted", json!({"n": 1, "head": "h"}), 10),
+            ev("PassPreempted", json!({"n": 1, "done": 3, "total": 9, "red_suites": ["test-x.sh"]}), 30),
+        ];
+        let (passes, since) = fold(&events);
+        assert_eq!(passes[0]["verdict"], "preempted");
+        assert_eq!((passes[0]["done"].as_u64(), passes[0]["total"].as_u64()), (Some(3), Some(9)));
+        assert_eq!(passes[0]["red_suites"], json!(["test-x.sh"]));
+        assert_eq!(since, Some(30));
     }
 
     #[test]

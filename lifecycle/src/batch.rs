@@ -128,6 +128,9 @@ pub enum BatchEventKind {
     PassRed { n: u32, red_suites: Vec<String>, suites_s: u64, build_s: u64 },
     /// Any phase -> ATTRIBUTING: the pass produced no verdict (over the cap, VM lost).
     PassIncomplete { n: u32, reason: String },
+    /// Any phase -> ATTRIBUTING: the pass was stopped on purpose, with `done` of `total`
+    /// suites finished and `red_suites` already red.
+    PassPreempted { n: u32, done: u32, total: u32, red_suites: Vec<String> },
     /// ATTRIBUTING -> OPEN for the next pass, at the head the survivors were rebuilt to.
     PassRebuilt { head: String },
     Green,
@@ -206,6 +209,7 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
         | BatchEventKind::PassGreen { .. }
         | BatchEventKind::PassRed { .. }
         | BatchEventKind::PassIncomplete { .. }
+        | BatchEventKind::PassPreempted { .. }
         | BatchEventKind::PassRebuilt { .. }
         | BatchEventKind::Green
         | BatchEventKind::Red
@@ -259,7 +263,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             }
             PassStarted { n, head } => started(n, Some(head)),
             Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. } | SuitesStarted { .. }
-            | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassRebuilt { .. } => illegal(row, kind),
+            | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } => illegal(row, kind),
         },
 
         BatchState::CiRunning => match kind {
@@ -270,9 +274,9 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 Outcome::applied(moved(BatchState::CiRunning, Some(BatchPhase::Suites)))
             }
             PassGreen { n, .. } if *n == row.pass && row.phase == Some(BatchPhase::Suites) => Outcome::applied(moved(BatchState::Green, None)),
-            PassRed { n, .. } | PassIncomplete { n, .. } if *n == row.pass => Outcome::applied(moved(BatchState::Attributing, None)),
+            PassRed { n, .. } | PassIncomplete { n, .. } | PassPreempted { n, .. } if *n == row.pass => Outcome::applied(moved(BatchState::Attributing, None)),
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
-            | PassIncomplete { .. } | PassRebuilt { .. } | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle
+            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle
             | Abandon { .. } => illegal(row, kind),
         },
 
@@ -285,7 +289,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             BaseMoved => Outcome::applied(moved(BatchState::Rebuilding, None)),
             Eject { .. } => Outcome::applied(moved(BatchState::Open, None)),
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
-            | PassIncomplete { .. } | PassRebuilt { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. } => {
+            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. } => {
                 illegal(row, kind)
             }
         },
@@ -297,7 +301,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 Outcome::applied(new)
             }
             PassStarted { n, head } => started(n, Some(head)),
-            MemberAdded { .. } | CiStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. }
+            MemberAdded { .. } | CiStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. }
             | PassRebuilt { .. } | Green | Red | BaseMoved | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. }
             | Eject { .. } => illegal(row, kind),
         },
@@ -311,12 +315,12 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 Outcome::applied(new)
             }
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
-            | PassIncomplete { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } => illegal(row, kind),
+            | PassIncomplete { .. } | PassPreempted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } => illegal(row, kind),
         },
 
         BatchState::Landed | BatchState::Settled | BatchState::Abandoned => match kind {
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
-            | PassIncomplete { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
+            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
             | Settle | Abandon { .. } | Eject { .. } => terminal(row),
         },
     }
@@ -346,6 +350,7 @@ mod tests {
             BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 },
             BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 1, build_s: 1 },
             BatchEventKind::PassIncomplete { n: 1, reason: "cap".into() },
+            BatchEventKind::PassPreempted { n: 1, done: 3, total: 9, red_suites: vec![] },
             BatchEventKind::PassRebuilt { head: "h2".into() },
             BatchEventKind::Green,
             BatchEventKind::Red,
@@ -545,6 +550,17 @@ mod tests {
         assert_eq!(incomplete.state, BatchState::Attributing);
         let green = apply(&row(BatchState::Attributing), &ev(BatchState::Attributing, 0, BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 }));
         assert!(!green.applied);
+    }
+
+    #[test]
+    fn a_pass_preempted_in_any_phase_goes_to_attributing_and_only_for_the_current_pass() {
+        let preempt = |n| BatchEventKind::PassPreempted { n, done: 3, total: 9, red_suites: vec!["test-x.sh".into()] };
+        let building = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
+        assert_eq!(step(&building, preempt(1)).state, BatchState::Attributing);
+        let suites = step(&building, BatchEventKind::SuitesStarted { n: 1 });
+        assert_eq!(step(&suites, preempt(1)).state, BatchState::Attributing);
+        refused(&suites, preempt(2));
+        refused(&row(BatchState::Open), preempt(1));
     }
 
     #[test]

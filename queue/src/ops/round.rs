@@ -20,6 +20,11 @@ use crate::records::{self, one_line, write_atomic, Kv};
 /// opposed to FAIL, which is a red round.
 pub const FAULT: i32 = 4;
 
+/// certify's exit when `round preempt` stopped its pass: the verb, not certify, records that.
+pub const PREEMPTED: i32 = 5;
+
+const PREEMPT_POLLS: u32 = 120;
+
 const RECORD: &str = "round";
 const BUILD_RED: &str = "workspace-build";
 const LC_ACTOR: &str = "queue.sh";
@@ -33,6 +38,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
         Round::Eject { batch, id, repo, reason, suites, red, harness_fault, rebuild } => eject(w, batch, id, repo.as_deref(), reason, suites, *red, *harness_fault, *rebuild),
         Round::Land { batch, repo } => land(w, batch, repo.as_deref()),
         Round::Abandon { batch, repo, reason } => abandon(w, batch, repo.as_deref(), reason),
+        Round::Preempt { batch, repo, eject, reason, suites } => preempt(w, batch, repo.as_deref(), eject, reason, suites),
         Round::Status { repo } => status(w, repo.as_deref()),
         Round::PassStart { batch, repo } => pass_start(w, batch, repo.as_deref()),
         Round::SuitesStarted { batch, repo } => suites_started_verb(w, batch, repo.as_deref()),
@@ -225,6 +231,14 @@ fn set_phase(w: &World, kv: &mut Kv, phase: &str) {
 
 fn rounds_dir(c: &Ctx) -> PathBuf {
     c.s.run.join("rounds")
+}
+
+fn handle_of(c: &Ctx, batch: &str) -> PathBuf {
+    rounds_dir(c).join(format!("{batch}.pass"))
+}
+
+fn preempt_marker(c: &Ctx, batch: &str) -> PathBuf {
+    rounds_dir(c).join(format!("{batch}.preempt"))
 }
 
 fn mark_running(c: &Ctx, batch: &str) {
@@ -540,6 +554,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
             w.err(format!("queue.sh {label}: spira-lc refused to start the round {batch} (rc={rc}): {out}"));
             return FAIL;
         }
+        let _ = fs::remove_file(preempt_marker(&c, batch));
         set_phase(w, &mut kv, "certifying");
         kv.remove("red");
         if save(w, label, &c, &kv).is_err() {
@@ -559,7 +574,13 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
             return FAIL;
         };
         let began = w.clock.now();
-        let out = w.scripts.round_vm(&wt, &results, &base, c.s.round_wall_secs);
+        let _ = fs::create_dir_all(rounds_dir(&c));
+        let out = w.scripts.round_vm(&wt, &results, &base, c.s.round_wall_secs, &handle_of(&c, batch));
+        let _ = fs::remove_file(handle_of(&c, batch));
+        if preempt_marker(&c, batch).exists() {
+            w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
+            return PREEMPTED;
+        }
         timings = pass_timings(&results, w.clock.now().saturating_sub(began));
         let mut found = Vec::new();
         suite_statuses(&results, &mut found, 0);
@@ -780,6 +801,148 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         w.err(format!("queue.sh {label}: {} left round {batch} but did not return to REWORK: {} — see above", id, unreturned.join(" ")));
         return FAIL;
     }
+    OK
+}
+
+/// Stops the round's running pass without letting it finish: TERM to the run's handle so
+/// round-vm salvages the finished suites and releases the VM, `PassPreempted` on the batch,
+/// the named members ejected with the evidence, the head rebuilt and checked, the next pass
+/// started. Refuses, naming the phase, when no pass is running.
+fn preempt(w: &World, batch: &str, repo: Option<&str>, eject_arg: &str, reason: &Text, suites: &str) -> i32 {
+    let label = "round preempt";
+    let reason = match read_text(w, reason) {
+        Ok(r) if !r.trim().is_empty() => r,
+        Ok(_) => {
+            w.err(format!("queue.sh {label}: --reason is required — it is the evidence each ejected bead carries back"));
+            return USAGE;
+        }
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot read the reason: {e}"));
+            return USAGE;
+        }
+    };
+    let ids: Vec<String> = eject_arg.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
+    if ids.is_empty() {
+        w.err(format!("queue.sh {label}: --eject names no bead"));
+        return USAGE;
+    }
+    let Ok((c, path)) = local_ctx(w, label, repo) else { return FAIL };
+    if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
+        return FAIL;
+    }
+    if ids.iter().try_for_each(|i| idents(w, label, &[("bead id", i)])).is_err() || suites.split(',').filter(|s| !s.is_empty()).try_for_each(|s| idents(w, label, &[("suite", s)])).is_err() {
+        return FAIL;
+    }
+
+    let (wt, head, tips) = {
+        let Ok(_g) = lock(w, label, &c) else { return FAIL };
+        let Ok(kv) = load(w, label, &c, batch) else { return FAIL };
+        let phase = kv.get("phase").unwrap_or("");
+        let members = kv.members();
+        if let Some(missing) = ids.iter().find(|i| !members.iter().any(|m| &m.id == *i)) {
+            let named: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
+            w.err(format!("queue.sh {label}: {missing} is not a member of round {batch} (members: {})", named.join(" ")));
+            return FAIL;
+        }
+        let pid = fs::read_to_string(handle_of(&c, batch)).ok().and_then(|t| t.trim().parse::<u32>().ok()).filter(|p| w.scripts.pass_alive(*p));
+        let Some(pid) = pid.filter(|_| phase == "certifying") else {
+            w.err(format!("queue.sh {label}: round {batch} is {phase}, with no pass running — nothing to preempt"));
+            return FAIL;
+        };
+        let _ = fs::create_dir_all(rounds_dir(&c));
+        if let Err(e) = fs::write(preempt_marker(&c, batch), one_line(&reason)) {
+            w.err(format!("queue.sh {label}: cannot mark the pass as preempted: {e}"));
+            return FAIL;
+        }
+        w.scripts.pass_terminate(pid);
+        let mut polls = 0;
+        while w.scripts.pass_alive(pid) && polls < PREEMPT_POLLS {
+            w.clock.sleep(1);
+            polls += 1;
+        }
+        if w.scripts.pass_alive(pid) {
+            let _ = fs::remove_file(preempt_marker(&c, batch));
+            w.err(format!("queue.sh {label}: the pass of round {batch} (pid {pid}) did not stop after {PREEMPT_POLLS} polls — left running, not killed: a kill would lose its salvaged results"));
+            return FAIL;
+        }
+        (worktree_of(&kv), kv.get("head").unwrap_or("").to_string(), members)
+    };
+
+    let mut found = Vec::new();
+    suite_statuses(&rounds_dir(&c).join(format!("{batch}.results")), &mut found, 0);
+    let corpus = fs::read_dir(wt.join("spira"))
+        .map(|rd| rd.flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.starts_with("test-") && n.ends_with(".sh")).count())
+        .unwrap_or(0);
+    let (done, total) = (found.len() as u32, (corpus.max(found.len())) as u32);
+    let mut reds: Vec<String> = found.iter().filter(|(_, s)| BLOCKING.contains(&s.as_str())).map(|(n, _)| n.clone()).collect();
+    reds.sort();
+    reds.dedup();
+
+    {
+        let Ok(_g) = lock(w, label, &c) else { return FAIL };
+        let Ok(mut kv) = load(w, label, &c, batch) else { return FAIL };
+        if kv.get("phase") != Some("certifying") || kv.get("head") != Some(head.as_str()) {
+            w.err(format!("queue.sh {label}: the round {batch} changed while its pass was stopping — nothing ejected"));
+            return FAIL;
+        }
+        let recorded = lc_cas(w, batch, |s, v| {
+            let (n, _) = w.lc.batch_pass(batch).ok_or((1, format!("spira-lc cannot say which pass {batch} is on")))?;
+            let kind = serde_json::json!({"PassPreempted": {"n": n, "done": done, "total": total, "red_suites": reds}});
+            w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string())
+        });
+        if let Err((rc, out)) = recorded {
+            w.err(format!("queue.sh {label}: spira-lc refused PassPreempted for {batch} (rc={rc}): {out} — nothing ejected"));
+            return FAIL;
+        }
+        set(&mut kv, "red", &reds.join(","));
+        set_phase(w, &mut kv, "preempted");
+        if save(w, label, &c, &kv).is_err() {
+            return FAIL;
+        }
+        let _ = fs::remove_file(preempt_marker(&c, batch));
+        mark_running(&c, batch);
+    }
+    landing_log(&c.s.run, &format!("QUEUE ROUND-PREEMPT {} repo={} batch={batch} done={done}/{total} red={} eject={}", w.clock.now(), c.r.name, reds.join(","), ids.join(",")));
+    w.out(format!("queue.sh {label}: pass of round {batch} stopped at {done}/{total} suites, red so far: {}", if reds.is_empty() { "none".to_string() } else { reds.join(",") }));
+
+    for id in &ids {
+        match records::read_kv(&c.queue_file(RECORD)) {
+            Ok(Some(kv)) if kv.get("batch_id") == Some(batch) && kv.members().iter().any(|m| &m.id == id) => {}
+            Ok(Some(kv)) if kv.get("batch_id") == Some(batch) => {
+                w.out(format!("queue.sh {label}: {id} already left round {batch} with an earlier eject"));
+                continue;
+            }
+            _ => break,
+        }
+        let rc = eject(w, batch, id, repo, &Text::Arg(reason.clone()), suites, !suites.is_empty(), false, true);
+        if rc != OK {
+            w.err(format!("queue.sh {label}: eject of {id} failed (rc={rc}) — the next pass was not started"));
+            return rc;
+        }
+    }
+
+    let Ok(Some(kv)) = records::read_kv(&c.queue_file(RECORD)) else {
+        w.out(format!("queue.sh {label}: round {batch} has no member left; no pass to start"));
+        return OK;
+    };
+    let new_head = kv.get("head").unwrap_or("").to_string();
+    let base = kv.get("base").unwrap_or("").to_string();
+    let still_in: Vec<&str> = tips
+        .iter()
+        .filter(|m| !kv.members().iter().any(|k| k.id == m.id))
+        .filter(|m| w.git.is_ancestor(&path, &m.tip, &new_head) && !w.git.is_ancestor(&path, &m.tip, &base))
+        .map(|m| m.id.as_str())
+        .collect();
+    if !still_in.is_empty() || w.git.rev_parse(&worktree_of(&kv), "HEAD").as_deref() != Some(new_head.as_str()) {
+        w.err(format!("queue.sh {label}: the rebuilt head {new_head} of round {batch} still holds the tip of {} or the worktree is not at it — the next pass was not started", still_in.join(" ")));
+        return FAIL;
+    }
+    w.out(format!("queue.sh {label}: verified no ejected tip remains in head {new_head}"));
+    if !w.scripts.pass_restart(batch, &c.r.name) {
+        w.err(format!("queue.sh {label}: cannot start the next pass of round {batch} — run `queue round certify {batch}`"));
+        return FAIL;
+    }
+    w.out(format!("queue.sh {label}: next pass of round {batch} started at {new_head}"));
     OK
 }
 
