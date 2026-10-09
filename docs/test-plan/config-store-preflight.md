@@ -25,7 +25,7 @@ This page lands the catalogue and the `# tier:` / `# covers:` tags on the surviv
 
 - **Doctor rows (27–32, 34): superseded.** The bash `test-doctor-*.sh` suites are gone; doctor is a Rust crate whose tests are `doctor/src/tests.rs`. Those UCs are marked uncovered (not deleted) until a suite declares them.
 - **Config parsing (02, repo-map readers, fayth readers):** moved to `spira-config`; its tests are Rust. UC-02 stays an explicit gap (a malformed or inline-commented `spira.conf` row).
-- **Not done here, still open:** the S1 schema-verdict seam with its T1 table, the merges of bd-resolve/bd-lock-retry into test-conf and of repo-label/lanes into one repo-map suite, test-bd-contract.sh (UC-25), the S5 containment injection and S6 source-time cost work, and the gaps G3–G12. They change production code or retire suites that other branches touch (`spira/conf.sh`, `spira/lib.sh` are in flight on other beads), so they are filed as follow-ups rather than done blind.
+- **Not done here, still open:** the S1 schema-verdict seam with its T1 table, the merges of bd-resolve/bd-lock-retry into test-conf and of repo-label/lanes into one repo-map suite, the S5 containment injection and S6 source-time cost work, and the gaps G3–G12. They change production code or retire suites that other branches touch (`spira/conf.sh`, `spira/lib.sh` are in flight on other beads), so they are filed as follow-ups rather than done blind.
 - **Missing suites** named by the old plan (test-roster-warn, test-schema-migration-guard, test-literal-lint, test-install-bd-init-cwd) no longer exist; UCs 17, 22 and 23 are marked uncovered.
 
 ## Cost
