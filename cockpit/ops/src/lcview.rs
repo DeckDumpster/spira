@@ -96,6 +96,43 @@ pub fn tail_lines(bytes: &[u8], partial: bool, n: usize) -> Vec<String> {
     found
 }
 
+/// One legal move of the bead machine, as `spira-lc ops-graph` prints it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: String,
+    pub event: String,
+    pub to: String,
+}
+
+/// One `ops_edges` row: an applied move (`to_state`) or a refused event (`event`, `refusal`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EdgeRow {
+    pub kind: String,
+    pub from_state: String,
+    pub to_state: Option<String>,
+    pub event: Option<String>,
+    pub refusal: Option<String>,
+    pub n_1h: i64,
+}
+
+/// One `ops_dwell` row: when a live bead entered its state, against that state's measured p95.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DwellRow {
+    pub bead_id: String,
+    pub state: String,
+    pub entered_at: i64,
+    pub p95_s: Option<i64>,
+}
+
+/// One batch of `spira-lc list --batches`, with the beads it carries.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BatchRow {
+    pub id: String,
+    pub state: String,
+    pub last_at: i64,
+    pub members: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
@@ -111,6 +148,14 @@ pub struct Snapshot {
     pub tails: HashMap<String, Tail>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
+    #[serde(default)]
+    pub graph: Vec<GraphEdge>,
+    #[serde(default)]
+    pub edges: Vec<EdgeRow>,
+    #[serde(default)]
+    pub dwell: Vec<DwellRow>,
+    #[serde(default)]
+    pub batches: Vec<BatchRow>,
 }
 
 /// The ids a commit subject names as its own work: `sp-x: …` or `… merge sp-x (…`.
@@ -179,6 +224,41 @@ pub struct PipeLine {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
+pub struct SmEdge {
+    pub event: String,
+    pub to: String,
+    pub rate_1h: i64,
+    pub main: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SmState {
+    pub name: String,
+    pub count: usize,
+    pub detail: String,
+    pub red: bool,
+    pub edges: Vec<SmEdge>,
+    /// The graph has no move from this state to REWORK, though work here can come back.
+    pub no_rework_exit: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SmRefusal {
+    pub what: String,
+    pub n: i64,
+    pub why: String,
+    pub red: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SmBatch {
+    pub name: String,
+    pub count: usize,
+    pub detail: String,
+    pub red: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct View {
     pub clock: String,
     pub release: String,
@@ -206,6 +286,158 @@ pub struct View {
     pub next: Vec<Item>,
     pub blocked: Vec<Item>,
     pub recent: Vec<Item>,
+    pub machine: Vec<SmState>,
+    pub terminal: String,
+    pub refused: Vec<SmRefusal>,
+    pub batch: Vec<SmBatch>,
+}
+
+const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
+const TERMINAL: [&str; 3] = ["SUPERSEDED", "DROPPED", "DONE"];
+const NEEDS_REWORK_EXIT: [&str; 3] = ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"];
+const OPEN_BATCH: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
+const REFUSED_SHOWN: usize = 4;
+const REPEATED_REFUSALS: i64 = 2;
+
+fn kebab(s: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('-');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn bead_ids_in(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.')).to_string())
+        .filter(|w| w.starts_with("sp-") && w.len() > 3)
+        .collect()
+}
+
+fn join_parts(parts: Vec<String>) -> String {
+    parts.join(" · ")
+}
+
+fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
+    let in_batch: std::collections::HashSet<&str> =
+        s.batches.iter().filter(|b| OPEN_BATCH.contains(&b.state.as_str())).flat_map(|b| b.members.iter().map(String::as_str)).collect();
+    let day = |r: &Row| s.now - r.updated_at < 86_400;
+    let mut out = Vec::new();
+    for name in CHAIN.iter().copied().chain(["REWORK"]) {
+        let rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == name).collect();
+        let count = if name == "LANDED" { rows.iter().filter(|r| day(r)).count() } else { rows.len() };
+        let mut parts: Vec<String> = Vec::new();
+        let mut red = false;
+        if matches!(name, "READY" | "REWORK") {
+            let (mut claimable, mut blocked, mut held, mut poison) = (0, 0, 0, 0);
+            let mut blockers: BTreeMap<String, usize> = BTreeMap::new();
+            for r in &rows {
+                if r.holds.iter().any(|h| h == "poison") {
+                    poison += 1;
+                } else if r.holds.iter().any(|h| h == "wait") {
+                    blocked += 1;
+                    for b in bead_ids_in(r.reason.as_deref().unwrap_or("")) {
+                        *blockers.entry(b).or_default() += 1;
+                    }
+                } else if !r.holds.is_empty() {
+                    held += 1;
+                } else if !on_base(&r.id) {
+                    claimable += 1;
+                }
+            }
+            parts.push(format!("claimable {claimable}"));
+            if blocked > 0 {
+                let mut top: Vec<(usize, String)> = blockers.into_iter().map(|(b, n)| (n, b)).collect();
+                top.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+                let names = top.iter().take(2).map(|(_, b)| b.clone()).collect::<Vec<_>>().join(" ");
+                parts.push(if names.is_empty() { format!("blocked {blocked}") } else { format!("blocked {blocked} ← {names}") });
+            }
+            for (label, n) in [("held", held), ("poison", poison)] {
+                if n > 0 {
+                    parts.push(format!("{label} {n}"));
+                }
+            }
+        }
+        if name == "WORKING" {
+            let dead = rows.iter().filter(|r| r.holder.is_none() || r.lease_until.is_some_and(|l| l <= s.now)).count();
+            if dead > 0 {
+                parts.push(format!("dead holder {dead}"));
+                red = true;
+            }
+        }
+        if name == "SUBMITTED" {
+            let skipped = rows.iter().filter(|r| r.reason.as_deref().is_some_and(|x| x.to_lowercase().contains("conflict"))).count();
+            if skipped > 0 {
+                parts.push(format!("skipped: conflict {skipped}"));
+            }
+        }
+        if name == "IN_DELIVERY" {
+            let inside = rows.iter().filter(|r| in_batch.contains(r.id.as_str())).count();
+            parts.push(format!("in open batch {inside} · orphaned {}", rows.len() - inside));
+            red |= inside < rows.len();
+        }
+        if name == "LANDED" {
+            parts.push("last 24h".into());
+        }
+        let stuck = s.dwell.iter().filter(|d| d.state == name && d.p95_s.is_some_and(|p| s.now - d.entered_at > p)).count();
+        if stuck > 0 {
+            parts.push(format!("stuck >p95 {stuck}"));
+            red = true;
+        }
+        let mut edges: Vec<SmEdge> = Vec::new();
+        let next = CHAIN.iter().position(|c| *c == name).and_then(|i| CHAIN.get(i + 1)).copied();
+        let mut tos: Vec<&str> = s.graph.iter().filter(|g| g.from == name && !TERMINAL.contains(&g.to.as_str())).map(|g| g.to.as_str()).collect();
+        tos.sort_by_key(|t| (Some(*t) != next, *t));
+        tos.dedup();
+        for to in tos {
+            let events: Vec<String> = s.graph.iter().filter(|g| g.from == name && g.to == to).map(|g| kebab(&g.event)).collect();
+            let rate = s.edges.iter().filter(|e| e.kind == "applied" && e.from_state == name && e.to_state.as_deref() == Some(to)).map(|e| e.n_1h).sum();
+            edges.push(SmEdge { event: events.join("/"), to: to.into(), rate_1h: rate, main: Some(to) == next });
+        }
+        let no_rework_exit = NEEDS_REWORK_EXIT.contains(&name) && !s.graph.is_empty() && !s.graph.iter().any(|g| g.from == name && g.to == "REWORK");
+        out.push(SmState { name: name.into(), count, detail: join_parts(parts), red, edges, no_rework_exit });
+    }
+    out
+}
+
+fn refusals(s: &Snapshot) -> Vec<SmRefusal> {
+    let mut by: BTreeMap<(String, String), (i64, String)> = BTreeMap::new();
+    for e in s.edges.iter().filter(|e| e.kind == "refused" && e.n_1h > 0) {
+        let slot = by.entry((e.from_state.clone(), e.event.clone().unwrap_or_default())).or_insert((0, e.refusal.clone().unwrap_or_default()));
+        slot.0 += e.n_1h;
+    }
+    let mut v: Vec<SmRefusal> = by
+        .into_iter()
+        .map(|((state, event), (n, why))| SmRefusal { what: format!("{event}@{state}"), n, why, red: n >= REPEATED_REFUSALS })
+        .collect();
+    v.sort_by(|a, b| b.n.cmp(&a.n).then(a.what.cmp(&b.what)));
+    v.truncate(REFUSED_SHOWN);
+    v
+}
+
+fn batch_block(s: &Snapshot) -> Vec<SmBatch> {
+    let green_limit = s.dwell.iter().find(|d| d.state == "IN_DELIVERY").and_then(|d| d.p95_s);
+    let of = |st: &str| -> Vec<&BatchRow> { s.batches.iter().filter(|b| b.state == st).collect() };
+    let mut out = Vec::new();
+    for (name, st) in [("OPEN", "OPEN"), ("CI", "CI_RUNNING"), ("GREEN", "GREEN"), ("ATTRIBUTING", "ATTRIBUTING"), ("REBUILDING", "REBUILDING")] {
+        let bs = of(st);
+        if bs.is_empty() && matches!(name, "ATTRIBUTING" | "REBUILDING") {
+            continue;
+        }
+        let oldest = bs.iter().map(|b| b.last_at).min();
+        let red = st == "GREEN" && oldest.zip(green_limit).is_some_and(|(at, p)| s.now - at > p);
+        let detail = if red { format!("stuck {}", age(s.now - oldest.unwrap_or(s.now))) } else { String::new() };
+        out.push(SmBatch { name: name.into(), count: bs.len(), detail, red });
+    }
+    out.push(SmBatch { name: "LANDED".into(), count: of("LANDED").iter().filter(|b| s.now - b.last_at < 86_400).count(), detail: "last 24h".into(), red: false });
+    out
 }
 
 fn age(secs: i64) -> String {
@@ -282,6 +514,15 @@ pub fn view(s: &Snapshot) -> View {
         ("IN_DELIVERY".into(), count("IN_DELIVERY")),
         ("LANDED/24h".into(), s.rows.iter().filter(|r| r.state == "LANDED" && day(r)).count()),
     ];
+
+    v.machine = state_machine(s, &|id| s.on_base.contains_key(id));
+    v.terminal = TERMINAL
+        .iter()
+        .map(|t| format!("{t} {}", s.rows.iter().filter(|r| r.state == *t && day(r)).count()))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    v.refused = refusals(s);
+    v.batch = batch_block(s);
 
     let mut by_kind: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for r in s.rows.iter().filter(|r| !r.holds.is_empty() && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED")) {
@@ -379,6 +620,10 @@ const YEL: &str = "\x1b[33m";
 const GRN: &str = "\x1b[32m";
 const CYN: &str = "\x1b[36m";
 
+const REWORK_SHOWN: usize = 3;
+const NEXT_SHOWN: usize = 5;
+const RECENT_SHOWN: usize = 5;
+
 pub fn render(v: &View, width: usize) -> Vec<String> {
     let w = width.max(60);
     let mut out = Vec::new();
@@ -393,19 +638,40 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     for e in &v.errors {
         out.push(format!("{RED}  source failed: {}{R}", cut(e, w - 18)));
     }
-    let mut flow = format!("{B}FLOW{R}   READY {B}{}{R}", v.ready);
-    if v.ready_held > 0 {
-        let c = if v.held_pct >= 25 { RED } else { YEL };
-        flow.push_str(&format!(" {c}({} held, {}%){R}", v.ready_held, v.held_pct));
+    out.push(format!("{B}STATE MACHINE{R}   {D}(counts now · edge rates per hour){R}"));
+    let dw = w.saturating_sub(24);
+    let dot = |red: bool| if red { format!(" {RED}●{R}") } else { String::new() };
+    for st in &v.machine {
+        let c = if st.name == "REWORK" { YEL } else { "" };
+        out.push(format!("{c}{B}{:<14}{R}{B}{:>4}{R}{}{}", st.name, st.count, if st.detail.is_empty() { String::new() } else { format!("  {}", cut(&st.detail, dw)) }, dot(st.red)));
+        for e in &st.edges {
+            let glyph = if e.main { "│" } else { "└▶" };
+            let label = if e.main { e.event.clone() } else { format!("{} ▶ {}", e.event, e.to) };
+            let lw = if e.main { 27 } else { 26 };
+            out.push(format!("  {D}{glyph}{R} {:<lw$}{:>4}/h", cut(&label, lw), e.rate_1h));
+        }
+        if st.no_rework_exit {
+            out.push(format!("  {RED}└▶ (no exit to REWORK){R}  {RED}●{R}"));
+        }
+        if st.name == "LANDED" {
+            out.push(String::new());
+        }
     }
-    for (st, n) in &v.flow[1..] {
-        flow.push_str(&format!(" → {st} {B}{n}{R}"));
+    out.push(String::new());
+    out.push(format!("{D}terminal 24h{R}    {}", v.terminal));
+    out.push(String::new());
+    out.push(format!("{B}REFUSED (1h){R}"));
+    if v.refused.is_empty() {
+        out.push(format!("  {D}none{R}"));
     }
-    out.push(flow);
-    out.push(format!(
-        "       {YEL}REWORK {}{R}  {D}DROPPED {}/24h · SUPERSEDED {}/24h · LANDED {} all time{R}",
-        v.rework, v.dropped_24h, v.superseded_24h, v.landed_total
-    ));
+    for r in &v.refused {
+        out.push(format!("  {:<24}{B}{:>4}{R}  {}{}", cut(&r.what, 24), r.n, cut(&r.why, dw), dot(r.red)));
+    }
+    out.push(String::new());
+    out.push(format!("{B}BATCH{R}"));
+    for b in &v.batch {
+        out.push(format!("  {:<12}{B}{:>3}{R}{}{}", b.name, b.count, if b.detail.is_empty() { String::new() } else { format!("  {}", b.detail) }, dot(b.red)));
+    }
     if !v.holds.is_empty() {
         out.push(format!("{B}HOLDS{R}"));
         for g in &v.holds {
@@ -458,15 +724,15 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     }
     if !v.rework_items.is_empty() {
         out.push(format!("{B}REWORK{R} {D}sent back — bead · why{R}"));
-        for i in v.rework_items.iter().take(6) {
+        for i in v.rework_items.iter().take(REWORK_SHOWN) {
             out.push(format!("  {YEL}{:<12}{R} {} {D}{}{R} {}", i.id, i.prio, i.age, cut(&i.note, w.saturating_sub(30))));
         }
-        if v.rework_items.len() > 6 {
-            out.push(format!("  {D}… {} more{R}", v.rework_items.len() - 6));
+        if v.rework_items.len() > REWORK_SHOWN {
+            out.push(format!("  {D}… {} more{R}", v.rework_items.len() - REWORK_SHOWN));
         }
     }
     out.push(format!("{B}NEXT{R}   {B}{}{R} claimable {D}(claim order: express, REWORK, then priority){R}", v.next_count));
-    for i in v.next.iter().take(10) {
+    for i in v.next.iter().take(NEXT_SHOWN) {
         out.push(format!("  {} {:<12} {}", i.prio, i.id, cut(&i.title, w.saturating_sub(20))));
     }
     if !v.blocked.is_empty() {
@@ -476,7 +742,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         }
     }
     out.push(format!("{B}RECENT{R} {D}last transitions — when · bead · now{R}"));
-    for i in v.recent.iter().take(8) {
+    for i in v.recent.iter().take(RECENT_SHOWN) {
         let c = match i.state.as_str() {
             "LANDED" => GRN,
             "REWORK" | "DROPPED" => YEL,
@@ -669,7 +935,7 @@ mod tests {
         assert_eq!(v.next_count, 2);
         assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-high", "sp-low"]);
         let f = plain(&render(&v, 120));
-        assert!(f.contains("2 claimable"), "{f}");
+        assert!(f.contains("2 claimable") && f.contains("claimable 2"), "{f}");
     }
 
     #[test]
@@ -692,7 +958,7 @@ mod tests {
             rows.push(r);
         }
         let f = plain(&render(&view(&snap(rows)), 120));
-        assert!(f.contains("READY 4 (3 held, 75%)"), "{f}");
+        assert!(f.contains("READY") && f.contains("claimable 1 · held 3"), "{f}");
         assert!(f.contains("3× repo:spira is not in the map"), "{f}");
     }
 
@@ -715,7 +981,8 @@ mod tests {
         let pane = plain(&render(&v, 120));
         let page = render_html(&v, None, 10);
         for (st, n) in &v.flow {
-            assert!(pane.contains(&format!("{st} {n}")) || st == "READY", "pane lacks {st} {n}");
+            let line = v.machine.iter().find(|m| m.name == st.trim_end_matches("/24h")).map(|m| format!("{:<14}{:>4}", m.name, m.count));
+            assert!(line.is_some_and(|l| pane.contains(&l)), "pane lacks {st} {n}");
             assert!(page.contains(&format!("<span>{st}</span><b>{n}</b>")), "page lacks {st} {n}");
         }
         assert!(pane.contains("DRIFT 1") && page.contains("1 bead(s) READY/REWORK"));
@@ -853,5 +1120,212 @@ mod tests {
         s.meta.insert("sp-a".into(), Meta { title: "t".into(), priority: Some(1) });
         let back: Snapshot = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(serde_json::to_string(&view(&back)).unwrap(), serde_json::to_string(&view(&s)).unwrap());
+    }
+
+    fn ge(from: &str, event: &str, to: &str) -> GraphEdge {
+        GraphEdge { from: from.into(), event: event.into(), to: to.into() }
+    }
+
+    fn graph(with_certified_exit: bool) -> Vec<GraphEdge> {
+        let mut g = vec![
+            ge("OPEN", "Ready", "READY"),
+            ge("READY", "Claim", "WORKING"),
+            ge("WORKING", "Submit", "SUBMITTED"),
+            ge("WORKING", "Release", "READY"),
+            ge("SUBMITTED", "GatePass", "CERTIFIED"),
+            ge("SUBMITTED", "GateRed", "REWORK"),
+            ge("CERTIFIED", "Deliver", "IN_DELIVERY"),
+            ge("IN_DELIVERY", "Delivered", "LANDED"),
+            ge("IN_DELIVERY", "Returned", "REWORK"),
+            ge("REWORK", "Claim", "WORKING"),
+            ge("READY", "Drop", "DROPPED"),
+        ];
+        if with_certified_exit {
+            g.push(ge("CERTIFIED", "GateRed", "REWORK"));
+        }
+        g
+    }
+
+    fn dwell(id: &str, st: &str, entered: i64, p95: i64) -> DwellRow {
+        DwellRow { bead_id: id.into(), state: st.into(), entered_at: entered, p95_s: Some(p95) }
+    }
+
+    fn applied(from: &str, to: &str, n: i64) -> EdgeRow {
+        EdgeRow { kind: "applied".into(), from_state: from.into(), to_state: Some(to.into()), n_1h: n, ..Default::default() }
+    }
+
+    fn refused(from: &str, event: &str, why: &str, n: i64) -> EdgeRow {
+        EdgeRow { kind: "refused".into(), from_state: from.into(), event: Some(event.into()), refusal: Some(why.into()), n_1h: n, ..Default::default() }
+    }
+
+    fn healthy() -> Snapshot {
+        let mut s = snap(vec![row("sp-r", "READY", 90_000), row("sp-w", "WORKING", 99_000), row("sp-c", "CERTIFIED", 99_000)]);
+        s.rows[1].holder = Some("aeon-guardian".into());
+        s.rows[1].lease_until = Some(100_500);
+        s.graph = graph(true);
+        s.edges = vec![applied("READY", "WORKING", 12), applied("WORKING", "SUBMITTED", 9)];
+        s.dwell = vec![dwell("sp-w", "WORKING", 99_000, 7_200), dwell("sp-c", "CERTIFIED", 99_000, 7_200)];
+        s
+    }
+
+    fn squash(s: &str) -> String {
+        s.split('\n').map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join("\n")
+    }
+
+    fn machine_lines(s: &Snapshot) -> Vec<String> {
+        let f = plain(&render(&view(s), 120));
+        f.lines().skip_while(|l| !l.starts_with("STATE MACHINE")).take_while(|l| !l.starts_with("HOLDS") && !l.starts_with("NOW")).map(String::from).collect()
+    }
+
+    #[test]
+    fn a_clean_fixture_renders_no_red_dot_and_no_missing_exit() {
+        let f = machine_lines(&healthy()).join("\n");
+        assert!(!f.contains('●') && !f.contains("no exit"), "{f}");
+        assert!(f.contains("REFUSED (1h)\n  none"), "{f}");
+    }
+
+    #[test]
+    fn the_state_machine_is_vertical_with_fixed_columns_and_every_edge_on_its_own_line() {
+        let f = machine_lines(&healthy()).join("\n");
+        let want = "\
+STATE MACHINE   (counts now · edge rates per hour)
+OPEN             0
+  │ ready                         0/h
+READY            1  claimable 1
+  │ claim                        12/h
+WORKING          1
+  │ submit                        9/h
+  └▶ release ▶ READY              0/h
+SUBMITTED        0
+  │ gate-pass                     0/h
+  └▶ gate-red ▶ REWORK            0/h
+CERTIFIED        1
+  │ deliver                       0/h
+  └▶ gate-red ▶ REWORK            0/h
+IN_DELIVERY      0  in open batch 0 · orphaned 0
+  │ delivered                     0/h
+  └▶ returned ▶ REWORK            0/h
+LANDED           0  last 24h
+
+REWORK           0  claimable 0
+  └▶ claim ▶ WORKING              0/h
+
+terminal 24h    SUPERSEDED 0 · DROPPED 0 · DONE 0
+
+REFUSED (1h)
+  none
+
+BATCH
+  OPEN          0
+  CI            0
+  GREEN         0
+  LANDED        0  last 24h";
+        assert_eq!(f, want);
+    }
+
+    #[test]
+    fn certified_for_a_day_with_no_exit_to_rework_shows_both_dots_and_the_missing_exit() {
+        let mut s = healthy();
+        s.rows = vec![row("sp-cert-a", "CERTIFIED", 100_000 - 23 * 3600), row("sp-cert-b", "CERTIFIED", 100_000 - 18 * 3600)];
+        s.graph = graph(false);
+        s.dwell = vec![dwell("sp-cert-a", "CERTIFIED", 100_000 - 23 * 3600, 3_600), dwell("sp-cert-b", "CERTIFIED", 100_000 - 18 * 3600, 3_600)];
+        let f = squash(&machine_lines(&s).join("\n"));
+        assert!(f.contains("CERTIFIED 2 stuck >p95 2 ●"), "{f}");
+        assert!(f.contains("└▶ (no exit to REWORK) ●"), "{f}");
+        assert!(f.contains("│ deliver"), "{f}");
+    }
+
+    #[test]
+    fn an_orphaned_working_bead_names_its_dead_holder() {
+        let mut s = healthy();
+        s.rows[1].lease_until = Some(99_000);
+        s.rows.push({
+            let mut r = row("sp-orphan", "WORKING", 95_000);
+            r.holder = None;
+            r
+        });
+        let f = squash(&machine_lines(&s).join("\n"));
+        assert!(f.contains("WORKING 2 dead holder 2 ●"), "{f}");
+    }
+
+    #[test]
+    fn stranded_delivery_is_split_into_open_batch_and_orphaned() {
+        let mut s = healthy();
+        s.rows = (0..5).map(|i| row(&format!("sp-d{i}"), "IN_DELIVERY", 99_000)).collect();
+        s.batches = vec![BatchRow { id: "r-1".into(), state: "CI_RUNNING".into(), last_at: 99_000, members: vec!["sp-d0".into(), "sp-d1".into()] }];
+        let f = squash(&machine_lines(&s).join("\n"));
+        assert!(f.contains("IN_DELIVERY 5 in open batch 2 · orphaned 3 ●"), "{f}");
+        s.rows.truncate(2);
+        assert!(!squash(&machine_lines(&s).join("\n")).contains("orphaned 0 ●"));
+    }
+
+    #[test]
+    fn ready_splits_into_claimable_blocked_with_its_blocker_held_and_poison() {
+        let mut s = healthy();
+        let mut blocked = row("sp-b", "READY", 1);
+        blocked.holds = vec!["wait".into()];
+        blocked.reason = Some("blocked on sp-blk1, sp-blk1".into());
+        let mut held = row("sp-h", "READY", 1);
+        held.holds = vec!["ask".into()];
+        let mut poison = row("sp-p", "READY", 1);
+        poison.holds = vec!["poison".into(), "wait".into()];
+        s.rows.extend([blocked, held, poison]);
+        let f = squash(&machine_lines(&s).join("\n"));
+        assert!(f.contains("READY 4 claimable 1 · blocked 1 ← sp-blk1 · held 1 · poison 1"), "{f}");
+    }
+
+    #[test]
+    fn a_batch_stuck_green_past_its_delivery_p95_is_a_stuck_dot() {
+        let mut s = healthy();
+        s.dwell.push(dwell("sp-x", "IN_DELIVERY", 99_000, 1_800));
+        s.batches = vec![
+            BatchRow { id: "r-1".into(), state: "GREEN".into(), last_at: 100_000 - 4 * 3600, members: vec![] },
+            BatchRow { id: "r-0".into(), state: "LANDED".into(), last_at: 90_000, members: vec![] },
+        ];
+        let f = squash(&plain(&render(&view(&s), 120)));
+        assert!(f.contains("GREEN 1 stuck 4h ●"), "{f}");
+        assert!(f.contains("LANDED 1 last 24h"), "{f}");
+    }
+
+    #[test]
+    fn repeated_refusals_are_listed_by_state_and_event_and_the_edges_use_the_graph() {
+        let mut s = healthy();
+        s.edges.push(refused("WORKING", "Claim", "double-claim", 14));
+        s.edges.push(refused("CERTIFIED", "GateRed", "no legal exit", 3));
+        s.edges.push(refused("READY", "Submit", "wrong state", 1));
+        let f = squash(&machine_lines(&s).join("\n"));
+        assert!(f.contains("Claim@WORKING 14 double-claim ●"), "{f}");
+        assert!(f.contains("GateRed@CERTIFIED 3 no legal exit ●"), "{f}");
+        assert!(f.contains("Submit@READY 1 wrong state\n") || f.ends_with("wrong state"), "{f}");
+        assert!(!f.contains("wrong state ●"), "{f}");
+    }
+
+    #[test]
+    fn skipped_for_conflict_is_counted_under_submitted() {
+        let mut s = healthy();
+        let mut r = row("sp-s", "SUBMITTED", 99_000);
+        r.reason = Some("skipped: Conflict in round".into());
+        s.rows.push(r);
+        assert!(squash(&machine_lines(&s).join("\n")).contains("SUBMITTED 1 skipped: conflict 1"));
+    }
+
+    #[test]
+    fn the_listings_are_shortened_to_make_room() {
+        let mut s = healthy();
+        for i in 0..9 {
+            s.rows.push(row(&format!("sp-n{i}"), "READY", i));
+            s.rows.push(row(&format!("sp-k{i}"), "REWORK", i));
+        }
+        let f = plain(&render(&view(&s), 120));
+        assert!(!f.contains("FLOW"), "{f}");
+        let after = |head: &str| f.lines().skip_while(|l| !l.starts_with(head)).skip(1).take_while(|l| l.starts_with("  ")).count();
+        assert!(after("NEXT") <= 5 && after("RECENT") <= 5 && after("REWORK") <= 4, "{f}");
+    }
+
+    #[test]
+    fn an_old_snapshot_file_without_the_machine_fields_still_loads() {
+        let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[]});
+        let s: Snapshot = serde_json::from_value(old).unwrap();
+        assert!(s.graph.is_empty() && s.dwell.is_empty());
     }
 }

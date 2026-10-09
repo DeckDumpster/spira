@@ -2,7 +2,7 @@
 //! tools only: `spira-lc list` (state), `work list --json` (titles, priority), the landing ref's
 //! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
-use cockpit_ops::lcview::{own_ids, render, tail_lines, view, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{own_ids, render, tail_lines, view, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -39,6 +39,63 @@ fn read_tail(path: &std::path::Path) -> Option<Tail> {
     let mut buf = Vec::new();
     f.take(TAIL_BYTES).read_to_end(&mut buf).ok()?;
     Some(Tail { lines: tail_lines(&buf, start > 0, 2), mtime })
+}
+
+fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+    let name = format!("spira-lc {}", args.join(" "));
+    run("spira-lc", args)
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("{name}: {e}")))
+        .map(|v| v.as_array().cloned().unwrap_or_default())
+}
+
+fn text(v: &serde_json::Value) -> String {
+    v.as_str().unwrap_or("").into()
+}
+
+fn gather_state_machine(s: &mut Snapshot) {
+    match lc_json(&["ops-graph"]) {
+        Ok(rows) => s.graph = rows.iter().map(|g| GraphEdge { from: text(&g["from"]), event: text(&g["event"]), to: text(&g["to"]) }).collect(),
+        Err(e) => s.errors.push(e),
+    }
+    match lc_json(&["ops-view", "ops_edges"]) {
+        Ok(rows) => {
+            s.edges = rows
+                .iter()
+                .map(|e| EdgeRow {
+                    kind: text(&e["kind"]),
+                    from_state: text(&e["from_state"]),
+                    to_state: e["to_state"].as_str().map(String::from),
+                    event: e["event"].as_str().map(String::from),
+                    refusal: e["refusal"].as_str().map(String::from),
+                    n_1h: num(&e["n_1h"]).unwrap_or(0),
+                })
+                .collect()
+        }
+        Err(e) => s.errors.push(e),
+    }
+    match lc_json(&["ops-view", "ops_dwell"]) {
+        Ok(rows) => {
+            s.dwell = rows
+                .iter()
+                .map(|d| DwellRow { bead_id: text(&d["bead_id"]), state: text(&d["state"]), entered_at: num(&d["entered_at"]).unwrap_or(0), p95_s: num(&d["p95_s"]) })
+                .collect()
+        }
+        Err(e) => s.errors.push(e),
+    }
+    match lc_json(&["list", "--batches"]) {
+        Ok(rows) => {
+            s.batches = rows
+                .iter()
+                .map(|b| BatchRow {
+                    id: text(&b["batch_id"]),
+                    state: text(&b["state"]),
+                    last_at: num(&b["last_at"]).or_else(|| num(&b["opened_at"])).unwrap_or(0),
+                    members: b["members"].as_array().map(|arr| arr.iter().map(|x| text(&x["bead_id"])).collect()).unwrap_or_default(),
+                })
+                .collect()
+        }
+        Err(e) => s.errors.push(e),
+    }
 }
 
 fn gather() -> Snapshot {
@@ -114,6 +171,7 @@ fn gather() -> Snapshot {
             }
         }
     }
+    gather_state_machine(&mut s);
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s
 }
