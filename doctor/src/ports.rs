@@ -144,5 +144,8 @@ pub trait World {
     /// table. Empty when none is.
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String>;
 
+    /// `git -C <repo> config --get core.hooksPath`, verbatim; `None` when unset or git cannot run.
+    fn git_hooks_path(&self, repo: &Path) -> Option<String>;
+
     fn out(&self, s: &str);
 }
