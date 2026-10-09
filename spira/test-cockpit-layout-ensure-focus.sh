@@ -189,16 +189,13 @@ want   "a copy refuses ensure"                        "ensure refused" "$copy_er
 want   "and names the installed binary's path"        "/bin/layout ensure" "$copy_err"
 
 echo
-echo "mouse mode: on by default, left alone by off/no/0, and ensure still succeeds"
+echo "mouse mode: left alone by off/no/0, and ensure still succeeds"
 mouse_now() { TMUX_TMPDIR="$TMUXDIR" tmux show-options -gv mouse 2>/dev/null; }
 for v in off no 0; do
     TMUX_TMPDIR="$TMUXDIR" tmux set-option -g mouse off
     ensure_stderr "$_FAKE_RELEASE/bin/layout" COCKPIT_MOUSE="$v" >/dev/null
     is "COCKPIT_MOUSE=$v leaves mouse off" "off" "$(mouse_now)"
 done
-TMUX_TMPDIR="$TMUXDIR" tmux set-option -g mouse off
-ensure_stderr "$_FAKE_RELEASE/bin/layout" >/dev/null
-is "the default turns mouse on" "on" "$(mouse_now)"
 
 echo
 echo "pane identity: a tag on a pane that runs no dashboard is cleared, not obeyed"

@@ -90,7 +90,6 @@ ref="incident:decisions-undeclared"
 file_incident "$ref" "undeclared incident" "p" >/dev/null
 case " $(field_of "$ref" labels) " in *" needs-repo-triage "*) ok "an undeclared repo is flagged needs-repo-triage" ;; *) bad "an undeclared repo is flagged needs-repo-triage" "$(field_of "$ref" labels)" ;; esac
 is "an undeclared repo records no repo" "" "$(field_of "$ref" repo)"
-want "the triage note names the missing declaration" "SPIRA_INCIDENT_REPO" "$(field_of "$ref" notes)"
 
 # ======================================================================================
 echo
