@@ -25,6 +25,14 @@ pub struct Row {
     pub updated_at: i64,
     pub since: i64,
     pub lease_until: Option<i64>,
+    #[serde(default)]
+    pub persona: Option<String>,
+    #[serde(default)]
+    pub rework: bool,
+    #[serde(default)]
+    pub claimable: Option<bool>,
+    #[serde(default)]
+    pub blocker: Option<String>,
 }
 
 /// What `work list` knows that the lifecycle does not.
@@ -147,6 +155,8 @@ pub struct Item {
     pub age: String,
     pub note: String,
     pub state: String,
+    pub persona: String,
+    pub rework: bool,
     /// The aeon's last output lines, how old, and ok|warn|bad|none.
     pub out: Vec<String>,
     pub out_age: String,
@@ -194,6 +204,7 @@ pub struct View {
     pub rework_items: Vec<Item>,
     pub next_count: usize,
     pub next: Vec<Item>,
+    pub blocked: Vec<Item>,
     pub recent: Vec<Item>,
 }
 
@@ -238,6 +249,8 @@ pub fn view(s: &Snapshot) -> View {
         age: age(s.now - age_of),
         note,
         state: r.state.clone(),
+        persona: r.persona.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| "—".into()),
+        rework: r.rework,
         ..Default::default()
     };
 
@@ -335,8 +348,18 @@ pub fn view(s: &Snapshot) -> View {
     rw.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
     v.rework_items = rw.iter().map(|r| item(r, r.updated_at, r.reason.clone().unwrap_or_default())).collect();
 
-    let mut nx: Vec<&Row> = ready.iter().copied().filter(|r| r.holds.is_empty() && !s.on_base.contains_key(&r.id)).collect();
-    nx.sort_by_key(|r| (s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
+    let blocked_row = |r: &Row| r.blocker.as_deref().is_some_and(|b| !b.is_empty());
+    let mut nx: Vec<&Row> = ready
+        .iter()
+        .copied()
+        .filter(|r| r.claimable.unwrap_or(r.holds.is_empty() && !s.on_base.contains_key(&r.id)) && !blocked_row(r))
+        .collect();
+    nx.sort_by_key(|r| (!r.rework, s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
+    v.blocked = ready
+        .iter()
+        .filter(|r| blocked_row(r))
+        .map(|r| item(r, r.since, format!("{} <- {}", r.id, r.blocker.as_deref().unwrap_or(""))))
+        .collect();
     v.next_count = nx.len();
     v.next = nx.iter().take(12).map(|r| item(r, r.since, String::new())).collect();
 
@@ -409,7 +432,9 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     }
     let tw = w.saturating_sub(48).min(70);
     for i in &v.now_items {
-        out.push(format!("  {CYN}{:<9}{R} {:<12} {} {:<tw$} {D}{} · {}{R}", cut(&i.who, 9), i.id, i.prio, cut(&i.title, tw), i.age, i.note));
+        let tag = if i.rework { format!("{YEL}{B}REWORK{R} ") } else { String::new() };
+        out.push(format!("  {CYN}{:<9}{R} {:<12} {tag}{} {:<tw$} {D}{} · {}{R}", cut(&i.who, 9), i.id, i.prio, cut(&i.title, tw), i.age, i.note));
+        out.push(format!("  {D}{:<9}{R}", cut(&i.persona, 9)));
         let c = match i.out_level.as_str() {
             "bad" => RED,
             "warn" => YEL,
@@ -440,9 +465,15 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
             out.push(format!("  {D}… {} more{R}", v.rework_items.len() - 6));
         }
     }
-    out.push(format!("{B}NEXT{R}   {B}{}{R} claimable {D}(READY, unheld, not on the base) — by priority{R}", v.next_count));
+    out.push(format!("{B}NEXT{R}   {B}{}{R} claimable {D}(claim order: express, REWORK, then priority){R}", v.next_count));
     for i in v.next.iter().take(10) {
         out.push(format!("  {} {:<12} {}", i.prio, i.id, cut(&i.title, w.saturating_sub(20))));
+    }
+    if !v.blocked.is_empty() {
+        out.push(format!("{B}BLOCKED{R} {B}{}{R} {D}(READY, waiting on an unmet dependency){R}", v.blocked.len()));
+        for i in v.blocked.iter().take(6) {
+            out.push(format!("  {} {:<26} {}", i.prio, i.note, cut(&i.title, w.saturating_sub(36))));
+        }
     }
     out.push(format!("{B}RECENT{R} {D}last transitions — when · bead · now{R}"));
     for i in v.recent.iter().take(8) {
@@ -534,9 +565,11 @@ pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
     };
     h.push_str(&table("Now", "working — holder · bead · lease", &v.now_items, &|i| {
         format!(
-            "<tr><td class=who>{}</td><td><b>{}</b> <span class=dim>{}</span><br>{}{}</td><td class=dim>{}<br>{}</td></tr>",
+            "<tr><td class=who>{}<br><span class=dim>{}</span></td><td><b>{}</b>{} <span class=dim>{}</span><br>{}{}</td><td class=dim>{}<br>{}</td></tr>",
             esc(&i.who),
+            esc(&i.persona),
             esc(&i.id),
+            if i.rework { " <b class=warn>REWORK</b>" } else { "" },
             esc(&i.prio),
             esc(&i.title),
             out_html(i),
@@ -559,6 +592,11 @@ pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
     h.push_str(&table(&format!("Next ({})", v.next_count), "ready, unheld, not on the base — by priority", &v.next, &|i| {
         format!("<tr><td class=num>{}</td><td><b>{}</b><br>{}</td></tr>", esc(&i.prio), esc(&i.id), esc(&i.title))
     }));
+    if !v.blocked.is_empty() {
+        h.push_str(&table(&format!("Blocked ({})", v.blocked.len()), "ready, waiting on an unmet dependency", &v.blocked, &|i| {
+            format!("<tr><td class=num>{}</td><td><b>{}</b><br>{}</td></tr>", esc(&i.prio), esc(&i.note), esc(&i.title))
+        }));
+    }
     h.push_str(&table("Recent", "last transitions", &v.recent, &|i| {
         let c = match i.state.as_str() {
             "LANDED" => "ok",
@@ -682,6 +720,53 @@ mod tests {
         }
         assert!(pane.contains("DRIFT 1") && page.contains("1 bead(s) READY/REWORK"));
         assert!(page.contains(&format!("Next ({})", v.next_count)));
+    }
+
+    fn now_row(id: &str, persona: Option<&str>, rework: bool) -> Row {
+        let mut r = row(id, "WORKING", 1);
+        r.holder = Some("aeon-mindy".into());
+        r.persona = persona.map(String::from);
+        r.rework = rework;
+        r
+    }
+
+    #[test]
+    fn now_rows_carry_a_rework_tag_and_the_persona_under_the_name() {
+        let s = snap(vec![now_row("sp-rw", Some("ops"), true), now_row("sp-fresh", Some("guardian"), false), now_row("sp-nul", None, false)]);
+        let v = view(&s);
+        let pane = plain(&render(&v, 120));
+        let l: Vec<&str> = pane.lines().collect();
+        let at = |id: &str| l.iter().position(|x| x.contains(id)).unwrap();
+        assert!(l[at("sp-rw")].contains("REWORK") && l[at("sp-rw") + 1].trim() == "ops", "{pane}");
+        assert!(!l[at("sp-fresh")].contains("REWORK") && l[at("sp-fresh") + 1].trim() == "guardian", "{pane}");
+        assert_eq!(l[at("sp-nul") + 1].trim(), "—", "a NULL persona is a dash, not omitted");
+        let page = render_html(&v, None, 10);
+        assert!(page.contains("<b class=warn>REWORK</b>") && page.contains("<span class=dim>ops</span>") && page.contains("<span class=dim>—</span>"));
+        assert_eq!(page.matches("REWORK</b>").count(), 1);
+        assert!(render(&v, 120).iter().any(|x| x.contains(&format!("{YEL}{B}REWORK{R}"))), "colour on the tag");
+    }
+
+    #[test]
+    fn next_lists_only_claimable_rework_first_and_blocked_apart() {
+        let mut fresh = row("sp-fresh", "READY", 1);
+        fresh.claimable = Some(true);
+        let mut rw = row("sp-rw", "READY", 2);
+        rw.claimable = Some(true);
+        rw.rework = true;
+        let mut no = row("sp-no", "READY", 3);
+        no.claimable = Some(false);
+        let mut bl = row("sp-hq1v76", "READY", 4);
+        bl.blocker = Some("sp-o4s4t4".into());
+        bl.claimable = Some(false);
+        let mut s = snap(vec![fresh, rw, no, bl]);
+        s.meta.insert("sp-fresh".into(), Meta { title: "f".into(), priority: Some(0) });
+        s.meta.insert("sp-rw".into(), Meta { title: "r".into(), priority: Some(2) });
+        let v = view(&s);
+        assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-rw", "sp-fresh"]);
+        assert_eq!(v.next_count, 2);
+        let pane = plain(&render(&v, 120));
+        assert!(pane.contains("BLOCKED 1") && pane.contains("sp-hq1v76 <- sp-o4s4t4"), "{pane}");
+        assert!(render_html(&v, None, 10).contains("sp-hq1v76 &lt;- sp-o4s4t4"));
     }
 
     fn log_line(kind: &str, body: &str) -> String {

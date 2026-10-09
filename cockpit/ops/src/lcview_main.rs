@@ -26,6 +26,10 @@ fn num(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
+fn truthy(v: &serde_json::Value) -> bool {
+    v.as_bool().unwrap_or_else(|| num(v).is_some_and(|n| n != 0))
+}
+
 fn read_tail(path: &std::path::Path) -> Option<Tail> {
     let mut f = std::fs::File::open(path).ok()?;
     let meta = f.metadata().ok()?;
@@ -59,6 +63,10 @@ fn gather() -> Snapshot {
                     updated_at: num(&r["updated_at"]).unwrap_or(0),
                     since: num(&r["since"]).or_else(|| num(&r["updated_at"])).unwrap_or(0),
                     lease_until: num(&r["lease_until"]),
+                    persona: r["persona"].as_str().map(String::from),
+                    rework: truthy(&r["rework"]),
+                    claimable: (!r["claimable"].is_null()).then(|| truthy(&r["claimable"])),
+                    blocker: r["blocker"].as_str().map(String::from),
                 });
             }
         }

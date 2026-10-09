@@ -107,7 +107,7 @@ CREATE INDEX IF NOT EXISTS event_at_idx ON event (machine, applied, at, from_sta
 -- statistics, which on a mostly-terminal table would otherwise choose a scan.
 CREATE OR REPLACE VIEW ops_live AS
 SELECT /*+ JOIN_ORDER(r,t) LOOKUP_JOIN(r,t) */
-       t.bead_id, t.state, t.holds, t.holder, t.lease_until, t.since, t.updated_at, t.priority, t.title
+       t.bead_id, t.state, t.holds, t.holder, t.persona, (t.state = 'REWORK') AS rework, t.lease_until, t.since, t.updated_at, t.priority, t.title
   FROM (SELECT bead_id FROM bead
          WHERE state IN ('OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK')) r
   JOIN bead t ON t.bead_id = r.bead_id;
