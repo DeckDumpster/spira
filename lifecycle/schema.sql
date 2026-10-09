@@ -92,3 +92,4 @@ CREATE TABLE IF NOT EXISTS event (
 
 CREATE INDEX IF NOT EXISTS event_lc_key_idx ON event (machine, lc_key);
 CREATE INDEX IF NOT EXISTS event_since_idx ON event (machine, applied, lc_key, to_state, at);
+CREATE INDEX IF NOT EXISTS event_history_idx ON event (lc_key, machine);
