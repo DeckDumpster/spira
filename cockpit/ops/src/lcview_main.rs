@@ -3,7 +3,7 @@
 //! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{own_ids, render, tail_lines, view, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{holder_pid, own_ids, render, tail_lines, view, LiveAeon, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -187,6 +187,58 @@ fn claimable_ids() -> Option<Vec<String>> {
     Some(ids)
 }
 
+/// The live aeons: every `spira-aeon-*` unit's main pid and start (one systemctl call), and its
+/// phase read from its process tree (status only, never its work).
+fn live_aeons() -> Option<Vec<LiveAeon>> {
+    let units: Vec<String> = run("systemctl", &["--user", "list-units", "spira-aeon-*", "--no-legend", "--plain"])
+        .ok()?
+        .lines()
+        .filter_map(|l| l.split_whitespace().next().map(String::from))
+        .filter(|u| u.ends_with(".service"))
+        .collect();
+    if units.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut args: Vec<&str> = vec!["--user", "show", "--timestamp=unix", "-p", "Id,MainPID,ActiveEnterTimestamp"];
+    args.extend(units.iter().map(String::as_str));
+    let shown = run("systemctl", &args).ok()?;
+    let mut out = Vec::new();
+    for block in shown.split("\n\n") {
+        let get = |k: &str| block.lines().find_map(|l| l.strip_prefix(&format!("{k}=")).map(str::to_string)).unwrap_or_default();
+        let pid: i64 = get("MainPID").parse().unwrap_or(0);
+        if pid <= 0 {
+            continue;
+        }
+        let started = get("ActiveEnterTimestamp").trim_start_matches('@').parse().unwrap_or(0);
+        out.push(LiveAeon { unit: get("Id"), pid, started, phase: aeon_phase(pid) });
+    }
+    Some(out)
+}
+
+/// session while the aeon's agent runs; else closeout, naming the step it is in.
+fn aeon_phase(pid: i64) -> String {
+    let (mut comms, mut cmds) = (Vec::new(), Vec::new());
+    let mut stack = vec![pid];
+    while let Some(p) = stack.pop() {
+        if comms.len() > 400 {
+            break;
+        }
+        comms.push(std::fs::read_to_string(format!("/proc/{p}/comm")).unwrap_or_default().trim().to_string());
+        cmds.push(std::fs::read(format!("/proc/{p}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).unwrap_or_default());
+        let kids = std::fs::read_to_string(format!("/proc/{p}/task/{p}/children")).unwrap_or_default();
+        stack.extend(kids.split_whitespace().filter_map(|k| k.parse::<i64>().ok()));
+    }
+    if comms.iter().any(|c| c == "claude") {
+        "session".into()
+    } else if cmds.iter().any(|c| c.contains("build-fence")) {
+        "closeout · build-fence".into()
+    } else if cmds.iter().any(|c| c.contains("testenv")) {
+        "closeout · testenv".into()
+    } else {
+        "closeout".into()
+    }
+}
+
 fn gather() -> Snapshot {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut s = Snapshot { now, ..Default::default() };
@@ -262,8 +314,10 @@ fn gather() -> Snapshot {
         s.errors.push(e);
         "?".into()
     });
+    s.live = live_aeons();
+    let live_pids: Vec<i64> = s.live.as_ref().map(|l| l.iter().map(|a| a.pid).collect()).unwrap_or_default();
     if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
-        for r in s.rows.iter().filter(|r| r.state == "WORKING" && r.holder.is_some()) {
+        for r in s.rows.iter().filter(|r| (r.state == "WORKING" && r.holder.is_some()) || r.holder.as_deref().and_then(holder_pid).is_some_and(|p| live_pids.contains(&p))) {
             if let Some(t) = read_tail(&std::path::Path::new(run.trim()).join(format!("{}.log", r.id))) {
                 s.tails.insert(r.id.clone(), t);
             }

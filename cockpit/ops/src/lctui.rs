@@ -272,9 +272,9 @@ pub fn tree(v: &View) -> Vec<Node> {
         })
         .collect();
     if aeons.is_empty() {
-        aeons.push(Node::new("now/none", format!("{D}nothing is being worked{R}")));
+        aeons.push(Node::new("now/none", format!("{D}no aeon is live{R}")));
     }
-    out.push(Node::new("now", format!("{B}NOW{R}    {B}{}{R} working {D}of {} — holder · bead · lease{R}", v.now_items.len(), v.ceiling)).kids(aeons));
+    out.push(Node::new("now", format!("{B}NOW{R}    {B}{}{R} live {D}of {} — aeon · bead · phase{R}", v.now_items.len(), v.ceiling)).kids(aeons));
 
     let mut states = Vec::new();
     for st in &v.machine {

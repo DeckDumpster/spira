@@ -148,6 +148,21 @@ pub struct BatchRow {
     pub eject_at: Vec<i64>,
 }
 
+/// One live aeon: its unit, main pid, when it started, and its phase from its process tree
+/// (session while its agent runs, else closeout and the step: build-fence, ...).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LiveAeon {
+    pub unit: String,
+    pub pid: i64,
+    pub started: i64,
+    pub phase: String,
+}
+
+/// The pid a lifecycle holder names: `aeon-<name>@<pid>.<start>`.
+pub fn holder_pid(holder: &str) -> Option<i64> {
+    holder.split_once('@')?.1.split('.').next()?.parse().ok()
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
@@ -159,6 +174,10 @@ pub struct Snapshot {
     /// Bead ids whose own commit (`<id>:` subject, or a round's `merge <id> (`) is on the base.
     pub on_base: HashMap<String, String>,
     pub ceiling: usize,
+    /// The aeons actually live (their systemd units), with what each is doing; `None` when it
+    /// could not be read, and NOW falls back to WORKING beads.
+    #[serde(default)]
+    pub live: Option<Vec<LiveAeon>>,
     /// Log tails of WORKING beads, by bead id; a bead with no log is absent.
     pub tails: HashMap<String, Tail>,
     /// The label that marks a question for the operator (SPIRA_ASK_LABEL); such a bead is in
@@ -739,30 +758,56 @@ pub fn view(s: &Snapshot) -> View {
     drift.sort();
     v.drift = drift;
 
-    let mut wk: Vec<&Row> = s.rows.iter().filter(|r| r.state == "WORKING").collect();
-    wk.sort_by_key(|r| r.since);
-    v.now_items = wk
-        .iter()
-        .map(|r| {
-            let lease = r.lease_until.map(|l| if l > s.now { format!("lease {}", age(l - s.now)) } else { "lease EXPIRED".into() }).unwrap_or_default();
-            let mut it = item(r, r.since, lease);
-            if r.holder.is_some() {
-                match s.tails.get(&r.id) {
-                    Some(t) if !t.lines.is_empty() => {
-                        let a = s.now - t.mtime;
-                        it.out = t.lines.clone();
-                        it.out_age = age(a);
-                        it.out_level = if a >= STALE_BAD_S { "bad" } else if a >= STALE_WARN_S { "warn" } else { "ok" }.into();
-                    }
-                    _ => {
-                        it.out = vec!["no output yet".into()];
-                        it.out_level = "none".into();
-                    }
+    let with_tail = |mut it: Item, r: &Row| {
+        if r.holder.is_some() {
+            match s.tails.get(&r.id) {
+                Some(t) if !t.lines.is_empty() => {
+                    let a = s.now - t.mtime;
+                    it.out = t.lines.clone();
+                    it.out_age = age(a);
+                    it.out_level = if a >= STALE_BAD_S { "bad" } else if a >= STALE_WARN_S { "warn" } else { "ok" }.into();
+                }
+                _ => {
+                    it.out = vec!["no output yet".into()];
+                    it.out_level = "none".into();
                 }
             }
-            it
-        })
-        .collect();
+        }
+        it
+    };
+    match &s.live {
+        // NOW is the aeons actually live (per Ryan 2026-10-09), each with its bead and phase: an
+        // aeon in closeout holds a slot after its bead has left WORKING.
+        Some(live) => {
+            let mut live = live.clone();
+            live.sort_by_key(|a| a.started);
+            v.now_items = live
+                .iter()
+                .map(|a| {
+                    let phase = format!("{} {}", a.phase, age(s.now - a.started));
+                    match s.rows.iter().find(|r| r.holder.as_deref().and_then(holder_pid) == Some(a.pid)) {
+                        Some(r) => {
+                            let mut it = with_tail(item(r, a.started, phase), r);
+                            it.age = age(s.now - a.started);
+                            it
+                        }
+                        None => Item { id: "?".into(), who: a.unit.trim_start_matches("spira-aeon-").trim_end_matches(".service").into(), note: phase, age: age(s.now - a.started), ..Default::default() },
+                    }
+                })
+                .collect();
+        }
+        None => {
+            let mut wk: Vec<&Row> = s.rows.iter().filter(|r| r.state == "WORKING").collect();
+            wk.sort_by_key(|r| r.since);
+            v.now_items = wk
+                .iter()
+                .map(|r| {
+                    let lease = r.lease_until.map(|l| if l > s.now { format!("lease {}", age(l - s.now)) } else { "lease EXPIRED".into() }).unwrap_or_default();
+                    with_tail(item(r, r.since, lease), r)
+                })
+                .collect();
+        }
+    }
 
     for st in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
         let mut rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == st).collect();
@@ -1134,6 +1179,26 @@ mod tests {
         s.claimable = None;
         let st = state_machine(&s, &|_| false).into_iter().find(|x| x.name == "READY").unwrap();
         assert!(st.detail.contains("claimable unknown"), "{}", st.detail);
+    }
+
+    #[test]
+    fn now_is_the_live_aeons_with_their_phase_even_after_their_bead_left_working() {
+        let mut w = row("sp-w", "WORKING", 99_000);
+        w.holder = Some("aeon-ixion@111.5".into());
+        let mut c = row("sp-c", "SUBMITTED", 99_500);
+        c.holder = Some("aeon-sandy@222.7".into());
+        let mut mine = row("sp-mine", "WORKING", 1);
+        mine.holder = Some("concierge".into());
+        let mut s = snap(vec![w, c, mine]);
+        s.live = Some(vec![
+            LiveAeon { unit: "spira-aeon-builder-1.service".into(), pid: 111, started: 99_000, phase: "session".into() },
+            LiveAeon { unit: "spira-aeon-builder-2.service".into(), pid: 222, started: 98_000, phase: "closeout · build-fence".into() },
+        ]);
+        let v = view(&s);
+        assert_eq!(v.now_items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-c", "sp-w"], "live aeons only, oldest first; the Concierge's claim is not an aeon");
+        assert!(v.now_items[0].note.starts_with("closeout · build-fence"), "{:?}", v.now_items[0].note);
+        assert_eq!(holder_pid("aeon-ixion@111.5"), Some(111));
+        assert_eq!(holder_pid("concierge"), None);
     }
 
     #[test]
