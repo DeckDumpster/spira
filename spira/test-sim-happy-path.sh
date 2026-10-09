@@ -40,8 +40,8 @@ sim_in_repo() {  # sim_in_repo <args...> — sim from the fixture repo, no produ
     (cd "$REPO" && timeout 90 env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" "$@")
 }
 
-dump() {  # dump <world> — what the world did, for a red run
-    local w="$1"
+dump() {  # dump — what the world did, for a red run (exec.log was copied out before the world went down)
+    local w="$T"
     printf '%s\n' "${RUN_OUT:-}" | tail -4 | cut -c1-260 | sed 's/^/# run: /'
     [ -f "$w/exec.log" ] || return 0
     grep -c '^=== ' "$w/exec.log" | sed 's/^/# commands run: /'
@@ -78,6 +78,7 @@ wantrc "sim replay of the same seed reports no divergence" 0 "$rc"
 [ "$rc" = 0 ] || printf '# replay: %s\n' "$out"
 cmp -s "$T/events.first" "$W/trace/events.jsonl" && ok "replay leaves the events table byte-identical" || bad "replay leaves the events table byte-identical" "differs"
 
+cp "$W/exec.log" "$T/exec.log" 2>/dev/null
 sim_in_repo world down "$W" >/dev/null 2>&1
 
 # --- 4. CONTROL: an unreachable goal fails, naming the seed ------------------------------------
@@ -87,5 +88,5 @@ wantrc "control: a scenario that never files its bead exits non-zero" 1 "$rc"
 want "control: the failure names the unreached goal and the seed" "goal sp-hp01:LANDED unreached: seed 3" "$out"
 for w in "$T"/sim-run-*-3; do [ -d "$w" ] && sim_in_repo world down "$w" >/dev/null 2>&1; done
 
-[ "$_TL_FAIL" -gt 0 ] && [ -n "${W:-}" ] && dump "$W"
+[ "$_TL_FAIL" -gt 0 ] && dump
 tl_summary
