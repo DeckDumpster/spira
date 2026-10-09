@@ -674,16 +674,6 @@ fn open_children_label(env: &Env) -> String {
     env.config.open_children_label.clone()
 }
 
-/// `SPIRA_SUBMITTED_LABEL`, via `env.config` — the one source now (per Ryan 2026-10-05).
-/// Two bash functions (`ready_shared_exclude`'s bare `${VAR:-}` and `bead_reopen`'s
-/// `${VAR:-spira-submitted}`) used to carry two different embedded defaults for this same
-/// key; both are gone — `reopen`'s own caller now reads this same function, not a second
-/// one (see the migration report). (`epics`/`select` read no label: a child's progress is
-/// its lifecycle row, sp-mve9i.)
-fn submitted_label_f(env: &Env) -> String {
-    env.config.submitted_label.clone()
-}
-
 /// `READY_ARGS`, resolved from this call's flags/config/environment.
 fn ready_args_for(a: &Args, env: &Env) -> Vec<String> {
     ready::ready_args(&scope_label(a, env), &no_loop_label(a, env))
@@ -782,7 +772,7 @@ fn roster(home: &std::path::Path, fayths: &str) -> Vec<String> {
 }
 
 fn fayth_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
-    let shared = ready::shared_exclude3(&queue_wait_label(env), &submitted_label_f(env), &open_children_label(env));
+    let shared = ready::shared_exclude(&queue_wait_label(env), &open_children_label(env));
     ready::fayth_exclude(me, own, &roster(home, &env.config.fayths), &shared)
 }
 
@@ -811,7 +801,7 @@ fn cmd_shared_exclude(a: &Args, env: &Env) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
-    Outcome::ok(ready::shared_exclude3(&queue_wait_label(env), &submitted_label_f(env), &open_children_label(env)))
+    Outcome::ok(ready::shared_exclude(&queue_wait_label(env), &open_children_label(env)))
 }
 
 /// `SPIRA_READY_CACHE`'s own lookup (`awk -v f="$f" '$1==f{print $2} END{...}'`): the
@@ -915,7 +905,7 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
     };
     let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
-    let mine = ready::partition(&rows, &part, &queue_wait_label(env), &submitted_label_f(env));
+    let mine = ready::partition(&rows, &part, &queue_wait_label(env));
     if json {
         return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
     }
@@ -965,7 +955,7 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => r,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {}", first_line(&e))),
     };
-    let counts = ready::bucket(&rows, &parts, &queue_wait_label(env), &submitted_label_f(env));
+    let counts = ready::bucket(&rows, &parts, &queue_wait_label(env));
     Outcome {
         code: 0,
         out: counts.into_iter().fold(String::new(), |mut s, (name, n)| {

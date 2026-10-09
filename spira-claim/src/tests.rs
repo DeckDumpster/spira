@@ -772,7 +772,7 @@ fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
         &[("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
         &[("SPIRA_HOME", Some(home.as_str()))],
     );
-    assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-submitted,spira-open-children,fayth:ops");
+    assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-open-children,fayth:ops");
     assert_eq!(o.code, 0);
 }
 
@@ -816,7 +816,7 @@ fn shared_exclude_cli_the_three_labels_ready_shared_exclude_carried() {
     // declared values (spira-queue-waiting/spira-submitted/spira-open-children) are what
     // conf.sh's derivation would hold once it ran; no override needed.
     let o = run(&["shared-exclude"], "");
-    assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-submitted,spira-open-children"));
+    assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-open-children"));
 }
 
 /// All three shared labels declared empty (a legitimate, resolved "no restriction" — not
@@ -1026,7 +1026,7 @@ fn bulk_ready_by_fayth_cli_buckets_one_fetch_by_the_chamber_roster() {
         &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
         &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str()))],
     );
-    assert_eq!(o.out, "builder 1\nops 1\n", "c is dropped by the shared spira-submitted exclusion");
+    assert_eq!(o.out, "builder 2\nops 1\n", "c is READY in the lifecycle: a stale spira-submitted label must not hide it");
 }
 
 #[test]
