@@ -16,6 +16,38 @@ pub const GANTT_SQL: &str = "SELECT seq, lc_key AS bead_id, from_state, to_state
 
 const LIVE_STATES: &str = "'OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK'";
 
+/// Terminal beads of the last day, one index range per state.
+fn terminal_sql() -> String {
+    let states = lifecycle::bead::BeadState::TERMINAL.iter().map(|s| format!("'{}'", s.as_str())).collect::<Vec<_>>().join(", ");
+    format!("SELECT bead_id, state, since, updated_at, priority, title FROM bead WHERE state IN ({states}) AND since >= UNIX_TIMESTAMP() - 86400")
+}
+
+const EJECTS_SQL: &str = "SELECT lc_key AS batch_id, evidence, actor, at FROM event \
+     WHERE machine = 'batch' AND event = 'Eject' AND applied = 1 AND at >= UNIX_TIMESTAMP() - 86400";
+
+/// Everything the ops pane draws, in one process start on one held connection.
+pub fn cmd_ops_snapshot(_args: &[String], conn: &Conn) -> (i32, String) {
+    let queries: [(&str, String); 7] = [
+        ("live", "SELECT * FROM ops_live".into()),
+        ("recent", terminal_sql()),
+        ("edges", "SELECT * FROM ops_edges".into()),
+        ("dwell_p95", "SELECT * FROM ops_dwell_p95".into()),
+        ("dwell", "SELECT * FROM ops_dwell".into()),
+        ("batches", "SELECT * FROM ops_round".into()),
+        ("ejects", EJECTS_SQL.into()),
+    ];
+    let mut out = serde_json::Map::new();
+    out.insert("now".into(), serde_json::json!(crate::db::now_epoch()));
+    out.insert("graph".into(), serde_json::from_str(&graph_json()).unwrap_or(Value::Null));
+    for (key, sql) in &queries {
+        match conn.query(sql) {
+            Ok(rows) => out.insert((*key).into(), Value::Array(rows)),
+            Err(e) => return (2, format!("cannot tell: {key}: {e:?}")),
+        };
+    }
+    (0, Value::Object(out).to_string())
+}
+
 pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(view) = args.first().and_then(|a| VIEWS.iter().find(|v| **v == a.as_str())) else {
         return (2, format!("ops-view: takes one of {}", VIEWS.join(" | ")));
