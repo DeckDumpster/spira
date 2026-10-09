@@ -129,7 +129,7 @@ bdq() {
 }
 
 # Each of these three is also called directly, by name, from several test suites
-# (test-repo-label.sh, test-destructive-bead.sh) — not only from inside bdq() above — so each
+# (test-repo-map.sh, test-destructive-bead.sh) — not only from inside bdq() above — so each
 # gets its own shim onto the binary's `__fence` subcommand rather than relying on bdq()'s own
 # dispatch to reach them.
 _bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
@@ -1796,7 +1796,7 @@ repo_land_queued() {
 #
 # PORTED (wave 4.35, sp-kelr2, row V) to maechen-trigger's `lanes` module, called in-process
 # by its own sweep; this is now the one-line shim onto its `repo-lanes` CLI door, which
-# groom-trigger.sh (the one surviving bash caller) and test-repo-lanes.sh both reach the
+# groom-trigger.sh (the one surviving bash caller) and test-repo-map.sh both reach the
 # same way. SPIRA_HOME is threaded explicitly — conf.sh deliberately never exports it (the
 # EXEC-BOUNDARY TRAP comment at the top of this file). `_spira_expand_lanes`, the internal
 # helper this function used to call, had no caller outside this one and is retired rather

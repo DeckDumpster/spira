@@ -177,8 +177,7 @@ spira/test-reclaim-slay-branch-guard.sh
 spira/test-reconciler.sh
 spira/test-released-defects.sh
 spira/test-release.sh
-spira/test-repo-label.sh
-spira/test-repo-lanes.sh
+spira/test-repo-map.sh
 spira/test-review.sh
 spira/test-sending-closed-reap.sh
 spira/test-sending-mode-filter.sh
