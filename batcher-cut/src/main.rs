@@ -26,6 +26,7 @@ mod drive;
 mod flip;
 mod io;
 mod order;
+mod screen;
 mod vm;
 
 use std::collections::BTreeMap;
@@ -219,6 +220,7 @@ fn cut(o: &Opts) -> Result<(), String> {
         println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
     }
     let open = io::read_open_batch(&env_, &repo.name)?;
+    let pool = screen::screened(&env_, &repo, pool, open.as_ref());
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());

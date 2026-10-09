@@ -71,6 +71,7 @@ members = [
     "sim",
     "spira/sim",
     "reclaim",
+    "sift",
 ]
 resolver = "2"
 
