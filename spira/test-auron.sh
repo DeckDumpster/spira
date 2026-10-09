@@ -21,7 +21,7 @@
 # exactly test-aeon-sweep.sh's own `command aeon --home ...` pattern for the same reason
 # (the wrapper function below is itself named `auron`, shadowing the bare binary name).
 # tier: T2
-# covers: auron/src/* spira/conf.sh
+# covers: auron/src/* spira/conf.sh UC-ops-detection-remediation-19
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

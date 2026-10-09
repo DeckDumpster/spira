@@ -44,7 +44,7 @@
 # this bead touched.
 #
 # tier: T2
-# covers: spira/gate-check.sh sentinel/src/* aeon/src/*
+# covers: spira/gate-check.sh sentinel/src/* aeon/src/* UC-landing-merge-queue-53
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

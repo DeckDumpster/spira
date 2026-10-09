@@ -15,7 +15,7 @@
 # a working fixture: zero stderr lines required.
 #
 # tier: T1
-# covers: spira/gate-check.sh
+# covers: spira/gate-check.sh UC-landing-merge-queue-52
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

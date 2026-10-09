@@ -2,7 +2,7 @@
 # test-gate-base-evidence.sh — a red base names its own red suites and carries its own output,
 # and excuses only the suites that are red on it too.
 # tier: T1
-# covers: spira/gate.sh UC-gate-verdict-10 UC-gate-verdict-14
+# covers: spira/gate.sh UC-gate-verdict-10 UC-gate-verdict-12 UC-gate-verdict-14
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

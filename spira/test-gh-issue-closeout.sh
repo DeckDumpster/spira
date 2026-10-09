@@ -13,7 +13,7 @@
 # SPIRA_GH, never at the real `gh` binary.
 #
 # tier: T1
-# covers: gh-intake/src/* spira/lib.sh
+# covers: gh-intake/src/* spira/lib.sh UC-landing-merge-queue-57
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

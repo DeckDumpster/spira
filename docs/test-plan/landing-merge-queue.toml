@@ -6,18 +6,13 @@ id = "UC-landing-merge-queue-01"
 tier = "T3"
 statement = "A closed queue-mode branch whose gate passes is `CERTIFIED` at its tip. Main is unchanged and the bead stays closed."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-02"
 tier = "T1"
 statement = "A certified tip is not gated again. A moved tip invalidates the record and is certified again. A tip that has not moved since its `RED` mark is skipped (CHECK6)."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "landing-pass is Rust; the skip-at-same-tip decision is pinned only by cargo test -p landing-pass certified_or_withdrawn_at_the_same_tip_is_not_gated_again, and no bash suite asserts it end to end"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -26,15 +21,15 @@ id = "UC-landing-merge-queue-03"
 tier = "T3"
 statement = "A gate FAIL or a failed rebase at certification reopens the bead and marks it `RED`. Main is unchanged. The reopen note (the tail of the gate output) names the offending file:line."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-04"
 tier = "T1"
 statement = "Certification order is (priority ASC, closed_at ASC). In the phase-2 tiers, never-gated branches come before moved-tip `RED` branches."
+
+[use_case.uncovered]
+reason = "certification order is landing-pass order::tests (Rust); no bash suite drives a multi-branch priority/closed_at ordering"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-05"
@@ -42,7 +37,7 @@ tier = "T1"
 statement = "When the pass budget cannot fit a gate, the pass certifies nothing. It logs one budget cut naming the first deferred branch and the deferred count. Successive passes cover disjoint sets."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the budget cut is landing-pass budget::tests and the_budget_cut_defers_the_rest (Rust); a bash pass cannot be made to run out of budget deterministically"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -52,17 +47,7 @@ tier = "T3"
 statement = "Gates run in parallel up to `SPIRA_CERTIFY_PAR`, and each branch is certified in completion order."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-07"
-tier = "T1"
-statement = "When CI is idle and nothing is certified, a branch is certified as sole batch member without a gate. When CI is busy, or `?`, the gate runs."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "parallel certification needs concurrent gate processes; pinned by landing-pass cargo tests (par_n_starts_n_gates_before_any_finishes and its siblings), no bash suite"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -72,7 +57,7 @@ tier = "T1"
 statement = "With `SPIRA_GATE_SUITES=off`, certification is fences-only and uses a distinct gate cache key. Push mode never gets the switch."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the distinct fences-only gate cache key is gate/landing-pass Rust; only the admission bypass is asserted in bash (test-gate-admission-suites-only.sh)"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -82,7 +67,7 @@ tier = "T1"
 statement = "The gate lock wait defaults to 2 × `SPIRA_GATE_TIMEOUT`. An operator value is honoured. When the pass budget is shorter, the wait is capped and logged as rc=75 contention."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the gate lock-wait default, operator override and pass-budget cap are landing-pass budget::tests (Rust); no bash suite asserts them"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -91,55 +76,35 @@ id = "UC-landing-merge-queue-10"
 tier = "T2"
 statement = "When the base is red (`BASE_FAIL`), branches are held, not reopened. The pass files exactly one incident per red base (with suite, repo, \"no attempt charged\", and gate output) and logs any recurrence. Held branches land once the base is green."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-11"
 tier = "T1"
 statement = "A `basefail:<repo>:<suite>` bead is gated first, is exempt from the budget, and is certified while the base is red. Without one, nothing is certified."
+
+[use_case.uncovered]
+reason = "base-fix selection and budget exemption are landing-pass order::basefail_fix_decision and its cargo tests; no bash suite certifies a base-fix bead"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-12"
 tier = "T1"
 statement = "The watchtower admission throttle behaves as follows: at depth ≥ engage with drain, it writes the stamp and files an incident with a stable ref. On a stall, it files a fault instead. It lifts with hysteresis. The `off` override clears it, and a halted world skips it. Depth counts only live, unlanded `CERTIFIED` records."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-13"
 tier = "T3"
 statement = "An uncontested branch lands by ancestry and advances the operator checkout. The pass records `bead.landed`."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-14"
 tier = "T3"
 statement = "A push rejected because the base moved is retried and lands the branch's own commits. The next pass does not land it again. A rejection that is not a race is not called a race, and neither case reopens the bead."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-15"
 tier = "T3"
 statement = "A pass reopens a bead only for a failure it can attribute: a failed gate (`bead.reopened`) or a real conflict naming the file. A parallel-duplicate note names the bead that already landed."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-16"
@@ -151,20 +116,10 @@ id = "UC-landing-merge-queue-17"
 tier = "T3"
 statement = "A branch reaped or slain mid-pass, or between a race and its retry, is never reported as a conflict. The pass says whether the work is on the base."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-18"
 tier = "T3"
 statement = "After a landing moves the base, withheld survivors are rebased at once. A survivor that truly conflicts is reopened, naming the landing. A branch held by a live aeon is never rewritten or landed."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-19"
@@ -172,7 +127,7 @@ tier = "T2"
 statement = "Repeated rebase failures escalate at `SPIRA_REBASE_ESCALATE_AT` instead of reopening, exactly once. A merge-conflict event is written once per (tip, base)."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "escalation exactly once and the per-(tip, base) merge-conflict event are pinned only by landing-pass pr_branch/pass cargo tests; test-landing-rebase.sh asserts one escalation at the threshold but not once-only or the event dedupe"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -182,7 +137,7 @@ tier = "T2"
 statement = "PR mode opens one PR per branch and posts once. It refreshes on base movement without opening a second PR. It leaves a MERGED PR alone. It never rewrites a branch when gh cannot say the PR state. Past the refresh cap it escalates once."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "PR mode is landing-pass pr_branch::tests (Rust, recording fakes of gh and git); no bash suite drives the PR state machine"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -191,90 +146,35 @@ id = "UC-landing-merge-queue-21"
 tier = "T3"
 statement = "The pass skips a superseded closed bead's branch instead of reopening it. The other branches still land."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-22"
 tier = "T2"
 statement = "The bead scan issues one bulk `bd show`. A branch with no bead is never landed. A bead without a `repo:` label lands in the swept repo. A bead reopened during its gate is not landed and not reopened again."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-23"
 tier = "T1"
 statement = "The pass prunes verdict-cache entries older than `SPIRA_VERDICT_TTL` and reports a reused verdict."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-24"
 tier = "T2"
 statement = "`landing.sh halt` stops a running pass: it kills the pass, writes an interrupt record and removes the run state. It deletes orphan `spira/queue/*` branches and keeps the one named by the open record. Dry-run and idle forms exit honestly."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-25"
-tier = "T2"
-statement = "After a land, the post-land step rebuilds a cargo binary when it is absent and its unit is enabled. It never rebuilds without cargo."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-26"
-tier = "T0"
-statement = "Every land mode declared in the header is handled in `land_repo`. `land_mark`, `land_state` and `land_mark_at` have one implementation (lib.sh). The landing worktree is never rebased. Every fetch uses `--no-write-fetch-head`."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-27"
 tier = "T1"
 statement = "`submit` accepts only `spira/<id>` branches. It runs the gate against the named repo (or the home repo) and certifies the branch on spira-lc, keeping no queue record of its own. A refusal writes no state. A gate fail writes no landstate. `testenv suites` quarantine/disable/activate each submit a change bead's `spira/<bead>` branch."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-28"
 tier = "T1"
 statement = "`flush` runs the builder now with wait=0 and refuses push-mode and unknown repos. `step` runs the verdict before the batch. Landing's queue pass calls `queue.sh step`."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-29"
 tier = "T1"
 statement = "`eject` writes `RED` at the tip, reopens the bead (clearing the assignee, with a comment), closes the PR, removes the record and returns the survivors to `CERTIFIED` at their tips. `abandon` does the same, except that it leaves `EJECTED`/`RED` members untouched, archives the record as `closed-pr<N>-<ts>Z` and passes `--reason` to the forge. Each refuses a non-member or a missing batch."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-30"
@@ -286,20 +186,10 @@ id = "UC-landing-merge-queue-31"
 tier = "T1"
 statement = "`queue_sort_rows` keeps every row when the priority JSON is over 128 KiB, orders by priority with suite-state transitions first, and fails open on bad JSON."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-32"
 tier = "T1"
-statement = "`queue.sh protect` sets branch protection on the repo's base branch and writes a receipt. Doctor warns on a queue repo that has no receipt and is silent for push mode."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "`queue.sh protect` sets branch protection on the repo's base branch and writes a receipt."
 
 [[use_case]]
 id = "UC-landing-merge-queue-33"
@@ -307,7 +197,7 @@ tier = "T1"
 statement = "`queue.sh stats` reports the local red rate, the batch and member counts, cost, and caught/escaped counts from the meter lines."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "covered only by cargo tests in queue/src/stats.rs and queue/src/tests.rs; no bash suite drives `queue stats`"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -320,36 +210,6 @@ statement = "The count/wait/idle/express predicate table was batch.sh's own trig
 reason = "retired (sp-vsob2): The count/wait/idle/express predicate table was batch.sh's own trigger; the batcher crate's `should_cut` replaces it with an adaptive pool s"
 date = "2026-09-27"
 bead = "sp-vsob2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-35"
-tier = "T2"
-statement = "An open batch record or a held flock prevents a second batch; batch.sh's own DIRTY-PR check (UC-36) still runs against it every pass. The unrecorded-open-`spira/queue/*`-PR mail this UC used to include was part of batch.sh's own PR-open tail and was retired with it (sp-vsob2) — nothing currently detects that race."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-36"
-tier = "T2"
-statement = "An open batch PR reported DIRTY is abandoned: the PR is closed, the record removed, BATCHED members return to `CERTIFIED`, `RED` stays `RED`, and the operator is mailed. A CLEAN PR is left alone."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-37"
-tier = "T1"
-statement = "Before a batch, and even while one is open, landstate is reconciled: tip in base → `LANDED`; branch gone → `LANDED` if its tip is in base or it appears in reap.log, else `LOST`, never a member, with mail; a branch advanced after certification → a stale-certification log with both SHAs, and `LANDED` only when the live tip equals base; a closed bead with `RED`/`EJECTED` and a live branch → closed-red-live mail. Landstate records without a trailing newline are read."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-38"
@@ -384,22 +244,7 @@ bead = "sp-vsob2"
 [[use_case]]
 id = "UC-landing-merge-queue-41"
 tier = "T1"
-statement = "The PR body lists `id — title`, or `(title unavailable)`. The title says `beads for <repo>`. `format_batch` (a declared formatter adds a format commit on the batch branch only, and a formatter failure never blocks the PR) is no longer applied to the batcher's own automatic batches — it survives only as a primitive `queue.sh open-batch` (the hand tool) still calls."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-42"
-tier = "T1"
-statement = "A queue with no BATCHED/LANDED movement for longer than `SPIRA_QUEUE_STUCK_AGE` mails once and sets a flag. The flag clears when movement resumes, and the alert fires again on a new stall. Depth alone never alerts. A queue with no history is skipped, with a log line."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "The open-batch PR body lists `id — title` per member."
 
 [[use_case]]
 id = "UC-landing-merge-queue-43"
@@ -424,12 +269,7 @@ bead = "sp-flj4a"
 [[use_case]]
 id = "UC-landing-merge-queue-45"
 tier = "T3"
-statement = "A green batch on an unchanged base fast-forwards. Members become `LANDED` and flaky annotations are recorded. The batch record and the batch branch (local and remote) are deleted."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "A green batch on an unchanged base fast-forwards the forge base to the batch head, and the batch is `LANDED`."
 
 [[use_case]]
 id = "UC-landing-merge-queue-46"
@@ -437,29 +277,14 @@ tier = "T2"
 statement = "When a green batch's base has moved, the PR is closed and members return to `CERTIFIED`, or become `LANDED` when their tips are in the new base. When the CI head SHA differs from the sealed head, nothing is pushed and the operator is mailed."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-47"
-tier = "T2"
-statement = "For a red batch, the red suites are replayed per member, with an all-suites fallback and diff attribution limited to the member's own change. Only the guilty member is ejected, with the failing assertion in its note. Survivors are merged again onto the same PR. A together-only or unannotated red halves the batch. An unreproduced red requeues, and a second unreproduced red at the same tip ejects."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "covered only by cargo tests in queue/src/tests/verdict.rs (moved-base rebuild, requeue, head-SHA refusal); the forge head-SHA seam is not driven from bash"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-48"
 tier = "T2"
-statement = "Attribution is not fooled by flaky or odd input. A suite that fails and then passes on retry does not eject, and one that is always red does. A gate-classified red is not quarantined as flaky. A could-not-judge member (exit 2) does not exonerate a guilty one and is named in the mail. The ejected set is deterministic."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "Attribution is not fooled by a flake: a suite that is red once and green on a plain rerun ejects nobody, and a suite that stays red ejects the member that broke it."
 
 [[use_case]]
 id = "UC-landing-merge-queue-49"
@@ -476,40 +301,15 @@ id = "UC-landing-merge-queue-50"
 tier = "T0"
 statement = "The verdict timer runs `spira-verdict.sh`, which calls `queue.sh step` for each repo. The service has `TimeoutStartSec` ≥ 3600 and no CPUQuota."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
-id = "UC-landing-merge-queue-51"
-tier = "T1"
-statement = "CI park is classified from the land mode: in pr mode it is `watch` until `SPIRA_CI_PARK_MAX` and then `expired`; push, hold and unmapped repos are `no-ci`; an unparseable timestamp gives `watch` with rc 2; 0 disables the deadline; junk falls back to 5400."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-52"
 tier = "T1"
 statement = "`gate-check` discovers `--branch` once per distinct unbound-gate branch and never calls a bare discover or discovers for push repos. It then runs `gate check`. It reports a gate with no await_id as stuck. It parses ESCALATE lines for any `SPIRA_ID_PREFIX`. Its stderr is silent on a clean pass."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-53"
 tier = "T2"
 statement = "bd's own gh:run gates behave as the harness expects: a gated bead leaves `ready`, and resolution is scoped to `metadata.repo`."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-54"
@@ -517,7 +317,7 @@ tier = "T1"
 statement = "`forge.sh` maps gh JSON to the line protocol for every verb Spira consumes: check-status (`pending`/`green`/`red`/`harness_fault`/`provision_fault`, `red-suite:`, `head-sha:`), runs-active (`?` never 0), run-metadata (max activity), workflow-rerun (never `--failed`, cancels in-progress), and also pr-mergeability, pr-list-queue, batch-ci-status, queued-since, run-id and pr-number."
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "covered only by cargo tests in forge/src/tests.rs against a fake gh; no suite header names it"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -526,28 +326,12 @@ id = "UC-landing-merge-queue-55"
 tier = "T1"
 statement = "The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other fayth, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-56"
 tier = "T1"
 statement = "`pve.sh` refuses to make an HTTP call when credentials or the CA are missing. It always passes `--cacert` and never `--insecure`, and routes each verb to its API path."
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-landing-merge-queue-57"
 tier = "T2"
 statement = "When a bead with a GitHub ref lands, its issue is commented (short SHA + link) and closed once, with a marker. An unlanded bead's issue is never closed. Backfill decides landed-ness by ancestry of `spira: land <id>`. The unlanded scan asks once, logs refusals, and marks issues already closed on the forge."
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-

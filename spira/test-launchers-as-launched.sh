@@ -6,7 +6,7 @@
 #
 # hermetic-ok: its own TMUX_TMPDIR server and throwaway HOMEs; touches no operator state
 # tier: T2
-# covers: aerc/accounts.conf install/src/bin/install.rs mail/src/sendmail.rs release/src/session_hook.rs spira/ctx-meter.sh spira/hooks/session.sh cockpit/ops/src/layout.rs cockpit/ops/src/health_main.rs UC-operator-channel-46 UC-operator-channel-47 UC-operator-channel-48 UC-cockpit-observability-51
+# covers: aerc/accounts.conf install/src/bin/install.rs mail/src/sendmail.rs release/src/session_hook.rs spira/ctx-meter.sh spira/hooks/session.sh cockpit/ops/src/layout.rs cockpit/ops/src/health_main.rs UC-operator-channel-46 UC-operator-channel-47 UC-operator-channel-48 UC-cockpit-observability-51 UC-operator-launchers-05 UC-operator-launchers-06
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"

@@ -18,7 +18,7 @@
 #
 # defect: sp-gyl8n
 # tier: T2
-# covers: cockpit/ops/src/layout.rs UC-cockpit-observability-43
+# covers: cockpit/ops/src/layout.rs UC-cockpit-observability-41 UC-cockpit-observability-43 UC-cockpit-observability-44 UC-cockpit-observability-45
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -168,5 +168,53 @@ still_there="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w2:0 -F '#{pane_id}' | 
 is "the duplicate really was killed by repair_dashboards" "0" "$still_there"
 after2="$(active_of w2:0)"
 is "focus falls back to the session pane once its target is gone" "$sess_id2" "$after2"
+
+echo
+echo "a copy of the layout binary refuses ensure and names the installed one"
+ensure_stderr() {   # ensure_stderr <layout-binary> [KEY=value ...] -> that run's output
+    local bin="$1"; shift
+    tl_config COCKPIT_MAIL="fakemail" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_RUN="$RUN" \
+        SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 "$@"
+    TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$_FAKE_RELEASE" HOME="$TMP" \
+        PATH="$_FAKE_RELEASE/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_TOML="$SPIRA_TOML" \
+        "$bin" ensure 2>&1
+}
+mkdir -p "$TMP/copy"
+cp "$_FAKE_RELEASE/bin/layout" "$TMP/copy/layout"
+installed_err="$(ensure_stderr "$_FAKE_RELEASE/bin/layout")"
+nowant "positive control: the installed binary is not refused" "ensure refused" "$installed_err"
+copy_err="$(ensure_stderr "$TMP/copy/layout")"
+want   "a copy refuses ensure"                        "ensure refused" "$copy_err"
+want   "and names the installed binary's path"        "/bin/layout ensure" "$copy_err"
+
+echo
+echo "mouse mode: on by default, left alone by off/no/0, and ensure still succeeds"
+mouse_now() { TMUX_TMPDIR="$TMUXDIR" tmux show-options -gv mouse 2>/dev/null; }
+for v in off no 0; do
+    TMUX_TMPDIR="$TMUXDIR" tmux set-option -g mouse off
+    ensure_stderr "$_FAKE_RELEASE/bin/layout" COCKPIT_MOUSE="$v" >/dev/null
+    is "COCKPIT_MOUSE=$v leaves mouse off" "off" "$(mouse_now)"
+done
+TMUX_TMPDIR="$TMUXDIR" tmux set-option -g mouse off
+ensure_stderr "$_FAKE_RELEASE/bin/layout" >/dev/null
+is "the default turns mouse on" "on" "$(mouse_now)"
+
+echo
+echo "pane identity: a tag on a pane that runs no dashboard is cleared, not obeyed"
+TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s w3 -x 214 -y 53
+TMUX_TMPDIR="$TMUXDIR" tmux set-option -t w3 window-size largest
+sess3="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w3:0 -F '#{pane_id}' | head -1)"
+imp="$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t w3:0 -h -P -F '#{pane_id}' "exec sleep 300 health.sh")"
+TMUX_TMPDIR="$TMUXDIR" tmux set-option -p -t "$imp" @cockpit health
+is "positive control: the impostor carries the health tag before ensure" "health" \
+    "$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -p -t "$imp" '#{@cockpit}')"
+imp_out="$(ensure_stderr "$_FAKE_RELEASE/bin/layout")"
+is   "ensure untagged the impostor" "" \
+    "$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -p -t "$imp" '#{@cockpit}')"
+want "and logged it" "runs no dashboard" "$imp_out"
+panes3="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w3:0 -F '#{pane_id}')"
+want "the session pane was not killed"  "$sess3" "$panes3"
+want "the impostor pane was not killed" "$imp"   "$panes3"
 
 tl_summary

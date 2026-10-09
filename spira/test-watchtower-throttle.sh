@@ -17,7 +17,7 @@
 # assertion is preceded by a fixture that proves the detector can fire.
 #
 # tier: T1
-# covers: watchtower/src/* sentinel/src/* spira/lib.sh spira/conf.sh
+# covers: watchtower/src/* sentinel/src/* spira/lib.sh spira/conf.sh UC-landing-merge-queue-12
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

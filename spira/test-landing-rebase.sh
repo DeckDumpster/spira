@@ -12,7 +12,7 @@
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
 # tier: T2
-# covers: landing-pass/* spira/lib.sh skew/src/*
+# covers: landing-pass/* spira/lib.sh skew/src/* UC-landing-merge-queue-18
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

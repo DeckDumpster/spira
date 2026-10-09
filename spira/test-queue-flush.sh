@@ -7,7 +7,7 @@
 # with no verdict after it opens one pull request and never lands it.
 #
 # tier: T1
-# covers: queue/src/* landing-pass/src/* spira/lib.sh
+# covers: queue/src/* landing-pass/src/* spira/lib.sh UC-landing-merge-queue-28
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

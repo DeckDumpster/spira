@@ -26,7 +26,7 @@
 # Each detector is shown to fire before it is trusted as silent.
 #
 # tier: T2
-# covers: spira/deploy.sh spira/conf.sh UC-instance-lifecycle-12 UC-instance-lifecycle-13
+# covers: spira/deploy.sh spira/conf.sh UC-instance-lifecycle-12 UC-instance-lifecycle-13 UC-instance-lifecycle-14
 # host-reason: mock components in isolated temp dirs; no real systemd, database, or network
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

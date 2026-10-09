@@ -23,7 +23,7 @@
 # The bare remote is real git so ancestry checks are real.
 #
 # tier: T2
-# covers: landing-pass/* spira/conf.sh spira/lib.sh queue/src/* queue/src/ops/* spira/gate.sh
+# covers: landing-pass/* spira/conf.sh spira/lib.sh queue/src/* queue/src/ops/* spira/gate.sh UC-landing-merge-queue-01 UC-landing-merge-queue-03
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

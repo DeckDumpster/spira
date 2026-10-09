@@ -11,7 +11,7 @@
 # repositories section at all post sp-utt1i, let alone a selector for one.
 #
 # tier: T1
-# covers: queue/src/*
+# covers: queue/src/* UC-landing-merge-queue-32
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

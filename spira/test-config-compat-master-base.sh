@@ -14,7 +14,7 @@
 # repo whose base is `master`.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/lc-fixture.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/lc-fixture.sh UC-landing-merge-queue-45
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

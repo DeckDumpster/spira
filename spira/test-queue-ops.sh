@@ -14,7 +14,7 @@
 # that abandon's return-to-CERTIFIED path makes NO bd call at all.
 #
 # tier: T3
-# covers: queue/src/* forge/src/* spira/conf.sh
+# covers: queue/src/* forge/src/* spira/conf.sh UC-landing-merge-queue-29
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

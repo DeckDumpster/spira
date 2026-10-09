@@ -11,11 +11,6 @@ id = "UC-cockpit-observability-02"
 tier = "T1"
 statement = "`SP_AT` is stamped before any section data; `SP_WINDOW_HOURS`, `SP_PASS_SECS` and `SP_COLLECTOR_REV` are always emitted"
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-cockpit-observability-03"
 tier = "T0"
@@ -26,20 +21,10 @@ id = "UC-cockpit-observability-04"
 tier = "T1"
 statement = "fragment merge: an `ok` fragment contributes its keys; `never`/`timeout`/`error` contribute only `_PROBE_AT_<n>`/`_PROBE_STATUS_<n>`; `stale` keeps its last-known-good values; a key clash picks the alphabetically first fragment"
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-cockpit-observability-05"
 tier = "T1"
 statement = "a probe that times out writes `status=timeout`, logs its name, increments `_PROBE_KILLED` (surfaced as `SP_PROBE_KILLED_<n>`), and leaves no temp file; a success resets the counter and logs `probe <n> ok <N>s`"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-cockpit-observability-06"
@@ -101,20 +86,10 @@ id = "UC-cockpit-observability-17"
 tier = "T1"
 statement = "`SP_NEXT` attributes each ready bead to the persona that will claim it, or marks it `unclaimable` when its `fayth:` preference cannot match"
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-cockpit-observability-18"
 tier = "T1"
 statement = "the statute probe reports DB/page counts and SKEW as `?` with no wiki, MISMATCH when DB < page/2, and OK otherwise"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-cockpit-observability-19"
@@ -142,7 +117,7 @@ tier = "T1"
 statement = "the pane fills exactly its height: NOW served first, NEXT/RECENT capped at 5, slack to INFLOW, CI keeps its row, no row exceeds 70/96 columns, labels align at column 9"
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "pane height sharing is unit-tested in cockpit/ops health::share and health::frame (render_marks_drop_count_on_the_header_when_pane_is_too_short, first_served_sections_fill_to_max_before_others_reach_base); the golden-frame bash suite for the 70/96-column and column-9 rules is gone and nothing asserts them end to end"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -152,7 +127,7 @@ tier = "T1"
 statement = "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct message ids, ctx is the last usage, only the current attempt counts, MODEL mismatch with `FAYTH_MODEL` shows a warning, an unreadable trace gives `?` and an empty trace gives `-`, live-aeon count comes from pidfiles and /proc"
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "NOW-row derivation is unit-tested in aeon::trace (trace_stats_* cases) and health::sections now_section tests; the Rust seam is not drivable from bash and the MODEL-mismatch warning and pidfile live-count have no test"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -207,7 +182,7 @@ tier = "T2"
 statement = "panel write paths (close, comment, archive, enact, premise-reject) call `bd`/`rule.sh` with the right arguments and actor, and surface failure"
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "close, comment and enact are verified against a fake bd by cockpit/panel model.rs unit tests; archive and premise-reject have no argv-recording test and the Rust seam is not drivable from bash"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -242,24 +217,9 @@ date = "2026-10-09"
 bead = "sp-5disbg"
 
 [[use_case]]
-id = "UC-cockpit-observability-34"
-tier = "T1"
-statement = "Loom self-maintenance: `layout.sh` rebuilds when the source is newer than the binary or the binary is missing, and restarts a stale service only when the binary is executable"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
 id = "UC-cockpit-observability-35"
 tier = "T1"
 statement = "`ready.sh` reports FAIL/`?`/WARN/pass/skip for each check (sentinel timer, halt stamp, DB, dolt starting-port, statutes, ready work, loom latency, agent, snapshot freshness, panes) and exits 1 on any FAIL or `?`"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-cockpit-observability-36"
@@ -296,11 +256,6 @@ id = "UC-cockpit-observability-41"
 tier = "T1"
 statement = "pane identity comes from the process a pane actually runs, not argv text that merely mentions `health.sh`; `ensure` untags an impostor, logs it, and never kills the session pane"
 
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
 [[use_case]]
 id = "UC-cockpit-observability-42"
 tier = "T2"
@@ -314,22 +269,12 @@ statement = "`ensure` detaches ghost clients idle longer than `COCKPIT_CLIENT_ID
 [[use_case]]
 id = "UC-cockpit-observability-44"
 tier = "T1"
-statement = "the health pane command carries `SPIRA_CONF`; in split-checkout mode it runs the `SPIRA_PROD` renderer unless `SPIRA_DEV_RENDERER=1`; mouse mode defaults on, can be switched off with off/no/0, and never fails the caller"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "the health pane command carries `SPIRA_CONF`; mouse mode defaults on, can be switched off with off/no/0, and never fails the caller"
 
 [[use_case]]
 id = "UC-cockpit-observability-45"
 tier = "T1"
-statement = "a copy of `layout.sh` refuses `ensure` and names the installed path; the collector watchdog restarts an instance-qualified collector that started before `cockpit.sh` was last promoted"
-
-[use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
+statement = "a copy of the `layout` binary refuses `ensure` and names the installed path"
 
 [[use_case]]
 id = "UC-cockpit-observability-46"
@@ -352,7 +297,7 @@ tier = "T1"
 statement = "the collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures"
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the merge-failure exit is the supervisor run loop, verified by cockpit-collect supervisor::tests::run_loop_exits_one_after_consecutive_merge_failures; a bash test would need a service-supervised collector loop"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -362,7 +307,7 @@ tier = "T1"
 statement = "`ready.sh` loom grace pass: a loom that refuses the first probe and opens its port later is retried until it answers (pass, not FAIL); a loom that never answers is FAIL bounded by `SPIRA_LOOM_READY_GRACE`, not the default"
 
 [use_case.uncovered]
-reason = "no covering suite when plan-lint --gaps became a hard failure"
+reason = "the loom grace loop is a real HTTP probe against a localhost port, and the earlier suite for it flaked and was deleted; no deterministic seam exists short of a timed listener"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
