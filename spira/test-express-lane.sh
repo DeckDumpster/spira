@@ -50,10 +50,11 @@ stub confine.sh 'exit 0'
 mkdir -p "$TMP/lcx"
 cat > "$TMP/lcx/spira-lc" <<'LCX'
 #!/usr/bin/env bash
+MIRROR="$(dirname "$0")/../lc"
 case "${1:-}" in
-    express) mkdir -p "$SPIRA_RUN/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; [ -z "${LC_EXPRESS_FILE:-}" ] || echo "$2" >> "$LC_EXPRESS_FILE" ;;
+    express) mkdir -p "$SPIRA_RUN/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; echo "$2" >> "$MIRROR/express" ;;
     unexpress) rm -f "$SPIRA_RUN/lc-express/${2:?}" ;;
-    *) [ -z "${LC_MIRROR_BIN:-}" ] || exec "$LC_MIRROR_BIN" "$@" ;;
+    *) [ ! -x "$MIRROR/spira-lc" ] || exec "$MIRROR/spira-lc" "$@" ;;
 esac
 exit 0
 LCX
@@ -217,7 +218,6 @@ chmod +x "$SH/mock-summon"
 # the only mode); the stand-in (testlib lc_mirror_bd) answers spira-lc `list` from this
 # REAL bd store — an open bead is a READY row — ahead of the tree's spira-lc on PATH.
 lc_mirror_bd "$TMP/lc"
-export LC_EXPRESS_FILE="$TMP/lc/express" LC_MIRROR_BIN="$TMP/lc/spira-lc"
 sentinel_run() {
     # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
     # the real one) is exec'd as sentinel's own child for its ready reads and reads them as
@@ -258,7 +258,6 @@ if [ -n "$BID" ]; then
     out="$(sentinel_run 2>&1)" || true
     want "express bead ready: bypass grants pool=1, restricted to express" \
          "granting pool=1 (restricted to express)" "$out"
-    bad "DBG BID=$BID file=$(cat "$LC_EXPRESS_FILE" 2>&1 | tr '\n' ' ') rows=$(PATH="$TMP/lc:$PATH" "$TMP/lc/spira-lc" list 2>&1 | cut -c1-600)" ""
     want "express bead ready: builder is summoned despite the throttle" \
          "SUMMONED:builder" "$(cat "$SUMMONED" 2>/dev/null)"
 else
