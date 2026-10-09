@@ -27,16 +27,17 @@ NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u 
 sim() { (cd "$REPO" && env "${NOLOC[@]}" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" "$@"); }
 
 START=$SECONDS
-out="$(timeout 120 env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 bash -c "cd '$REPO' && '$SIM' run '$HERE/sim/scenarios/happy-path.toml' --seed $SEED --keep" 2>&1)"; rc=$?
+out="$(timeout 55 env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 bash -c "cd '$REPO' && '$SIM' run '$HERE/sim/scenarios/happy-path.toml' --seed $SEED --keep" 2>&1)"; rc=$?
 ELAPSED=$((SECONDS - START))
-W="$(printf '%s\n' "$out" | sed -n 's/^sim: world kept at //p' | tail -1)"
+W="$(ls -d "$T"/sim-run-* 2>/dev/null | head -1)"
 wantrc "sim run happy-path exits 0" 0 "$rc"
 if [ "$rc" != 0 ]; then
     printf '%s\n' "$out" | tail -15 | cut -c1-300 | sed 's/^/# run: /'
     if [ -f "$W/exec.log" ]; then
         grep -c '^===' "$W/exec.log" | sed 's/^/# commands run: /'
-        grep '^=== ' "$W/exec.log" | grep -v ': exit status: 0' | tail -8 | cut -c1-200 | sed 's/^/# nonzero: /'
-        tail -12 "$W/exec.log" | cut -c1-300 | sed 's/^/# log: /'
+        grep '^=== ' "$W/exec.log" | grep -v ': exit status: 0' | tail -6 | cut -c1-200 | sed 's/^/# nonzero: /'
+        grep -v '^$' "$W/exec.log" | grep -v 'target-reap\|^=== ' | tail -14 | cut -c1-260 | sed 's/^/# log: /'
+        grep '^=== ' "$W/exec.log" | awk '{print $3,$4}' | sort | uniq -c | sort -rn | head -8 | sed 's/^/# by command: /'
     fi
 fi
 [ "$ELAPSED" -le 60 ] && ok "the run took ${ELAPSED}s (<= 60s)" || bad "the run took ${ELAPSED}s (<= 60s)" "${ELAPSED}s"
