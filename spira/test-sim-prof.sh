@@ -74,19 +74,6 @@ in_world() {
 }
 tm() { local s=$(date +%s%N); in_world "$@" >/dev/null 2>&1; echo "# $(( ($(date +%s%N) - s) / 1000000 ))ms: $*" | cut -c1-120; }
 echo "# tools: $(command -v strace perf ltrace | tr '\n' ' ')"
-tm bd -C "$(sed -n 's/^SIM_BEADS_DB=//p' "$W/config/sim.env")" list --json
-tm spira-lc list
-tm git -C "$W/work" status -s
-tm gh pr list --json number
-tm queue stats
-tm landing-pass land
-tm landing-pass land
-tm batcher rounds
-tm gate-worker run
-tm queue publish-settle
-if command -v strace >/dev/null; then
-  in_world strace -f -e trace=execve -o "$T/ex.txt" landing-pass land >/dev/null 2>&1
-  grep -o 'execve("[^"]*"' "$T/ex.txt" | sed 's#.*/##; s/"//' | sort | uniq -c | sort -rn | head -12 | tr '\n' ' ' | sed 's/^/# execs: /'; echo
-fi
+in_world landing-pass land 2>&1 | while IFS= read -r l; do printf '%s %s\n' "$(date +%s.%N)" "$l"; done | awk '{t=$1; $1=""; if (NR>1 && t-p>0.4) printf "# +%.1fs after: %s\n#      then: %s\n", t-p, substr(prev,1,150), substr($0,1,150); p=t; prev=$0} END{print "# total lines " NR}'
 bad "prof" "forced"
 tl_summary
