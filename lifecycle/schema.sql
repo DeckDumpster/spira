@@ -147,17 +147,17 @@ SELECT /*+ JOIN_ORDER(r,t) LOOKUP_JOIN(r,t) */
   FROM (SELECT bead_id FROM bead WHERE state = 'LANDED' AND since >= UNIX_TIMESTAMP() - 86400) r
   JOIN bead t ON t.bead_id = r.bead_id;
 
--- The where-stuck read model; migrations/0009-where-stuck.sql makes the same views on an existing
--- database, and the two are asserted identical by test-ops-read-model.sh.
+-- The where-stuck read model; migrations/0009-where-stuck.sql and 0013-ops-edges-event.sql make the
+-- same views on an existing database, and the two are asserted identical by test-ops-read-model.sh.
 CREATE OR REPLACE VIEW ops_edges AS
-SELECT 'applied' AS kind, from_state, to_state, NULL AS event, NULL AS refusal,
-       SUM(at >= UNIX_TIMESTAMP() - 3600) AS n_1h, COUNT(*) AS n_24h
+SELECT 'applied' AS kind, from_state, to_state, event, NULL AS refusal,
+       SUM(at >= UNIX_TIMESTAMP() - 3600) AS n_1h, COUNT(*) AS n_24h, MAX(at) AS last_at
   FROM event
  WHERE machine = 'bead' AND applied = 1 AND at >= UNIX_TIMESTAMP() - 86400 AND from_state <> to_state
- GROUP BY from_state, to_state
+ GROUP BY from_state, to_state, event
 UNION ALL
 SELECT 'refused', from_state, NULL, event, refusal,
-       SUM(at >= UNIX_TIMESTAMP() - 3600), COUNT(*)
+       SUM(at >= UNIX_TIMESTAMP() - 3600), COUNT(*), MAX(at)
   FROM event
  WHERE machine = 'bead' AND applied = 0 AND at >= UNIX_TIMESTAMP() - 86400
  GROUP BY from_state, event, refusal;

@@ -44,7 +44,7 @@ wantrc "a second migrate run is a no-op" 0 $?
 want "the second run finds nothing pending" "already applied" "$again"
 
 views_of() { python3 -I -c 'import re,sys; t=re.sub(r"--[^\n]*","",open(sys.argv[1]).read()); print(re.sub(r"\s+"," ",t[t.index("CREATE "+sys.argv[2]+"VIEW "+sys.argv[3]):]).replace("CREATE OR REPLACE VIEW","CREATE VIEW").strip())' "$1" "$2" "$3"; }
-is "schema.sql and migrations 0007, 0009 and 0011 define the same views" "$(views_of "$LC_DIR/migrations/0011-bead-dep.sql" "OR REPLACE " ops_live) $(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_round) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_edges)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
+is "schema.sql and migrations 0007, 0009, 0011 and 0013 define the same views" "$(views_of "$LC_DIR/migrations/0011-bead-dep.sql" "OR REPLACE " ops_live) $(views_of "$LC_DIR/migrations/0007-ops-read-model.sql" "" ops_round) $(views_of "$LC_DIR/migrations/0013-ops-edges-event.sql" "OR REPLACE " ops_edges) $(views_of "$LC_DIR/migrations/0009-where-stuck.sql" "" ops_dwell_p95)" "$(views_of "$LC_DIR/schema.sql" "OR REPLACE " ops_live)"
 is "migrating the pre-0007 store gives ops_live its claimable and blocker" "blocker claimable" "$(lcfix_sql -r csv -q "SELECT column_name FROM information_schema.columns WHERE table_name = 'ops_live' AND column_name IN ('claimable','blocker') ORDER BY 1" | sed 1d | paste -sd' ')"
 
 cols="SELECT column_name FROM information_schema.columns WHERE table_schema = 'spira_lifecycle' AND table_name = 'ops_live' AND column_name IN ('persona','rework') ORDER BY 1"
