@@ -81,7 +81,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim deliberate-causes                                      (lib.sh _census_deliberate_reopen_causes; wave 4.19)
        spira-claim deliberate-exempt <cause>                              (lib.sh _census_reopen_admission_exempt; wave 4.19)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
-  common:     --db PATH  --timeout-s N (5)
+  common:     --db PATH  --timeout-s N (15)
   exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
         stack also 3 = not claimable (its own JSON still names the reason);
         deadlocked also 3 = a candidate was refused or a lift did not verify;
@@ -168,7 +168,7 @@ fn read_source(path: &str, stdin: &mut dyn Read) -> Result<String, String> {
 }
 
 fn store(a: &Args, cfg: &Config) -> Result<Store, String> {
-    let t = a.num("--timeout-s", 5)?;
+    let t = a.num("--timeout-s", 15)?;
     Ok(Store::new(a.get("--db").map(str::to_string), t as u64, cfg))
 }
 

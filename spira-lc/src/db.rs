@@ -36,18 +36,18 @@ pub struct Conn {
     /// A second connection for plain reads, so a slow `list` never holds the write session
     /// and every lifecycle write queues behind it.
     read_session: Mutex<Option<Wire>>,
-    /// The socket read/write limit for this connection: the 5 s query cap, or
+    /// The socket read/write limit for this connection: the query deadline, or
     /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
     pub io_timeout: std::time::Duration,
 }
 
 /// A query's server-side deadline: a statement that has not answered in this long is
 /// abandoned and reported as [`DEADLINE_MESSAGE`], never as a partial answer.
-pub const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
+pub const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 pub const DEADLINE_MESSAGE: &str = "deadline";
 
 /// The admin batch verbs' socket limit (admin-apply-ddl, admin-migrate): one-off install
-/// DDL on a fresh Dolt server under load ran past the 5 s query cap ("Resource temporarily
+/// DDL on a fresh Dolt server under load ran past the query deadline ("Resource temporarily
 /// unavailable", sp-4o5um). Bounded, and never used for a query.
 // batch-job: install-time schema DDL, bounded at 120 s; not a query on any serving path.
 pub const ADMIN_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);

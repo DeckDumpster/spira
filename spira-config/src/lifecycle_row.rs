@@ -4,7 +4,7 @@
 use std::process::{Command, Stdio};
 
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
-const LC_TIMEOUT_SECS: &str = "5";
+const LC_TIMEOUT_SECS: &str = "15";
 
 pub fn lc_bin() -> String {
     std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "spira-lc".to_string())

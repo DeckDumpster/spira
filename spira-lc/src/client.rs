@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(12);
 
 /// `None` means "no usable service — fall back to a direct connection", not an error: no
 /// socket configured, nothing listening, or a malformed reply are all treated the same way,

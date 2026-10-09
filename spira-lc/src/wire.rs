@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 
 use crate::db::ScriptFailure;
 
-const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const IO_TIMEOUT: Duration = Duration::from_secs(12);
 const IDLE_PING_AFTER: Duration = Duration::from_secs(30);
 
 const CLIENT_LONG_PASSWORD: u32 = 1;
