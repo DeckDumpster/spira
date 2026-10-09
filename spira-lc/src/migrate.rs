@@ -413,27 +413,33 @@ pub fn service_may(grants: &str, privilege: &str, table: &str) -> bool {
 }
 
 /// The `GRANT ... ON spira_lifecycle.<table> TO ...` statements of `grants` (single-line, no
-/// placeholders), each with its table.
-pub fn table_grants(grants: &str) -> Vec<(String, String)> {
+/// placeholders), each with its table and grantee user.
+pub fn table_grants(grants: &str) -> Vec<(String, String, String)> {
     grants
         .lines()
         .filter_map(|line| {
             let stmt = line.trim().trim_end_matches(';').trim();
             let rest = stmt.strip_prefix("GRANT ")?;
             let (_, rest) = rest.split_once(" ON ")?;
-            let (object, _) = rest.split_once(" TO ")?;
+            let (object, grantee) = rest.split_once(" TO ")?;
             let table = object.trim().strip_prefix("spira_lifecycle.")?;
-            Some((ident(table), stmt.to_string()))
+            let user = grantee.trim().trim_start_matches('\'').split('\'').next()?;
+            Some((ident(table), user.to_string(), stmt.to_string()))
         })
         .collect()
 }
 
-/// Apply every grant in `grants` whose table exists, as `admin`; GRANT is idempotent. A table
-/// a pending migration has yet to create is skipped until that migration has run.
+/// Apply every grant in `grants` whose table and grantee exist, as `admin`; GRANT is idempotent.
+/// A table a pending migration has yet to create is skipped until it has run, and a grantee the
+/// server does not have (a world that never created the service users) has nothing to grant to.
 fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
-    for (table, stmt) in table_grants(grants) {
+    for (table, user, stmt) in table_grants(grants) {
         let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&table));
         if admin.rows(&probe).map_err(|e| format!("cannot tell whether {table} exists: {e}"))?.is_empty() {
+            continue;
+        }
+        let who = format!("SELECT user FROM mysql.user WHERE user = {}", quote(&user));
+        if admin.rows(&who).map_err(|e| format!("cannot tell whether user {user} exists: {e}"))?.is_empty() {
             continue;
         }
         admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
@@ -746,6 +752,7 @@ mod tests {
         indexes: std::collections::BTreeSet<String>,
         views: std::collections::BTreeSet<String>,
         tables: std::collections::BTreeSet<String>,
+        users: std::collections::BTreeSet<String>,
         /// Terminal rows still carrying a holder (what 0003's guarded UPDATE corrects).
         stale_terminal_rows: bool,
         /// Every statement that changed something, as `<user>: <sql>`.
@@ -787,6 +794,10 @@ mod tests {
             if sql.contains("table_type = 'VIEW'") {
                 let view = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(if st.views.contains(view) { vec![serde_json::json!({ "TABLE_NAME": view })] } else { vec![] });
+            }
+            if sql.contains("mysql.user") {
+                let user = sql.split("user = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.users.contains(user) { vec![serde_json::json!({ "User": user })] } else { vec![] });
             }
             if sql.starts_with("SELECT 1 FROM bead WHERE") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
@@ -851,6 +862,8 @@ mod tests {
             st.views.insert(v.into());
         }
         st.tables.insert("bead_dep".into());
+        st.users.insert("spira_lc".into());
+        st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());
         st.columns.insert(("ops_live".into(), "blocker".into()));
         Rc::new(RefCell::new(st))
@@ -876,6 +889,15 @@ mod tests {
         let bad = FakeConn { can_ddl: false, ..svc };
         let e = apply_grants(&bad, grants).unwrap_err();
         assert!(e.contains("GRANT SELECT ON spira_lifecycle.bead_dep"), "{e}");
+    }
+
+    #[test]
+    fn a_grant_to_a_user_the_server_lacks_is_skipped() {
+        let db = migrated();
+        db.borrow_mut().users.clear();
+        let adm = admin(&db, false);
+        apply_grants(&adm, "GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';\n").unwrap();
+        assert!(adm.attempts.borrow().is_empty());
     }
 
     #[test]
