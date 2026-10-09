@@ -72,7 +72,7 @@ pub fn replay_world(world: &Path, seed: u64) -> Result<Option<crate::trace::Dive
     let (sc, _) = load_world(world)?;
     let recorded = Trace::open(world)?.events()?;
     let exec = Box::new(Resumed { recorded: recorded.iter().filter(|e| matches!(e["kind"].as_str(), Some("start" | "step"))).map(|e| e["exit"].as_i64().unwrap_or(0) as i32).collect(), live: None });
-    let report = match drive(&sc, seed, exec, Box::new(NoProbe), None, &[], &Stop::Events(recorded.len() as u64 + 1)) {
+    let report = match drive(&sc, seed, exec, Box::new(NoProbe), None, &[], &Stop::Events(recorded.len() as u64 + u64::from(sc.goal.is_none()))) {
         Ok(r) => r,
         Err(e) if e.contains("fewer executions") => return Ok(first_divergence(&recorded, &[])),
         Err(e) => return Err(e),

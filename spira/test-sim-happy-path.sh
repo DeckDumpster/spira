@@ -51,5 +51,15 @@ if [ -f "$W/trace/events.jsonl" ]; then
     cmp -s "$T/events.first" "$W/trace/events.jsonl" && ok "replay leaves the events table byte-identical" || bad "replay leaves the events table byte-identical" "differs"
 fi
 
+if [ -d "$W" ]; then
+    out="$(timeout 60 env "${NOLOC[@]}" bash -c "cd '$REPO' && '$SIM' step '$W' --until 7200000" 2>&1)"; rc=$?
+    echo "# step rc=$rc: $(printf '%s' "$out" | tail -3 | cut -c1-300)"
+    echo "# tags: $(git -C "$W/work" tag | tr '\n' ' ')"
+    echo "# refs: $(git -C "$W/work" for-each-ref --format='%(refname)' | tr '\n' ' ')"
+    echo "# gh: $(ls -R "$W/gh" | tr '\n' ' ' | cut -c1-300)"
+    grep -A6 'publish-settle' "$W/exec.log" | cut -c1-200 | head -24 | sed 's/^/# pub: /'
+    echo "# ${SECONDS}s"
+    bad "explore" "forced"
+fi
 if [ -d "$W" ]; then sim world down "$W" >/dev/null 2>&1; fi
 tl_summary
