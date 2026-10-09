@@ -812,6 +812,40 @@ pub fn lc_withdraw(env: &Env, id: &str) {
     }
 }
 
+/// `id`'s state on the machine.
+pub fn lc_state(env: &Env, id: &str) -> Result<String, String> {
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    v.get("bead").and_then(|b| b.get("state")).and_then(|s| s.as_str()).map(str::to_string).ok_or_else(|| "show: no state".to_string())
+}
+
+/// Sends `id` back to REWORK with `GateRed(reason)` at `tip`, but only while it is still the
+/// SUBMITTED or CERTIFIED bead at that tip the screen judged.
+pub fn lc_gate_red(env: &Env, id: &str, tip: &str, reason: &str) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    let bead = v.get("bead").cloned().unwrap_or_default();
+    let state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("");
+    let version = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).ok_or("show: no version")?;
+    if !matches!(state, "SUBMITTED" | "CERTIFIED") || bead.get("tip").and_then(|t| t.as_str()) != Some(tip) {
+        return Err(format!("{id} moved since screening (state {state})"));
+    }
+    let kind = serde_json::json!({"GateRed": {"tip": tip, "reason": reason}}).to_string();
+    lcq(env, &["event", "bead", id, "--expect", state, "--version", &version.to_string(), "--actor", "sift", "--kind", &kind]).map(|_| ())
+}
+
+pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
+    let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
+    spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), id, &reason, "sift", Some(keeper))
+}
+
+/// The evidence a send-back stands on, written on the bead before the GateRed.
+pub fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
+    // batch-job: bead.sh amend is a bead-store write that takes as long as the store does
+    let mut cmd = Command::new("bash");
+    cmd.arg(env.home.join("bead.sh")).args(["amend", id, "--note", text]).env("SPIRA_HOME", &env.home);
+    run(&mut cmd, "bead.sh amend").map(|_| ())
+}
+
 /// Suites present at `member_tip` but gone from `base_sha` — reported only for a member set
 /// aside on conflict, since that is the list its builder needs to know before rebasing.
 pub fn deleted_suites(repo: &Repo, member_tip: &str, base_sha: &str) -> Vec<String> {

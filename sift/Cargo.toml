@@ -1,0 +1,18 @@
+[package]
+name = "sift"
+version = "0.1.0"
+edition = "2021"
+description = "sift — the deterministic pre-round screen: conflict, duplicate, stacked-on-a-reworked-bead and tree-built lint, with a per-tip verdict cache, a send-back cap and a fail-open seam. The batcher runs it when it cuts a round."
+
+[dependencies]
+spira-config = { path = "../spira-config" }
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
