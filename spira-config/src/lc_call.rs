@@ -4,7 +4,24 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub const LC_TIMEOUT: Duration = Duration::from_secs(5);
+pub const LC_TIMEOUT: Duration = Duration::from_secs(15); // batch-job: spira-lc requests queue behind a loaded Dolt in the round VM
+
+/// Print a service answer: a "cannot tell" refusal goes to stderr, so a caller capturing stdout
+/// as an id or a value gets nothing, never the refusal text (law-never-derive-an-id-from-output).
+pub fn print_answer(code: i32, out: &str) {
+    if out.is_empty() {
+        return;
+    }
+    if is_refusal(code, out) {
+        eprintln!("{out}");
+    } else {
+        println!("{out}");
+    }
+}
+
+pub fn is_refusal(code: i32, out: &str) -> bool {
+    code != 0 && out.starts_with("cannot tell")
+}
 
 /// `SPIRA_LC_BIN`, else `spira-lc` beside this executable, else the bare name.
 pub fn lc_bin() -> PathBuf {
@@ -73,6 +90,13 @@ mod tests {
         let mut c = Command::new("/bin/sh");
         c.args(["-c", "echo hi; exit 3"]).env_clear();
         assert_eq!(run_bounded(c, LC_TIMEOUT), (3, "hi\n".to_string()));
+    }
+
+    #[test]
+    fn a_deadline_refusal_is_never_stdout() {
+        assert!(is_refusal(2, "cannot tell: deadline"));
+        assert!(!is_refusal(0, "sp-abc12"), "an id is data");
+        assert!(!is_refusal(1, "sp-abc12"));
     }
 
     #[test]

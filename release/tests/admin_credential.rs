@@ -88,7 +88,7 @@ fn a_fresh_servers_root_is_closed_and_admin_migrate_uses_the_provisioned_credent
 
     let migs = root.join("migs");
     std::fs::create_dir_all(&migs).unwrap();
-    std::fs::write(migs.join("0004-event-since-idx.sql"), "CREATE INDEX event_since_idx ON event (at);\n").unwrap();
+    std::fs::write(migs.join("0099-test-only-idx.sql"), "CREATE INDEX test_only_idx ON event (at);\n").unwrap();
     let migrate = |xdg_home: &Path| {
         let args = vec!["admin-migrate".to_string(), migs.to_string_lossy().to_string()];
         let env = [("SPIRA_LC_USER", "spira_lc"), ("SPIRA_LC_PASSWORD", rw), ("XDG_CONFIG_HOME", xdg_home.to_str().unwrap())];

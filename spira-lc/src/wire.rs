@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 
 use crate::db::ScriptFailure;
 
-const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const IO_TIMEOUT: Duration = Duration::from_secs(12); // batch-job: spira-lc requests queue behind a loaded Dolt in the round VM
 const IDLE_PING_AFTER: Duration = Duration::from_secs(30);
 
 const CLIENT_LONG_PASSWORD: u32 = 1;

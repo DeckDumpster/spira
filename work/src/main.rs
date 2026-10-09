@@ -74,9 +74,7 @@ fn main() {
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
     match send(&req, wait) {
         Ok((code, out)) => {
-            if !out.is_empty() {
-                println!("{out}");
-            }
+            spira_config::lc_call::print_answer(code, &out);
             std::process::exit(code);
         }
         Err(e) => {

@@ -124,9 +124,7 @@ fn main() {
     // in well under the same-user fallback's per-call reconnect cost. Same-user fallback
     // (below) is always correct, just slower — see db.rs's module doc.
     if let Some((code, out)) = client::try_socket(&args) {
-        if !out.is_empty() {
-            println!("{out}");
-        }
+        spira_config::lc_call::print_answer(code, &out);
         std::process::exit(code);
     }
 
