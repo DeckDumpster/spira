@@ -23,7 +23,7 @@ const HOME: &str = "home";
 /// The file the legacy bash readers still require, with the one row the world registers.
 const REGISTRY_ROWS: &str = "registry-rows";
 /// The name the world's one repository is registered under (`repo.<name>` in its config).
-const REPO_NAME: &str = "sim";
+pub const REPO_NAME: &str = "sim";
 /// The home every path in the complete fixture config is rooted at (spira-config/tests/fixtures).
 const FIXTURE_HOME: &str = "/fixture/userhome";
 /// The PID world up recorded for the world's `spira-lc serve`; world down signals only it.
@@ -98,6 +98,8 @@ pub trait Steps {
     fn release(&self, repo: &Path, tree: &str, cache: &Path) -> Result<PathBuf, String>;
     fn db_up(&self, world: &Path) -> Result<String, String>;
     fn db_down(&self, fixture: &str) -> Result<(), String>;
+    /// The absolute `bd` the world's config names; its bead store is only reachable through it.
+    fn bd(&self) -> Result<PathBuf, String>;
     fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String>;
     fn config_set(&self, release: &Path, file: &Path, key: &str, value: &str) -> Result<(), String>;
     /// Start the world's `spira-lc serve` on [`lc_socket`], write its PID to [`lc_pid_file`]
@@ -296,6 +298,10 @@ impl Steps for ProcessSteps {
         lc("admin-migrate", lifecycle.join("migrations"))
     }
 
+    fn bd(&self) -> Result<PathBuf, String> {
+        on_path("bd", &std::env::var("PATH").unwrap_or_default()).ok_or_else(|| "bd is not on PATH: a world's bead store is read through it".to_string())
+    }
+
     fn db_down(&self, fixture: &str) -> Result<(), String> {
         run(Command::new("testenv").args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
     }
@@ -455,7 +461,8 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
     std::fs::write(home.join(REGISTRY_ROWS), registry_rows(&work)).map_err(|e| e.to_string())?;
     std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
-    for (k, v) in config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, &fixture)) {
+    let bd = steps.bd()?;
+    for (k, v) in config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, &fixture, &bd)) {
         steps.config_set(&release, &file, &k, &v)?;
     }
     for (k, v) in lc_settings(dir) {
@@ -465,7 +472,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     std::fs::write(
         config.join("sim.env"),
         format!(
-            "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\n{}={}\n{}={}\n",
+            "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSPIRA_DB={}\n{}={}\n{}={}\n",
             run_dir.display(),
             dir.join("release/spira").display(),
             runner.display(),
@@ -477,6 +484,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
             dir.join("release").display(),
             lc_socket(dir).display(),
             port.trim(),
+            bead_db(&fixture).display(),
             crate::agent::SCENARIO_VAR,
             dir.join("agent.scenario").display(),
             crate::agent::STATE_VAR,
@@ -495,7 +503,10 @@ pub fn registry_rows(work: &Path) -> String {
 /// The complete base with every path of the fixture's home moved under the world's `home`,
 /// and without the fixture's own `repo.spira`: a world registers only the repository it built.
 pub fn base_config(home: &Path) -> String {
-    let moved = CONFIG_BASE.replace(FIXTURE_HOME, &home.display().to_string());
+    let release = home.parent().unwrap_or(home).join("release");
+    let moved = CONFIG_BASE
+        .replace(&format!("{FIXTURE_HOME}/spira/spira-releases/current"), &release.display().to_string())
+        .replace(FIXTURE_HOME, &home.display().to_string());
     let mut out = String::new();
     let mut skipping = false;
     for line in moved.lines() {
@@ -510,14 +521,25 @@ pub fn base_config(home: &Path) -> String {
     out
 }
 
+/// The workspace of a testdb fixture: where `bd` finds the bead store.
+pub fn bead_db(fixture: &str) -> PathBuf {
+    Path::new(fixture.trim()).join("ws")
+}
+
+/// `name` as an absolute path from `path`'s directories (a world's config names tools absolutely).
+pub fn on_path(name: &str, path: &str) -> Option<PathBuf> {
+    path.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(name)).find(|p| p.is_file())
+}
+
 /// What the world's tools find at locators the base's moved paths leave empty: the release's
 /// own harness tree, and the world's bead store.
-pub fn home_settings(world: &Path, fixture: &str) -> Vec<(String, String)> {
+pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, String)> {
     let spira = world.join("release/spira");
     vec![
+        ("spira.bd".to_string(), bd.display().to_string()),
         ("spira.prod".to_string(), spira.display().to_string()),
         ("spira.chamber".to_string(), spira.join("chamber").display().to_string()),
-        ("spira.db".to_string(), fixture.trim().to_string()),
+        ("spira.db".to_string(), bead_db(fixture).display().to_string()),
         ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
         ("spira.home_repo".to_string(), REPO_NAME.to_string()),
     ]

@@ -30,7 +30,7 @@ fn load_world(world: &Path) -> Result<(Scenario, u64), String> {
     let read = |f: &str| std::fs::read_to_string(world.join(f)).map_err(|e| format!("{}: {e}", world.join(f).display()));
     let seed = read(SEED_FILE)?.trim().parse().map_err(|e| format!("{SEED_FILE}: {e}"))?;
     let mut sc = parse_scenario(&read(SCENARIO_FILE)?)?;
-    sc.release = Some(world.join("release"));
+    sc.tree = Some(world.join("work"));
     Ok((sc, seed))
 }
 
@@ -41,7 +41,7 @@ fn finish(world: &Path, seed: u64, goal: Option<String>, goal_reached: bool) -> 
 
 pub fn run_scenario(world: &Path, text: &str, seed: u64, exec: Box<dyn Exec>, probe: Box<dyn Probe>) -> Result<RunResult, String> {
     let mut sc = parse_scenario(text)?;
-    sc.release = Some(world.join("release"));
+    sc.tree = Some(world.join("work"));
     std::fs::write(world.join(SCENARIO_FILE), text).map_err(|e| e.to_string())?;
     std::fs::write(world.join(SEED_FILE), seed.to_string()).map_err(|e| e.to_string())?;
     let trace = Trace::create(world)?;

@@ -11,6 +11,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 const COMMAND_DEADLINE: Duration = Duration::from_secs(120); // batch-job: one actor run or scenario step against a world
+const REPO: &str = crate::world::REPO_NAME;
+pub const EXEC_LOG: &str = "exec.log";
 const PROBE_KEY: &str = "SIM_PROBE";
 
 #[derive(Debug, Deserialize)]
@@ -56,7 +58,10 @@ impl StepDef {
     pub fn shell(&self) -> Result<String, String> {
         match (&self.command, &self.file, &self.claim) {
             (Some(c), None, None) if self.script.is_empty() => Ok(c.clone()),
-            (None, Some(b), None) if self.script.is_empty() => Ok(format!("spira-lc create-bead {}", bead_id(b)?)),
+            (None, Some(b), None) if self.script.is_empty() => {
+                let b = bead_id(b)?;
+                Ok(format!("bd -C \"$SPIRA_DB\" create {} --id {b} -t task -p 2 -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}"))))
+            }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;
                 let lines: Vec<String> = self.script.iter().map(|l| shell_quote(&format!("{b} {l}"))).collect();
@@ -74,15 +79,15 @@ pub struct Scenario {
     pub goal: Option<String>,
     #[serde(default, rename = "actor")]
     pub actors: Vec<ActorDef>,
-    /// Actors taken by name from the release's `sim/actors.toml`: cadence from its real timer
+    /// Actors taken by name from the tree's `sim/actors.toml`: cadence from its real timer
     /// units, durations from its fitted series.
     #[serde(default)]
     pub real_actors: Vec<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<StepDef>,
-    /// The release `real_actors` resolve against; the world's `release` link.
+    /// The tree under test `real_actors` resolve against: the world's `work` checkout.
     #[serde(skip)]
-    pub release: Option<PathBuf>,
+    pub tree: Option<PathBuf>,
 }
 
 pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
@@ -121,7 +126,7 @@ fn load_specs(release: &Path, names: &[String]) -> Result<Vec<sim::actors::Actor
         .iter()
         .map(|n| match all.iter().position(|a| &a.name == n) {
             Some(i) => Ok(all.remove(i)),
-            None => Err(format!("scenario: no actor {n:?} in the release's sim/actors.toml")),
+            None => Err(format!("scenario: no actor {n:?} in the tree's sim/actors.toml")),
         })
         .collect()
 }
@@ -174,9 +179,10 @@ impl ProcessExec {
     fn command(&self, shell: &str, now_ms: u64) -> Result<Command, String> {
         let mut cmd = sim::actor_command("sh", self.epoch + now_ms / 1000);
         let path = format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             self.world.join("bin").display(),
             self.world.join("release/bin").display(),
+            self.world.join("release/spira").display(),
             std::env::var("PATH").unwrap_or_default()
         );
         cmd.arg("-c").arg(shell).current_dir(self.world.join("work")).env("PATH", path);
@@ -191,9 +197,20 @@ impl ProcessExec {
     }
 }
 
+impl ProcessExec {
+    /// Appends one run to `exec.log` in the world: what each command printed is not in the trace.
+    fn log(&self, command: &str, now_ms: u64, status: &str, out: &str, err: &str) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.world.join(EXEC_LOG)) {
+            let _ = writeln!(f, "=== t={now_ms} {command}: {status}\n{}{}", out, err);
+        }
+    }
+}
+
 impl Exec for ProcessExec {
     fn run(&mut self, command: &str, now_ms: u64) -> Result<i32, String> {
-        let (status, _, _) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
+        let (status, out, err) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
+        self.log(command, now_ms, &format!("{status}"), &out, &err);
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
 }
@@ -300,7 +317,7 @@ pub fn drive(
         }
     }
     if !sc.real_actors.is_empty() {
-        let release = sc.release.as_deref().ok_or("scenario names real_actors but no release to read them from")?;
+        let release = sc.tree.as_deref().ok_or("scenario names real_actors but no tree to read them from")?;
         let specs = load_specs(release, &sc.real_actors)?;
         let durations = sim::fit::Durations::parse(&read(&release.join("sim/durations.toml"))?)?;
         for spec in &specs {
