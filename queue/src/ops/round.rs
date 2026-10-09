@@ -3,6 +3,7 @@
 //! the verbs differ from a hand's scratch scripts in that spira-lc, loom and round-duty can
 //! all see the round (DESIGN.md §2.2).
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -344,6 +345,7 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
 
     let mut skips: Vec<String> = Vec::new();
     let mut admitted: Vec<Member> = Vec::new();
+    let mut blocked_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in wanted {
         match w.lc.bead_row(&m.id) {
             None => skips.push(format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id)),
@@ -353,7 +355,10 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
                 skips.push(format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state))
             }
             Some(r) => match r.tip.filter(|t| !t.is_empty()) {
-                Some(tip) if tip.starts_with(&m.tip) => admitted.push(Member { id: m.id, tip }),
+                Some(tip) if tip.starts_with(&m.tip) => {
+                    blocked_by.insert(m.id.clone(), r.blocked_by);
+                    admitted.push(Member { id: m.id, tip })
+                }
                 Some(tip) => skips.push(format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip)),
                 None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
             },
@@ -373,6 +378,10 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     let mut merged: Vec<Member> = Vec::new();
     let mut unreturned = false;
     for m in admitted {
+        if let Some(b) = blocked_by.get(&m.id).and_then(|bs| bs.iter().find(|b| !merged.iter().any(|x| &x.id == *b))) {
+            skips.push(format!("{}: blocked by {b}, which has not landed and is not merged ahead of it in this round — not admitted", m.id));
+            continue;
+        }
         if w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip, &c.s.git_name, &c.s.git_email) {
             merged.push(m);
         } else {
