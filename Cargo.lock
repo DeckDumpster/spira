@@ -1850,6 +1850,7 @@ dependencies = [
 name = "watchtower"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "spira-config",

@@ -18,6 +18,7 @@ mod git;
 mod incident;
 mod lc;
 mod lapsed;
+mod load_fence;
 mod lock_holders;
 mod log;
 mod pr_stall;
@@ -373,6 +374,17 @@ fn main() {
                 &resolved_incident_sh(),
                 &cfg,
             );
+        }
+        Some("--load-fence-check") => {
+            let cfg = load_fence::Cfg {
+                comms: getenv("SPIRA_LOAD_FENCE_COMMS")
+                    .unwrap_or_else(|| load_fence::DEFAULT_COMMS.to_string())
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect(),
+                owner_mark: getenv("SPIRA_LOAD_FENCE_OWNER_MARK").unwrap_or_else(|| load_fence::DEFAULT_OWNER_MARK.to_string()),
+            };
+            load_fence::run(std::path::Path::new("/proc"), &cfg);
         }
         Some("--conditions-check") => {
             if world_halted(&run) {
