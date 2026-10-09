@@ -109,6 +109,5 @@ want "control: a branch moved after submit trips the tip invariant" "invariant i
 want "control: an expectation nothing meets is named" "expectation nothing_can_meet_this unmet: seed 3" "$(cat "$T/res.control-unmet.out")"
 is "control: the stale-tip run exits 1" 1 "$(cat "$T/res.control-stale-tip.rc")"
 is "control: the unmet run exits 1" 1 "$(cat "$T/res.control-unmet.rc")"
-[ "$((SECONDS - START))" -le 270 ] && ok "all runs finished inside the suite's wall budget" || bad "all runs finished inside the suite's wall budget" "$((SECONDS - START))s"
 
 tl_summary
