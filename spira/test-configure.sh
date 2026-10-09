@@ -43,13 +43,13 @@ echo "positive control (a) — conf.sh refuses an unknown key:"
 # a toml file and asks the same `spira-config validate` the round-trip check below uses,
 # rather than sourcing conf.sh against a SPIRA_CONF-style file nothing reads any more.
 _pc_conf="$TMP/pc-bad.toml"
-printf '[spira]\nnonexistent_key_zzzzz = "value"\n' > "$_pc_conf"
+printf '[spira]\nmax_aeons = "value"\n' > "$_pc_conf"
 _pc_warn="$(spira-config validate "$_pc_conf" 2>&1)"; _pc_rc=$?
-if [ "$_pc_rc" -ne 0 ] && printf '%s\n' "$_pc_warn" | grep -qi 'unknown'; then
-    ok "spira-config validate refuses an unknown key in the config file"
+if [ "$_pc_rc" -ne 0 ] && printf '%s\n' "$_pc_warn" | grep -q 'max_aeons'; then
+    ok "spira-config validate refuses a malformed value in the config file"
 else
     bad "positive control (a)" \
-        "spira-config validate did not refuse nonexistent_key_zzzzz — round-trip test would be vacuous: $_pc_warn"
+        "spira-config validate did not refuse a malformed max_aeons — round-trip test would be vacuous: $_pc_warn"
 fi
 
 # ==========================================================================

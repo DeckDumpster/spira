@@ -705,6 +705,8 @@ pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
 /// `[spira]` — naming the key and the bead that retired it — instead of silently dropping
 /// them. A key `SPIRA_CONF_KEYS`/`SpiraSection` never accepted still hard-errors: only
 /// listed retirements are stripped before the deserialize that would otherwise refuse them.
+/// A key this release does not know at all (a newer release wrote it) is warned and ignored,
+/// so a predecessor can read its successor's config; a malformed value of a known key still errors.
 ///
 /// A `[spira]` key's registry `MAX=` is enforced here too: this function deserializes the
 /// TOML directly and never runs the shipped schema against the document.
@@ -765,15 +767,49 @@ fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), Str
             }
         }
     }
-    let doc: SpiraToml = serde_path_to_error::deserialize(root).map_err(|e| {
+    let doc = loop {
+        let attempt: Result<SpiraToml, _> = serde_path_to_error::deserialize(root.clone());
+        let e = match attempt {
+            Ok(doc) => break doc,
+            Err(e) => e,
+        };
         let path = e.path().to_string();
-        if path.is_empty() {
-            e.inner().to_string()
-        } else {
-            format!("{path}: {}", e.inner())
+        let msg = e.inner().to_string();
+        match unknown_key_path(&path, &msg).and_then(|p| remove_key(&mut root, &p).then_some(p)) {
+            Some(p) => warnings.push(format!(
+                "{p} is not known to this release (written by a newer release?) and ignored"
+            )),
+            None if path.is_empty() => return Err(msg),
+            None => return Err(format!("{path}: {msg}")),
         }
-    })?;
+    };
     Ok((doc, warnings))
+}
+
+/// The dotted path of the key serde refused as an unknown field, from the error's path and
+/// message (`unknown field \`k\`, expected ...`). The path may or may not already end in the key.
+fn unknown_key_path(path: &str, msg: &str) -> Option<String> {
+    let key = msg.strip_prefix("unknown field `")?.split('`').next()?;
+    if path.is_empty() {
+        Some(key.to_string())
+    } else if path == key || path.ends_with(&format!(".{key}")) {
+        Some(path.to_string())
+    } else {
+        Some(format!("{path}.{key}"))
+    }
+}
+
+fn remove_key(root: &mut toml::Value, path: &str) -> bool {
+    let mut parts: Vec<&str> = path.split('.').collect();
+    let Some(last) = parts.pop() else { return false };
+    let mut cur = root;
+    for p in parts {
+        match cur.get_mut(p) {
+            Some(v) => cur = v,
+            None => return false,
+        }
+    }
+    cur.as_table_mut().is_some_and(|t| t.remove(last).is_some())
 }
 
 /// Whether `new` is a SHRINK of `existing` — fewer `[repo.*]` tables, or fewer
@@ -1234,8 +1270,10 @@ mod tests {
 
     #[test]
     fn unknown_key_names_its_path() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap_err();
-        assert!(err.starts_with("spira.bogus"), "{err}");
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.bogus") && m.contains("newer release")), "{w:?}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = \"four\"\nbogus = 1\n").unwrap_err();
+        assert!(err.starts_with("spira.max_aeons"), "{err}");
     }
 
     #[test]
@@ -1347,9 +1385,8 @@ mod tests {
             warnings.iter().any(|w| w.contains("repo.spira.gate") && w.contains("sp-quu2w")),
             "{warnings:?}"
         );
-        // Positive control: a misspelt repo key is still refused.
-        let err = validate("[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngatee = 1\n").unwrap_err();
-        assert!(err.contains("repo.spira"), "{err}");
+        let (_, w) = validate_with_warnings("[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngatee = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("repo.spira.gatee") && !m.contains("retired")), "{w:?}");
     }
 
     #[test]
@@ -1383,11 +1420,11 @@ mod tests {
     }
 
     #[test]
-    fn a_misspelt_key_still_errors() {
-        // Positive control for a_retired_key_warns_instead_of_erroring: a key that looks
-        // like a retired one but isn't must still be refused, not silently accepted.
-        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\n").unwrap_err();
-        assert!(err.starts_with("spira.queue_local_gatee"), "{err}");
+    fn a_misspelt_key_warns_as_unknown_but_a_bad_known_value_errors() {
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.queue_local_gatee") && !m.contains("retired")), "{w:?}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\nmax_aeons = true\n").unwrap_err();
+        assert!(err.starts_with("spira.max_aeons"), "{err}");
     }
 
     #[test]
@@ -1510,7 +1547,7 @@ mod tests {
     fn load_names_the_path_on_a_parse_error() {
         let dir = scratch_dir("load-bad");
         let path = dir.join(FILE_NAME);
-        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap();
+        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_aeons = true\n").unwrap();
         let err = load(&path).unwrap_err();
         assert!(err.contains(&path.display().to_string()), "{err}");
     }
