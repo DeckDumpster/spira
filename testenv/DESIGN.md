@@ -460,7 +460,7 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
 * **Owner claim**: refuse (rc 2) when the file names another live pid.
 * **Image and boot**: `testenv container up --name <n> --checkout <worktree>` (§12; image by
   build-closure tag: local, else pulled from the registry, else built; `--systemd`,
-  pids-limit 8192, the worktree bind-mounted at `/workspace`, cargo volumes), then
+  pids-limit (SPIRA_TESTENV_PIDS_LIMIT, default 32768), the worktree bind-mounted at `/workspace`, cargo volumes), then
   `testenv container probe`. The runner owns neither the Containerfile nor the tag scheme; the
   `container` subcommand (§12) does.
 * **Install** (unless `SPIRA_BATCH_SKIP_INSTALL`): `configure.sh` with
@@ -1018,7 +1018,7 @@ What matters, and is ported:
    labelled `spira.testenv=1` run at once; `up` queues, polling every
    `SPIRA_TESTENV_QUEUE_POLL` (5) seconds, and gives up after `SPIRA_TESTENV_QUEUE_TIMEOUT`
    (900) seconds.
-4. **Boot.** `podman run -d --systemd=true --pids-limit 8192 --label spira.testenv=1`, the
+4. **Boot.** `podman run -d --systemd=true --pids-limit $SPIRA_TESTENV_PIDS_LIMIT --label spira.testenv=1`, the
    checkout bind-mounted at `/workspace`, plus one bind mount per distinct directory
    `Host::symlinked_targets(<checkout>/target)` names (D23) — empty for an ordinary
    checkout — the two named cargo volumes; wait for `basic.target` (one retry); on failure

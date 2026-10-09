@@ -110,6 +110,7 @@ pub struct Conf {
     pub registry: String,
     pub max_concurrent: i64,
     pub cpus: Option<String>,
+    pub pids_limit: u64,
     pub queue_timeout: u64,
     pub queue_poll: u64,
     pub heartbeat: u64,
@@ -136,6 +137,7 @@ impl Conf {
             registry: cfg("SPIRA_TESTENV_REGISTRY")?,
             max_concurrent: cfg_parse("SPIRA_TESTENV_MAX_CONCURRENT")?,
             cpus: valid_cpus(&cfg("SPIRA_TESTENV_CPUS")?),
+            pids_limit: cfg_parse("SPIRA_TESTENV_PIDS_LIMIT")?,
             queue_timeout: cfg_parse::<i64>("SPIRA_TESTENV_QUEUE_TIMEOUT")?.max(0) as u64,
             queue_poll: cfg_parse::<i64>("SPIRA_TESTENV_QUEUE_POLL")?.max(1) as u64,
             heartbeat: num("SPIRA_TESTENV_BUILD_HEARTBEAT").unwrap_or(60).max(1) as u64,
@@ -642,6 +644,18 @@ impl Driver<'_> {
         (rc == 0).then_some(out)
     }
 
+    fn kernel_task_ceiling_below(&self, limit: u64) -> Option<(&'static str, u64)> {
+        [
+            ("kernel.pid_max", "/proc/sys/kernel/pid_max"),
+            ("kernel.threads-max", "/proc/sys/kernel/threads-max"),
+        ]
+        .into_iter()
+        .find_map(|(key, path)| {
+            let v = self.host.sysctl(path)?.trim().parse::<u64>().ok()?;
+            (v < limit).then_some((key, v))
+        })
+    }
+
     fn inotify_pressure(&self) -> (String, String) {
         let used = self.host.inotify_used();
         let a = self
@@ -827,7 +841,13 @@ impl Driver<'_> {
             self.err("testenv: cannot tell whether podman is rootless; refusing to start without network isolation");
             return 1;
         };
-        // pids-limit 8192: 52 parallel suites exhausted podman's rootless default of 2048.
+        if let Some((key, ceiling)) = self.kernel_task_ceiling_below(self.conf.pids_limit) {
+            self.err(&format!(
+                "testenv: {key} is {ceiling}, below the configured SPIRA_TESTENV_PIDS_LIMIT {}; raising the container limit alone does nothing — raise {key} or lower the limit",
+                self.conf.pids_limit
+            ));
+            return 1;
+        }
         let run: Vec<String> = [
             s("run"),
             s("-d"),
@@ -835,7 +855,7 @@ impl Driver<'_> {
             name.clone(),
             s("--systemd=true"),
             s("--pids-limit"),
-            s("8192"),
+            self.conf.pids_limit.to_string(),
             s("--network"),
             s(network),
             s("--label"),

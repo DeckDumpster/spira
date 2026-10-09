@@ -43,6 +43,13 @@ pub const WORKSPACE: &str = "/workspace";
 /// host's writeback and overran bd's 10 s read timeout (`[mysql] i/o timeout`).
 pub const CONTAINER_TESTDB_ROOT: &str = "/tmp/spira-testdb";
 
+/// Pure over the two cgroup files' contents (`pids.max` is a number or the word `max`).
+pub fn pids_peak_line(peak: &str, max: &str) -> Option<String> {
+    let peak: u64 = peak.trim().parse().ok()?;
+    let max = max.trim();
+    (max == "max" || max.parse::<u64>().is_ok()).then(|| format!("peak tasks {peak} of {max}"))
+}
+
 /// What the one setup exec established ([`Session::setup`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Setup {
@@ -958,6 +965,15 @@ impl<'a> Session<'a> {
         (bytes > 0).then_some(bytes / 1_048_576)
     }
 
+    /// `peak tasks N of LIMIT` from the container cgroup's `pids.peak` and `pids.max`, if the
+    /// kernel exposes them.
+    pub fn pids_peak_line(&self) -> Option<String> {
+        let cg = self.rt.inspect(&self.name, "{{.State.CgroupPath}}")?;
+        let dir = format!("/sys/fs/cgroup/{}", cg.trim_start_matches('/'));
+        let read = |f: &str| std::fs::read_to_string(format!("{dir}/{f}")).ok();
+        pids_peak_line(&read("pids.peak")?, &read("pids.max")?)
+    }
+
     pub fn down(&self) -> ExecOutcome {
         self.rt.testenv(
             &[
@@ -1192,6 +1208,14 @@ pub mod fake {
 mod tests {
     use super::fake::FakeRuntime;
     use super::*;
+
+    #[test]
+    fn the_summary_line_parses_a_cgroup_peak() {
+        assert_eq!(pids_peak_line("21345\n", "32768\n").as_deref(), Some("peak tasks 21345 of 32768"));
+        assert_eq!(pids_peak_line("7\n", "max\n").as_deref(), Some("peak tasks 7 of max"));
+        assert_eq!(pids_peak_line("", "32768"), None);
+        assert_eq!(pids_peak_line("12", "lots"), None);
+    }
 
     #[test]
     fn suspension_reasons_do_not_blame_the_image_rustc() {
