@@ -4,7 +4,7 @@
 //! external process than the bead store these call directly.
 
 use crate::bd::Bd;
-use crate::seam::Seam;
+use crate::seam::{PersonaPredicate, Seam};
 
 pub type CmdResult = Result<String, (i32, String)>;
 
@@ -16,24 +16,110 @@ fn refused(msg: impl Into<String>) -> CmdResult {
     Err((2, msg.into()))
 }
 
+/// The persona a piece is labelled for when `-l` names none of a persona's partition labels.
+const DEFAULT_PIECE_PERSONA: &str = "builder";
+const GROOMER_PERSONA: &str = "groomer";
+
+fn label_args(extra: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < extra.len() {
+        if matches!(extra[i].as_str(), "-l" | "--label" | "--labels") {
+            if let Some(v) = extra.get(i + 1) {
+                out.extend(v.split(',').map(str::trim).filter(|l| !l.is_empty()).map(str::to_string));
+            }
+            i += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn claims(p: &PersonaPredicate, labels: &[String]) -> bool {
+    p.labels.iter().all(|l| labels.contains(l)) && !p.exclude.iter().any(|l| labels.contains(l))
+}
+
+/// The labels a piece must end with, and the partition labels it must not keep.
+struct PieceLabels {
+    want: Vec<String>,
+    strip: Vec<String>,
+}
+
+fn piece_labels(preds: &[PersonaPredicate], named: &[String]) -> Result<PieceLabels, String> {
+    let all: std::collections::BTreeSet<&String> = preds.iter().flat_map(|p| p.labels.iter()).collect();
+    let scope: Vec<String> = match preds.first() {
+        Some(first) => first.labels.iter().filter(|l| preds.iter().all(|p| p.labels.contains(l))).cloned().collect(),
+        None => Vec::new(),
+    };
+    let own: Vec<String> = named.iter().filter(|l| all.contains(l) && !scope.contains(l)).cloned().collect();
+    let want: Vec<String> = if own.is_empty() {
+        let b = preds
+            .iter()
+            .find(|p| p.persona == DEFAULT_PIECE_PERSONA)
+            .ok_or_else(|| format!("no {DEFAULT_PIECE_PERSONA} persona predicate to label a piece from"))?;
+        b.labels.clone()
+    } else {
+        scope.into_iter().chain(own).collect()
+    };
+    let strip = all.into_iter().filter(|l| !want.contains(l)).cloned().collect();
+    Ok(PieceLabels { want, strip })
+}
+
+fn apply(labels: &[String], pl: &PieceLabels) -> Vec<String> {
+    let mut out: Vec<String> = labels.iter().filter(|l| !pl.strip.contains(l)).cloned().collect();
+    for w in &pl.want {
+        if !out.contains(w) {
+            out.push(w.clone());
+        }
+    }
+    out
+}
+
 /// `split-piece <original-id> [bd create args...]`. `bd create --parent` inherits every
 /// label from the parent, including the parent's `branch:` label (a bead's branch
-/// affinity IS a label) and any `delivers:` claim — both undone here rather than left to
-/// the caller, because the id (and so the branch name) is not known until `create`
-/// returns it.
-pub fn split_piece(bd: &dyn Bd, original_id: &str, extra: &[String]) -> CmdResult {
+/// affinity IS a label), any `delivers:` claim, and the parent's partition labels — all
+/// undone here rather than left to the caller, because the id (and so the branch name)
+/// is not known until `create` returns it. A piece ends labelled for the persona that
+/// builds it, never for one whose predicate it merely inherited, and is refused outright
+/// if the groomer's own predicate would claim it.
+pub fn split_piece(bd: &dyn Bd, seam: &dyn Seam, original_id: &str, extra: &[String]) -> CmdResult {
     if original_id.is_empty() {
         return usage_err("split-piece: original bead id required");
+    }
+    let preds = seam.persona_predicates();
+    let named = label_args(extra);
+    let pl = piece_labels(&preds, &named).map_err(|e| (1, format!("split-piece: {e}")))?;
+    let groomer = preds.iter().find(|p| p.persona == GROOMER_PERSONA);
+    let refuse = |labels: &[String]| -> CmdResult {
+        refused(format!(
+            "split-piece: a piece labelled {} would be claimed by the {GROOMER_PERSONA}, not built\ngroomer: name the persona that builds it with -l",
+            labels.join(",")
+        ))
+    };
+    if let (Some(g), Ok(parent)) = (groomer, bd.show_json(original_id)) {
+        let mut inherited = first_bead_labels(&parent);
+        inherited.extend(named.iter().cloned());
+        let predicted = apply(&inherited, &pl);
+        if claims(g, &predicted) {
+            return refuse(&predicted);
+        }
     }
     let new_id = bd.create_child(original_id, extra).map_err(|e| (1, format!("split-piece: {e}")))?;
     bd.set_state(&new_id, &format!("branch=spira/{new_id}")).map_err(|e| (1, format!("split-piece: could not record branch on {new_id}: {e}")))?;
     if let Ok(v) = bd.show_json(&new_id) {
-        let delivers: Vec<String> = first_bead_labels(&v)
-            .into_iter()
-            .filter(|l| l.starts_with("delivers:"))
-            .collect();
-        if !delivers.is_empty() {
-            let _ = bd.label_remove(&new_id, &delivers.join(","));
+        let have = first_bead_labels(&v);
+        let drop: Vec<String> = have.iter().filter(|l| l.starts_with("delivers:") || pl.strip.contains(l)).cloned().collect();
+        if !drop.is_empty() {
+            let _ = bd.label_remove(&new_id, &drop.join(","));
+        }
+        for w in pl.want.iter().filter(|w| !have.contains(w)) {
+            bd.label_add(&new_id, w).map_err(|e| (1, format!("split-piece: could not label {new_id} {w}: {e}")))?;
+        }
+        if let Some(g) = groomer {
+            let after = apply(&have.into_iter().filter(|l| !l.starts_with("delivers:")).collect::<Vec<_>>(), &pl);
+            if claims(g, &after) {
+                return refuse(&after);
+            }
         }
     }
     Ok(format!("{new_id}\n"))
@@ -177,12 +263,58 @@ mod cmds_tests {
     use crate::bd::fake::FakeBd;
     use crate::seam::fake::FakeSeam;
 
+    fn pred(persona: &str, labels: &[&str]) -> PersonaPredicate {
+        PersonaPredicate { persona: persona.into(), labels: labels.iter().map(|s| s.to_string()).collect(), exclude: vec![] }
+    }
+
+    fn seam_with_personas() -> FakeSeam {
+        let seam = FakeSeam::new();
+        *seam.predicates.borrow_mut() = vec![pred("builder", &["spira", "plan"]), pred("groomer", &["spira", "groom"]), pred("spike", &["spira", "research"])];
+        seam
+    }
+
+    #[test]
+    fn split_piece_of_a_groom_parent_ends_plan_and_not_groom() {
+        let bd = FakeBd::new();
+        let seam = seam_with_personas();
+        *bd.next_child_id.borrow_mut() = Some("sp-1.1".into());
+        bd.set_show("sp-1", serde_json::json!([{"labels": ["spira", "groom", "repo:x"]}]));
+        bd.set_show("sp-1.1", serde_json::json!([{"labels": ["spira", "groom", "repo:x"]}]));
+        let out = split_piece(&bd, &seam, "sp-1", &[]).unwrap();
+        assert_eq!(out, "sp-1.1\n");
+        assert!(bd.log().iter().any(|c| c == "label remove sp-1.1 groom"));
+        assert!(bd.log().iter().any(|c| c == "label add sp-1.1 plan"));
+    }
+
+    #[test]
+    fn split_piece_refuses_a_piece_the_groomer_would_claim() {
+        let bd = FakeBd::new();
+        let seam = seam_with_personas();
+        bd.set_show("sp-1", serde_json::json!([{"labels": ["spira", "groom"]}]));
+        let err = split_piece(&bd, &seam, "sp-1", &["-l".into(), "groom".into()]).unwrap_err();
+        assert_eq!(err.0, 2);
+        assert!(!bd.log().iter().any(|c| c.starts_with("create")));
+    }
+
+    #[test]
+    fn split_piece_honours_a_named_persona() {
+        let bd = FakeBd::new();
+        let seam = seam_with_personas();
+        *bd.next_child_id.borrow_mut() = Some("sp-1.1".into());
+        bd.set_show("sp-1", serde_json::json!([{"labels": ["spira", "groom"]}]));
+        bd.set_show("sp-1.1", serde_json::json!([{"labels": ["spira", "groom", "research"]}]));
+        split_piece(&bd, &seam, "sp-1", &["-l".into(), "research".into()]).unwrap();
+        assert!(bd.log().iter().any(|c| c == "label remove sp-1.1 groom"));
+        assert!(!bd.log().iter().any(|c| c == "label add sp-1.1 plan"));
+    }
+
     #[test]
     fn split_piece_records_its_own_branch_and_strips_inherited_delivers() {
         let bd = FakeBd::new();
+        let seam = seam_with_personas();
         *bd.next_child_id.borrow_mut() = Some("sp-1.1".into());
         bd.set_show("sp-1.1", serde_json::json!([{"labels": ["plan", "delivers:beads", "branch:spira/sp-1"]}]));
-        let out = split_piece(&bd, "sp-1", &[]).unwrap();
+        let out = split_piece(&bd, &seam, "sp-1", &[]).unwrap();
         assert_eq!(out, "sp-1.1\n");
         assert!(bd.log().contains(&"set-state sp-1.1 branch=spira/sp-1.1".to_string()));
         assert!(bd.log().iter().any(|c| c.starts_with("label remove sp-1.1 delivers:beads")));
@@ -191,15 +323,17 @@ mod cmds_tests {
     #[test]
     fn split_piece_requires_an_id() {
         let bd = FakeBd::new();
-        let err = split_piece(&bd, "", &[]).unwrap_err();
+        let seam = seam_with_personas();
+        let err = split_piece(&bd, &seam, "", &[]).unwrap_err();
         assert_eq!(err.0, 1);
     }
 
     #[test]
     fn split_piece_propagates_a_create_failure() {
         let bd = FakeBd::new();
+        let seam = seam_with_personas();
         *bd.fail_create.borrow_mut() = true;
-        let err = split_piece(&bd, "sp-1", &[]).unwrap_err();
+        let err = split_piece(&bd, &seam, "sp-1", &[]).unwrap_err();
         assert_eq!(err.0, 1);
     }
 

@@ -116,6 +116,24 @@ esac
 
 echo
 # ======================================================================================
+echo "split-piece: a piece of a groom parent is built, not groomed:"
+# ======================================================================================
+printf '{"id":"%s","title":"%s","status":"open","issue_type":"task","labels":["spira","groom","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    sp-tgsp-groom "groom parent" | testdb_seed
+gchild="$(groomer split-piece sp-tgsp-groom --title "groom piece" --type task 2>"$TMP/gerr")"
+is "groom-parent split-piece exits 0" "0" "$?"
+glabels=" $(labels_of "$gchild") "
+case "$glabels" in
+    *" plan "*) ok "groom-parent piece carries plan" ;;
+    *) bad "groom-parent piece carries plan" "labels:$glabels" ;;
+esac
+case "$glabels" in
+    *" groom "*) bad "groom-parent piece does not carry groom" "labels:$glabels" ;;
+    *) ok "groom-parent piece does not carry groom" ;;
+esac
+
+echo
+# ======================================================================================
 echo "split-piece: usage errors"
 # ======================================================================================
 groomer split-piece >/dev/null 2>&1

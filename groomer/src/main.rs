@@ -76,7 +76,11 @@ fn main() {
             let Some((id, extra)) = rest.split_first() else {
                 die("split-piece: original bead id required");
             };
-            match cmds::split_piece(&bd, id, extra) {
+            let Some(home) = home else {
+                die("cannot find lib.sh (set SPIRA_HOME)");
+            };
+            let seam = LibSeam::new(home.join("lib.sh"));
+            match cmds::split_piece(&bd, &seam, id, extra) {
                 Ok(out) => print!("{out}"),
                 Err((code, msg)) => {
                     eprintln!("groomer: {msg}");
