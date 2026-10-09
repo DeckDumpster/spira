@@ -259,7 +259,6 @@ if [ -n "$BID" ]; then
     out="$(sentinel_run 2>&1)" || true
     want "express bead ready: bypass grants pool=1, restricted to express" \
          "granting pool=1 (restricted to express)" "$out"
-    bad "DBG LC=$SPIRA_LC_BIN file=$(cat "$TMP/lc/express" 2>&1) rows=$("$SPIRA_LC_BIN" list 2>&1 | cut -c1-300) sent=$(printf '%s' "$out" | tr '\n' '|' | cut -c1-900)" ""
     want "express bead ready: builder is summoned despite the throttle" \
          "SUMMONED:builder" "$(cat "$SUMMONED" 2>/dev/null)"
 else
