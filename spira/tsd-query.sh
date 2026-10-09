@@ -34,6 +34,19 @@
 #   tsd-query.sh slow-in-branch <branch> <n>                the <n> slowest suite-timing rows
 #                                                           (raw, not deduped) for <branch>
 #
+#   tsd-query.sh where  [<hours>]                          WIP and dwell per bead stage, now:
+#                                                           {state, wip, dwell_p50_s, dwell_max_s}
+#   tsd-query.sh rework [<hours>]                          reopens (to REWORK) vs landed beads:
+#                                                           one '*' row, then one row per reason
+#   tsd-query.sh time   [<hours>]                          seconds in aeon sessions, gate runs,
+#                                                           batch rounds, and empty slots
+#   tsd-query.sh slots  [<hours>]                          empty-slot-minutes, split by whether
+#                                                           work was ready
+#   tsd-query.sh sentinel [<hours>]                        pass p50/p90 secs and top phases
+#   tsd-query.sh bead   <id>                               one bead's timeline, oldest first
+#   (<hours> defaults to 720, thirty days; each prints JSON, and a missing
+#   family exits non-zero so a caller shows ?, never 0)
+#
 # <family>/<field> are read straight from a shell command line and interpolated into SQL, so
 # both are restricted to a tight identifier charset before they ever reach a query string —
 # not sanitized, refused, the same choice tsd::valid_family makes for a path component. A
@@ -52,6 +65,8 @@ FIELD_RE='^[a-z_][a-z0-9_]*$'
 NUM_RE='^[0-9]+$'
 FRAC_RE='^(0(\.[0-9]+)?|1(\.0+)?)$'
 SUITE_RE='^[A-Za-z0-9._-]+$'
+BEAD_RE='^[a-z][a-z0-9]*-[a-z0-9.]+$'
+DEFAULT_HOURS=720
 BRANCH_RE='^[A-Za-z0-9._/-]+$'
 
 usage() {
@@ -67,6 +82,8 @@ usage:
   tsd-query.sh suite-p90s    <n>
   tsd-query.sh last-run
   tsd-query.sh slow-in-branch <branch> <n>
+  tsd-query.sh where|rework|time|slots|sentinel [<hours>]
+  tsd-query.sh bead          <id>
 USAGE
 }
 
@@ -104,6 +121,23 @@ _check_family() {
         return 3
     }
     printf '%s' "$path"
+}
+
+# _rows <jsonl path> <col>... — the columns as VARCHAR, malformed lines skipped: these
+# families are appended by many producers, and one bad line must not blind a headline.
+_rows() {
+    local path="$1" cols="" casts="" c t; shift
+    for c in "$@"; do
+        cols="${cols:+$cols, }\"$c\": 'VARCHAR'"
+        case "$c" in
+            seq|live|ceiling|ready) t=BIGINT ;;
+            wall_s|ran_secs|secs|duration_ms) t=DOUBLE ;;
+            applied) t=BOOLEAN ;;
+            *) continue ;;
+        esac
+        casts="${casts:+$casts, }TRY_CAST(\"$c\" AS $t) AS \"$c\""
+    done
+    printf "(SELECT * REPLACE (%s) FROM read_json('%s', format='newline_delimited', columns={%s}, ignore_errors=true))" "${casts:-ts AS ts}" "$path" "$cols"
 }
 
 _check_field() {
@@ -265,6 +299,127 @@ case "$cmd" in
             WHERE branch = $(_sqlstr "$branch") AND suite != '__batch__'
             ORDER BY wall_secs DESC
             LIMIT $n;
+        "
+        ;;
+    where)
+        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
+        path="$(_check_family bead-stage)" || exit $?
+        duckdb -json -c "
+            WITH latest AS (
+                SELECT to_state, epoch(now()) - epoch(CAST(ts AS TIMESTAMPTZ)) AS dwell_s,
+                       row_number() OVER (PARTITION BY key ORDER BY seq DESC) AS rn
+                FROM $(_rows $path ts seq machine key from_state to_state applied reason)
+                WHERE machine = 'bead' AND applied
+                  AND CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'
+            )
+            SELECT to_state AS state, count(*) AS wip,
+                   CAST(quantile_cont(dwell_s, 0.5) AS BIGINT) AS dwell_p50_s,
+                   CAST(max(dwell_s) AS BIGINT) AS dwell_max_s
+            FROM latest
+            WHERE rn = 1 AND to_state IN ('READY','WORKING','SUBMITTED','CERTIFIED','IN_DELIVERY','REWORK')
+            GROUP BY to_state
+            ORDER BY CASE to_state WHEN 'READY' THEN 1 WHEN 'WORKING' THEN 2 WHEN 'SUBMITTED' THEN 3
+                                   WHEN 'CERTIFIED' THEN 4 WHEN 'IN_DELIVERY' THEN 5 ELSE 6 END;
+        "
+        ;;
+    rework)
+        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
+        path="$(_check_family bead-stage)" || exit $?
+        duckdb -json -c "
+            WITH win AS (
+                SELECT key, to_state, COALESCE(reason, 'unknown') AS reason
+                FROM $(_rows $path ts seq machine key from_state to_state applied reason)
+                WHERE machine = 'bead' AND applied
+                  AND CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'
+            ), landed AS (
+                SELECT count(DISTINCT key) AS n FROM win WHERE to_state = 'LANDED'
+            ), reopens AS (
+                SELECT reason, count(*) AS n FROM win WHERE to_state = 'REWORK' GROUP BY reason
+            )
+            SELECT '*' AS reason, COALESCE((SELECT sum(n) FROM reopens), 0)::BIGINT AS reopens,
+                   (SELECT n FROM landed) AS landed, 0 AS ord
+            UNION ALL
+            SELECT reason, n, (SELECT n FROM landed), 1 FROM reopens
+            ORDER BY ord, reopens DESC, reason;
+        "
+        ;;
+    slots)
+        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
+        path="$(_check_family slots)" || exit $?
+        duckdb -json -c "
+            WITH s AS (
+                SELECT CAST(ts AS TIMESTAMPTZ) AS t, ceiling, live, ready,
+                       least(epoch(lead(CAST(ts AS TIMESTAMPTZ)) OVER (ORDER BY ts)) - epoch(CAST(ts AS TIMESTAMPTZ)), 300) AS dt
+                FROM $(_rows $path ts live ceiling ready)
+            )
+            SELECT CAST(COALESCE(sum(greatest(ceiling - live, 0) * dt) FILTER (WHERE ready > 0), 0) / 60 AS BIGINT) AS empty_with_work_min,
+                   CAST(COALESCE(sum(greatest(ceiling - live, 0) * dt) FILTER (WHERE ready = 0), 0) / 60 AS BIGINT) AS empty_idle_min,
+                   count(*) AS samples
+            FROM s WHERE t >= now() - INTERVAL '$hours hours' AND dt IS NOT NULL;
+        "
+        ;;
+    time)
+        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
+        apath="$(_check_family aeon-session)" || exit $?
+        gpath="$(_check_family gate-run)" || exit $?
+        spath="$(_check_family slots)" || exit $?
+        rpath="$(_family_path batch-round)"
+        rsrc="SELECT 0.0 AS secs WHERE false"
+        [ -f "$rpath" ] && rsrc="SELECT CAST(duration_ms AS DOUBLE) / 1000 AS secs FROM $(_rows $rpath ts duration_ms) WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'"
+        duckdb -json -c "
+            WITH sl AS (
+                SELECT CAST(ts AS TIMESTAMPTZ) AS t, ceiling, live,
+                       least(epoch(lead(CAST(ts AS TIMESTAMPTZ)) OVER (ORDER BY ts)) - epoch(CAST(ts AS TIMESTAMPTZ)), 300) AS dt
+                FROM $(_rows $spath ts live ceiling ready)
+            )
+            SELECT
+                (SELECT CAST(COALESCE(sum(wall_s), 0) AS BIGINT) FROM $(_rows $apath ts bead fayth status wall_s)
+                    WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS aeon_s,
+                (SELECT CAST(COALESCE(sum(ran_secs), 0) AS BIGINT) FROM $(_rows $gpath ts bead status reason ran_secs)
+                    WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS gate_s,
+                (SELECT CAST(COALESCE(sum(secs), 0) AS BIGINT) FROM ($rsrc)) AS round_s,
+                (SELECT CAST(COALESCE(sum(greatest(ceiling - live, 0) * dt), 0) AS BIGINT) FROM sl
+                    WHERE t >= now() - INTERVAL '$hours hours' AND dt IS NOT NULL) AS idle_slot_s;
+        "
+        ;;
+    sentinel)
+        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
+        path="$(_check_family sentinel-phase)" || exit $?
+        duckdb -json -c "
+            WITH w AS (
+                SELECT pass, \"check\" AS phase, secs
+                FROM $(_rows $path ts pass check secs)
+                WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'
+            ), per_pass AS (
+                SELECT pass, sum(secs) AS total FROM w GROUP BY pass
+            ), top AS (
+                SELECT phase, sum(secs) AS secs FROM w GROUP BY phase ORDER BY secs DESC, phase LIMIT 3
+            )
+            SELECT quantile_cont(total, 0.5) AS p50, quantile_cont(total, 0.9) AS p90, count(*) AS passes,
+                   (SELECT list(phase || ':' || CAST(secs AS BIGINT)) FROM top) AS top_phases
+            FROM per_pass;
+        "
+        ;;
+    bead)
+        id="${1:?bead id required}"
+        [[ "$id" =~ $BEAD_RE ]] || { printf 'tsd-query: bad bead %q\n' "$id" >&2; exit 2; }
+        path="$(_check_family bead-stage)" || exit $?
+        extra=""
+        [ -f "$(_family_path aeon-session)" ] && extra="$extra
+            UNION ALL SELECT ts, 'aeon', fayth || ' ' || status, CAST(wall_s AS BIGINT)
+            FROM $(_rows $(_family_path aeon-session) ts bead fayth status wall_s) WHERE bead = $(_sqlstr "$id")"
+        [ -f "$(_family_path gate-run)" ] && extra="$extra
+            UNION ALL SELECT ts, 'gate', status || ' ' || COALESCE(reason, ''), CAST(ran_secs AS BIGINT)
+            FROM $(_rows $(_family_path gate-run) ts bead status reason ran_secs) WHERE bead = $(_sqlstr "$id")"
+        duckdb -json -c "
+            SELECT * FROM (
+                SELECT ts, 'stage' AS kind,
+                       from_state || ' -> ' || to_state || COALESCE(' (' || reason || ')', '') AS what,
+                       CAST(epoch(CAST(ts AS TIMESTAMPTZ)) - epoch(CAST(lag(ts) OVER (ORDER BY seq) AS TIMESTAMPTZ)) AS BIGINT) AS secs
+                FROM $(_rows $path ts seq machine key from_state to_state applied reason)
+                WHERE machine = 'bead' AND applied AND key = $(_sqlstr "$id")
+                $extra
+            ) ORDER BY ts, kind;
         "
         ;;
     *)
