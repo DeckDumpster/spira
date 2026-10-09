@@ -657,9 +657,9 @@ pev batch-passes '{"PassStarted":{"n":2,"head":"headP2"}}' >/dev/null
 pev batch-passes '{"SuitesStarted":{"n":2}}' >/dev/null
 passes_json="$(lc list --batches)"
 pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-passes"][0]; print(eval(sys.argv[1]))' "$1"; }
-is "list --batches reports pass 2 in the suites phase" "2 suites" "$(pfield 'f"{b[\"pass\"]} {b[\"phase\"]}"')"
-is "list --batches reports pass 1's verdict, red suites and timings" "red ['test-x.sh'] 30 90" "$(pfield 'f"{b[\"passes\"][0][\"verdict\"]} {b[\"passes\"][0][\"red_suites\"]} {b[\"passes\"][0][\"build_s\"]} {b[\"passes\"][0][\"suites_s\"]}"')"
-is "list --batches counts the eject against pass 1" "1 0" "$(pfield 'f"{b[\"passes\"][0][\"ejects\"]} {b[\"passes\"][1][\"ejects\"]}"')"
+is "list --batches reports pass 2 in the suites phase" "2 suites" "$(pfield 'str(b["pass"]) + " " + b["phase"]')"
+is "list --batches reports pass 1's verdict, red suites and timings" "red ['test-x.sh'] 30 90" "$(pfield '" ".join(str(b["passes"][0][k]) for k in ("verdict", "red_suites", "build_s", "suites_s"))')"
+is "list --batches counts the eject against pass 1" "1 0" "$(pfield '" ".join(str(p["ejects"]) for p in b["passes"])')"
 is "pass 2 has no verdict yet" "None" "$(pfield 'b["last_pass"]["verdict"]')"
 nowant "phase_since is reported" "None" "$(pfield 'b["phase_since"]')"
 pev batch-passes '{"PassGreen":{"n":2,"suites_s":80,"build_s":20}}' >/dev/null
@@ -672,6 +672,6 @@ pev batch-cap '{"SuitesStarted":{"n":1}}' >/dev/null
 pev batch-cap '{"PassIncomplete":{"n":1,"reason":"over the 900s cap"}}' >/dev/null
 passes_json="$(lc list --batches)"
 pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-cap"][0]; print(eval(sys.argv[1]))' "$1"; }
-is "a pass killed at the cap is incomplete, in ATTRIBUTING, neither red nor green" "incomplete ATTRIBUTING" "$(pfield 'f"{b[\"last_pass\"][\"verdict\"]} {b[\"state\"]}"')"
+is "a pass killed at the cap is incomplete, in ATTRIBUTING, neither red nor green" "incomplete ATTRIBUTING" "$(pfield 'b["last_pass"]["verdict"] + " " + b["state"]')"
 
 tl_summary
