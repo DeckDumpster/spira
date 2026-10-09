@@ -232,6 +232,30 @@ fn release_and_holder_dead_return_working_to_ready_and_refuse_elsewhere() {
 }
 
 #[test]
+fn writers_acting_on_a_state_that_moved_send_no_event() {
+    let mut f = Fake::default();
+    f.bead("sp-ready", BeadState::Ready);
+    let a = go(&mut f, "holder-dead", &["sp-ready"]);
+    assert_eq!(a.code, REFUSED);
+    assert!(a.stderr.contains("sp-ready is READY"), "{}", a.stderr);
+    f.bead("sp-deliv", BeadState::InDelivery);
+    assert_eq!(go(&mut f, "withdraw-ask", &["sp-deliv"]).code, REFUSED);
+    f.bead("sp-r", BeadState::Ready);
+    assert_eq!(go(&mut f, "reply", &["sp-r", "m-1@spira"]).code, REFUSED);
+    assert!(f.events.is_empty(), "{:?}", f.events);
+}
+
+#[test]
+fn certify_on_a_bead_sent_to_rework_sends_neither_submit_nor_verdict() {
+    let mut f = Fake::default();
+    f.bead("sp-rw", BeadState::Rework);
+    let a = go(&mut f, "certify", &["sp-rw", "fff666", "pass", "keyB", "gate"]);
+    assert_eq!(a.code, REFUSED);
+    assert_eq!(a.cert_log.map(|c| c.0), Some("skip".into()));
+    assert!(f.events.is_empty(), "{:?}", f.events);
+}
+
+#[test]
 fn drop_is_orthogonal_and_terminal() {
     let mut f = Fake::default();
     f.bead("sp-x", BeadState::Ready);

@@ -314,8 +314,21 @@ fn with_row(
         Ok(k) => k,
         Err(a) => return a,
     };
+    if let Some(why) = not_admitted(&kind, &state, &holds_of(v.get("bead").and_then(|b| b.get("holds")))) {
+        return Answer { code: REFUSED, stderr: format!("lc: {id} is {state}; {why} — nothing sent\n"), ..Default::default() };
+    }
     let (code, text) = event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default());
     Answer { code, stderr: if code == 0 { String::new() } else { text }, ..Default::default() }
+}
+
+/// Why the state just read cannot take `kind`, for the events whose writers act on a read
+/// that may predate a move; None when the machine admits it (or the writer is not one of those).
+fn not_admitted(kind: &BeadEventKind, state: &str, holds: &[String]) -> Option<&'static str> {
+    match kind {
+        BeadEventKind::Reply { .. } | BeadEventKind::AskWithdrawn if !holds.iter().any(|h| h == "ask") => Some("it holds no ask"),
+        BeadEventKind::HolderDead if state != "WORKING" => Some("it has no holder to reap"),
+        _ => None,
+    }
 }
 
 fn event(m: &mut dyn Machine, machine: &str, id: &str, expect: &str, version: &str, actor: &str, kind: &str) -> (i32, String) {
@@ -493,13 +506,14 @@ fn submit_kind(tip: &str) -> String {
     serde_json::to_string(&BeadEventKind::Submit { tip: tip.to_string() }).unwrap_or_default()
 }
 
-/// Move the row as close to SUBMITTED-at-<tip> as an event can: WORKING/REWORK advance by
-/// Submit, and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as
-/// bead.rs's own Certified+Submit arm has it). None: the row is unreadable.
+/// Move the row as close to SUBMITTED-at-<tip> as an event can: WORKING advances by Submit (a
+/// REWORK row has no Submit, so a verdict for a bead that moved on is skipped, not refused),
+/// and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as bead.rs's
+/// own Certified+Submit arm has it). None: the row is unreadable.
 fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Option<(String, String)> {
     let (mut st, mut ver, row) = state_version(m, id)?;
     let resubmit = match st.as_str() {
-        "WORKING" | "REWORK" => true,
+        "WORKING" => true,
         "CERTIFIED" => bead_field(&row, "tip") != tip,
         _ => false,
     };
