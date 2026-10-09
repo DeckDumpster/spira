@@ -71,7 +71,7 @@ pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64, reported: usize, total:
             let (host, status) = vm_unreachable(stderr).unwrap_or_default();
             let host = if host.is_empty() { "unknown host".to_string() } else { host };
             let status = if status.is_empty() { "no ssh status in stderr".to_string() } else { format!("ssh exit {status}") };
-            format!("round-vm: infrastructure fault — the round VM ({host}) was unreachable ({status}) and 0 of {total} suites reported; no member is implicated, and this is not a cap breach (rc {rc})")
+            format!("round-vm: infrastructure fault — the round VM ({host}) was unreachable ({status}) and 0 of {total} suites reported within the {wall_secs}s wall bound; no member is implicated, and this is not a cap breach (rc {rc})")
         }
         4 => return Ok(MainEnd::WorkspaceBuild),
         2 => {
