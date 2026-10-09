@@ -516,8 +516,14 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Err(o) => return o,
         },
     };
+    let rework: BTreeSet<String> = machine_lc
+        .iter()
+        .flat_map(|m| m.values())
+        .filter(|r| r.state == lifecycle::bead::BeadState::Rework && r.tip.is_some() && r.holds.is_empty())
+        .map(|r| r.bead_id.clone())
+        .collect();
     if a.has("--top-tier") {
-        return Outcome::ok(rank::top_tier(&rows, &lookup).iter().fold(String::new(), |mut s, l| {
+        return Outcome::ok(rank::top_tier(&rows, &lookup, &rework).iter().fold(String::new(), |mut s, l| {
             s.push_str(l);
             s.push('\n');
             s
@@ -530,7 +536,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         },
         None => BTreeSet::new(),
     };
-    let ranked = rank::rank(&rows, &lookup, &resumable);
+    let ranked = rank::rank(&rows, &lookup, &resumable, &rework);
     if a.has("--json") {
         return Outcome::ok(format!("{}\n", serde_json::to_string_pretty(&ranked).unwrap()));
     }
