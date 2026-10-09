@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::round::{assemble, certify, csv, finish, handle_of, local_ctx, lock, mark_running, rounds_dir, set, set_phase, suite_statuses, tail, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, RECORD};
+use super::round::{assemble, certify, csv, finish, handle_of, local_ctx, lock, mark_running, phase_of, rounds_dir, set, set_phase, suite_statuses, tail, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, RECORD};
 use super::{actor, idents, landing_log, lc_cas, read_text, require_lc, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
@@ -200,9 +200,9 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
         };
         let parent = kv.get("parent").unwrap_or("").to_string();
         match records::read_kv(&c.queue_file(RECORD)) {
-            Ok(Some(run)) if run.get("batch_id") == Some(parent.as_str()) && run.get("phase") == Some("green") => {}
+            Ok(Some(run)) if run.get("batch_id") == Some(parent.as_str()) && phase_of(w, &parent) == "green" => {}
             Ok(Some(run)) if run.get("batch_id") == Some(parent.as_str()) => {
-                w.err(format!("queue.sh {label}: {parent} is {}, not green — the staged round is tested once it is", run.get("phase").unwrap_or("?")));
+                w.err(format!("queue.sh {label}: {parent} is {}, not green — the staged round is tested once it is", phase_of(w, &parent)));
                 return FAIL;
             }
             _ => {
@@ -373,7 +373,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
             w.err(format!(
                 "queue.sh {label}: round {} is still open for {repo_name} (phase {}) — {batch} follows {parent} and is promoted once it has landed",
                 running.get("batch_id").unwrap_or("?"),
-                running.get("phase").unwrap_or("?")
+                phase_of(w, running.get("batch_id").unwrap_or(""))
             ));
             return FAIL;
         }
@@ -433,7 +433,6 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         round.push("worktree", &wt.display().to_string());
         round.push("actor", &actor(w));
         round.push("opened", &now);
-        set_phase(w, &mut round, "opened");
         if let Err(e) = write_atomic(&c.queue_file(RECORD), &round.render()) {
             w.err(format!("queue.sh {label}: {batch} is OPEN on spira-lc but its round record cannot be written: {e}"));
             return FAIL;

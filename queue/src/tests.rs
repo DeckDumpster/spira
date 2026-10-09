@@ -482,6 +482,7 @@ impl Lc for FLc {
     }
     fn cut(&self, id: &str, _: &str, _: &str, _: &str, members: &str, _: &str) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push(format!("cut {id} {members}"));
+        self.batch_view.borrow_mut().get_or_insert(("OPEN".into(), 1, 0, String::new()));
         Ok("1".into())
     }
     fn stage(&self, id: &str, _: &str, head: &str, base: &str, members: &str, parent: &str, _: &str) -> Result<String, (i32, String)> {
