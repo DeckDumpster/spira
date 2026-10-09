@@ -185,6 +185,11 @@ cp "$_FAKE_RELEASE/bin/layout" "$TMP/copy/layout"
 installed_err="$(ensure_stderr "$_FAKE_RELEASE/bin/layout")"
 nowant "positive control: the installed binary is not refused" "ensure refused" "$installed_err"
 copy_err="$(ensure_stderr "$TMP/copy/layout")"
+for hk in window-resized client-resized client-attached; do
+    want "ensure installs the $hk hook sizing the health pane to right_pct" \
+        "resize-pane -t $health -x 33%" \
+        "$(TMUX_TMPDIR="$TMUXDIR" tmux show-hooks -t w1 "$hk" | tr -d '"')"
+done
 want   "a copy refuses ensure"                        "ensure refused" "$copy_err"
 want   "and names the installed binary's path"        "/bin/layout ensure" "$copy_err"
 
@@ -210,6 +215,8 @@ imp_out="$(ensure_stderr "$_FAKE_RELEASE/bin/layout")"
 is   "ensure untagged the impostor" "" \
     "$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -p -t "$imp" '#{@cockpit}')"
 want "and logged it" "runs no dashboard" "$imp_out"
+is   "ensure sets window-size latest, so the client in use gets a fitted layout" "latest" \
+    "$(TMUX_TMPDIR="$TMUXDIR" tmux show-options -t w3 -v window-size)"
 panes3="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w3:0 -F '#{pane_id}')"
 want "the session pane was not killed"  "$sess3" "$panes3"
 want "the impostor pane was not killed" "$imp"   "$panes3"
