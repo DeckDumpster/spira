@@ -245,7 +245,7 @@ f, e, t = sys.argv[2:5]
 print(any(x["from"] == f and x["event"] == e and x["to"] == t for x in json.loads(sys.argv[1])))' "$graph" "$@"; }
 is "the graph has the claim edge, spelled as the state column spells it" True "$(gedge READY Claim WORKING)"
 is "the graph has the gate edge" True "$(gedge SUBMITTED GatePass CERTIFIED)"
-is "the graph has no edge from CERTIFIED to REWORK that a red gate could take" False "$(gedge CERTIFIED GateRed REWORK)"
+is "the graph carries the legal exit from CERTIFIED to REWORK on a red gate" True "$(gedge CERTIFIED GateRed REWORK)"
 is "the graph has no exit from a terminal state" 0 "$(python3 -I -c 'import json,sys; print(sum(x["from"] in ("LANDED","DROPPED","SUPERSEDED","DONE") for x in json.loads(sys.argv[1])))' "$graph")"
 
 tl_summary
