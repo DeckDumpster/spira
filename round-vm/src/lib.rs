@@ -6,6 +6,7 @@ pub mod cli;
 pub mod config;
 pub mod load;
 pub mod lpt;
+pub mod machine;
 pub mod pool;
 pub mod procs;
 pub mod progress;
