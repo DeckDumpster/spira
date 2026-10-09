@@ -52,12 +52,16 @@ if [ -f "$W/trace/events.jsonl" ]; then
 fi
 
 if [ -d "$W" ]; then
-    out="$(timeout 60 env "${NOLOC[@]}" bash -c "cd '$REPO' && '$SIM' step '$W' --until 7200000" 2>&1)"; rc=$?
-    echo "# step rc=$rc: $(printf '%s' "$out" | tail -3 | cut -c1-300)"
-    echo "# tags: $(git -C "$W/work" tag | tr '\n' ' ')"
-    echo "# refs: $(git -C "$W/work" for-each-ref --format='%(refname)' | tr '\n' ' ')"
-    echo "# gh: $(ls -R "$W/gh" | tr '\n' ' ' | cut -c1-300)"
-    grep -A6 'publish-settle' "$W/exec.log" | cut -c1-200 | head -24 | sed 's/^/# pub: /'
+    in_world() {
+        local -a kv=(); local line
+        while IFS= read -r line; do [ -n "$line" ] && kv+=("$line"); done < "$W/config/sim.env"
+        (cd "$W/work" && env "${NOLOC[@]}" SPIRA_TOML="$W/config/sim.toml" "${kv[@]}" PATH="$W/bin:$W/release/bin:$W/release/spira:$PATH" "$@")
+    }
+    PB="$(git -C "$W/work" for-each-ref --format='%(refname:strip=3)' refs/remotes/origin/spira/publish | head -1)"
+    echo "# pb=$PB"
+    out="$(in_world forge pr-create "$W/work" "$PB" main t </dev/null 2>&1)"; echo "# forge rc=$? out=$(printf '%s' "$out" | tail -3 | cut -c1-300)"
+    out="$(in_world gh pr create --head "$PB" --base main --title t --body-file - </dev/null 2>&1)"; echo "# gh rc=$? out=$(printf '%s' "$out" | tail -3 | cut -c1-300)"
+    echo "# state: $(head -c 400 "$W/gh/state.json")"
     echo "# ${SECONDS}s"
     bad "explore" "forced"
 fi
