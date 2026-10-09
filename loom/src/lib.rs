@@ -4,8 +4,8 @@
 //! WHAT IS AND IS NOT HERE. This serves the graph and nothing else — no layout, no
 //! components, no buckets, no ranking. All of that measured 2 ms in the browser at the live
 //! corpus and 60 ms at a hundred times it, so computing it here would buy nothing and cost a
-//! rendering stack. The payload is the raw rows as `bd` returns them plus the dependency
-//! edges between them, and the page derives every view from that.
+//! rendering stack. The payload is the lifecycle store's live and recently landed rows, shaped
+//! as the page reads them, and the page derives every view from that.
 //!
 //! WHY THERE IS A BUDGET AT ALL. A query per request is the simple choice, and it is the
 //! right one only while it stays cheap. The meter ships with the mechanism rather than after
@@ -30,7 +30,6 @@ use axum::Router;
 use beads::QueryError;
 use ops::OpsSnapshot;
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
@@ -45,13 +44,11 @@ const APP_JS: &str = include_str!("../static/app.js");
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// The beads project directory `bd -C` is pointed at. There is deliberately NO default:
-    /// `bd` resolves a database from its working directory when given a bad one, so a guess
-    /// here does not fail, it silently serves somebody else's graph.
-    pub db: String,
+    /// The `spira-lc` to run, from `SPIRA_LC_BIN`.
+    pub lc: String,
     /// Prepended to the child's PATH, from the harness's configured `SPIRA_PATH`.
     pub extra_path: Vec<String>,
-    /// The deadline on one `bd` query.
+    /// The deadline on one lifecycle read.
     pub budget: Duration,
     /// How long a parsed snapshot is held. Bounding the cost by TIME rather than by viewer is
     /// what makes ten open tabs cost one query instead of ten. It is a cache and not a
@@ -59,9 +56,6 @@ pub struct Config {
     pub cache: Duration,
     /// Where the server listens.
     pub addr: String,
-    /// The `bd` to run, from the harness's own `SPIRA_BD` override. Ordinarily the bare name,
-    /// resolved through `extra_path`.
-    pub bd: String,
     /// The runtime directory holding cockpit.env and the world stamps.
     /// From `SPIRA_RUN`. Empty means no ops endpoint data.
     pub run: String,
@@ -78,7 +72,7 @@ impl Config {
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("loom: {e}"))?;
         Ok(Config {
-            db: cfg("SPIRA_DB").map_err(|e| format!("loom: {e}"))?,
+            lc: spira_config::lifecycle_row::lc_bin(),
             extra_path: cfg("SPIRA_PATH")
                 .map_err(|e| format!("loom: {e}"))?
                 .split(':')
@@ -88,7 +82,6 @@ impl Config {
             budget: Duration::from_millis(cfg_parse::<u64>("SPIRA_LOOM_BUDGET_MS").map_err(|e| format!("loom: {e}"))?),
             cache: Duration::from_secs(cfg_parse::<u64>("SPIRA_LOOM_CACHE_S").map_err(|e| format!("loom: {e}"))?),
             addr: cfg("SPIRA_LOOM_ADDR").map_err(|e| format!("loom: {e}"))?,
-            bd: cfg("SPIRA_BD").map_err(|e| format!("loom: {e}"))?,
             run: cfg("SPIRA_RUN").map_err(|e| format!("loom: {e}"))?,
             instance: spira_config::resolve::resolve_instance(&env, &home).map_err(|e| format!("loom: {e}"))?,
             // SPIRA_SYSTEMCTL is not a registered config key — test-only override, left as env.
@@ -112,8 +105,6 @@ struct Snapshot {
     edges_json: String,
     count: usize,
     edge_count: usize,
-    dropped_closed: usize,
-    dropped_edges: usize,
     query_ms: u128,
     refresh_ms: u128,
 }
@@ -148,41 +139,19 @@ impl Loom {
         let began = Instant::now();
         let c = &self.cfg;
 
-        // `--limit 0` for every row, and NO `--all`: the default already excludes closed
-        // beads, and that bound is the entire reason a query per request is affordable — the
-        // closed corpus is several times the live one and none of it is work in flight.
-        let (out, query_ms) = beads::run(
-            &c.bd,
-            &c.db,
-            &c.extra_path,
-            "beads",
-            &["list", "--limit", "0", "--json"],
-            c.budget,
-        )
-        .await?;
-
-        // An empty database answers with nothing at all rather than `[]`, and that is not an
-        // error — it is a harness with no live work.
-        let payload = beads::json_only(&out);
-        let rows: Vec<Value> = if payload.trim().is_empty() {
-            Vec::new()
-        } else {
-            serde_json::from_str(payload).map_err(|e| QueryError::Failed {
-                name: "beads",
-                detail: format!("unparseable payload: {e}"),
-            })?
-        };
-
-        // The state half (design §3.4): one bounded `spira-lc list`, off the async runtime.
-        let lc = tokio::task::spawn_blocking(|| spira_config::lc_state::list().ok().map(spira_config::lc_state::index))
-            .await
-            .ok()
-            .flatten();
-        let (mut rows, dropped_closed) = beads::drop_closed(rows, lc.as_ref());
-        beads::tag_holds(&mut rows, lc.as_ref());
-        let edges = beads::take_edges(&mut rows);
-        let live: HashSet<&str> = rows.iter().filter_map(|r| r["id"].as_str()).collect();
-        let (edges, dropped_edges) = beads::drawable_edges(edges, &live);
+        // Both views are read together: each is a few indexed lookups on the held store
+        // connection, and the budget bounds the slower of the two.
+        let (live, recent) = tokio::join!(
+            beads::ops_view(&c.lc, &c.extra_path, "live", "ops_live", c.budget),
+            beads::ops_view(&c.lc, &c.extra_path, "recent", "ops_recent", c.budget),
+        );
+        let ((live, live_ms), (recent, recent_ms)) = (live?, recent?);
+        let query_ms = live_ms.max(recent_ms);
+        let rows: Vec<Value> = live
+            .iter()
+            .filter_map(|r| beads::page_row(r, false))
+            .chain(recent.iter().filter_map(|r| beads::page_row(r, true)))
+            .collect();
 
         Ok(Snapshot {
             taken: Instant::now(),
@@ -191,10 +160,8 @@ impl Loom {
                 .map(|d| d.as_millis())
                 .unwrap_or(0),
             count: rows.len(),
-            edge_count: edges.len(),
-            dropped_edges,
-            dropped_closed,
-            edges_json: serde_json::to_string(&edges).unwrap_or_else(|_| "[]".to_string()),
+            edge_count: 0,
+            edges_json: "[]".to_string(),
             beads_json: serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string()),
             query_ms,
             refresh_ms: began.elapsed().as_millis(),
@@ -216,8 +183,8 @@ impl Loom {
             "query_ms": s.query_ms as u64,
             "count": s.count,
             "edge_count": s.edge_count,
-            "dropped_closed": s.dropped_closed,
-            "dropped_edges": s.dropped_edges,
+            "dropped_closed": 0,
+            "dropped_edges": 0,
         });
         let mut out = serde_json::to_string(&meta).unwrap_or_else(|_| "{}".to_string());
         out.pop(); // the closing brace; the two big arrays are spliced in as text

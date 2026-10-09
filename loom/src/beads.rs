@@ -1,16 +1,11 @@
-//! What `bd` is asked, and what comes back from it.
+//! What the lifecycle store is asked, and what comes back from it.
 //!
-//! ONE QUERY ANSWERS THE WHOLE GRAPH, and it took a wrong turn to find that out. The listing
-//! carries each bead's typed dependency edges inline, on the rows that have any — so reading
-//! the key set of the FIRST row and concluding the edges are absent is wrong, and the second
-//! query written to recover them cost as much again as the listing itself. There is no cheap
-//! second source: the batch dependency query runs one lookup per id and takes seconds, and
-//! the graph formats drop either the type or the edges to beads that are no longer live.
+//! The page reads `spira-lc ops-view`, the read model the lifecycle store keeps for the
+//! panes: the non-terminal rows plus the last day's landings, a few indexed lookups. It never
+//! reads `bd`, whose full listing is a scan of the whole corpus under whatever load the box is
+//! carrying. The store holds no dependency edges, so the page's graph has none.
 
-use serde_json::Value;
-use spira_config::lc_state;
-use spira_config::nonwork::{self, Kind};
-use std::collections::{HashMap, HashSet};
+use serde_json::{json, Value};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
@@ -21,13 +16,12 @@ use tokio::process::Command;
 pub enum QueryError {
     /// The deadline fired. The child was killed rather than awaited — see `run`.
     OverBudget { name: &'static str, budget_ms: u64 },
-    /// `bd` answered, and the answer was not usable.
+    /// The store answered, and the answer was not usable.
     Failed { name: &'static str, detail: String },
 }
 
-/// Directories prepended to the child's PATH. `bd` lives in a different place on every box,
-/// and this process may be started by a service manager whose PATH has neither it nor the
-/// database engine behind it.
+/// Directories prepended to the child's PATH: this process may be started by a service
+/// manager whose PATH has neither the lifecycle binary nor the tools behind it.
 pub fn child_path(extra: &[String]) -> String {
     let inherited = std::env::var("PATH").unwrap_or_default();
     if extra.is_empty() {
@@ -37,29 +31,22 @@ pub fn child_path(extra: &[String]) -> String {
     }
 }
 
-/// One `bd` invocation under a deadline. Returns its stdout and what it cost.
+/// One `spira-lc ops-view <view>` under a deadline. Returns its rows and what it cost.
 ///
-/// THE DEADLINE KILLS, it does not merely stop waiting. `tokio::time::timeout` drops the
-/// future it wrapped, and a child is only ended by that drop because `kill_on_drop` is set —
-/// without it an overrun leaves a `bd` process still competing for the database that was
-/// already too slow, and every subsequent refusal makes the next one likelier.
-pub async fn run(
+/// THE DEADLINE KILLS, it does not merely stop waiting: `timeout` drops the future, and a
+/// child is only ended by that drop because `kill_on_drop` is set. Otherwise an overrun leaves
+/// a process still competing for the store that was already too slow.
+pub async fn ops_view(
     bin: &str,
-    db: &str,
     extra_path: &[String],
     name: &'static str,
-    args: &[&str],
+    view: &str,
     budget: Duration,
-) -> Result<(String, u128), QueryError> {
+) -> Result<(Vec<Value>, u128), QueryError> {
     let started = Instant::now();
     let mut cmd = Command::new(bin);
-    cmd.arg("-C")
-        .arg(db)
-        .args(args)
+    cmd.args(["ops-view", view])
         .env("PATH", child_path(extra_path))
-        // A read endpoint must never be able to answer a prompt. Without this `bd` can
-        // inherit a terminal and block on one, which reads from outside as a hung query.
-        .env("BD_NON_INTERACTIVE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -81,131 +68,103 @@ pub async fn run(
         Ok(Ok(out)) => out,
     };
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
+        let err = String::from_utf8_lossy(&out.stdout) + String::from_utf8_lossy(&out.stderr);
         return Err(QueryError::Failed {
             name,
             detail: format!(
-                "{bin} exited {}: {}",
+                "{bin} ops-view {view} exited {}: {}",
                 out.status.code().unwrap_or(-1),
                 err.trim().chars().take(400).collect::<String>()
             ),
         });
     }
-    Ok((
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        started.elapsed().as_millis(),
-    ))
+    let rows = parse_rows(&String::from_utf8_lossy(&out.stdout)).map_err(|detail| QueryError::Failed { name, detail })?;
+    Ok((rows, started.elapsed().as_millis()))
 }
 
-/// Everything from the first line that begins a JSON value.
-///
-/// `bd --json` can print advisories on STDOUT ahead of the payload — a `beads.role` warning
-/// is emitted by an unconfigured checkout, which every fresh fixture is. Handing that
-/// straight to a parser fails with a column-1 syntax error that reads like a broken database
-/// rather than a preamble.
-pub fn json_only(out: &str) -> &str {
-    let mut at = 0usize;
-    for line in out.split_inclusive('\n') {
-        if line.starts_with('[') || line.starts_with('{') {
-            return &out[at..];
-        }
-        at += line.len();
+pub fn parse_rows(text: &str) -> Result<Vec<Value>, String> {
+    match serde_json::from_str::<Value>(text.trim()) {
+        Ok(Value::Array(a)) => Ok(a),
+        Ok(_) => Err("ops-view: not a JSON array".to_string()),
+        Err(e) => Err(format!("unparseable payload: {e}")),
     }
-    ""
 }
 
-/// Rows that are not over, and how many were dropped.
-///
-/// "Over" is the lifecycle machine's word for a work bead (design §3.4, sp-mve9i: bd holds
-/// content, spira-lc holds state): a row whose lifecycle row is terminal is dropped,
-/// whatever bd's status says. A row with no lifecycle row is a coordination or other
-/// non-work bead, whose bd status is its only state (spira_config::nonwork). With no answer
-/// from the machine (`lc` is `None`) nothing is dropped: a state that cannot be read is not
-/// read as over.
-///
-/// The query is already bounded to work in flight — that bound is the entire reason a
-/// per-request read over `bd` is affordable, since the closed corpus is several times the
-/// live one. This is the belt to that brace, and the COUNT is the point of it: if the bound
-/// ever stops holding, the number says so out loud in every response rather than the payload
-/// quietly growing by a factor of six (a check that finds nothing must be able to find
-/// something).
-pub fn drop_closed(rows: Vec<Value>, lc: Option<&HashMap<String, lc_state::Row>>) -> (Vec<Value>, usize) {
-    let before = rows.len();
-    let Some(lc) = lc else { return (rows, 0) };
-    let kept: Vec<Value> = rows
-        .into_iter()
-        .filter(|r| match lc.get(r.get("id").and_then(Value::as_str).unwrap_or("")) {
-            Some(row) => !row.terminal(),
-            None => !nonwork::row_closed(Kind::Epic, r),
-        })
-        .collect();
-    let dropped = before - kept.len();
-    (kept, dropped)
+fn num(v: Option<&Value>) -> Option<i64> {
+    match v? {
+        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        Value::String(s) => s.trim().parse::<f64>().ok().map(|f| f as i64),
+        _ => None,
+    }
 }
 
-/// The kinds a hold can take, in the order the page lists them.
+fn text(v: Option<&Value>) -> Option<String> {
+    v.and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+/// The hold kinds the page lists, in its order.
 pub const HOLD_KINDS: [&str; 4] = ["wait", "manual", "ask", "poison"];
 
-/// Each served row's lifecycle holds, as `holds`: the state half of the picture the page
-/// cannot read off a bd label. A row with no lifecycle row, or no answer from the machine,
-/// carries an empty list.
-pub fn tag_holds(rows: &mut [Value], lc: Option<&HashMap<String, lc_state::Row>>) {
-    for r in rows.iter_mut() {
-        let id = r.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-        let held: Vec<&str> = lc
-            .and_then(|m| m.get(&id))
-            .map(|row| HOLD_KINDS.iter().copied().filter(|k| row.held(k)).collect())
-            .unwrap_or_default();
-        if let Some(o) = r.as_object_mut() {
-            o.insert("holds".into(), Value::from(held));
-        }
-    }
+fn holds(v: Option<&Value>) -> Vec<String> {
+    let arr = match v {
+        Some(Value::Array(a)) => a.clone(),
+        Some(Value::String(s)) => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Array(a)) => a,
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    let held: Vec<String> = arr.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+    HOLD_KINDS.iter().filter(|k| held.iter().any(|h| h == *k)).map(|k| k.to_string()).collect()
 }
 
-/// Every row's `dependencies`, lifted into one list and removed from the rows.
-///
-/// HOISTED RATHER THAN LEFT IN PLACE, so the payload has exactly one edge list. Left where it
-/// was, the page would have a second one alongside the served list — unfiltered, still naming
-/// beads that are not in the payload — and the two would disagree in precisely the case that
-/// matters, an edge whose other end has been closed.
-///
-/// The edge objects themselves are passed through as `bd` writes them: `issue_id`,
-/// `depends_on_id` and `type`, plus when and by whom. Renaming them would put the page's model
-/// and the command line into different vocabularies for the same thing.
-pub fn take_edges(rows: &mut [Value]) -> Vec<Value> {
-    let mut edges = Vec::new();
-    for row in rows.iter_mut() {
-        let Some(obj) = row.as_object_mut() else { continue };
-        let Some(Value::Array(deps)) = obj.remove("dependencies") else {
-            continue;
-        };
-        edges.extend(deps);
-    }
-    edges
+/// Epoch seconds as the UTC timestamp the page parses.
+pub fn iso(secs: i64) -> String {
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
-/// The edges both of whose ends are in the payload, and how many were dropped.
-///
-/// An edge to a bead that is not being served cannot be drawn, so it is dropped — and
-/// counted, because a graph quietly missing a third of its edges looks like a graph. On a
-/// live database this number is not small: the closed corpus is most of the database, and
-/// every edge into it lands here.
-pub fn drawable_edges(edges: Vec<Value>, live: &HashSet<&str>) -> (Vec<Value>, usize) {
-    let before = edges.len();
-    let kept: Vec<Value> = edges
-        .into_iter()
-        .filter(|e| {
-            let has = |k: &str| {
-                e.get(k)
-                    .and_then(Value::as_str)
-                    .map(|id| live.contains(id))
-                    .unwrap_or(false)
-            };
-            has("issue_id") && has("depends_on_id")
-        })
-        .collect();
-    let dropped = before - kept.len();
-    (kept, dropped)
+/// A view row in the shape the page reads: the lifecycle state stands for bd's status, and
+/// the holder for its assignee. A row filed before titles were mirrored shows its id.
+pub fn page_row(r: &Value, landed: bool) -> Option<Value> {
+    let id = text(r.get("bead_id"))?;
+    let state = text(r.get("state")).unwrap_or_default();
+    let status = if landed {
+        "closed"
+    } else if state == "WORKING" || state == "IN_DELIVERY" {
+        "in_progress"
+    } else {
+        "open"
+    };
+    let mut row = json!({
+        "id": id,
+        "title": text(r.get("title")).unwrap_or_else(|| id.clone()),
+        "status": status,
+        "issue_type": "task",
+        "priority": num(r.get("priority")).unwrap_or(3),
+        "state": state,
+        "holds": holds(r.get("holds")),
+    });
+    let o = row.as_object_mut()?;
+    if let Some(h) = text(r.get("holder")) {
+        o.insert("assignee".into(), Value::from(h));
+    }
+    if let Some(t) = num(r.get("updated_at")) {
+        o.insert("updated_at".into(), Value::from(iso(t)));
+    }
+    if let Some(t) = num(r.get("since")) {
+        o.insert("closed_at".into(), Value::from(iso(t)));
+    }
+    Some(row)
 }
 
 #[cfg(test)]
@@ -213,98 +172,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_only_skips_an_advisory_printed_before_the_payload() {
-        let out = "warning: beads.role not configured.\n  Fix: git config …\n[{\"id\":\"sp-a\"}]\n";
-        assert_eq!(json_only(out).trim(), "[{\"id\":\"sp-a\"}]");
-        // The positive control's other half: a payload with no preamble is returned whole.
-        assert_eq!(json_only("[1,2]").trim(), "[1,2]");
-        // And nothing that is not JSON at all yields nothing, rather than a truncated value.
-        assert_eq!(json_only("bd: command not found\n"), "");
+    fn epoch_seconds_become_the_timestamp_the_page_parses() {
+        assert_eq!(iso(0), "1970-01-01T00:00:00Z");
+        assert_eq!(iso(1_791_480_577), "2026-10-08T17:29:37Z");
+        assert_eq!(iso(951_782_400), "2000-02-29T00:00:00Z");
     }
 
     #[test]
-    fn a_closed_row_is_dropped_and_counted() {
-        let rows: Vec<Value> = serde_json::from_str(
-            r#"[{"id":"sp-a","status":"open"},
-                {"id":"sp-b","status":"closed"},
-                {"id":"sp-c","status":"in_progress"}]"#,
+    fn a_live_row_is_shaped_for_the_page() {
+        let r: Value = serde_json::from_str(
+            r#"{"bead_id":"sp-a","state":"WORKING","holds":"[\"manual\",\"wait\",\"other\"]","holder":"aeon-1","priority":"1","title":"t","updated_at":"100"}"#,
         )
         .unwrap();
-        let lc = HashMap::new();
-        let (kept, dropped) = drop_closed(rows, Some(&lc));
-        // The filter is SEEN removing something before its silence is believed anywhere else.
-        assert_eq!(dropped, 1);
-        assert_eq!(kept.len(), 2);
-        assert!(kept.iter().all(|r| r["status"].as_str() != Some("closed")));
-    }
-
-    /// sp-mve9i: a work bead's row is dropped when its lifecycle row is over, not when bd
-    /// says closed; with no machine answer nothing is dropped.
-    #[test]
-    fn a_work_row_is_dropped_by_its_lifecycle_state() {
-        let rows: Vec<Value> = serde_json::from_str(
-            r#"[{"id":"sp-a","status":"open"},
-                {"id":"sp-b","status":"closed"},
-                {"id":"sp-c","status":"open"}]"#,
-        )
-        .unwrap();
-        let lc: HashMap<String, lc_state::Row> = [("sp-a", "LANDED"), ("sp-b", "REWORK")]
-            .iter()
-            .map(|(id, st)| (id.to_string(), lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() }))
-            .collect();
-        let (kept, dropped) = drop_closed(rows.clone(), Some(&lc));
-        let ids: Vec<&str> = kept.iter().filter_map(|r| r["id"].as_str()).collect();
-        assert_eq!((ids, dropped), (vec!["sp-b", "sp-c"], 1));
-        assert_eq!(drop_closed(rows, None).1, 0);
+        let p = page_row(&r, false).unwrap();
+        assert_eq!(p["status"], "in_progress");
+        assert_eq!(p["priority"], 1);
+        assert_eq!(p["assignee"], "aeon-1");
+        assert_eq!(p["holds"], json!(["wait", "manual"]));
+        assert_eq!(p["updated_at"], "1970-01-01T00:01:40Z");
+        let bare = page_row(&json!({"bead_id":"sp-b","state":"READY","holds":null}), false).unwrap();
+        assert_eq!((bare["title"].as_str(), bare["status"].as_str(), bare["priority"].as_i64()), (Some("sp-b"), Some("open"), Some(3)));
+        assert!(bare.get("assignee").is_none());
+        assert_eq!(page_row(&json!({"bead_id":"sp-c","state":"LANDED"}), true).unwrap()["status"], "closed");
+        assert!(page_row(&json!({"state":"READY"}), false).is_none());
     }
 
     #[test]
-    fn rows_carry_their_hold_kinds_with_manual_in_place_of_operator() {
-        let mut rows: Vec<Value> = serde_json::from_str(r#"[{"id":"sp-a"},{"id":"sp-b"},{"id":"sp-c"}]"#).unwrap();
-        let lc: HashMap<String, lc_state::Row> = [("sp-a", vec!["manual", "wait"]), ("sp-b", vec!["operator"])]
-            .into_iter()
-            .map(|(id, h)| (id.to_string(), lc_state::Row { bead_id: id.into(), state: "READY".into(), holds: h.into_iter().map(String::from).collect(), ..Default::default() }))
-            .collect();
-        tag_holds(&mut rows, Some(&lc));
-        assert_eq!(rows[0]["holds"], serde_json::json!(["wait", "manual"]));
-        assert_eq!(rows[1]["holds"], serde_json::json!([]), "the retired name is not a kind");
-        assert_eq!(rows[2]["holds"], serde_json::json!([]));
-        tag_holds(&mut rows, None);
-        assert_eq!(rows[0]["holds"], serde_json::json!([]));
-    }
-
-    #[test]
-    fn edges_are_hoisted_off_the_rows_they_arrived_on() {
-        let mut rows: Vec<Value> = serde_json::from_str(
-            r#"[{"id":"sp-a","dependencies":[
-                    {"issue_id":"sp-a","depends_on_id":"sp-b","type":"blocks"},
-                    {"issue_id":"sp-a","depends_on_id":"sp-z","type":"parent-child"}]},
-                {"id":"sp-b"}]"#,
-        )
-        .unwrap();
-        let edges = take_edges(&mut rows);
-        assert_eq!(edges.len(), 2);
-        assert_eq!(edges[0]["type"], "blocks");
-        // The whole point of hoisting: no second, unfiltered copy is left behind for the page
-        // to reach for by accident.
-        assert!(rows[0].get("dependencies").is_none());
-        // A row that never had any is untouched rather than given an empty array.
-        assert!(rows[1].get("dependencies").is_none());
-    }
-
-    #[test]
-    fn an_edge_whose_other_end_is_not_served_is_dropped_and_counted() {
-        let edges: Vec<Value> = serde_json::from_str(
-            r#"[{"issue_id":"sp-a","depends_on_id":"sp-b","type":"blocks"},
-                {"issue_id":"sp-a","depends_on_id":"sp-gone","type":"blocks"},
-                {"issue_id":"sp-nowhere","depends_on_id":"sp-b","type":"blocks"}]"#,
-        )
-        .unwrap();
-        let live: HashSet<&str> = ["sp-a", "sp-b"].into_iter().collect();
-        let (kept, dropped) = drawable_edges(edges, &live);
-        // SEEN dropping two before its silence on the third means anything.
-        assert_eq!(dropped, 2);
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0]["depends_on_id"], "sp-b");
+    fn only_a_json_array_is_rows() {
+        assert_eq!(parse_rows("[{\"bead_id\":\"x\"}]\n").unwrap().len(), 1);
+        assert!(parse_rows("{}").is_err());
+        assert!(parse_rows("cannot tell").is_err());
     }
 }
