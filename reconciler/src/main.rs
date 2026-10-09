@@ -128,6 +128,7 @@ struct Seams {
     queue_helpers: String,
     queue: String,
     spira_lc: String,
+    bead: String,
     target_reap: String,
     podman: String,
     df: String,
@@ -155,6 +156,7 @@ impl Seams {
             queue_helpers: name("queue-helpers"),
             queue: name("queue"),
             spira_lc: name("spira-lc"),
+            bead: name("bead"),
             target_reap: name("target-reap"),
             podman: name("podman"),
             df: name("df"),
@@ -1237,6 +1239,62 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Epic edges: a blocks edge onto an open epic can never clear, because an epic closes only
+// when its children do. The remedy rewrites it as parent-child.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const EPIC_EDGE_PREFIX: &str = "epic-blocks:";
+
+fn epic_edge_pairs(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            Some((w.next()?.to_string(), w.next()?.to_string()))
+        })
+        .collect()
+}
+
+fn observe_epic_edges(cfg: &Config) -> Vec<Check> {
+    let out = match spira_config::bounded::bounded(&cfg.seams.bead)
+        .args(["dep", "epic-edges"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(o) => {
+            return vec![Check {
+                key: "epic-blocks-edge".into(),
+                raw: RawStatus::Unobservable { reason: format!("{} dep epic-edges exited {}", cfg.seams.bead, o.status.code().unwrap_or(-1)) },
+                remedy: Remedy::Escalate,
+            }]
+        }
+        Err(e) => {
+            return vec![Check {
+                key: "epic-blocks-edge".into(),
+                raw: RawStatus::Unobservable { reason: format!("{}: {}", cfg.seams.bead, e) },
+                remedy: Remedy::Escalate,
+            }]
+        }
+    };
+    epic_edge_pairs(&out)
+        .into_iter()
+        .map(|(child, epic)| Check {
+            key: format!("{}{}:{}", EPIC_EDGE_PREFIX, child, epic),
+            raw: RawStatus::Gap {
+                desired: "a parent-child edge onto an epic".into(),
+                observed: format!("{} blocked by open epic {}", child, epic),
+                since_hint: None,
+            },
+            remedy: Remedy::Command {
+                program: cfg.seams.bead.clone(),
+                args: vec!["dep".into(), "convert".into(), child, epic],
+            },
+        })
+        .collect()
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Main health: the landing ref must pass the fences every branch is judged by. A base
 // that is red turns every bead's gate red, so a red fence escalates at once.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1535,6 +1593,9 @@ fn run_pass() -> Result<(), String> {
     let junk = observe_junk_rows(&cfg);
     state.retain(|k, _| !k.starts_with(JUNK_ROW_PREFIX) || junk.iter().any(|c| &c.key == k));
     checks.extend(junk);
+    let epic_edges = observe_epic_edges(&cfg);
+    state.retain(|k, _| !k.starts_with(EPIC_EDGE_PREFIX) || epic_edges.iter().any(|c| &c.key == k));
+    checks.extend(epic_edges);
     checks.extend(observe_main_health(&cfg));
 
     remind_due_suspensions(&cfg, &load_ctrl(&cfg));
@@ -1898,6 +1959,26 @@ mod tests {
             strand: strand.to_string_lossy().to_string(),
             ..Seams::production()
         }
+    }
+
+    #[test]
+    fn an_epic_edge_is_a_gap_whose_remedy_converts_it_and_no_edge_is_satisfied() {
+        let dir = scratch_dir("epic-edges");
+        let bead = dir.join("bead");
+        testkit::write_exe(&bead, "#!/bin/sh\nprintf 'sp-child sp-epic\\n'\n");
+        let cfg = Config { seams: Seams { bead: bead.to_string_lossy().to_string(), ..Seams::production() }, ..test_config() };
+        let checks = observe_epic_edges(&cfg);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].key, "epic-blocks:sp-child:sp-epic");
+        assert!(matches!(&checks[0].raw, RawStatus::Gap { .. }));
+        assert!(matches!(&checks[0].remedy, Remedy::Command { args, .. } if args == &["dep", "convert", "sp-child", "sp-epic"]));
+
+        testkit::write_exe(&bead, "#!/bin/sh\nexit 0\n");
+        assert!(observe_epic_edges(&cfg).is_empty());
+
+        testkit::write_exe(&bead, "#!/bin/sh\nexit 1\n");
+        let broken = observe_epic_edges(&cfg);
+        assert!(matches!(&broken[0].raw, RawStatus::Unobservable { .. }));
     }
 
     #[test]

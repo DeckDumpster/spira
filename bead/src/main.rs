@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc::notify_live_aeon;
 use bead::{
-    branch_candidate, branch_label, chamber_partitions, incident_blocks_refusal, is_blocks_type,
+    branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, parse_dependents, is_blocks_type,
     awaits_dispatch, lane_check, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
@@ -41,6 +41,8 @@ fn main() {
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
             Some("remove") => cmd_dep_remove(&home, &rest[1..]),
+            Some("epic-edges") => cmd_dep_epic_edges(&home),
+            Some("convert") => cmd_dep_convert(&home, &rest[1..]),
             _ => {
                 eprintln!("usage: bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>");
                 2
@@ -1017,7 +1019,12 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
     if is_blocks_type(dep_type.as_deref()) {
         let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
         let (_, out) = bdq_capture(home, &s(&["show", &depid, "--json"]));
-        let target_labels = parse_show_row(&out).map(|r| r.labels).unwrap_or_default();
+        let target = parse_show_row(&out);
+        if target.as_ref().is_some_and(|r| r.issue_type == "epic") {
+            eprintln!("{}", epic_blocks_refusal(&id, &depid));
+            return 1;
+        }
+        let target_labels = target.map(|r| r.labels).unwrap_or_default();
         if target_labels.iter().any(|l| l == &incident_label) {
             eprintln!("{}", incident_blocks_refusal(&id, &depid, &incident_label));
             return 1;
@@ -1033,6 +1040,63 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
     }
     call.extend(rest);
     bdq_status(home, &call)
+}
+
+// =========================================================================================
+// dep epic-edges / dep convert — the reconciler's observation and remedy for a blocks edge
+// onto an open epic.
+// =========================================================================================
+
+fn cmd_dep_epic_edges(home: &str) -> i32 {
+    let (code, out) = bdq_capture(home, &s(&["list", "--type", "epic", "--brief", "--json", "--limit", "0"]));
+    if code != 0 {
+        eprintln!("bead: dep epic-edges: bd list exited {code}");
+        return 1;
+    }
+    let epics = parse_list_ids(&out);
+    if epics.is_empty() {
+        return 0;
+    }
+    let mut call = s(&["dep", "list"]);
+    call.extend(epics.iter().cloned());
+    call.extend(s(&["--direction", "up", "--type", "blocks", "--json"]));
+    let (code, out) = bdq_capture(home, &call);
+    if code != 0 {
+        eprintln!("bead: dep epic-edges: bd dep list exited {code}");
+        return 1;
+    }
+    for (child, epic) in parse_dependents(&out) {
+        if epics.contains(&epic) {
+            println!("{child} {epic}");
+        }
+    }
+    0
+}
+
+fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
+    let (id, epic) = match args {
+        [i, e] if !i.starts_with('-') && !e.starts_with('-') => (i.clone(), e.clone()),
+        _ => {
+            eprintln!("usage: bead.sh dep convert <id> <epic-id>");
+            return 2;
+        }
+    };
+    let (_, out) = bdq_capture(home, &s(&["show", &epic, "--json"]));
+    if parse_show_row(&out).is_none_or(|r| r.issue_type != "epic") {
+        eprintln!("bead: dep convert: refusing — {epic} is not an epic");
+        return 1;
+    }
+    let rc = bdq_status(home, &s(&["dep", "remove", &id, &epic]));
+    if rc != 0 {
+        return rc;
+    }
+    let rc = bdq_status(home, &s(&["dep", "add", &id, &epic, "--type", "parent-child"]));
+    if rc != 0 {
+        bdq_status(home, &s(&["dep", "add", &id, &epic, "--type", "blocks"]));
+        return rc;
+    }
+    println!("converted edge: {id} -> {epic} blocks => parent-child");
+    0
 }
 
 // =========================================================================================
