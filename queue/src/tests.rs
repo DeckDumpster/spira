@@ -397,6 +397,8 @@ struct FLc {
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
     eject_refused: Cell<bool>,
+    /// Every bead event is refused with this text (a locked lifecycle store).
+    event_refused: Cell<Option<&'static str>>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
     calls: RefCell<Vec<String>>,
@@ -404,7 +406,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), row_fails: Cell::new(false), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), row_fails: Cell::new(false), calls: RefCell::default() }
     }
 }
 
@@ -455,7 +457,10 @@ impl Lc for FLc {
     }
     fn bead_event(&self, bead: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("event bead {bead} {s} {v} {kind}"));
-        Ok(())
+        match self.event_refused.get() {
+            Some(why) => Err((1, why.into())),
+            None => Ok(()),
+        }
     }
     fn land_batch(&self, id: &str, v: &str, _: &str, sha: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("land {id} {v} {sha}"));
@@ -1005,6 +1010,16 @@ fn open_batch_record(t: &T) {
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb\nopened=5\nbranch=spira/queue/x\nowner=batcher\n");
 }
 
+
+#[test]
+fn eject_with_a_locked_lifecycle_store_exits_nonzero_naming_the_lock() {
+    let t = T::new(LandMode::Queue);
+    open_batch_record(&t);
+    t.lc.event_refused.set(Some("database is locked"));
+    assert_eq!(t.run(&["eject", "sp-a"]), 1);
+    assert!(t.err().contains("database is locked") && t.err().contains("sp-a"), "{}", t.err());
+    assert!(!t.out().contains("ejected sp-a from spira batch"), "{}", t.out());
+}
 
 #[test]
 fn eject_member_records_the_harness_cause_and_returns_it_to_rework_on_spira_lc() {

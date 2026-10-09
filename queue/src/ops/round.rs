@@ -561,9 +561,15 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         return FAIL;
     }
     let cause = EjectCause::decide(red, harness_fault, suites);
+    let mut unreturned: Vec<&str> = Vec::new();
     for (bead, why_text, own_cause) in std::iter::once((id, reason.clone(), cause)).chain(stacked.iter().map(|m| (m.id.as_str(), format!("stacked on {id}"), cause))) {
-        w.lib.bead_reopen(bead, own_cause.as_str(), suites);
-        lc_return(w, bead);
+        if !w.lib.bead_reopen(bead, own_cause.as_str(), suites) {
+            w.err(format!("queue.sh {label}: cannot reopen {bead} (cause {})", own_cause.as_str()));
+            unreturned.push(bead);
+        }
+        if lc_return(w, bead).is_err() && !unreturned.contains(&bead) {
+            unreturned.push(bead);
+        }
         w.lib.release_claim(bead);
         if bead != id {
             let why = bounded_text(&why_text);
@@ -592,6 +598,10 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         w.git.worktree_remove(&path, &wt);
         finish(&c, batch, &format!("emptied: {id} ejected, no member remains"));
         w.out(format!("queue.sh {label}: ejected {id}; the round {batch} has no member left and is closed"));
+        if !unreturned.is_empty() {
+            w.err(format!("queue.sh {label}: {} left round {batch} but did not return to REWORK: {} — see above", id, unreturned.join(" ")));
+            return FAIL;
+        }
         return OK;
     }
 
@@ -605,9 +615,13 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         return FAIL;
     }
     mark_running(&c, batch);
-    w.out(format!("queue.sh {label}: ejected {id} from round {batch}"));
+    w.out(format!("queue.sh {label}: ejected {id} from round {batch}; {} member(s) remain", survivors.len()));
     w.out(format!("head={new_head}"));
     w.out(format!("members={}", render_members(&survivors)));
+    if !unreturned.is_empty() {
+        w.err(format!("queue.sh {label}: {} left round {batch} but did not return to REWORK: {} — see above", id, unreturned.join(" ")));
+        return FAIL;
+    }
     OK
 }
 

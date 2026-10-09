@@ -133,6 +133,26 @@ fn a_refused_lifecycle_eject_changes_nothing() {
 }
 
 #[test]
+fn an_eject_whose_lifecycle_write_is_locked_exits_nonzero_naming_the_lock() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.lc.event_refused.set(Some("database is locked"));
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red"]), 1);
+    let e = t.err();
+    assert!(e.contains("database is locked") && e.contains("sp-b") && e.contains("did not return to REWORK"), "{e}");
+}
+
+#[test]
+fn a_successful_eject_reports_the_round_and_the_remaining_count() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red"]), 0, "{}", t.err());
+    assert!(t.out().contains(&format!("ejected sp-b from round {batch}; 2 member(s) remain")), "{}", t.out());
+}
+
+#[test]
 fn ejecting_the_last_member_closes_the_round() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
