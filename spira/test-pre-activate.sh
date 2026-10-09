@@ -195,6 +195,36 @@ SPIRA_STORE_CHECK_TIMEOUT=1 run "$REL"
 is   "store: bd never answers: exit 1" 1 "$rc"
 want "store: bd never answers: store slow" "store slow: no answer in 1 s" "$out"
 nowant "store: bd never answers: not a mismatch" "schema mismatch" "$out"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "[mysql] packets.go:58 read tcp 127.0.0.1:1->127.0.0.1:3307: i/o timeout"
+echo x >> "$TMP/bd-calls"
+exit 1
+STUB
+chmod +x "$TMP/binstub/bd"
+rm -f "$TMP/bd-calls"; export TMP
+run "$REL"
+is   "store: dropped connection: exit 1" 1 "$rc"
+want "store: dropped connection: slow/unreachable" "store slow/unreachable: [mysql]" "$out"
+nowant "store: dropped connection: not a mismatch" "schema mismatch" "$out"
+is   "store: dropped connection: retried" 2 "$(wc -l < "$TMP/bd-calls")"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "schema drift: column x missing"
+echo x >> "$TMP/bd-calls"
+exit 1
+STUB
+rm -f "$TMP/bd-calls"; run "$REL"
+is   "store: genuine mismatch: not retried" 1 "$(wc -l < "$TMP/bd-calls")"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+if [ -e "$TMP/bd-once" ]; then echo "Version matches"; exit 0; fi
+touch "$TMP/bd-once"
+echo "dial tcp 127.0.0.1:3307: connection refused"
+exit 1
+STUB
+rm -f "$TMP/bd-once"; run "$REL"
+is   "store: errors once then succeeds: exit 0" 0 "$rc"
 mkbd 0
 
 # ── units: units-install --render must exit 0 with no placeholder left unfilled ─────────
