@@ -326,7 +326,18 @@ impl Conn {
     /// itself opens with `CREATE DATABASE IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;`.
     pub fn apply_ddl(&self, sql_text: &str) -> Result<(), DbError> {
         let wire = self.connect(Some(&self.database)).or_else(|_| self.connect(None));
-        let result = wire.and_then(|mut wire| wire.exec(sql_text));
+        // One statement per round trip: the server's own multi-statement splitter refuses a
+        // view body with an optimizer hint ("unable to get sub statement").
+        let result = wire.and_then(|mut wire| {
+            let mut last = Ok(Vec::new());
+            for stmt in crate::migrate::split_statements(sql_text) {
+                last = wire.exec(&stmt);
+                if last.is_err() {
+                    break;
+                }
+            }
+            last
+        });
         match result {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("DDL reported a serialization conflict".into())),

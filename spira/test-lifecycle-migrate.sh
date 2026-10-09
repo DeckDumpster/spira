@@ -120,7 +120,7 @@ store_from() {
 SHIPPED="$REPO/lifecycle/migrations"
 # The live database before round 268: schema.sql as it stood without bead.since.
 pre_since_db() {
-    grep -v '^    since ' "$REPO/lifecycle/schema.sql" > "$TMP/pre-since.sql"
+    sed '/^-- The ops read model;/,$d' "$REPO/lifecycle/schema.sql" | grep -v -e '^    since ' -e bead_state_since_idx > "$TMP/pre-since.sql"
     store_from "$TMP/pre-since.sql"
 }
 
