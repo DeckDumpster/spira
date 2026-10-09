@@ -76,3 +76,4 @@ sim ghctl "$SIM_GH_DIR" pr-merge "$pr"
 sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
 """
 # flake probe 1
+# flake probe 2
