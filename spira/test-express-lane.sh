@@ -218,6 +218,7 @@ chmod +x "$SH/mock-summon"
 # the only mode); the stand-in (testlib lc_mirror_bd) answers spira-lc `list` from this
 # REAL bd store — an open bead is a READY row — ahead of the tree's spira-lc on PATH.
 lc_mirror_bd "$TMP/lc"
+export SPIRA_LC_BIN="$TMP/lcx/spira-lc"
 sentinel_run() {
     # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
     # the real one) is exec'd as sentinel's own child for its ready reads and reads them as
