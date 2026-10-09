@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS batch (
     pr        BIGINT NULL,
     run       VARCHAR(64) NULL,
     reason    TEXT NULL,
+    -- The round's pass number and, while CI_RUNNING, its phase (build|suites); migrations/0014-batch-pass.sql for an existing database.
+    pass      BIGINT NOT NULL DEFAULT 0,
+    phase     VARCHAR(8) NULL,
     version   BIGINT NOT NULL,
     opened_at BIGINT NOT NULL
 );

@@ -27,6 +27,7 @@ mod git_evidence;
 mod legacy_files;
 mod migrate;
 mod ops;
+mod passes;
 mod wire;
 mod repo_config;
 mod rows;
@@ -408,7 +409,7 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let run = || -> Result<Vec<Value>, String> {
         let mut batches = q(format!(
-            "SELECT batch_id, repo, state, reason, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
+            "SELECT batch_id, repo, state, reason, pass, phase, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
         ))?;
         let ids: Vec<String> = batches
             .iter()
@@ -425,12 +426,21 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
              FROM event WHERE machine = 'batch' AND event = 'Eject' AND applied = 1 AND lc_key IN ({ids}) ORDER BY seq"
         ))?;
         let last = q(format!("SELECT lc_key AS batch_id, MAX(at) AS last_at FROM event WHERE machine = 'batch' AND applied = 1 AND lc_key IN ({ids}) GROUP BY lc_key"))?;
+        let events = q(format!(
+            "SELECT lc_key AS batch_id, event, evidence, at FROM event WHERE machine = 'batch' AND applied = 1 AND event IN ({}) AND lc_key IN ({ids}) ORDER BY seq",
+            passes::FETCHED
+        ))?;
         let of = |rows: &[Value], id: &Value| -> Vec<Value> { rows.iter().filter(|r| r.get("batch_id") == Some(id)).cloned().collect() };
         for b in batches.iter_mut() {
             let id = b.get("batch_id").cloned().unwrap_or(Value::Null);
             let obj = b.as_object_mut().expect("a batch row is an object");
             obj.insert("members".into(), Value::Array(of(&members, &id)));
             obj.insert("ejected".into(), Value::Array(of(&ejected, &id)));
+            let (history, since) = passes::fold(&of(&events, &id));
+            let opened = obj.get("opened_at").and_then(Value::as_i64);
+            obj.insert("phase_since".into(), since.or(opened).map_or(Value::Null, Value::from));
+            obj.insert("last_pass".into(), history.last().cloned().unwrap_or(Value::Null));
+            obj.insert("passes".into(), Value::Array(history));
             obj.insert("last_at".into(), of(&last, &id).first().and_then(|r| r.get("last_at")).cloned().unwrap_or(Value::Null));
         }
         Ok(batches)

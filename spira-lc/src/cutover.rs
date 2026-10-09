@@ -131,6 +131,8 @@ pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
                 "base": row.base,
                 "run": row.run,
                 "reason": row.reason,
+                "pass": row.pass,
+                "phase": row.phase.map(|p| p.as_str()),
                 "version": row.version,
             })
             .to_string(),

@@ -252,6 +252,8 @@ pub trait Lc {
     fn available(&self) -> bool;
     /// `show-batch` → (state, version); None when the batch row does not exist.
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;
+    /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.
+    fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
     fn create_bead(&self, id: &str);
     /// `cut` → Ok(version) or Err((rc, output)).
     fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)>;

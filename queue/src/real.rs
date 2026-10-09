@@ -732,6 +732,11 @@ impl Lc for RealLc {
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
         Some((json_str(&v, "state")?, json_str(&v, "version")?))
     }
+    fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)> {
+        let out = self.stdout(&["show-batch", batch_id]).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&out).ok()?;
+        Some((v.get("pass")?.as_u64()? as u32, json_str(&v, "phase").unwrap_or_default()))
+    }
     fn create_bead(&self, id: &str) {
         let _ = self.run(&["create-bead", id]);
     }

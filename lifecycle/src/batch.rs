@@ -52,6 +52,31 @@ impl BatchState {
     }
 }
 
+/// Where inside a CI_RUNNING pass the round is. The test cap's clock starts at `Suites`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BatchPhase {
+    Build,
+    Suites,
+}
+
+impl BatchPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BatchPhase::Build => "build",
+            BatchPhase::Suites => "suites",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "build" => Some(BatchPhase::Build),
+            "suites" => Some(BatchPhase::Suites),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BatchRow {
     pub batch_id: String,
@@ -62,6 +87,8 @@ pub struct BatchRow {
     pub base: Option<String>,
     pub run: Option<String>,
     pub reason: Option<String>,
+    pub pass: u32,
+    pub phase: Option<BatchPhase>,
     pub version: Version,
 }
 
@@ -78,6 +105,8 @@ impl BatchRow {
             base: Some(base.into()),
             run: None,
             reason: None,
+            pass: 0,
+            phase: None,
             version: 0,
         }
     }
@@ -89,6 +118,18 @@ pub enum BatchEventKind {
     /// event only proves the batch was still accepting members when it was added.
     MemberAdded { bead_id: String, tip: String },
     CiStarted { run: String },
+    /// OPEN or REBUILDING -> CI_RUNNING, phase build. `n` must be the next pass number.
+    PassStarted { n: u32, head: String },
+    /// Phase build -> suites: the test cap's clock starts here.
+    SuitesStarted { n: u32 },
+    /// Phase suites -> GREEN.
+    PassGreen { n: u32, suites_s: u64, build_s: u64 },
+    /// Any phase -> ATTRIBUTING: the pass ran and suites (or the build) failed.
+    PassRed { n: u32, red_suites: Vec<String>, suites_s: u64, build_s: u64 },
+    /// Any phase -> ATTRIBUTING: the pass produced no verdict (over the cap, VM lost).
+    PassIncomplete { n: u32, reason: String },
+    /// ATTRIBUTING -> OPEN for the next pass, at the head the survivors were rebuilt to.
+    PassRebuilt { head: String },
     Green,
     Red,
     BaseMoved,
@@ -115,11 +156,16 @@ pub struct BatchEvent {
     pub actor: String,
 }
 
+fn where_is(row: &BatchRow) -> String {
+    match row.phase {
+        Some(p) => format!("{} (pass {}, phase {})", row.state.as_str(), row.pass, p.as_str()),
+        None if row.pass > 0 => format!("{} (pass {})", row.state.as_str(), row.pass),
+        None => row.state.as_str().to_string(),
+    }
+}
+
 fn illegal(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow> {
-    Outcome::refuse(
-        row.clone(),
-        Refusal::IllegalTransition { state: row.state.as_str().to_string(), event: format!("{kind:?}") },
-    )
+    Outcome::refuse(row.clone(), Refusal::IllegalTransition { state: where_is(row), event: format!("{kind:?}") })
 }
 
 fn terminal(row: &BatchRow) -> Outcome<BatchRow> {
@@ -147,6 +193,7 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
             }
             let mut new = row.clone();
             new.state = BatchState::Abandoned;
+            new.phase = None;
             new.reason = Some(reason.clone());
             new.version += 1;
             Outcome::applied(new)
@@ -154,6 +201,12 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
 
         BatchEventKind::MemberAdded { .. }
         | BatchEventKind::CiStarted { .. }
+        | BatchEventKind::PassStarted { .. }
+        | BatchEventKind::SuitesStarted { .. }
+        | BatchEventKind::PassGreen { .. }
+        | BatchEventKind::PassRed { .. }
+        | BatchEventKind::PassIncomplete { .. }
+        | BatchEventKind::PassRebuilt { .. }
         | BatchEventKind::Green
         | BatchEventKind::Red
         | BatchEventKind::BaseMoved
@@ -171,103 +224,100 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
     // instead of a match on the event variant. States are qualified below instead.
     use BatchEventKind::*;
 
+    let moved = |state: BatchState, phase: Option<BatchPhase>| {
+        let mut new = row.clone();
+        new.state = state;
+        new.phase = phase;
+        new.version += 1;
+        new
+    };
+    let stays = || {
+        let mut new = row.clone();
+        new.version += 1;
+        new
+    };
+    let started = |n: &u32, head: Option<&String>| {
+        if *n != row.pass + 1 {
+            return illegal(row, kind);
+        }
+        let mut new = moved(BatchState::CiRunning, Some(BatchPhase::Build));
+        new.pass = *n;
+        if let Some(h) = head {
+            new.head = Some(h.clone());
+        }
+        Outcome::applied(new)
+    };
+
     match row.state {
         BatchState::Open => match kind {
-            MemberAdded { .. } => {
-                let mut new = row.clone();
-                new.version += 1;
-                Outcome::applied(new)
-            }
+            MemberAdded { .. } | Eject { .. } => Outcome::applied(stays()),
             CiStarted { run } => {
-                let mut new = row.clone();
-                new.state = BatchState::CiRunning;
+                let mut new = moved(BatchState::CiRunning, Some(BatchPhase::Build));
                 new.run = Some(run.clone());
-                new.version += 1;
+                new.pass += 1;
                 Outcome::applied(new)
             }
-            Eject { .. } => {
-                let mut new = row.clone();
-                new.version += 1;
-                Outcome::applied(new)
-            }
-            Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. } => illegal(row, kind),
+            PassStarted { n, head } => started(n, Some(head)),
+            Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. } | SuitesStarted { .. }
+            | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassRebuilt { .. } => illegal(row, kind),
         },
 
         BatchState::CiRunning => match kind {
-            Green => {
-                let mut new = row.clone();
-                new.state = BatchState::Green;
-                new.version += 1;
-                Outcome::applied(new)
+            Green => Outcome::applied(moved(BatchState::Green, None)),
+            Red => Outcome::applied(moved(BatchState::Attributing, None)),
+            Eject { .. } => Outcome::applied(stays()),
+            SuitesStarted { n } if *n == row.pass && row.phase == Some(BatchPhase::Build) => {
+                Outcome::applied(moved(BatchState::CiRunning, Some(BatchPhase::Suites)))
             }
-            Red => {
-                let mut new = row.clone();
-                new.state = BatchState::Attributing;
-                new.version += 1;
-                Outcome::applied(new)
-            }
-            Eject { .. } => {
-                let mut new = row.clone();
-                new.version += 1;
-                Outcome::applied(new)
-            }
-            MemberAdded { .. } | CiStarted { .. } | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
-            | Settle | Abandon { .. } => illegal(row, kind),
+            PassGreen { n, .. } if *n == row.pass && row.phase == Some(BatchPhase::Suites) => Outcome::applied(moved(BatchState::Green, None)),
+            PassRed { n, .. } | PassIncomplete { n, .. } if *n == row.pass => Outcome::applied(moved(BatchState::Attributing, None)),
+            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            | PassIncomplete { .. } | PassRebuilt { .. } | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle
+            | Abandon { .. } => illegal(row, kind),
         },
 
         BatchState::Green => match kind {
             FastForward { sha } => {
-                let mut new = row.clone();
-                new.state = BatchState::Landed;
+                let mut new = moved(BatchState::Landed, None);
                 new.reason = Some(sha.clone());
-                new.version += 1;
                 Outcome::applied(new)
             }
-            BaseMoved => {
-                let mut new = row.clone();
-                new.state = BatchState::Rebuilding;
-                new.version += 1;
-                Outcome::applied(new)
+            BaseMoved => Outcome::applied(moved(BatchState::Rebuilding, None)),
+            Eject { .. } => Outcome::applied(moved(BatchState::Open, None)),
+            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            | PassIncomplete { .. } | PassRebuilt { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. } => {
+                illegal(row, kind)
             }
-            Eject { .. } => {
-                let mut new = row.clone();
-                new.state = BatchState::Open;
-                new.version += 1;
-                Outcome::applied(new)
-            }
-            MemberAdded { .. } | CiStarted { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. } => illegal(row, kind),
         },
 
         BatchState::Rebuilding => match kind {
             Rebuilt => {
-                let mut new = row.clone();
-                new.state = BatchState::CiRunning;
-                new.version += 1;
+                let mut new = moved(BatchState::CiRunning, Some(BatchPhase::Build));
+                new.pass += 1;
                 Outcome::applied(new)
             }
-            MemberAdded { .. } | CiStarted { .. } | Green | Red | BaseMoved | FastForward { .. }
-            | Attributed { .. } | Settle | Abandon { .. } | Eject { .. } => illegal(row, kind),
-        },
-
-        BatchState::Attributing => match kind {
-            Attributed { .. } => {
-                let mut new = row.clone();
-                new.version += 1;
-                Outcome::applied(new)
-            }
-            Settle => {
-                let mut new = row.clone();
-                new.state = BatchState::Settled;
-                new.version += 1;
-                Outcome::applied(new)
-            }
-            MemberAdded { .. } | CiStarted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. }
+            PassStarted { n, head } => started(n, Some(head)),
+            MemberAdded { .. } | CiStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. }
+            | PassRebuilt { .. } | Green | Red | BaseMoved | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. }
             | Eject { .. } => illegal(row, kind),
         },
 
+        BatchState::Attributing => match kind {
+            Attributed { .. } | Eject { .. } => Outcome::applied(stays()),
+            Settle => Outcome::applied(moved(BatchState::Settled, None)),
+            PassRebuilt { head } => {
+                let mut new = moved(BatchState::Open, None);
+                new.head = Some(head.clone());
+                Outcome::applied(new)
+            }
+            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            | PassIncomplete { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } => illegal(row, kind),
+        },
+
         BatchState::Landed | BatchState::Settled | BatchState::Abandoned => match kind {
-            MemberAdded { .. } | CiStarted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. }
-            | Attributed { .. } | Settle | Abandon { .. } | Eject { .. } => terminal(row),
+            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            | PassIncomplete { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
+            | Settle | Abandon { .. } | Eject { .. } => terminal(row),
         },
     }
 }
@@ -291,6 +341,12 @@ mod tests {
         vec![
             BatchEventKind::MemberAdded { bead_id: "sp-1".into(), tip: "t1".into() },
             BatchEventKind::CiStarted { run: "run1".into() },
+            BatchEventKind::PassStarted { n: 1, head: "h".into() },
+            BatchEventKind::SuitesStarted { n: 1 },
+            BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 },
+            BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 1, build_s: 1 },
+            BatchEventKind::PassIncomplete { n: 1, reason: "cap".into() },
+            BatchEventKind::PassRebuilt { head: "h2".into() },
             BatchEventKind::Green,
             BatchEventKind::Red,
             BatchEventKind::BaseMoved,
@@ -418,8 +474,8 @@ mod tests {
     }
 
     #[test]
-    fn eject_refused_outside_open_and_ci_running() {
-        for &state in &[BatchState::Rebuilding, BatchState::Attributing, BatchState::Landed, BatchState::Settled, BatchState::Abandoned] {
+    fn eject_refused_outside_open_ci_running_green_and_attributing() {
+        for &state in &[BatchState::Rebuilding, BatchState::Landed, BatchState::Settled, BatchState::Abandoned] {
             let r = row(state);
             let out = apply(&r, &ev(state, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
             assert!(!out.applied, "{state:?} must refuse eject");
@@ -444,5 +500,77 @@ mod tests {
         assert!(!out.applied);
         assert_eq!(out.row, r);
         assert!(matches!(out.refusal, Some(Refusal::StaleVersion { .. })));
+    }
+
+    fn step(r: &BatchRow, kind: BatchEventKind) -> BatchRow {
+        let out = apply(r, &ev(r.state, r.version, kind.clone()));
+        assert!(out.applied, "{kind:?} refused at {:?}: {:?}", r.state, out.refusal);
+        out.row
+    }
+
+    fn refused(r: &BatchRow, kind: BatchEventKind) -> String {
+        let out = apply(r, &ev(r.state, r.version, kind));
+        assert!(!out.applied);
+        assert_eq!(out.row, *r);
+        match out.refusal {
+            Some(Refusal::IllegalTransition { state, .. }) => state,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_round_through_a_red_pass_an_eject_and_a_green_second_pass() {
+        let r = row(BatchState::Open);
+        let r = step(&r, BatchEventKind::PassStarted { n: 1, head: "h1".into() });
+        assert_eq!((r.state, r.pass, r.phase), (BatchState::CiRunning, 1, Some(BatchPhase::Build)));
+        let r = step(&r, BatchEventKind::SuitesStarted { n: 1 });
+        assert_eq!(r.phase, Some(BatchPhase::Suites));
+        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 90, build_s: 30 });
+        assert_eq!((r.state, r.phase), (BatchState::Attributing, None));
+        let r = step(&r, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "red".into() });
+        assert_eq!(r.state, BatchState::Attributing);
+        let r = step(&r, BatchEventKind::PassRebuilt { head: "h2".into() });
+        assert_eq!((r.state, r.head.as_deref(), r.pass), (BatchState::Open, Some("h2"), 1));
+        let r = step(&r, BatchEventKind::PassStarted { n: 2, head: "h2".into() });
+        let r = step(&r, BatchEventKind::SuitesStarted { n: 2 });
+        let r = step(&r, BatchEventKind::PassGreen { n: 2, suites_s: 80, build_s: 20 });
+        assert_eq!((r.state, r.pass, r.phase), (BatchState::Green, 2, None));
+    }
+
+    #[test]
+    fn a_pass_killed_at_the_cap_is_incomplete_not_green() {
+        let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
+        let r = step(&r, BatchEventKind::SuitesStarted { n: 1 });
+        let incomplete = step(&r, BatchEventKind::PassIncomplete { n: 1, reason: "over the 900s cap".into() });
+        assert_eq!(incomplete.state, BatchState::Attributing);
+        let green = apply(&row(BatchState::Attributing), &ev(BatchState::Attributing, 0, BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 }));
+        assert!(!green.applied);
+    }
+
+    #[test]
+    fn pass_events_must_name_the_current_pass_and_phase() {
+        let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
+        let at = refused(&r, BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 });
+        assert_eq!(at, "CI_RUNNING (pass 1, phase build)", "a green before the suites started is refused, naming the phase");
+        refused(&r, BatchEventKind::SuitesStarted { n: 2 });
+        refused(&row(BatchState::Open), BatchEventKind::PassStarted { n: 2, head: "h".into() });
+        let s = step(&r, BatchEventKind::SuitesStarted { n: 1 });
+        refused(&s, BatchEventKind::SuitesStarted { n: 1 });
+        refused(&s, BatchEventKind::PassGreen { n: 3, suites_s: 1, build_s: 1 });
+    }
+
+    #[test]
+    fn a_build_failure_is_red_from_the_build_phase() {
+        let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
+        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["workspace-build".into()], suites_s: 0, build_s: 12 });
+        assert_eq!(r.state, BatchState::Attributing);
+    }
+
+    #[test]
+    fn a_rebuilt_base_moved_round_starts_its_next_pass_from_rebuilding() {
+        let mut r = row(BatchState::Rebuilding);
+        r.pass = 1;
+        let r = step(&r, BatchEventKind::PassStarted { n: 2, head: "h2".into() });
+        assert_eq!((r.state, r.pass), (BatchState::CiRunning, 2));
     }
 }

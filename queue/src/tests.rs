@@ -291,6 +291,8 @@ struct FScripts {
     /// What `round-vm run` answers, and the `<suite>.result` files it leaves in --results-dir.
     round_vm: RefCell<RunOut>,
     round_vm_results: RefCell<Vec<(String, String)>>,
+    /// The `runner.meta` it leaves beside them (empty = none).
+    round_vm_meta: RefCell<String>,
 }
 
 impl Scripts for FScripts {
@@ -321,6 +323,9 @@ impl Scripts for FScripts {
         fs::create_dir_all(results).unwrap();
         for (suite, status) in self.round_vm_results.borrow().iter() {
             fs::write(results.join(format!("{suite}.result")), format!("{status}\n")).unwrap();
+        }
+        if !self.round_vm_meta.borrow().is_empty() {
+            fs::write(results.join("runner.meta"), &*self.round_vm_meta.borrow()).unwrap();
         }
         self.round_vm.borrow().clone()
     }
@@ -403,12 +408,14 @@ struct FLc {
     event_ignored: Cell<bool>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
+    /// When set, the batch answers (state, version, pass, phase) and follows the pass events it is sent.
+    batch_view: RefCell<Option<(String, u64, u32, String)>>,
     calls: RefCell<Vec<String>>,
 }
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -429,7 +436,17 @@ impl Lc for FLc {
     }
     fn batch_state(&self, id: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
-        Some(("CI_RUNNING".into(), "4".into()))
+        match &*self.batch_view.borrow() {
+            Some((s, v, _, _)) => Some((s.clone(), v.to_string())),
+            None => Some(("CI_RUNNING".into(), "4".into())),
+        }
+    }
+    fn batch_pass(&self, id: &str) -> Option<(u32, String)> {
+        self.calls.borrow_mut().push(format!("show-batch {id}"));
+        match &*self.batch_view.borrow() {
+            Some((_, _, n, p)) => Some((*n, p.clone())),
+            None => Some((1, "suites".into())),
+        }
     }
     fn create_bead(&self, id: &str) {
         self.calls.borrow_mut().push(format!("create-bead {id}"));
@@ -451,6 +468,18 @@ impl Lc for FLc {
     }
     fn batch_event(&self, id: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("event batch {id} {s} {v} {kind}"));
+        if let Some(view) = self.batch_view.borrow_mut().as_mut() {
+            let n: u32 = kind.split("\"n\":").nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|d| d.parse().ok()).unwrap_or(view.2);
+            let (state, pass, phase) = match kind.trim_start_matches("{\"").split('"').next().unwrap_or("") {
+                "PassStarted" => ("CI_RUNNING", n, "build"),
+                "SuitesStarted" => ("CI_RUNNING", view.2, "suites"),
+                "PassGreen" => ("GREEN", view.2, ""),
+                "PassRed" | "PassIncomplete" => ("ATTRIBUTING", view.2, ""),
+                "PassRebuilt" => ("OPEN", view.2, ""),
+                _ => (view.0.as_str(), view.2, view.3.as_str()),
+            };
+            *view = (state.to_string(), view.1 + 1, pass, phase.to_string());
+        }
         Ok(())
     }
     fn bead_state(&self, bead: &str) -> Option<(String, String)> {
