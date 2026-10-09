@@ -43,7 +43,7 @@ pub struct Conn {
 
 /// A query's server-side deadline: a statement that has not answered in this long is
 /// abandoned and reported as [`DEADLINE_MESSAGE`], never as a partial answer.
-pub const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+pub const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10); // batch-job: queries queue behind a loaded Dolt in the round VM
 pub const DEADLINE_MESSAGE: &str = "deadline";
 
 /// The admin batch verbs' socket limit (admin-apply-ddl, admin-migrate): one-off install

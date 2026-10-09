@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub const LC_TIMEOUT: Duration = Duration::from_secs(15);
+pub const LC_TIMEOUT: Duration = Duration::from_secs(15); // batch-job: spira-lc requests queue behind a loaded Dolt in the round VM
 
 /// Print a service answer: a "cannot tell" refusal goes to stderr, so a caller capturing stdout
 /// as an id or a value gets nothing, never the refusal text (law-never-derive-an-id-from-output).
