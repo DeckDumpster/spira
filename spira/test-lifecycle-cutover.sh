@@ -230,13 +230,13 @@ root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key = 'sp-l
 root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-mig','Submit','WORKING','WORKING','SUBMITTED',1,'{}','t',1),('bead','sp-lc-mig','Deliver','CERTIFIED','CERTIFIED','IN_DELIVERY',1,'{}','t',2),('delivery','sp-lc-mig','Cut','QUEUED','QUEUED','BATCHED',1,'{}','t',3)" >/dev/null
 lc event-continuity >/dev/null
 wantrc "POSITIVE CONTROL: the old hard-coded states are seen as breaks" 3 $?
-root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0014-event-continuity.sql" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0015-event-continuity.sql" >/dev/null 2>&1
 wantrc "migration 0013 applies" 0 $?
 is "the Deliver now says what the bead was" "SUBMITTED" "$(ev_field bead sp-lc-mig Deliver from_state)"
 is "the Cut of a row with no predecessor says NONE" "NONE" "$(ev_field delivery sp-lc-mig Cut from_state)"
 lc event-continuity >/dev/null
 wantrc "...and the log is continuous again" 0 $?
-root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0014-event-continuity.sql" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0015-event-continuity.sql" >/dev/null 2>&1
 wantrc "migration 0013 is idempotent" 0 $?
 
 # ── criterion 1: a green batch lands every member atomically in one transaction ──────────
