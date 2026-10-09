@@ -1569,6 +1569,135 @@ pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str) {
     }
 }
 
+/// A `queue round` verb running beside the caller, its output in files so a full pipe cannot
+/// stall it. The staged round's two long verbs run this way: `stage` while the open round's
+/// suites run, `stage-test` while it lands.
+pub struct BgVerb {
+    child: std::process::Child,
+    what: String,
+    out: PathBuf,
+    err: PathBuf,
+}
+
+fn round_verb_bg(env: &Env, args: &[&str], stdin: &str) -> Result<BgVerb, String> {
+    use std::io::Write;
+    let what = format!("queue round {}", args.first().copied().unwrap_or(""));
+    let stem = env.run.join(format!("round-bg-{}-{}", std::process::id(), args.first().copied().unwrap_or("verb")));
+    let (out, err) = (stem.with_extension("out"), stem.with_extension("err"));
+    let file = |p: &Path| fs::File::create(p).map_err(|e| format!("{what}: {}: {e}", p.display()));
+    // batch-job: this runs whatever its caller names, as long as that takes
+    let mut cmd = Command::new(&env.queue_bin);
+    cmd.arg("round").args(args);
+    cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
+    cmd.stdin(Stdio::piped()).stdout(file(&out)?).stderr(file(&err)?);
+    let mut child = cmd.spawn().map_err(|e| format!("{what}: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        si.write_all(stdin.as_bytes()).map_err(|e| format!("{what}: stdin: {e}"))?;
+    }
+    Ok(BgVerb { child, what, out, err })
+}
+
+impl BgVerb {
+    pub fn wait(mut self) -> Result<VerbRun, String> {
+        let status = self.child.wait().map_err(|e| format!("{}: {e}", self.what))?;
+        let read = |p: &Path| {
+            let t = fs::read_to_string(p).unwrap_or_default();
+            let _ = fs::remove_file(p);
+            t
+        };
+        let run = VerbRun { code: status.code(), out: read(&self.out), err: read(&self.err) };
+        if !run.out.is_empty() {
+            print!("{}", run.out);
+        }
+        if !run.err.is_empty() {
+            eprint!("{}", run.err);
+        }
+        Ok(run)
+    }
+}
+
+/// `queue round stage` for `members` behind the open round, in `wt`.
+pub fn round_stage_spawn(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<BgVerb, String> {
+    let text = members.iter().fold(String::new(), |mut acc, m| {
+        acc.push_str(&format!("{}:{}\n", m.id, m.tip));
+        acc
+    });
+    let wt_arg = wt.display().to_string();
+    round_verb_bg(env, &["stage", &repo.name, "--members-file", "-", "--worktree", &wt_arg], &text)
+}
+
+/// The staged round's batch id once the verb wrote the row; any other end is `None` and the
+/// open round goes on as if nothing had been staged.
+pub fn round_stage_done(repo: &Repo, bg: BgVerb) -> Option<String> {
+    match bg.wait() {
+        Ok(run) if run.code == Some(0) => verb_value(&run.out, "batch"),
+        Ok(run) => {
+            println!("batcher {}: {} — no round staged", repo.name, verb_failed("queue round stage", &run));
+            None
+        }
+        Err(e) => {
+            println!("batcher {}: {e} — no round staged", repo.name);
+            None
+        }
+    }
+}
+
+pub fn round_stage_test_spawn(env: &Env, repo: &Repo) -> Result<BgVerb, String> {
+    round_verb_bg(env, &["stage-test", &repo.name], "")
+}
+
+/// True when the staged round's own pass ended green.
+pub fn round_stage_test_done(repo: &Repo, bg: BgVerb) -> bool {
+    match bg.wait() {
+        Ok(run) if run.code == Some(0) => true,
+        Ok(run) => {
+            println!("batcher {}: {} — the staged round gets its own pass", repo.name, verb_failed("queue round stage-test", &run));
+            false
+        }
+        Err(e) => {
+            println!("batcher {}: {e}", repo.name);
+            false
+        }
+    }
+}
+
+/// What `queue round promote` cut: the round now OPEN, its head, its members, and whether the
+/// staged pass was attested as that round's certification.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Promotion {
+    pub batch: String,
+    pub head: String,
+    pub members: Vec<(String, String)>,
+    pub attested: bool,
+}
+
+pub fn parse_promotion(out: &str) -> Option<Promotion> {
+    let members = verb_value(out, "members")?
+        .split_whitespace()
+        .filter_map(|m| m.split_once(':').map(|(i, t)| (i.to_string(), t.to_string())))
+        .collect();
+    Some(Promotion { batch: verb_value(out, "batch")?, head: verb_value(out, "head")?, members, attested: verb_value(out, "attested").as_deref() == Some("1") })
+}
+
+/// `queue round promote`. A refusal is not an error: the verb has discarded the stage, or left
+/// it for `round discard`, and the next cut proceeds from the pool as ever.
+pub fn round_promote(env: &Env, repo: &Repo) -> Option<Promotion> {
+    match round_verb(env, &["promote", &repo.name], "") {
+        Ok(run) if run.code == Some(0) => parse_promotion(&run.out).or_else(|| {
+            println!("batcher {}: queue round promote named no round", repo.name);
+            None
+        }),
+        Ok(run) => {
+            println!("batcher {}: {}", repo.name, verb_failed("queue round promote", &run));
+            None
+        }
+        Err(e) => {
+            println!("batcher {}: {e}", repo.name);
+            None
+        }
+    }
+}
+
 /// Exit 1 is the verb's own refusal — reported, not an error; exit 3 is a deploy fault: the
 /// members landed, only the release was not activated.
 #[derive(Debug, PartialEq, Eq)]
@@ -2547,6 +2676,45 @@ mod land_exit_tests {
 
     fn repo_at(d: &Path) -> Repo {
         Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: d.to_path_buf(), land: Land::Local }
+    }
+
+    fn echo_queue(d: &Path, script: &str) -> Env {
+        let mut e = lifecycle_tests_env(d);
+        testkit::write_exe(&d.join("queue"), &format!("#!/bin/sh\n{script}\n"));
+        e.queue_bin = d.join("queue");
+        e
+    }
+
+    #[test]
+    fn a_promotion_names_its_round_head_members_and_whether_it_was_attested() {
+        let p = parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1 sp-b:t2\nattested=1\n").unwrap();
+        assert_eq!(p, Promotion { batch: "r2".into(), head: "abc".into(), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attested: true });
+        assert!(!parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1\nattested=0\n").unwrap().attested);
+        assert_eq!(parse_promotion("batch=r2\nmembers=sp-a:t1\n"), None, "a promotion with no head names no tree to land");
+    }
+
+    #[test]
+    fn a_stage_runs_beside_the_caller_and_names_its_batch_only_on_success() {
+        let d = testkit::TempDir::new("batcher-cut-stage");
+        let e = echo_queue(&d, "cat >/dev/null; echo \"$@\" > '/dev/null'; echo batch=r2; echo not-this >&2");
+        let m = Member { id: "sp-a".into(), tip: "t1".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: Vec::new() };
+        let bg = round_stage_spawn(&e, &repo_at(&d), &d.join("wt"), &[m.clone()]).unwrap();
+        assert_eq!(round_stage_done(&repo_at(&d), bg), Some("r2".into()));
+        let e = echo_queue(&d, "cat >/dev/null; echo batch=r2; exit 1");
+        let bg = round_stage_spawn(&e, &repo_at(&d), &d.join("wt"), &[m]).unwrap();
+        assert_eq!(round_stage_done(&repo_at(&d), bg), None, "a refused stage staged nothing");
+    }
+
+    #[test]
+    fn a_stage_test_is_green_only_on_exit_zero_and_a_refused_promote_is_none() {
+        let d = testkit::TempDir::new("batcher-cut-stage-test");
+        let e = echo_queue(&d, "exit 0");
+        assert!(round_stage_test_done(&repo_at(&d), round_stage_test_spawn(&e, &repo_at(&d)).unwrap()));
+        let e = echo_queue(&d, "exit 1");
+        assert!(!round_stage_test_done(&repo_at(&d), round_stage_test_spawn(&e, &repo_at(&d)).unwrap()));
+        assert_eq!(round_promote(&e, &repo_at(&d)), None);
+        let e = echo_queue(&d, "echo batch=r2; echo head=h; echo members=sp-a:t1; echo attested=0");
+        assert_eq!(round_promote(&e, &repo_at(&d)).map(|p| (p.batch, p.attested)), Some(("r2".into(), false)));
     }
 
     #[test]
