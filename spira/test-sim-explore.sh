@@ -17,7 +17,7 @@ NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u 
 W="$T/w"
 (cd "$REPO" && env "${NOLOC[@]}" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" world up "$W") 2>&1 | tail -3
 sed -i '/SPIRA_LIFECYCLE_ENFORCE/d' "$W/config/sim.env"
-echo "SPIRA_HOME=$W/release" >> "$W/config/sim.env"
+echo "SPIRA_HOME=$W/release/spira" >> "$W/config/sim.env"
 env "${NOLOC[@]}" "$SPIRA_RELEASE/bin/spira-config" set spira.batcher_enable 1 "$W/config/sim.toml"
 in_world() {
     local -a kv=()
