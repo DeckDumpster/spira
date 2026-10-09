@@ -23,12 +23,13 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The "plane work" line of `world status`, which it prints first; the rest of its report takes
-/// it tens of seconds, so read until the line and stop rather than wait for all of it.
+/// The "plane work" line of `world status`, which it prints first (within a second); the rest of
+/// its report takes it tens of seconds, so read until the line and stop. The 5 s deadline bounds
+/// the whole call, so nothing it spawned outlives it.
 fn world_plane() -> Result<String, String> {
     use std::io::BufRead;
     let mut child = Command::new("timeout")
-        .args(["20", "world", "status"])
+        .args(["5", "world", "status"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()

@@ -434,9 +434,9 @@ struct Flat {
     auto_open: bool,
 }
 
-fn flatten(nodes: Vec<Node>, depth: usize, parent: Option<usize>, out: &mut Vec<Flat>) -> Vec<usize> {
+fn flatten(level: Vec<Node>, depth: usize, parent: Option<usize>, out: &mut Vec<Flat>) -> Vec<usize> {
     let mut ids = Vec::new();
-    for n in nodes {
+    for n in level {
         let i = out.len();
         out.push(Flat { key: n.key, line: n.line, depth, parent, kids: Vec::new(), elide: n.elide, fold: n.fold, auto_open: n.auto_open });
         let kids = flatten(n.kids, depth + 1, Some(i), out);
