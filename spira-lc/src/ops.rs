@@ -8,7 +8,11 @@ use serde_json::Value;
 use crate::db::Conn;
 
 /// The only views `ops-view` will name; the argument is matched, never interpolated.
-pub const VIEWS: [&str; 5] = ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell"];
+pub const VIEWS: [&str; 6] = ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell", "ops_dwell_p95"];
+
+/// Every applied state change of the last day, read from the event time index.
+pub const GANTT_SQL: &str = "SELECT seq, lc_key AS bead_id, from_state, to_state, at FROM event \
+     WHERE machine = 'bead' AND applied = 1 AND at >= UNIX_TIMESTAMP() - 86400 AND from_state <> to_state";
 
 const LIVE_STATES: &str = "'OPEN', 'READY', 'WORKING', 'SUBMITTED', 'CERTIFIED', 'IN_DELIVERY', 'REWORK'";
 
@@ -19,6 +23,32 @@ pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
     match conn.query(&format!("SELECT * FROM {view}")) {
         Ok(rows) => (0, Value::Array(rows).to_string()),
         Err(e) => (2, format!("cannot tell: {e:?}")),
+    }
+}
+
+/// The stuck page's bars: the day's transitions plus the clock they are measured against.
+pub fn cmd_ops_gantt(args: &[String], conn: &Conn) -> (i32, String) {
+    if args.first().map(String::as_str) == Some("--print-sql") {
+        return (0, GANTT_SQL.to_string());
+    }
+    match conn.query(GANTT_SQL) {
+        Ok(rows) => (0, serde_json::json!({ "now": crate::db::now_epoch(), "events": rows }).to_string()),
+        Err(e) => (2, format!("cannot tell: {e:?}")),
+    }
+}
+
+/// One bead's whole timeline, refused events included, with the row that says who holds it.
+pub fn cmd_ops_bead(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(id) = args.first() else {
+        return (2, "ops-bead: missing <bead-id>".into());
+    };
+    let key = crate::rows::escape(id);
+    let bead = conn.query(&format!("SELECT bead_id, state, holder, persona, lease_until, holds, reason, gate_key, title, priority, updated_at FROM bead WHERE bead_id = '{key}'"));
+    let events = conn.query(&format!("SELECT seq, event, from_state, to_state, applied, refusal, evidence, actor, at FROM event WHERE machine = 'bead' AND lc_key = '{key}' ORDER BY seq"));
+    match (bead, events) {
+        (Ok(b), Ok(e)) if b.is_empty() && e.is_empty() => (1, "{}".into()),
+        (Ok(b), Ok(e)) => (0, serde_json::json!({ "now": crate::db::now_epoch(), "bead": b.first(), "events": e }).to_string()),
+        (Err(e), _) | (_, Err(e)) => (2, format!("cannot tell: {e:?}")),
     }
 }
 

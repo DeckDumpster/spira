@@ -209,9 +209,9 @@ fi
 echo ""
 echo "loom"
 # =============================================================================
-# Probe Loom at $SPIRA_LOOM_ADDR/api/beads. python3 is a fatal doctor requirement
+# Probe Loom at $SPIRA_LOOM_ADDR/stuck. python3 is a fatal doctor requirement
 # so it is always available. SPIRA_LOOM_PROBE overrides the HTTP call for test fixtures.
-_loom_url="http://$SPIRA_LOOM_ADDR/api/beads"
+_loom_url="http://$SPIRA_LOOM_ADDR/stuck"
 # loom is in every release's bin/ (sp-gypjk): there is no "not built" state to skip on.
 {
     _loom_probe_cmd="${SPIRA_LOOM_PROBE:-}"

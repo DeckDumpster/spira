@@ -124,9 +124,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # tmux: cockpit panes; doctor.sh WARN.
 # inotify-tools: provides inotifywait; test-mail-deliver.sh exercises the real binary.
 # aerc: test-mail-deliver.sh and related suites use it as a stub target.
-# nodejs: gate the browser page's view model; test-loom-page.sh exits 0 with SKIP
-#         when node is absent, making syntax errors in loom/static/ permanently
-#         invisible. This is the hard argument for including it.
+# nodejs: scripts and suites that still run under node.
 # build-essential: gcc for cargo's C linker when compiling Rust crates.
 # curl+ca-certificates: download gh and dolt release archives.
 # locales: locale-gen; suites need a UTF-8 locale for string operations.

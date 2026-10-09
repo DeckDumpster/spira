@@ -1,7 +1,6 @@
 [Unit]
-# The Loom server — a read endpoint over the live beads graph, with the page that draws it.
-# One binary, two routes: GET /api/beads returns the graph; GET / returns the page.
-Description=Loom — a read endpoint over the live beads graph
+# The Loom server — the stuck page, the lifecycle view and the ops read endpoint.
+Description=Loom — where work is stuck, read from the lifecycle store
 Documentation=file://@SPIRA_HOME@/loom.sh
 After=default.target
 StartLimitIntervalSec=60
