@@ -215,4 +215,17 @@ as_root spira-lc admin-apply-ddl "$SHIPPED/0002-since.sql" >"$TMP/m2.log" 2>&1
 wantrc "0002-since.sql applies via admin-apply-ddl" 0 $?
 want "since now exists" "since" "$(columns)"
 
+echo
+echo "0008 adds the per-key history index as the admin, and the history read's plan uses it"
+as_root spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema2.log" 2>&1
+root_sql --use-db spira_lifecycle sql -q "DROP INDEX event_history_idx ON event" >/dev/null 2>&1
+hq="EXPLAIN FORMAT=TREE SELECT seq, machine, lc_key, event FROM event WHERE lc_key = 'sp-1' ORDER BY seq"
+plan="$(root_sql --use-db spira_lifecycle sql -r csv -q "$hq" 2>&1)"
+nowant "positive control: without the index the plan does not use it" "event_history_idx" "$plan"
+out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "the pending index migration applies as the admin" 0 $rc
+want "reports 0008 applied" "0008-event-history-idx.sql" "$out"
+plan="$(root_sql --use-db spira_lifecycle sql -r csv -q "$hq" 2>&1)"
+want "the history read's plan uses event_history_idx" "event_history_idx" "$plan"
+
 tl_summary
