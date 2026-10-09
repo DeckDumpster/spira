@@ -293,7 +293,6 @@ impl<'a> Sentinel<'a> {
             "--czar-outcome-check",
             "--pr-stall-check",
             "--lock-holders-check",
-            "--disabled-timer-check",
             "--release-skew-check",
             "--deploy-fault-check",
             "--sccache-wedge-check",
