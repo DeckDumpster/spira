@@ -435,6 +435,8 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     )?;
     run(Command::new("tar").arg("-xf").arg(&tarball).arg("-C").arg(&work), CALL_DEADLINE)?;
     std::fs::remove_file(&tarball).map_err(|e| e.to_string())?;
+    let runner = dir.join("config/suite-runner");
+    std::fs::write(work.join("gate.steps"), stub_gate_steps(&runner)).map_err(|e| e.to_string())?;
     git(&work, &["add", "-A"])?;
     git(&work, &["commit", "-q", "-m", "sim seed"])?;
     git(&work, &["remote", "add", "origin", &p(&origin)])?;
@@ -500,6 +502,12 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     )
     .map_err(|e| e.to_string())?;
     steps.lc_serve(dir, &fixture)
+}
+
+/// The gate string the tree under test carries inside a world: the stub suite runner alone, whose
+/// verdict a scenario decides. The tree's own gate builds tools with cargo and runs suites.
+pub fn stub_gate_steps(runner: &Path) -> String {
+    format!("step \"{}\"\n", runner.display())
 }
 
 /// The one registry row of a world: `name|path|land|base|format|gate|lanes`.

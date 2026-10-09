@@ -209,8 +209,9 @@ impl ProcessExec {
 
 impl Exec for ProcessExec {
     fn run(&mut self, command: &str, now_ms: u64) -> Result<i32, String> {
+        let started = std::time::Instant::now();
         let (status, out, err) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
-        self.log(command, now_ms, &format!("{status}"), &out, &err);
+        self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
 }
