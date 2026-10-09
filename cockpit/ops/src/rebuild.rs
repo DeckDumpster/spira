@@ -362,7 +362,6 @@ impl Rebuild {
             hunk_win.as_ref().is_some_and(|w| cockpit_wins.contains(w)),
         );
 
-        sleep(Duration::from_secs(3));
         let health_pane = self
             .tmux
             .list_panes("brain:0", "#{pane_id} #{@cockpit}")
@@ -375,11 +374,7 @@ impl Rebuild {
         match health_pane {
             None => chk(&mut fail, &mut out, "health pane renders content", false),
             Some(pid) => {
-                let n = self
-                    .tmux
-                    .capture_pane(&pid)
-                    .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
-                    .unwrap_or(0);
+                let n = wait_for_first_render(&self.tmux, &pid);
                 if n > 0 {
                     out.push(format!("  ok    health pane renders content ({n} non-blank line(s))"));
                 } else {
@@ -423,6 +418,29 @@ fn chk(fail: &mut u32, out: &mut Vec<String>, label: &str, ok: bool) {
         out.push(format!("  FAIL  {label}"));
         *fail += 1;
     }
+}
+
+/// Non-blank line count of the pane, polled until it first renders or its process exits.
+/// The ceiling only bounds a pane that never renders; a rendering pane returns on the
+/// first sample that shows content (law-a-load-red-waits-on-a-signal).
+fn wait_for_first_render(tmux: &Tmux, pane: &str) -> usize {
+    let count = || {
+        tmux.capture_pane(pane)
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+            .unwrap_or(0)
+    };
+    for _ in 0..240 {
+        let n = count();
+        if n > 0 {
+            return n;
+        }
+        let dead = tmux.stdout(&["display-message", "-p", "-t", pane, "#{pane_dead}"]).is_none_or(|d| d.trim() != "0");
+        if dead {
+            break;
+        }
+        sleep(Duration::from_millis(250));
+    }
+    count()
 }
 
 fn first_untagged_pane(tmux: &Tmux, window: &str) -> Option<String> {
