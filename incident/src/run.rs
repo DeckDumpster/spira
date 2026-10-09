@@ -24,6 +24,7 @@ pub struct FileConfig<'a> {
     pub home_repo: &'a str,
     pub known_repos: &'a [String],
     pub ask_label: &'a str,
+    pub express: bool,
     pub provenance: &'a str,
 }
 
@@ -289,6 +290,12 @@ fn file_new(
             cfg.home_repo.to_string()
         };
         bd.set_state(cfg.db, &id, &format!("repo={effective}"));
+    }
+
+    if cfg.express {
+        if let Err(e) = spira_config::lifecycle_row::set_express(&id, true) {
+            log.push(format!("warning: {id} filed but not marked express: {e}"));
+        }
     }
 
     match cfg.delivers_pref {
@@ -571,6 +578,7 @@ mod tests {
             home_repo: "spira",
             known_repos: known,
             ask_label: "needs-ryan", // literal-ok: test fixture value, not a config default read at runtime.
+            express: false,
             provenance: "foo.service on host: ?",
         }
     }

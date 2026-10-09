@@ -229,6 +229,24 @@ pub struct LifecycleRow {
     pub snoozed_until: Option<i64>,
 }
 
+/// The beads whose lifecycle row carries Express (`spira-lc list`'s `express` column,
+/// string-valued like the rest).
+pub fn express_ids(text: &str) -> Result<BTreeSet<String>, String> {
+    let v: Value = serde_json::from_str(text.trim()).map_err(|e| format!("lifecycle snapshot is not JSON: {e}"))?;
+    let on = |r: &Value| match r.get("express") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_u64().unwrap_or(0) != 0,
+        Some(Value::String(s)) => matches!(s.trim(), "1" | "true"),
+        _ => false,
+    };
+    Ok(v.as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| on(r))
+        .filter_map(|r| r.get("bead_id").and_then(Value::as_str).map(str::to_string))
+        .collect())
+}
+
 pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, String> {
     let t = text.trim();
     if t.is_empty() {
@@ -806,5 +824,12 @@ mod tests {
         assert!(m["b"].holds.is_empty());
         assert!(parse_lifecycle("").is_err());
         assert!(parse_lifecycle(r#"[{"bead_id":"a","state":"NOPE"}]"#).is_err());
+    }
+
+    #[test]
+    fn express_ids_reads_the_column_in_every_encoding_and_refuses_non_json() {
+        let ids = express_ids(r#"[{"bead_id":"a","express":"1"},{"bead_id":"b","express":0},{"bead_id":"c","express":true},{"bead_id":"d"},{"bead_id":"e","express":"0"}]"#).unwrap();
+        assert_eq!(ids.into_iter().collect::<Vec<_>>(), ["a", "c"]);
+        assert!(express_ids("nope").is_err());
     }
 }

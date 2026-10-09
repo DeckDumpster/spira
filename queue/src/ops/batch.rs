@@ -370,7 +370,14 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             acc.push_str(&format!("{i} {t} {e}\n"));
             acc
         });
-        cands = w.lib.sort_rows(&c.s.express_label, &path, &base_sha, &prio, &rows);
+        let express: std::collections::HashSet<String> = match w.lc.express_ids() {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                eprintln!("queue: express set unreadable ({e}) -- ranking without it");
+                Default::default()
+            }
+        };
+        cands = w.lib.sort_rows(&express, &path, &base_sha, &prio, &rows);
     }
 
     // Admission: the member's lifecycle row, read fresh, is still CERTIFIED — waiting for a

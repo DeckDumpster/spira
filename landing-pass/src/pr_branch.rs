@@ -366,6 +366,7 @@ mod tests {
                     external_ref: None,
                     title: "a bead".into(),
                     notes: Vec::new(),
+                    express: false,
                 })
                 .collect())
         }

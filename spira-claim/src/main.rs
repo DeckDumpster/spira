@@ -60,10 +60,10 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
-       spira-claim ready-count <labels> [<exclude-labels>] [--json]          (ready_count; prints '0' on a failed query too; --json: the rows)
+       spira-claim ready-count <labels> [<exclude-labels>] [--json] [--express]          (ready_count; prints '0' on a failed query too; --json: the rows)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
-       spira-claim fayth-ready <fayth> [--json]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
+       spira-claim fayth-ready <fayth> [--json] [--express]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; the machine's claimable set)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
@@ -708,7 +708,7 @@ fn cmd_ready_args(a: &Args, env: &mut Env) -> Outcome {
 /// one ready set for a reader that shows beads rather than counts them, so nothing outside
 /// spira-claim asks bd for "ready" itself.
 fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
         return Outcome::usage(e);
     }
     let (labels, exclude) = match a.pos.as_slice() {
@@ -840,7 +840,12 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
     lc.extend(st.lifecycle_of(&blocker_rows)?);
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
-    Ok(rows.into_iter().filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. })).collect())
+    let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
+    Ok(rows
+        .into_iter()
+        .filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }))
+        .filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id)))
+        .collect())
 }
 
 /// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of FOUR things
@@ -871,7 +876,7 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
 /// `--json` prints the counted rows instead of their number: an aeon's ready set, so what it
 /// claims from is what the sentinel summoned it for.
 fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
@@ -894,7 +899,7 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
     }
     let json = a.has("--json");
     if let Ok(cache) = std::env::var("SPIRA_READY_CACHE") {
-        if !cache.is_empty() && !json {
+        if !cache.is_empty() && !json && !a.has("--express") {
             if let Ok(text) = std::fs::read_to_string(&cache) {
                 return Outcome::ok(ready_cache_lookup(&text, &me).to_string());
             }

@@ -3,6 +3,7 @@
 //! environment and the two output streams. `real.rs` implements them against the host;
 //! the unit tests implement them as fakes.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
@@ -45,8 +46,6 @@ pub struct Settings {
     /// `SPIRA_MAIL_SESSION_MAILBOX` (declared value): the mailbox `notify`/`divergence`
     /// alarm into.
     pub mailbox: String,
-    /// `SPIRA_EXPRESS_LABEL` (declared value): the bd label `sort_rows` ranks first.
-    pub express_label: String,
     /// `SPIRA_ROUND_CERTIFY_WALL_SECS` (declared value): the wall `round certify` allows the
     /// round VM's corpus.
     pub round_wall_secs: u64,
@@ -178,8 +177,8 @@ pub trait Lib {
     fn rebase(&self, branch: &str, onto: &str, path: &Path, name: &str) -> Result<(), String>;
     fn land_subject(&self, id: &str) -> String;
     /// R15: `queue_sort_rows` over `<id> <tip> <epoch>` rows; returns `<id> <tip>` rows.
-    /// `express_label`: `Settings::express_label` (`SPIRA_EXPRESS_LABEL`'s declared value).
-    fn sort_rows(&self, express_label: &str, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
+    /// `express`: the beads whose lifecycle row carries Express.
+    fn sort_rows(&self, express: &HashSet<String>, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str);
     fn format_batch(&self, wt: &Path, base: &str, name: &str);
     /// `_base_conflict`: true when the tip conflicts with the base.
@@ -283,6 +282,8 @@ pub trait Lc {
     fn probe(&self) -> Result<(), String>;
     /// `list [--state S]`: every bead row (with `since`). Err = cannot tell.
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String>;
+    /// `list --express`: the id of every bead whose row carries Express. Err = cannot tell.
+    fn express_ids(&self) -> Result<Vec<String>, String>;
     /// `show <bead>` → the bead row; None when it has no row or the machine cannot say.
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow>;
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.

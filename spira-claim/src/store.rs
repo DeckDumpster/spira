@@ -178,6 +178,10 @@ impl Store {
         Ok(out)
     }
 
+    pub fn express_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
+        Ok(self.lc_list(&["--express"])?.into_keys().collect())
+    }
+
     fn lc_list(&self, filter: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
         let mut c = Command::new(&self.lc);
         c.arg("list").args(filter);

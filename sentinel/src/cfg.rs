@@ -195,7 +195,6 @@ pub struct Declared {
     pub max_live_aeons: Option<i64>,
     pub lanes_max_live: Option<i64>,
     pub queue_throttle_override: String,
-    pub express_label: String,
     pub summon_lock_wait: u64,
     /// `SPIRA_LANES`, for CHECK 7's own log line (summon.rs) — display only.
     pub lanes: String,
@@ -248,7 +247,6 @@ impl Declared {
             max_live_aeons: opt_i64("SPIRA_MAX_LIVE_AEONS")?,
             lanes_max_live: opt_i64("SPIRA_LANES_MAX_LIVE")?,
             queue_throttle_override: spira_config::process::cfg("SPIRA_QUEUE_THROTTLE_OVERRIDE")?,
-            express_label: spira_config::process::cfg("SPIRA_EXPRESS_LABEL")?,
             summon_lock_wait: spira_config::process::cfg_parse::<u64>("SPIRA_SUMMON_LOCK_WAIT")?,
             lanes: spira_config::process::cfg("SPIRA_LANES")?,
             repo_map: spira_config::process::cfg("SPIRA_REPO_MAP")?,
@@ -285,7 +283,6 @@ impl Declared {
             max_live_aeons: None,
             lanes_max_live: None,
             queue_throttle_override: String::new(),
-            express_label: "express".into(),
             summon_lock_wait: 30,
             lanes: "ops groomer qa maechen czar warden".into(),
             repo_map: String::new(),
@@ -377,10 +374,6 @@ pub struct Cfg {
     pub queue_throttle_override: String,
     /// `SPIRA_THROTTLE_STAMP` (default `$SPIRA_RUN/queue-throttled`).
     pub throttle_stamp: PathBuf,
-    /// `SPIRA_EXPRESS_LABEL` (default "express"): the label `express_ready_in_task_pool`
-    /// composes onto a task fayth's own `FAYTH_LABELS` when the throttle is engaged, and
-    /// the `SPIRA_REQUIRE_LABEL` an express grant restricts the summoned aeon to.
-    pub express_label: String,
     /// `SPIRA_SENTINEL_PASS_BUDGET_SECS` (default 90s): CHECK 7's own per-partition budget,
     /// distinct from `pass_target`, the whole pass's budget.
     pub pass_budget_secs: i64,
@@ -529,7 +522,6 @@ impl Cfg {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| run.join("queue-throttled")),
-            express_label: d.express_label,
             pass_budget_secs: num("SPIRA_SENTINEL_PASS_BUDGET_SECS", 90),
             summon_lock_wait: d.summon_lock_wait,
             lane_round_robin: run.join("lane-round-robin"),

@@ -3,7 +3,7 @@
 //! own files live in a scratch directory.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -244,7 +244,7 @@ impl Lib for FLib {
     fn land_subject(&self, id: &str) -> String {
         format!("spira: land {id}")
     }
-    fn sort_rows(&self, _express_label: &str, _: &Path, _: &str, prio: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(&self, _express: &HashSet<String>, _: &Path, _: &str, prio: &str, rows: &str) -> Vec<(String, String)> {
         self.log(format!("sort_rows {prio}"));
         rows.lines().filter_map(|l| {
             let mut it = l.split_whitespace();
@@ -552,6 +552,10 @@ impl Lc for FLc {
         self.calls.borrow_mut().push(format!("list {}", state.unwrap_or("")));
         self.rows.borrow().clone().map(|r| r.into_iter().filter(|b| state.is_none_or(|s| b.state == s)).collect())
     }
+    fn express_ids(&self) -> Result<Vec<String>, String> {
+        self.calls.borrow_mut().push("list --express".into());
+        Ok(Vec::new())
+    }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
         self.calls.borrow_mut().push(format!("row {bead}"));
         if self.row_fails.get() {
@@ -690,7 +694,6 @@ impl T {
             git_name: "spira".into(),
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
-            express_label: "express".into(),
             round_wall_secs: 900,
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();

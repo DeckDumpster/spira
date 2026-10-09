@@ -26,7 +26,6 @@ pub struct Env {
     pub queue_dir: PathBuf,
     pub db: Option<PathBuf>,
     pub bd: String,
-    pub express_label: String,
     /// `spira-lc` — the one binary allowed to touch `spira_lifecycle` (see `read_certified`).
     pub lc_bin: Option<PathBuf>,
     pub lc_timeout: u64,
@@ -113,10 +112,20 @@ pub fn read_bisect(dir: &Path) -> Result<Option<(Vec<String>, u64)>, String> {
 /// this shells out rather than reading a directory or re-deriving the query in SQL here.
 /// Records are shared across repos; the caller narrows by the bead's `repo:` label.
 pub fn read_certified(env: &Env) -> Result<Vec<String>, String> {
+    lc_list(env, &["--state", "CERTIFIED"])
+}
+
+/// Every bead whose lifecycle row carries Express.
+pub fn read_express(env: &Env) -> Result<BTreeSet<String>, String> {
+    Ok(lc_list(env, &["--express"])?.into_iter().collect())
+}
+
+fn lc_list(env: &Env, filter: &[&str]) -> Result<Vec<String>, String> {
     let bin = env.lc_bin.as_ref().ok_or_else(|| "SPIRA_LC_BIN unset".to_string())?;
     let mut cmd = Command::new("timeout");
-    cmd.arg(env.lc_timeout.to_string()).arg(bin).args(["list", "--state", "CERTIFIED"]);
-    let text = run(&mut cmd, "spira-lc list --state CERTIFIED")?;
+    cmd.arg(env.lc_timeout.to_string()).arg(bin).arg("list").args(filter);
+    let what = format!("spira-lc list {}", filter.join(" "));
+    let text = run(&mut cmd, &what)?;
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("spira-lc list: unparsed output: {e}"))?;
     let items = match v {
         serde_json::Value::Array(a) => a,
@@ -147,7 +156,7 @@ fn run_bd(cmd: &mut Command, what: &str) -> Result<String, String> {
     }
 }
 
-pub fn read_beads(env: &Env, ids: &BTreeSet<String>) -> Result<(BTreeMap<String, Bead>, BTreeMap<String, String>), String> {
+pub fn read_beads(env: &Env, ids: &BTreeSet<String>, express: &BTreeSet<String>) -> Result<(BTreeMap<String, Bead>, BTreeMap<String, String>), String> {
     let mut beads = BTreeMap::new();
     let mut repos = BTreeMap::new();
     if ids.is_empty() {
@@ -179,7 +188,7 @@ pub fn read_beads(env: &Env, ids: &BTreeSet<String>) -> Result<(BTreeMap<String,
             Bead {
                 priority: it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8),
                 title: it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                express: labels.contains(&env.express_label.as_str()),
+                express: express.contains(id),
             },
         );
     }
@@ -351,7 +360,14 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
     for b in [s.batch.as_ref(), prev.batch()].into_iter().flatten() {
         ids.extend(b.members.iter().map(|m| m.id.clone()));
     }
-    match read_beads(env, &ids) {
+    let express = match read_express(env) {
+        Ok(e) => e,
+        Err(e) => {
+            s.errors.push(e);
+            return s;
+        }
+    };
+    match read_beads(env, &ids, &express) {
         Ok((beads, repos)) => {
             s.certified = certified
                 .into_iter()
@@ -482,7 +498,7 @@ echo ok"#,
     }
 
     fn env_with_lc(bin: PathBuf) -> Env {
-        Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), express_label: "express".into(), lc_bin: Some(bin), lc_timeout: 5 }
+        Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), lc_bin: Some(bin), lc_timeout: 5 }
     }
 
     // POSITIVE CONTROL: a stub that answers with something other than the JSON array
@@ -507,7 +523,7 @@ echo '[{"bead_id":"sp-b","state":"CERTIFIED"},{"bead_id":"sp-a","state":"CERTIFI
 
     #[test]
     fn read_certified_needs_spira_lc_bin() {
-        let env = Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), express_label: "express".into(), lc_bin: None, lc_timeout: 5 };
+        let env = Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), lc_bin: None, lc_timeout: 5 };
         let err = read_certified(&env).unwrap_err();
         assert!(err.contains("SPIRA_LC_BIN unset"), "{err}");
     }

@@ -106,7 +106,6 @@ scratch_max_age_hours = 24
 dolt_data = "/fixture/userhome/spira/dolt"
 eviction_escalate_at = "3"
 exporter = ""
-express_label = "express"
 failed_unit_runs = 3
 fayths = [
     "spike",

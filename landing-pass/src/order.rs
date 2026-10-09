@@ -15,7 +15,7 @@ pub struct OrderRow {
 }
 
 impl OrderRow {
-    pub fn of(branch: &str, bead: Option<&BeadRow>, express_label: &str) -> OrderRow {
+    pub fn of(branch: &str, bead: Option<&BeadRow>) -> OrderRow {
         let id = branch.strip_prefix("spira/").unwrap_or(branch).to_string();
         OrderRow {
             id,
@@ -23,7 +23,7 @@ impl OrderRow {
             priority: bead.map(|b| b.priority).unwrap_or(9999),
             closed_at: bead.map(|b| b.closed_at.clone()).unwrap_or_else(|| "9999-99-99".into()),
             external_ref: bead.and_then(|b| b.external_ref.clone()),
-            express: bead.map(|b| b.has_label(express_label)).unwrap_or(false),
+            express: bead.is_some_and(|b| b.express),
         }
     }
 }

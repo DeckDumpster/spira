@@ -756,14 +756,13 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
     return 0
 }
 
-# summon_fayth <fayth> [pool-remaining] [require-label] [reuse-ready] -> 0 if an aeon was
+# summon_fayth <fayth> [pool-remaining] [require-express] [reuse-ready] -> 0 if an aeon was
 # started, 1 otherwise.
 #
-# require-label is passed to the aeon as SPIRA_REQUIRE_LABEL, which it adds to its own
-# FAYTH_LABELS before claiming (aeon.sh). Set it only when the slot itself is restricted —
-# an express grant, say — so the aeon summoned under it cannot claim a bead outside that
-# restriction. A normal summon leaves it unset and claims under the fayth's own predicate
-# exactly as before.
+# A non-empty require-express is passed to the aeon as SPIRA_REQUIRE_EXPRESS, which narrows
+# its ready set to beads whose lifecycle row is express. Set it only when the slot itself is
+# restricted — an express grant, say. A normal summon leaves it unset and claims under the
+# fayth's own predicate exactly as before.
 #
 # reuse-ready=1 skips the fayth_ready bd round trip and uses SUMMON_FAYTH_CACHED_READY
 # (set by the previous call, in this same shell, for the SAME fayth) instead — a caller
@@ -821,7 +820,7 @@ world_gate() {         # world_gate <fayth> <log-prefix> -> 0 if summons are per
 summon_argv() {         # summon_argv <fayth> -> systemd-run property/setenv flags, one per line
     sentinel --summon-argv "$1"
 }
-summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label] -> 0 if an aeon was started, 1 otherwise
+summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-express] -> 0 if an aeon was started, 1 otherwise
     sentinel --summon "$1" "${2:-}" "${3:-}"
 }
 ck7_summon_pass() {
@@ -2349,7 +2348,7 @@ queue_sort_rows() {
     _pjf="$(mktemp)" || return 1
     printf '%s' "$_pj" > "$_pjf"
     _pj=""
-    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
+    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf"
     _rc=$?
     rm -f "$_pjf"
     return "$_rc"
