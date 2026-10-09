@@ -36,6 +36,17 @@ pub fn claimable(lc_list: &str, scenario: &str) -> Result<Vec<(String, i64)>, St
     Ok(out)
 }
 
+/// `sim-agent` beside the running `sim`: both are built and released together.
+fn agent_bin() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let agent = exe.with_file_name("sim-agent");
+    if agent.is_file() {
+        Ok(agent)
+    } else {
+        Err(format!("no sim-agent beside {}", exe.display()))
+    }
+}
+
 fn claim_event() -> String {
     serde_json::json!({"Claim": {"holder": HOLDER, "lease_until": LEASE_UNTIL}}).to_string()
 }
@@ -64,7 +75,7 @@ pub fn summon(world: &Path, scenario_file: &Path, state: &Path) -> Result<Vec<St
             git(&work, &["worktree", "add", "-b", &branch, &wt_arg, LANDING_BASE])?;
         }
         run(
-            Command::new("sim-agent")
+            Command::new(agent_bin()?)
                 .current_dir(&wt)
                 .env("BEAD_ID", &id)
                 .env("SPIRA_WORK_BEAD_ID", &id)

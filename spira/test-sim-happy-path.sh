@@ -7,7 +7,8 @@
 # sim world: `sim run` of spira/sim/scenarios/happy-path.toml (file and claim steps, the real
 # actors' schedules, the stub agent, the stub gate and round VM, sim gh), then `sim replay`.
 #
-#   1. `sim run` exits 0, world up included, in under 60 s of wall time.
+#   1. `sim run` exits 0, world up included, inside 60 s of wall time (the run is killed at that
+#      limit, so a slow run is a failed exit, not a measured number compared afterwards).
 #   2. The world ends with the bead LANDED on local/main, its publish PR merged and a release
 #      tag in the forge.
 #   3. `sim replay` of the same seed reports no divergence and leaves the events table
@@ -26,6 +27,7 @@ command -v testenv >/dev/null || bail "testenv is not on PATH"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 SEED=7
+RUN_LIMIT=60
 SCENARIO="$HERE/sim/scenarios/happy-path.toml"
 
 REPO="$T/repo"
@@ -36,8 +38,10 @@ git -C "$REPO" init -q --initial-branch=main && git -C "$REPO" add -A \
 
 NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
 
-sim_in_repo() {  # sim_in_repo <args...> — sim from the fixture repo, no production locator, a prebuilt release
-    (cd "$REPO" && timeout 90 env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" "$@")
+sim_in_repo() {  # sim_in_repo <seconds> <args...> — sim from the fixture repo, no production locator, a prebuilt release
+    local limit="$1"; shift
+    # batch-job: a whole simulated run, world up included; the caller names its wall-time limit
+    (cd "$REPO" && timeout "$limit" env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" "$@")
 }
 
 dump() {  # dump — what the world did, for a red run (exec.log was copied out before the world went down)
@@ -50,13 +54,10 @@ dump() {  # dump — what the world did, for a red run (exec.log was copied out 
 }
 
 # --- 1. the happy path, timed ----------------------------------------------------------------
-START=$SECONDS
-out="$(sim_in_repo run "$SCENARIO" --seed "$SEED" --keep 2>&1)"; rc=$?
-ELAPSED=$((SECONDS - START))
+out="$(sim_in_repo "$RUN_LIMIT" run "$SCENARIO" --seed "$SEED" --keep 2>&1)"; rc=$?
 W="$(ls -d "$T"/sim-run-*-"$SEED" 2>/dev/null | head -1)"
-wantrc "sim run happy-path exits 0" 0 "$rc"
+wantrc "sim run happy-path exits 0 within ${RUN_LIMIT}s (124 is the limit)" 0 "$rc"
 [ "$rc" = 0 ] || RUN_OUT="$out"
-[ "$ELAPSED" -le 60 ] && ok "the run took ${ELAPSED}s (<= 60s)" || bad "the run took ${ELAPSED}s (<= 60s)" "${ELAPSED}s"
 want "sim run prints the seed first" "sim seed: $SEED" "$out"
 
 if [ -z "$W" ] || [ ! -d "$W" ]; then
@@ -64,7 +65,7 @@ if [ -z "$W" ] || [ ! -d "$W" ]; then
 fi
 
 # --- 2. where the world ended -----------------------------------------------------------------
-probe="$(sim_in_repo probe "$W" 2>&1)"
+probe="$(sim_in_repo 30 probe "$W" 2>&1)"
 want "the bead is LANDED" '"lc_state":"LANDED"' "$(printf '%s' "$probe" | tr -d ' ')"
 want "its tip is on local/main" '"on_local_main":true' "$(printf '%s' "$probe" | tr -d ' ')"
 is "the publish PR is merged" 1 "$(grep -c '"state": "MERGED"' "$W/gh/state.json")"
@@ -73,20 +74,20 @@ is "the forge holds a release tag" 1 "$(grep -c '"name": "spira-release-' "$W/gh
 
 # --- 3. replay --------------------------------------------------------------------------------
 cp "$W/trace/events.jsonl" "$T/events.first"
-out="$(sim_in_repo replay "$W" --seed "$SEED" 2>&1)"; rc=$?
+out="$(sim_in_repo 30 replay "$W" --seed "$SEED" 2>&1)"; rc=$?
 wantrc "sim replay of the same seed reports no divergence" 0 "$rc"
 [ "$rc" = 0 ] || printf '# replay: %s\n' "$out"
 cmp -s "$T/events.first" "$W/trace/events.jsonl" && ok "replay leaves the events table byte-identical" || bad "replay leaves the events table byte-identical" "differs"
 
 cp "$W/exec.log" "$T/exec.log" 2>/dev/null
-sim_in_repo world down "$W" >/dev/null 2>&1
+sim_in_repo 60 world down "$W" >/dev/null 2>&1
 
 # --- 4. CONTROL: an unreachable goal fails, naming the seed ------------------------------------
 sed '/^\[\[step\]\]/,$d' "$SCENARIO" | sed 's/^horizon = .*/horizon = 300000/' > "$T/never.toml"
-out="$(sim_in_repo run "$T/never.toml" --seed 3 2>&1)"; rc=$?
+out="$(sim_in_repo 90 run "$T/never.toml" --seed 3 2>&1)"; rc=$?
 wantrc "control: a scenario that never files its bead exits non-zero" 1 "$rc"
 want "control: the failure names the unreached goal and the seed" "goal sp-hp01:LANDED unreached: seed 3" "$out"
-for w in "$T"/sim-run-*-3; do [ -d "$w" ] && sim_in_repo world down "$w" >/dev/null 2>&1; done
+for w in "$T"/sim-run-*-3; do [ -d "$w" ] && sim_in_repo 60 world down "$w" >/dev/null 2>&1; done
 
 [ "$_TL_FAIL" -gt 0 ] && dump
 tl_summary

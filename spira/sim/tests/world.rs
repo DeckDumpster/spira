@@ -75,7 +75,7 @@ fn up_then_down_leaves_nothing_behind() {
     let fake = Fake::default();
     up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap();
     let work = dir.join("work");
-    for p in ["release", "origin.git", "work", "run", "config/sim.toml", "bin/gh", "bin/round-vm", "gh"] {
+    for p in ["release", "origin.git", "work", "run", "config/sim.toml", "bin/gh", "bin/round-vm", "bin/sim", "bin/unit-ensure", "bin/target-reap", "home", "gate-verdict", "gh"] {
         assert!(dir.join(p).exists(), "{p}");
     }
     let rev = |r: &str| {
