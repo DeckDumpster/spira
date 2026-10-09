@@ -121,7 +121,7 @@ spira/test-gate-preflight.sh
 # to the timed set because the mechanisms it covers are still critical-path.
 spira/test-landing-rebase.sh
 
-# THE BUILD FENCE'S OWN POSITIVE CONTROL. build-fence.sh runs `make build` under the
+# THE BUILD FENCE'S OWN POSITIVE CONTROL. build-fence.sh runs `cargo check --workspace --locked` under the
 # pinned toolchain whenever a diff touches Cargo.toml, Cargo.lock, a crate's src/,
 # rust-toolchain, or the Makefile — the check fences-only certification (SPIRA_GATE_SUITES=off)
 # used to skip entirely, which let sp-upkae certify green and then break the whole batch's

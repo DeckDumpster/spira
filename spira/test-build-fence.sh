@@ -11,7 +11,7 @@
 # PROPERTIES
 #   T1: change-detection selects a build for a diff that touches Cargo.toml, Cargo.lock, a
 #       crate's src/, rust-toolchain, or the Makefile, and skips one that does not — proven
-#       with a stubbed `make` so the selection logic is asserted without a real compile.
+#       with a stubbed `cargo` so the selection logic is asserted without a real compile.
 #   T2: a real, deliberately uncompilable crate makes the fence RED, naming the failure;
 #       fixing the same crate (positive control) makes it pass.
 #
@@ -28,17 +28,18 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 fence() { bash "$1/spira/build-fence.sh" 2>&1; }
 
 # =========================================================================================
-# T1 — CHANGE DETECTION, WITH A STUBBED `make` SO NO COMPILE HAPPENS HERE.
+# T1 — CHANGE DETECTION, WITH A STUBBED `cargo` SO NO COMPILE HAPPENS HERE.
 # =========================================================================================
+export SPIRA_FENCE_TARGET_DIR="$TMP/target"
 SEL="$TMP/sel"; mkdir -p "$SEL/spira" "$SEL/bin"
 cp "$HERE/build-fence.sh" "$SEL/spira/build-fence.sh"
-MARK="$TMP/make-called"
-cat > "$SEL/bin/make" <<EOF
+MARK="$TMP/cargo-called"
+cat > "$SEL/bin/cargo" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$MARK"
 exit 0
 EOF
-chmod +x "$SEL/bin/make"
+chmod +x "$SEL/bin/cargo"
 sel_fence() {   # sel_fence <files-file>
     rm -f "$MARK"
     SPIRA_GATE_FILES="$1" PATH="$SEL/bin:$PATH" fence "$SEL"
@@ -49,7 +50,7 @@ echo "1. change-detection selects a build:"
 F="$TMP/f1"; printf 'Cargo.lock\n' > "$F"
 out="$(sel_fence "$F")"; rc=$?
 is "Cargo.lock-only diff: SEEN RED path, build was attempted" "yes" "$(made)"
-is "Cargo.lock-only diff: build-fence exits 0 (stub make passes)" "0" "$rc"
+is "Cargo.lock-only diff: build-fence exits 0 (stub cargo passes)" "0" "$rc"
 
 F="$TMP/f2"; printf 'spira/some-suite.sh\n' > "$F"
 out="$(sel_fence "$F")"; rc=$?
@@ -90,15 +91,15 @@ F="$TMP/f10"; : > "$F"
 out="$(SPIRA_GATE_FILES="$F" PATH="$SEL/bin:$PATH" fence "$SEL" 2>&1)"; rc=$?
 is   "an empty diff is a refusal" "2" "$rc"
 
-echo "3. NEGATIVE CONTROL: a failing stub make is a RED, not swallowed:"
+echo "3. NEGATIVE CONTROL: a failing stub cargo is a RED, not swallowed:"
 FAIL="$TMP/fail"; mkdir -p "$FAIL/spira" "$FAIL/bin"
 cp "$HERE/build-fence.sh" "$FAIL/spira/build-fence.sh"
-cat > "$FAIL/bin/make" <<'EOF'
+cat > "$FAIL/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 printf 'error: something is broken\n' >&2
 exit 2
 EOF
-chmod +x "$FAIL/bin/make"
+chmod +x "$FAIL/bin/cargo"
 F="$TMP/f8"; printf 'Cargo.lock\n' > "$F"
 out="$(SPIRA_GATE_FILES="$F" PATH="$FAIL/bin:$PATH" fence "$FAIL")"; rc=$?
 is "a failing build is a RED certification" "1" "$rc"
@@ -106,34 +107,52 @@ want "and the fence says so, not a suite" "RED certification" "$out"
 want "and it names the command's own error" "something is broken" "$out"
 
 # =========================================================================================
-# T2 — A REAL, DELIBERATELY UNCOMPILABLE CRATE. No mocked make or cargo: the real toolchain
+# T2 — A REAL, DELIBERATELY UNCOMPILABLE CRATE. No mocked cargo: the real toolchain
 # on PATH is the one the production gate's build job uses.
 # =========================================================================================
 echo "4. a real uncompilable crate goes RED:"
-CR="$TMP/crate"; mkdir -p "$CR/spira" "$CR/crate/src"
+CR="$TMP/crate"; mkdir -p "$CR/spira" "$CR/src" "$CR/baddep/src"
 cp "$HERE/build-fence.sh" "$CR/spira/build-fence.sh"
-cat > "$CR/Makefile" <<'EOF'
-build:
-	cargo build --manifest-path crate/Cargo.toml
-EOF
-cat > "$CR/crate/Cargo.toml" <<'EOF'
+cat > "$CR/Cargo.toml" <<'TOML'
 [package]
 name = "fixture"
 version = "0.1.0"
 edition = "2021"
-EOF
-# SEEN RED FIRST: a syntax error real rustc must refuse (law-a-regression-test-must-be-seen-to-fail).
-printf 'fn main() { let x = ; }\n' > "$CR/crate/src/main.rs"
+TOML
+printf 'fn main() { println!("ok"); }\n' > "$CR/src/main.rs"
+(cd "$CR" && cargo generate-lockfile --offline >/dev/null 2>&1)
 F="$TMP/f9"; printf 'Cargo.lock\n' > "$F"
+# SEEN RED FIRST: a syntax error real rustc must refuse (law-a-regression-test-must-be-seen-to-fail).
+printf 'fn main() { let x = ; }\n' > "$CR/src/main.rs"
 out="$(SPIRA_GATE_FILES="$F" fence "$CR")"; rc=$?
 is "SEEN RED: uncompilable crate fails certification" "1" "$rc"
 want "and the cargo error survives into the fence's output" "error" "$out"
 
 echo "5. GREEN AFTER: the same crate, fixed, passes (positive control):"
-printf 'fn main() { println!("ok"); }\n' > "$CR/crate/src/main.rs"
+printf 'fn main() { println!("ok"); }\n' > "$CR/src/main.rs"
 out="$(SPIRA_GATE_FILES="$F" fence "$CR")"; rc=$?
 is "GREEN AFTER: a compiling crate passes" "0" "$rc"
-want "and the fence says so" "make build ok" "$out"
+want "and the fence says so" "cargo check ok" "$out"
+
+echo "5b. an unparseable dependency manifest fails the fence (sp-9uro3's case):"
+printf 'this is [not toml\n' > "$CR/baddep/Cargo.toml"
+cat >> "$CR/Cargo.toml" <<'TOML'
+
+[dependencies]
+baddep = { path = "baddep" }
+TOML
+out="$(SPIRA_GATE_FILES="$F" fence "$CR")"; rc=$?
+is "SEEN RED: an unparseable dependency fails certification" "1" "$rc"
+want "and the fence names the cargo check failure" "cargo check FAILED" "$out"
+
+echo "5c. --locked: a lockfile that needs updating fails the fence:"
+printf '[package]\nname = "baddep"\nversion = "0.1.0"\nedition = "2021"\n' > "$CR/baddep/Cargo.toml"
+printf '' > "$CR/baddep/src/lib.rs"
+out="$(SPIRA_GATE_FILES="$F" fence "$CR")"; rc=$?
+is "SEEN RED: a stale Cargo.lock fails under --locked" "1" "$rc"
+(cd "$CR" && cargo generate-lockfile --offline >/dev/null 2>&1)
+out="$(SPIRA_GATE_FILES="$F" fence "$CR")"; rc=$?
+is "GREEN AFTER: the regenerated lockfile passes" "0" "$rc"
 
 # =========================================================================================
 # GATE INTEGRATION. A fence nothing invokes is a file. The repository's gate string names
