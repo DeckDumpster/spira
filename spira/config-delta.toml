@@ -11,7 +11,7 @@
 "spira.flow_unobservable_grace_secs" = "3600"
 "spira.round_vm_ssh_port" = "22"
 "spira.round_vm_vcpus" = "16"
-"spira.round_vm_maxpar" = "16"
+"spira.round_vm_maxpar" = ""
 "spira.round_vm_retry_interval" = "60"
 "spira.round_vm_max_retries" = "0"
 "spira.round_vm_mirror_port" = "9430"
