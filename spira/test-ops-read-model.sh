@@ -267,16 +267,19 @@ is "a bead's time in its state starts at the event that entered it" "$((NOW - 23
 edge() { spira-lc ops-view ops_edges | python3 -I -c '
 import json, sys
 k, f, t, ev = sys.argv[1:5]
-for r in json.load(sys.stdin):
-    if r["kind"] == k and r["from_state"] == f and (r["to_state"] or "") == t and (r["event"] or "") == ev:
-        print(int(r["n_1h"]), int(r["n_24h"])); break
-else:
-    print("none")' "$@"; }
-is "applied SUBMITTED to CERTIFIED: 20 history, 2 stuck and 1 fresh in the day, the fresh one in the hour" "1 23" "$(edge applied SUBMITTED CERTIFIED "")"
-is "applied READY to WORKING counts both claims of each of 20 beads, and two fresh" "2 42" "$(edge applied READY WORKING "")"
-is "applied WORKING to READY counts the 20 releases and the fresh one" "1 21" "$(edge applied WORKING READY "")"
+hit = [r for r in json.load(sys.stdin)
+       if r["kind"] == k and r["from_state"] == f and (r["to_state"] or "") == t and (ev == "*" or (r["event"] or "") == ev)]
+print("%d %d" % (sum(int(r["n_1h"]) for r in hit), sum(int(r["n_24h"]) for r in hit)) if hit else "none")' "$@"; }
+is "applied SUBMITTED to CERTIFIED: 20 history, 2 stuck and 1 fresh in the day, the fresh one in the hour" "1 23" "$(edge applied SUBMITTED CERTIFIED "*")"
+is "applied READY to WORKING counts both claims of each of 20 beads, and two fresh" "2 42" "$(edge applied READY WORKING "*")"
+is "applied WORKING to READY counts the 20 releases and the fresh one" "1 21" "$(edge applied WORKING READY "*")"
+is "two events drive SUBMITTED to CERTIFIED: GatePass is named with its own count" "0 20" "$(edge applied SUBMITTED CERTIFIED GatePass)"
+is "two events drive SUBMITTED to CERTIFIED: Fresh is named with its own count" "1 3" "$(edge applied SUBMITTED CERTIFIED Fresh)"
+is "two events drive READY to WORKING: Claim is named with its own count" "1 41" "$(edge applied READY WORKING Claim)"
+is "two events drive READY to WORKING: Fresh is named with its own count" "1 1" "$(edge applied READY WORKING Fresh)"
+is "every applied row names its event" 0 "$(spira-lc ops-view ops_edges | python3 -I -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["kind"]=="applied" and not r["event"]))')"
 is "refused events by state and kind: two in the hour, three in the day" "2 3" "$(edge refused CERTIFIED "" GateRed)"
-is "an applied event that stays in its state is not an edge" "none" "$(edge applied CERTIFIED CERTIFIED "")"
+is "an applied event that stays in its state is not an edge" "none" "$(edge applied CERTIFIED CERTIFIED "*")"
 refused_only="$(spira-lc ops-view ops_edges | python3 -I -c 'import json,sys; print(sorted({r["refusal"] for r in json.load(sys.stdin) if r["kind"]=="refused"}))')"
 is "a refusal carries its reason" "['IllegalTransition']" "$refused_only"
 
