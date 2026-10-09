@@ -32,7 +32,7 @@ cleanup() {
 trap cleanup EXIT
 FIXED_SEEDS="${SIM_SCENARIOS_SEEDS:-7}"
 FRESH_SEED=$(( $(date +%s%N) % 1000000000 ))
-PAR="${SIM_SCENARIOS_PAR:-8}"
+PAR="${SIM_SCENARIOS_PAR:-4}"
 RUN_LIMIT=280
 echo "# seeds: $FIXED_SEEDS and fresh $FRESH_SEED (SIM_SCENARIOS_SEEDS pins the fixed list)"
 
@@ -47,7 +47,7 @@ NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u 
 run_one() {  # run_one <label> <scenario file or name> <seed> — result in $T/res.<label>.{out,rc,s}
     local label="$1" scenario="$2" seed="$3" start=$SECONDS rc
     # batch-job: a whole simulated run, world up included; RUN_LIMIT is its wall-time limit
-    (cd "$REPO" && timeout "$RUN_LIMIT" env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" run "$scenario" --seed "$seed" >"$T/res.$label.out" 2>&1)
+    (cd "$REPO" && timeout "$RUN_LIMIT" nice -n 19 env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" run "$scenario" --seed "$seed" >"$T/res.$label.out" 2>&1)
     rc=$?
     echo "$rc" >"$T/res.$label.rc"
     echo "$((SECONDS - start))" >"$T/res.$label.s"
@@ -109,5 +109,9 @@ want "control: a branch moved after submit trips the tip invariant" "invariant i
 want "control: an expectation nothing meets is named" "expectation nothing_can_meet_this unmet: seed 3" "$(cat "$T/res.control-unmet.out")"
 is "control: the stale-tip run exits 1" 1 "$(cat "$T/res.control-stale-tip.rc")"
 is "control: the unmet run exits 1" 1 "$(cat "$T/res.control-unmet.rc")"
+
+# ISOLATION: every world is down and nothing of it still runs (the corpus shares this box)
+for w in "$T"/sim-run-*; do [ -d "$w" ] && timeout 60 "$SIM" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
+is "no world serve outlives its run" 0 "$(pgrep -fc "$T/sim-run-" || true)"
 
 tl_summary
