@@ -43,6 +43,9 @@ pub struct Meta {
     /// The bead's labels; `needs-ryan` marks a question waiting on the operator, never work.
     #[serde(default)]
     pub labels: Vec<String>,
+    /// The tail of the bead's notes, where Sift, ejects and the gate leave their evidence.
+    #[serde(default)]
+    pub notes_tail: String,
 }
 
 /// The tail of one aeon's session log: its last meaningful lines and the log's mtime.
@@ -162,6 +165,13 @@ pub struct Snapshot {
     /// DECIDE, never counted as work.
     #[serde(default)]
     pub ask_label: String,
+    /// Why a round last ejected each bead, newest eject per bead (the batch's own reason).
+    #[serde(default)]
+    pub eject_why: BTreeMap<String, String>,
+    /// The ids the claim tool would claim right now, when it answered (interim until the one
+    /// claimable-set read, sp-cuyg5f, serves both); `None` falls back to the row heuristic.
+    #[serde(default)]
+    pub claimable: Option<Vec<String>>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
     #[serde(default)]
@@ -210,6 +220,9 @@ pub fn own_ids(subject: &str) -> Vec<String> {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Item {
     pub id: String,
+    /// Why the bead is where it is, at length, for the expandable detail under it.
+    #[serde(default)]
+    pub why: String,
     pub prio: String,
     pub title: String,
     pub who: String,
@@ -507,6 +520,22 @@ pub fn passes(eject_at: &[i64]) -> usize {
     1 + at.windows(2).filter(|w| w[1] - w[0] > 600).count() + usize::from(!at.is_empty())
 }
 
+/// The evidence for why a bead came back: the round's eject reason when it was ejected, else the
+/// newest note line that says why (Sift's send-back, a red, a conflict), else the newest line.
+pub fn rework_why(s: &Snapshot, id: &str) -> String {
+    if let Some(w) = s.eject_why.get(id) {
+        return w.clone();
+    }
+    let notes = s.meta.get(id).map(|m| m.notes_tail.as_str()).unwrap_or("");
+    let lines: Vec<&str> = notes.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let says_why = |l: &&&str| {
+        let l = l.to_lowercase();
+        ["sent this back", "sift", "red", "fail", "conflict", "rebase", "eject", "reject", "rework"].iter().any(|k| l.contains(k))
+            && !l.starts_with("resumed by") && !l.starts_with("deferred by")
+    };
+    lines.iter().rev().find(says_why).or(lines.last()).map(|l| l.to_string()).unwrap_or_default()
+}
+
 pub fn age(secs: i64) -> String {
     let s = secs.max(0);
     if s < 90 {
@@ -591,7 +620,17 @@ pub fn view(s: &Snapshot) -> View {
         } else {
             rows.sort_by_key(|r| r.since);
         }
-        st.beads = rows.iter().take(40).map(|r| item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, r.reason.clone().unwrap_or_default())).collect();
+        st.beads = rows
+            .iter()
+            .take(40)
+            .map(|r| {
+                let mut it = item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, r.reason.clone().unwrap_or_default());
+                if st.name == "REWORK" {
+                    it.why = rework_why(s, &r.id);
+                }
+                it
+            })
+            .collect();
     }
     v.terminal = TERMINAL
         .iter()
@@ -696,7 +735,10 @@ pub fn view(s: &Snapshot) -> View {
     let mut nx: Vec<&Row> = ready
         .iter()
         .copied()
-        .filter(|r| r.claimable.unwrap_or(r.holds.is_empty() && !s.on_base.contains_key(&r.id)) && !blocked_row(r) && !is_ask(&r.id))
+        .filter(|r| match &s.claimable {
+            Some(ids) => ids.iter().any(|i| *i == r.id) && !is_ask(&r.id),
+            None => r.claimable.unwrap_or(r.holds.is_empty() && !s.on_base.contains_key(&r.id)) && !blocked_row(r) && !is_ask(&r.id),
+        })
         .collect();
     nx.sort_by_key(|r| (!r.rework, s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
     v.blocked = ready
@@ -1014,11 +1056,31 @@ mod tests {
     }
 
     #[test]
+    fn next_is_exactly_what_the_claim_tool_would_claim_when_it_answered() {
+        let mut s = snap(vec![row("sp-free", "READY", 1), row("sp-blocked", "READY", 2)]);
+        s.claimable = Some(vec!["sp-free".into()]);
+        let v = view(&s);
+        assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-free"], "a bead the claim tool would not take is not NEXT");
+        s.claimable = None;
+        assert_eq!(view(&s).next_count, 2, "without the claim tool's answer the row heuristic stands");
+    }
+
+    #[test]
+    fn rework_why_prefers_the_eject_reason_then_the_note_that_says_why() {
+        let mut s = snap(vec![row("sp-a", "REWORK", 1), row("sp-b", "REWORK", 1)]);
+        s.meta.insert("sp-a".into(), Meta { notes_tail: "Sift sent this back: fence red\nResumed by detect_file_overlaps: cleared".into(), ..Default::default() });
+        s.meta.insert("sp-b".into(), Meta { notes_tail: "Sift sent this back: fence red".into(), ..Default::default() });
+        s.eject_why.insert("sp-b".into(), "r-auto-9: test-x #3 red".into());
+        assert_eq!(rework_why(&s, "sp-a"), "Sift sent this back: fence red", "an overlap notice is not the why");
+        assert_eq!(rework_why(&s, "sp-b"), "r-auto-9: test-x #3 red", "a round's eject reason wins");
+    }
+
+    #[test]
     fn a_question_for_the_operator_is_in_decide_and_never_counted_as_claimable_work() {
         let mut s = snap(vec![row("sp-ask1", "READY", 90_000), row("sp-work1", "READY", 91_000), row("sp-done-ask", "DROPPED", 80_000)]);
         s.ask_label = "fixture-ask-label".into();
         for id in ["sp-ask1", "sp-done-ask"] {
-            s.meta.insert(id.into(), Meta { title: "Statute: something".into(), priority: Some(2), labels: vec![s.ask_label.clone()] });
+            s.meta.insert(id.into(), Meta { title: "Statute: something".into(), priority: Some(2), labels: vec![s.ask_label.clone()], ..Default::default() });
         }
         s.meta.insert("sp-work1".into(), Meta { title: "real work".into(), priority: Some(1), ..Default::default() });
         let v = view(&s);

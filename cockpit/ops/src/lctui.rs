@@ -43,10 +43,7 @@ const R_STATE_FOLD: u16 = 24;
 const R_TERMINAL: u16 = 25;
 const R_NEXT_SOME: u16 = 30;
 const R_NEXT_FEW: u16 = 31;
-const R_REWORK_SOME: u16 = 32;
-const R_REWORK_FEW: u16 = 33;
 const R_NEXT_ALL: u16 = 36;
-const R_REWORK_ALL: u16 = 37;
 const R_NOW_FOLD: u16 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -190,7 +187,7 @@ fn banner(v: &View) -> Vec<String> {
 }
 
 /// The whole pane as a tree, in Ryan's order: DECIDE, ROUND, NOW, STATE MACHINE (with each state's
-/// beads under it; PIPE retired 2026-10-09), REWORK, NEXT,
+/// beads under it; PIPE and REWORK retired 2026-10-09), NEXT,
 /// BLOCKED, DRIFT, REFUSED, HOLDS, RECENT.
 pub fn tree(v: &View) -> Vec<Node> {
     let mut out = Vec::new();
@@ -292,8 +289,16 @@ pub fn tree(v: &View) -> Vec<Node> {
             .beads
             .iter()
             .map(|i| {
-                let note = if i.note.is_empty() { String::new() } else { format!(" {D}· {}{R}", i.note) };
-                Node::new(format!("{sk}/{}", i.id), format!("{:<12} {D}{:>4}{R} {} {}{note}", i.id, i.age, i.prio, i.title))
+                // REWORK shows the rejection type up front and its evidence folded underneath
+                // (ported from the retired REWORK section, per Ryan 2026-10-09).
+                let kind = if i.note.is_empty() || st.name != "REWORK" { String::new() } else { format!("{YEL}[{}]{R} ", i.note) };
+                let note = if i.note.is_empty() || st.name == "REWORK" { String::new() } else { format!(" {D}· {}{R}", i.note) };
+                let n = Node::new(format!("{sk}/{}", i.id), format!("{:<12} {D}{:>4}{R} {} {kind}{}{note}", i.id, i.age, i.prio, i.title));
+                if i.why.is_empty() {
+                    n
+                } else {
+                    n.kids(vec![Node::new(format!("{sk}/{}/why", i.id), format!("{D}{}{R}", i.why))]).closed()
+                }
             })
             .collect();
         moves.extend(ranked(beads, &[(3, R_STATE_BEADS_MORE), (0, R_STATE_BEADS)]));
@@ -307,20 +312,6 @@ pub fn tree(v: &View) -> Vec<Node> {
     }
     states.push(Node::new("state/terminal", format!("{D}terminal 24h  {}{R}", v.terminal)).elide(R_TERMINAL));
     out.push(Node::new("state", format!("{B}STATE MACHINE{R}  {D}counts now · moves per hour{R}")).kids(states));
-
-    let rework = v
-        .rework_items
-        .iter()
-        .map(|i| {
-            Node::new(format!("rework/{}", i.id), format!("{YEL}{:<12}{R} {} {D}{}{R} {}", i.id, i.prio, i.age, i.note))
-                .kids(vec![Node::new(format!("rework/{}/title", i.id), format!("{D}{}{R}", i.title))])
-                .closed()
-        })
-        .collect();
-    out.push(
-        Node::new("rework", format!("{B}REWORK{R} {B}{}{R} {D}sent back — bead · why{R}", v.rework_items.len()))
-            .kids(ranked(rework, &[(3, R_REWORK_SOME), (1, R_REWORK_FEW), (0, R_REWORK_ALL)])),
-    );
 
     let next = v.next.iter().map(|i| Node::new(format!("next/{}", i.id), format!("{} {:<12} {}", i.prio, i.id, i.title))).collect();
     out.push(
@@ -800,6 +791,20 @@ mod tests {
         assert!(has(&t, "sp-sub0") && has(&t, "sp-sub7"), "an opened state lists every bead: {t:#?}");
         assert!(!has(&t, "event ev0-a"), "opening a state does not spill its transitions' events: {t:#?}");
         assert!(!t.iter().any(|l| l.contains("PIPE")), "PIPE is gone");
+    }
+
+    #[test]
+    fn a_rework_bead_shows_its_rejection_type_and_folds_its_evidence() {
+        let mut v = busy_view();
+        let rw = Item { id: "sp-rw1".into(), prio: "P1".into(), title: "fix it".into(), age: "4m".into(), note: "suites-failed".into(), why: "test-x #3 red: wanted 1 got 0".into(), ..Default::default() };
+        v.machine.iter_mut().find(|s| s.name == "REWORK").unwrap().beads = vec![rw];
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        assert!(t.iter().any(|l| l.contains("sp-rw1") && l.contains("[suites-failed]")), "{t:#?}");
+        assert!(!has(&t, "wanted 1 got 0"), "the evidence starts folded");
+        assert!(!t.iter().any(|l| l.trim_start().trim_start_matches(['▿', '▹', '▸', '▼', ' ']).starts_with("REWORK") && l.contains("sent back")), "no top-level REWORK section");
+        let mut ui = Ui::default();
+        ui.set("state/REWORK/sp-rw1", Mode::Open);
+        assert!(has(&text(&layout(&v, &ui, 100, 200)), "wanted 1 got 0"), "opening the bead shows why");
     }
 
     #[test]

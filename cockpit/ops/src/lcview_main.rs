@@ -107,6 +107,19 @@ fn gather_state_machine(s: &mut Snapshot) {
     }
     match lc_json(&["list", "--batches"]) {
         Ok(rows) => {
+            let mut by_time: Vec<(i64, String, String)> = Vec::new();
+            for b in &rows {
+                let at = num(&b["last_at"]).or_else(|| num(&b["opened_at"])).unwrap_or(0);
+                for e in b["ejected"].as_array().cloned().unwrap_or_default() {
+                    if let (Some(id), Some(why)) = (e["bead_id"].as_str(), e["reason"].as_str()) {
+                        by_time.push((at, id.to_string(), why.to_string()));
+                    }
+                }
+            }
+            by_time.sort();
+            for (_, id, why) in by_time {
+                s.eject_why.insert(id, why);
+            }
             s.batches = rows
                 .iter()
                 .map(|b| BatchRow {
@@ -138,6 +151,39 @@ fn gather_state_machine(s: &mut Snapshot) {
             Err(e) => s.errors.push(e),
         }
     }
+}
+
+/// The claim tool's own claimable ids, refreshed at most once a minute (it costs seconds):
+/// `bulk-ready-by-fayth` names the personas with anything ready, then `fayth-ready <p> --json`
+/// lists each one's rows. Interim until sp-cuyg5f gives the claim tool and this pane one read.
+fn claimable_ids() -> Option<Vec<String>> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(std::time::Instant, Vec<String>)>> = Mutex::new(None);
+    if let Ok(c) = CACHE.lock() {
+        if let Some((at, ids)) = c.as_ref() {
+            if at.elapsed() < Duration::from_secs(60) {
+                return Some(ids.clone());
+            }
+        }
+    }
+    let counts = run("spira-claim", &["bulk-ready-by-fayth"]).ok()?;
+    let mut ids = Vec::new();
+    for l in counts.lines() {
+        let mut f = l.split_whitespace();
+        let (Some(fayth), Some(n)) = (f.next(), f.next()) else { continue };
+        if n == "0" {
+            continue;
+        }
+        let rows = run("spira-claim", &["fayth-ready", fayth, "--json"]).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&rows).ok()?;
+        ids.extend(v.as_array().cloned().unwrap_or_default().iter().filter_map(|r| r["id"].as_str().map(String::from)));
+    }
+    ids.sort();
+    ids.dedup();
+    if let Ok(mut c) = CACHE.lock() {
+        *c = Some((std::time::Instant::now(), ids.clone()));
+    }
+    Some(ids)
 }
 
 fn gather() -> Snapshot {
@@ -179,6 +225,11 @@ fn gather() -> Snapshot {
                             title: b["title"].as_str().unwrap_or("").into(),
                             priority: num(&b["priority"]),
                             labels: b["labels"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect()).unwrap_or_default(),
+                            notes_tail: {
+                                let n = b["notes"].as_str().unwrap_or("");
+                                let cut = n.char_indices().rev().nth(4000).map(|(i, _)| i).unwrap_or(0);
+                                n[cut..].to_string()
+                            },
                         });
                 }
             }
@@ -218,6 +269,7 @@ fn gather() -> Snapshot {
         }
     }
     gather_state_machine(&mut s);
+    s.claimable = claimable_ids();
     s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s
