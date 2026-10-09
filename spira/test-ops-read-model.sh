@@ -105,6 +105,7 @@ check_stuck_plans() {
     done
     p="$(plan_of "SELECT * FROM ops_edges")"
     want "ops_edges takes its window from the event time index ($when)" "$window_index" "$p"
+    printf "# plan(%s): %s\n" "$when" "$p"
     nowant "ops_edges does not walk a bead's whole history ($when)" "event.lc_key" "$p"
     p="$(plan_of "SELECT * FROM ops_dwell_p95")"
     want "the p95 helper takes its window from the event time index ($when)" "$window_index" "$p"
