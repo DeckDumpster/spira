@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS bead (
     -- Mirrored from bd by bead.sh file/amend so the ops views never join to bd; migrations/0007.
     title       VARCHAR(512) NULL,
     priority    TINYINT NULL,
-    -- Ahead of the line (Express/Unexpress events); migrations/0009-express.sql for an existing database.
+    -- Ahead of the line (Express/Unexpress events); migrations/0010-express.sql for an existing database.
     express     BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at  BIGINT NOT NULL
 );

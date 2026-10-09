@@ -939,6 +939,8 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
         BeadEventKind::AskWithdrawn => "AskWithdrawn",
         BeadEventKind::Reclassify { .. } => "Reclassify",
         BeadEventKind::Renew { .. } => "Renew",
+        BeadEventKind::Express => "Express",
+        BeadEventKind::Unexpress => "Unexpress",
     }
 }
 
@@ -969,6 +971,8 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
         BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
         BeadEventKind::Renew { lease_until: 2 },
+        BeadEventKind::Express,
+        BeadEventKind::Unexpress,
     ]
 }
 
