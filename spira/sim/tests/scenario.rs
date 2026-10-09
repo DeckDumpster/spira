@@ -1,4 +1,4 @@
-use spira_sim::drive::{parse_scenario, Scenario};
+use spira_sim::drive::{parse_scenario, scenario_path, Scenario};
 use spira_sim::summon::claimable;
 use spira_sim::world::{base_config, bead_db, home_settings, registry_rows, stub_gate_steps, INERT_TOOLS, REPO_NAME};
 use std::path::Path;
@@ -99,4 +99,13 @@ fn a_world_registers_one_queue_local_row_and_names_its_tools_absolutely() {
 fn the_worlds_gate_is_the_stub_runner_alone_and_host_touching_tools_are_inert() {
     assert_eq!(stub_gate_steps(Path::new("/w/config/suite-runner")), "step \"/w/config/suite-runner\"\n");
     assert!(INERT_TOOLS.contains(&"unit-ensure") && INERT_TOOLS.contains(&"target-reap"));
+}
+
+#[test]
+fn a_bare_scenario_name_resolves_to_the_shipped_scenario_from_anywhere_in_the_checkout() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let shipped = scenario_path(&root.join("spira/sim/src"), "happy-path");
+    assert!(shipped.ends_with("spira/sim/scenarios/happy-path.toml") && shipped.is_file(), "{shipped:?}");
+    assert_eq!(scenario_path(&root, "./happy-path.toml"), Path::new("./happy-path.toml"));
+    assert_eq!(scenario_path(&root, "no-such-scenario"), Path::new("no-such-scenario"));
 }

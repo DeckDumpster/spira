@@ -2,7 +2,7 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim summon";
 
 fn main() {
@@ -121,7 +121,8 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
     use spira_sim::drive::{ProcessExec, ProcessProbe, parse_scenario};
     let (pos, set) = flags(args, &["--seed", "--world"], &["--keep"])?;
     let [scenario] = pos.as_slice() else { return Err(USAGE.to_string()) };
-    let text = std::fs::read_to_string(scenario).map_err(|e| format!("{scenario}: {e}"))?;
+    let path = spira_sim::drive::scenario_path(cwd, scenario);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let sc = parse_scenario(&text)?;
     let seed = match seed_of(&set)? {
         Some(s) => s,

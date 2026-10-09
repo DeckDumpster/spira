@@ -12,6 +12,7 @@ use std::time::Duration;
 
 const COMMAND_DEADLINE: Duration = Duration::from_secs(120); // batch-job: one actor run or scenario step against a world
 const REPO: &str = crate::world::REPO_NAME;
+pub const SCENARIOS_DIR: &str = "spira/sim/scenarios";
 pub const EXEC_LOG: &str = "exec.log";
 const PROBE_KEY: &str = "SIM_PROBE";
 
@@ -90,6 +91,21 @@ pub struct Scenario {
     /// The tree under test `real_actors` resolve against: the world's `work` checkout.
     #[serde(skip)]
     pub tree: Option<PathBuf>,
+}
+
+/// A scenario argument: a path, or a bare name of a scenario shipped under `spira/sim/scenarios/`
+/// in the checkout `cwd` is in.
+pub fn scenario_path(cwd: &Path, arg: &str) -> PathBuf {
+    let named = !arg.contains('/') && !arg.ends_with(".toml");
+    if named {
+        for dir in cwd.ancestors() {
+            let shipped = dir.join(SCENARIOS_DIR).join(format!("{arg}.toml"));
+            if shipped.is_file() {
+                return shipped;
+            }
+        }
+    }
+    PathBuf::from(arg)
 }
 
 pub fn parse_scenario(text: &str) -> Result<Scenario, String> {

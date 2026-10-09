@@ -55,7 +55,7 @@ dump() {  # dump — what the world did, for a red run (exec.log was copied out 
 
 # --- 1. the happy path, timed ----------------------------------------------------------------
 START=$SECONDS
-out="$(sim_in_repo "$RUN_LIMIT" run "$SCENARIO" --seed "$SEED" --keep 2>&1)"; rc=$?
+out="$(sim_in_repo "$RUN_LIMIT" run happy-path --seed "$SEED" --keep 2>&1)"; rc=$?
 echo "# sim run took $((SECONDS - START))s"
 W="$(ls -d "$T"/sim-run-*-"$SEED" 2>/dev/null | head -1)"
 wantrc "sim run happy-path exits 0 within ${RUN_LIMIT}s (124 is the limit)" 0 "$rc"
