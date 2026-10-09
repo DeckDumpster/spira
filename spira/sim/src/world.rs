@@ -15,6 +15,10 @@ pub const RELEASE_ENV: &str = "SPIRA_SIM_RELEASE";
 /// testenv's mark on every suite it runs (testenv/src/fixture.rs). It only ever widens the
 /// refusal below, so a forged value can stop a build but never start one.
 pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
+/// Host-touching tools the loop calls by bare name at the end of a pass: `unit-ensure`
+/// (re)installs the user's systemd units, `target-reap` removes shared build directories. In a
+/// world each is `sim` invoked under that name, and does nothing.
+pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap"];
 /// The release binaries the world itself calls; a prebuilt release without them is refused.
 const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
 /// The world's lifecycle service socket, under the world dir (sp-hq1v76).
@@ -456,6 +460,9 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     link(&sim_exe, &gh_bin)?;
     link(&sim_exe, &bin.join("round-vm"))?;
     link(&sim_exe, &bin.join("sim"))?;
+    for tool in INERT_TOOLS {
+        link(&sim_exe, &bin.join(tool))?;
+    }
     crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
     let home = dir.join(HOME);
     std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;

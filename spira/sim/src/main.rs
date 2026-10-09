@@ -9,6 +9,9 @@ fn main() {
     let mut args: Vec<String> = std::env::args().collect();
     let invoked_as = args.first().and_then(|a| std::path::Path::new(a).file_name()).and_then(|n| n.to_str()).map(str::to_string);
     args.remove(0);
+    if invoked_as.as_deref().is_some_and(|n| world::INERT_TOOLS.contains(&n)) {
+        std::process::exit(0);
+    }
     if let Some(name @ ("gh" | "round-vm")) = invoked_as.as_deref() {
         args.insert(0, name.to_string());
     }
