@@ -133,6 +133,7 @@ _rows() {
             seq|live|ceiling|ready) t=BIGINT ;;
             wall_s|ran_secs|secs|duration_ms) t=DOUBLE ;;
             applied) t=BOOLEAN ;;
+            ts) t=TIMESTAMPTZ ;;
             *) continue ;;
         esac
         casts="${casts:+$casts, }TRY_CAST(\"$c\" AS $t) AS \"$c\""
@@ -349,8 +350,9 @@ case "$cmd" in
         duckdb -json -c "
             WITH s AS (
                 SELECT CAST(ts AS TIMESTAMPTZ) AS t, ceiling, live, ready,
-                       least(epoch(lead(CAST(ts AS TIMESTAMPTZ)) OVER (ORDER BY ts)) - epoch(CAST(ts AS TIMESTAMPTZ)), 300) AS dt
-                FROM $(_rows $path ts live ceiling ready)
+                       CASE WHEN lead(ts) OVER (ORDER BY ts) IS NULL THEN NULL
+                            ELSE least(epoch(lead(ts) OVER (ORDER BY ts)) - epoch(ts), 300) END AS dt
+                FROM $(_rows $path ts live ceiling ready) WHERE ts IS NOT NULL
             )
             SELECT CAST(COALESCE(sum(greatest(ceiling - live, 0) * dt) FILTER (WHERE ready > 0), 0) / 60 AS BIGINT) AS empty_with_work_min,
                    CAST(COALESCE(sum(greatest(ceiling - live, 0) * dt) FILTER (WHERE ready = 0), 0) / 60 AS BIGINT) AS empty_idle_min,
@@ -369,8 +371,9 @@ case "$cmd" in
         duckdb -json -c "
             WITH sl AS (
                 SELECT CAST(ts AS TIMESTAMPTZ) AS t, ceiling, live,
-                       least(epoch(lead(CAST(ts AS TIMESTAMPTZ)) OVER (ORDER BY ts)) - epoch(CAST(ts AS TIMESTAMPTZ)), 300) AS dt
-                FROM $(_rows $spath ts live ceiling ready)
+                       CASE WHEN lead(ts) OVER (ORDER BY ts) IS NULL THEN NULL
+                            ELSE least(epoch(lead(ts) OVER (ORDER BY ts)) - epoch(ts), 300) END AS dt
+                FROM $(_rows $spath ts live ceiling ready) WHERE ts IS NOT NULL
             )
             SELECT
                 (SELECT CAST(COALESCE(sum(wall_s), 0) AS BIGINT) FROM $(_rows $apath ts bead fayth status wall_s)
