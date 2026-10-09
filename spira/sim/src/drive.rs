@@ -60,7 +60,7 @@ impl StepDef {
             (Some(c), None, None) if self.script.is_empty() => Ok(c.clone()),
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
-                Ok(format!("bd -C \"$SPIRA_DB\" create {} --id {b} -t task -p 2 -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}"))))
+                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p 2 -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}"))))
             }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;
