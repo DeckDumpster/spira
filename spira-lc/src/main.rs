@@ -725,10 +725,14 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
     }
 }
 
-/// The externally-tagged serde representation of an event kind is `{"Variant": {...}}`;
-/// the tag itself is what `event` logs as the event's name.
+/// Externally-tagged serde writes a struct variant as `{"Variant": {...}}` and a unit variant as
+/// the bare string `"Variant"`; either way the tag is the event's name.
 fn kind_name(evidence: &Value) -> String {
-    evidence.as_object().and_then(|m| m.keys().next()).cloned().unwrap_or_else(|| "unknown".to_string())
+    match evidence {
+        Value::String(s) => s.clone(),
+        Value::Object(m) => m.keys().next().cloned().unwrap_or_else(|| "unknown".to_string()),
+        _ => "unknown".to_string(),
+    }
 }
 
 fn refusal_name(r: &lifecycle::Refusal) -> String {
@@ -759,5 +763,13 @@ mod tests {
         assert!(sql.contains("applied = 1"));
         assert!(sql.contains("GROUP BY lc_key, to_state"));
         assert!(!sql.contains("e.lc_key = delivery"));
+    }
+
+    #[test]
+    fn a_unit_variant_and_a_struct_variant_are_both_named() {
+        let unit = serde_json::to_value(lifecycle::bead::BeadEventKind::Release).unwrap();
+        let strukt = serde_json::to_value(lifecycle::bead::BeadEventKind::Submit { tip: "abc".into() }).unwrap();
+        assert_eq!(kind_name(&unit), "Release");
+        assert_eq!(kind_name(&strukt), "Submit");
     }
 }
