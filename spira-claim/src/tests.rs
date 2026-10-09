@@ -570,7 +570,7 @@ fn store_events_parses_and_fails_closed() {
     assert!(empty.events(&["a".into()]).is_err(), "empty stdout is not zero rows");
     let garbage = fake_bd("echo 'Warning: schema migration needed'");
     assert!(garbage.events(&["a".into()]).is_err());
-    assert!(fake_bd_lc("exit 0", "exit 1").lifecycle_snapshot().is_err());
+    assert!(fake_bd_lc("exit 0", "exit 1").lifecycle_in_states(&["READY"]).is_err());
 }
 
 #[test]
@@ -1246,4 +1246,22 @@ fn an_absent_registry_key_is_refused_by_name_never_resolved_to_empty() {
     let o = exec_spira_claim(&["fayth-ready", "probe"], "");
     assert_ne!(o.code, 0, "{}", o.out);
     assert!(o.err.contains("SPIRA_OPEN_CHILDREN_LABEL"), "the refusal names the key: {}", o.err);
+}
+
+#[test]
+fn every_lifecycle_read_carries_a_filter() {
+    let log = tmp("");
+    let st = fake_bd_lc("echo '[]'", &format!("printf '%s\\n' \"$*\" >> {log}; echo '[]'"));
+    st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
+    st.lifecycle_of(&["a".into(), "b".into()]).unwrap();
+    assert!(st.lifecycle_of(&[]).unwrap().is_empty());
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(calls.lines().collect::<Vec<_>>(), ["list --state READY,REWORK", "list --ids a,b"], "{calls}");
+}
+
+#[test]
+fn no_call_site_reads_the_unfiltered_store() {
+    let src = include_str!("store.rs");
+    assert_eq!(src.matches("c.arg(\"list\")").count(), 1, "one spira-lc list site");
+    assert!(src.contains("c.arg(\"list\").args(filter)"));
 }
