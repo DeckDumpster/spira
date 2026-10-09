@@ -26,7 +26,7 @@ command -v testenv >/dev/null || bail "testenv is not on PATH"
 T="$(mktemp -d)"
 cleanup() {
     local w
-    for w in "$T"/sim-run-*; do [ -d "$w" ] && timeout 60 "$SIM" world down "$w" >/dev/null 2>&1; done
+    for w in "$T"/sim-run-*; do [ -d "$w" ] && timeout 60 "$SIM" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
     rm -rf "$T"
 }
 trap cleanup EXIT

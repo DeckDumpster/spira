@@ -5,14 +5,14 @@
 # the job's own steps provide. SPIRA_TOML is supplied to both: the job's steps set none, and
 # spira-config refuses without one.
 set -u
-pr=$(gh pr list --state open --json number -q '.[0].number // ""') || exit 9
+pr=$(timeout 5 gh pr list --state open --json number -q '.[0].number // ""') || exit 9
 [ -n "$pr" ] || exit 3
-sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid) || exit 9
-branch=$(gh pr view "$pr" --json headRefName -q .headRefName) || exit 9
+sha=$(timeout 5 gh pr view "$pr" --json headRefOid -q .headRefOid) || exit 9
+branch=$(timeout 5 gh pr view "$pr" --json headRefName -q .headRefName) || exit 9
 ws="$SIM_WORLD/ci-ws"
 rm -rf "$ws"
-git clone -q "$SIM_WORLD/origin.git" "$ws" || exit 9
-git -C "$ws" checkout -q -B main "$sha" || exit 9
+timeout 5 git clone -q "$SIM_WORLD/origin.git" "$ws" || exit 9
+timeout 5 git -C "$ws" checkout -q -B main "$sha" || exit 9
 results=$(ls "$ws"/spira/test-*.sh | sed 's|.*/||; s|$|.result|' | paste -sd, -)
 sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success || exit 9
 sim ghctl "$SIM_GH_DIR" run-add --branch "$branch" --sha "$sha" --conclusion success --artifact "batch-results-1:$results" >/dev/null || exit 9
