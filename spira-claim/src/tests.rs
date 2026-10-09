@@ -1265,3 +1265,18 @@ fn no_call_site_reads_the_unfiltered_store() {
     assert_eq!(src.matches("c.arg(\"list\")").count(), 1, "one spira-lc list site");
     assert!(src.contains("c.arg(\"list\").args(filter)"));
 }
+
+#[test]
+fn release_claim_writes_only_to_a_working_row() {
+    let log = tmp("");
+    let lc = format!(
+        "printf '%s\\n' \"$*\" >> {log}; case \"$1\" in list) echo \"[{{\\\"bead_id\\\":\\\"sp-x\\\",\\\"state\\\":\\\"$STATE\\\"}}]\";; esac"
+    );
+    for (state, writes) in [("REWORK", false), ("SUBMITTED", false), ("READY", false), ("WORKING", true)] {
+        std::fs::write(&log, "").unwrap();
+        let st = fake_bd_lc("echo '[]'", &format!("STATE={state}; {lc}"));
+        st.release_claim("sp-x", "t").unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().any(|l| l.starts_with("release ")), writes, "{state}: {calls}");
+    }
+}
