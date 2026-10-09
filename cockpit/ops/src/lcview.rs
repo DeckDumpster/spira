@@ -847,7 +847,7 @@ pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
 <meta http-equiv=refresh content='{refresh_s}'><title>Spira lifecycle</title><style>{CSS}</style></head><body>"
     ));
     h.push_str(&format!(
-        "<header><b>LIFECYCLE</b> <span class=dim>{}</span> · release <b>{}</b> · <span class={}>{}</span> · aeons <b>{}/{}</b></header>",
+        "<header><b>LIFECYCLE</b> <span class=dim>{}</span> · release <b>{}</b> · <span class={}>{}</span> · aeons <b>{}/{}</b> · <a href=/stuck>where work is stuck →</a></header>",
         esc(&v.clock),
         esc(&v.release),
         if v.world_running { "ok" } else { "bad" },
@@ -1046,6 +1046,7 @@ mod tests {
         let v = view(&s);
         assert!(plain(&render(&v, 100)).contains("source failed: spira-lc list: exit 1"));
         assert!(render_html(&v, None, 10).contains("source failed: spira-lc list: exit 1"));
+        assert!(render_html(&v, None, 10).contains("<a href=/stuck>"), "the lifecycle page links to where work is stuck");
     }
 
     #[test]
