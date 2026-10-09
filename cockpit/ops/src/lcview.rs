@@ -235,6 +235,10 @@ pub struct PipeLine {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SmEdge {
     pub event: String,
+    /// Each event behind this move, with its refusals from this state in the last hour and the
+    /// newest refusal's reason (the store counts applied moves per edge, not per event).
+    #[serde(default)]
+    pub events: Vec<(String, i64, String)>,
     pub to: String,
     pub rate_1h: i64,
     pub main: bool,
@@ -431,7 +435,18 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
         for to in tos {
             let events: Vec<String> = s.graph.iter().filter(|g| g.from == name && g.to == to).map(|g| kebab(&g.event)).collect();
             let rate = s.edges.iter().filter(|e| e.kind == "applied" && e.from_state == name && e.to_state.as_deref() == Some(to)).map(|e| e.n_1h).sum();
-            edges.push(SmEdge { event: events.join("/"), to: to.into(), rate_1h: rate, main: Some(to) == next });
+            let detail = s
+                .graph
+                .iter()
+                .filter(|g| g.from == name && g.to == to)
+                .map(|g| {
+                    let refused: Vec<&EdgeRow> =
+                        s.edges.iter().filter(|e| e.kind == "refused" && e.from_state == name && e.event.as_deref().is_some_and(|x| kebab(x) == kebab(&g.event))).collect();
+                    let why = refused.iter().find_map(|e| e.refusal.clone()).unwrap_or_default();
+                    (kebab(&g.event), refused.iter().map(|e| e.n_1h).sum(), why)
+                })
+                .collect();
+            edges.push(SmEdge { event: events.join("/"), events: detail, to: to.into(), rate_1h: rate, main: Some(to) == next });
         }
         let no_rework_exit = NEEDS_REWORK_EXIT.contains(&name) && !s.graph.is_empty() && !s.graph.iter().any(|g| g.from == name && g.to == "REWORK");
         out.push(SmState { name: name.into(), count, detail: join_parts(parts), red, edges, no_rework_exit });
@@ -563,17 +578,17 @@ pub fn view(s: &Snapshot) -> View {
         .join(" · ");
     v.refused = refusals(s);
     v.batch = batch_block(s);
+    // The newest round, open or not: when none is running the pane says how the last one ended.
     v.round = s
         .batches
         .iter()
-        .filter(|b| OPEN_BATCH.contains(&b.state.as_str()))
         .max_by_key(|b| b.opened_at.max(b.last_at))
         .map(|b| {
             let opened = if b.opened_at > 0 { b.opened_at } else { b.last_at };
             let ejects_of = |id: &str| s.batches.iter().filter(|o| o.ejected.iter().any(|e| e == id)).count();
             RoundView {
                 name: b.id.clone(),
-                state: b.state.clone(),
+                state: if OPEN_BATCH.contains(&b.state.as_str()) { b.state.clone() } else { format!("{} {} ago", b.state, age(s.now - b.last_at)) },
                 age: age(s.now - opened),
                 passes: passes(&b.eject_at),
                 ejected: b.ejected.clone(),

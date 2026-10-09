@@ -2,7 +2,7 @@
 //! tools only: `spira-lc list` (state), `work list --json` (titles, priority), the landing ref's
 //! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
-use cockpit_ops::lctui::{layout, Frame, Mode, Ui, ORDER};
+use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
 use cockpit_ops::lcview::{own_ids, render, tail_lines, view, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -122,10 +122,8 @@ fn gather_state_machine(s: &mut Snapshot) {
         }
         Err(e) => s.errors.push(e),
     }
-    for b in s.batches.iter_mut().filter(|b| matches!(b.state.as_str(), "OPEN" | "CI_RUNNING" | "GREEN" | "ATTRIBUTING" | "REBUILDING")) {
-        if b.ejected.is_empty() {
-            continue;
-        }
+    // Eject times for the newest round only: that is the one the pane names.
+    if let Some(b) = s.batches.iter_mut().max_by_key(|b| b.opened_at.max(b.last_at)).filter(|b| !b.ejected.is_empty()) {
         match lc_json(&["history", &b.id, "--machine", "batch"]) {
             Ok(evs) => {
                 b.eject_at = evs
@@ -285,42 +283,75 @@ fn interactive(secs: u64) -> std::io::Result<()> {
     let mut ui = load_ui();
     let mut v: Option<View> = None;
     let mut frame = Frame::default();
-    let n = ORDER.len();
     let mut said_waiting = false;
     let res = (|| -> std::io::Result<()> {
         loop {
             let mut dirty = v.is_none() && !std::mem::replace(&mut said_waiting, true);
             while let Ok(snap) = rx.try_recv() {
-                v = Some(view(&snap));
+                let nv = view(&snap);
+                // Forget choices for beads that have left the tree, once a whole gather says so.
+                if nv.errors.is_empty() && !frame.all_keys.is_empty() {
+                    let fresh = layout(&nv, &ui, 200, 1000).all_keys;
+                    let before = ui.modes.len();
+                    ui.modes.retain(|k, _| !k.contains("sp-") || fresh.contains(k));
+                    if ui.modes.len() != before {
+                        save_ui(&ui);
+                    }
+                }
+                v = Some(nv);
                 dirty = true;
             }
             if event::poll(Duration::from_millis(if v.is_some() { 250 } else { 50 }))? {
                 dirty = true;
-                let sel = ORDER[ui.selected.min(n - 1)];
+                let pos = frame.order.iter().position(|k| *k == ui.selected).unwrap_or(0);
+                let sel = frame.order.get(pos).cloned().unwrap_or_default();
+                let (has_kids, showing) = frame.nodes.get(&sel).copied().unwrap_or((false, false));
+                let select = |ui: &mut Ui, k: Option<&String>| {
+                    if let Some(k) = k {
+                        ui.selected = k.clone();
+                        ui.scroll = 0;
+                    }
+                };
                 match event::read()? {
                     Event::Key(k) if k.kind != KeyEventKind::Release => match k.code {
                         KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => {
-                            ui.selected = (ui.selected + 1) % n;
-                            ui.scroll = 0;
+                        KeyCode::Char('j') | KeyCode::Down => select(&mut ui, frame.order.get(pos + 1)),
+                        KeyCode::Char('k') | KeyCode::Up => select(&mut ui, pos.checked_sub(1).and_then(|p| frame.order.get(p))),
+                        KeyCode::Tab => {
+                            // Next top-level section.
+                            let next = frame.order.iter().skip(pos + 1).find(|k| !k.contains('/'));
+                            select(&mut ui, next.or_else(|| frame.order.first()))
                         }
-                        KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => {
-                            ui.selected = (ui.selected + n - 1) % n;
-                            ui.scroll = 0;
+                        KeyCode::BackTab => {
+                            let prev = frame.order.iter().take(pos).rev().find(|k| !k.contains('/'));
+                            select(&mut ui, prev)
                         }
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            ui.cycle(sel);
-                            save_ui(&ui);
+                        KeyCode::Char('l') | KeyCode::Right if has_kids => {
+                            if showing {
+                                select(&mut ui, frame.order.get(pos + 1));
+                            } else {
+                                ui.set(&sel, Mode::Open);
+                                save_ui(&ui);
+                            }
                         }
-                        KeyCode::Char('o') => {
-                            ui.modes.insert(sel.key().into(), Mode::Open);
-                            save_ui(&ui);
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            if has_kids && showing {
+                                ui.set(&sel, Mode::Collapsed);
+                                save_ui(&ui);
+                            } else {
+                                let up = parent_key(&sel).map(String::from);
+                                select(&mut ui, up.as_ref());
+                            }
                         }
-                        KeyCode::Char('c') => {
-                            ui.modes.insert(sel.key().into(), Mode::Collapsed);
+                        KeyCode::Enter | KeyCode::Char(' ') if has_kids => {
+                            ui.cycle(&sel);
                             save_ui(&ui);
                         }
                         KeyCode::Char('a') => {
+                            ui.reset(&sel);
+                            save_ui(&ui);
+                        }
+                        KeyCode::Char('A') => {
                             ui.modes.clear();
                             ui.scroll = 0;
                             save_ui(&ui);
@@ -331,9 +362,11 @@ fn interactive(secs: u64) -> std::io::Result<()> {
                     },
                     Event::Mouse(m) => match m.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if let Some((_, k)) = frame.headers.iter().find(|(r, _)| *r == m.row as usize) {
-                                ui.selected = *k;
-                                ui.cycle(ORDER[*k]);
+                            if let Some((_, key)) = frame.rows.iter().find(|(r, _)| *r == m.row as usize) {
+                                ui.selected = key.clone();
+                                if frame.nodes.get(key).is_some_and(|n| n.0) {
+                                    ui.cycle(key);
+                                }
                                 save_ui(&ui);
                             } else {
                                 dirty = false;
