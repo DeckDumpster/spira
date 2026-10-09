@@ -1260,6 +1260,26 @@ fn express_ready_but_capacity_unknown_does_not_summon() {
 // CHECK 2 / 2c (lifecycle)
 
 #[test]
+fn on_check2_skips_a_stale_holder_whose_bead_moved_since_the_read() {
+    let (w, r, sink, clock) = setup("check2-moved");
+    let lease = NOW - 20_000;
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(&format!(
+                r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#
+            ));
+        }
+        if s.prog == "spira-lc" && s.args[0] == "show" {
+            return ok(r#"{"bead":{"state":"READY","version":"4"}}"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert!(r.find(|s| s.prog == "spira-lc" && s.args[0] == "event").is_none(), "{}", sink.text());
+    assert!(sink.has("CHECK2 sp-b: skipped HolderDead — the bead moved to READY"), "{}", sink.text());
+}
+
+#[test]
 fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     let (w, r, sink, clock) = setup("check2");
     let lease = NOW - 20_000;
