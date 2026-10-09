@@ -13,7 +13,7 @@
 #   carrying a distinguishable sp-x.fixed marker and confirm that marker — not the prior
 #   one — is what current/bin/loom holds.
 #
-# The cargo build and a live loom process serving /api/beads run once, for real, in
+# The cargo build and a live loom process serving /stuck run once, for real, in
 # acceptance.yml (loom-from-release), against the real build-tarball.sh output — not
 # hand-assembled here, and not repeated on every branch (docs/test-plan/instance-
 # lifecycle.md, UC-instance-lifecycle-15). defect: sp-kcx8.

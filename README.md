@@ -207,25 +207,18 @@ Two mechanisms worth knowing:
 
 ---
 
-## Loom — the graph in a browser
+## Loom — where work is stuck
 
-`loom/` is a Rust read endpoint over the live beads graph and a page that renders it.
+`loom/` is a Rust read endpoint over the lifecycle store's read model. It never reads `bd`.
 
-- `GET /api/beads` — the raw rows as `bd` returns them, plus the dependency edges between them.
+- `GET /stuck` — a per-bead Gantt of the last day, stuck rows first; `GET /stuck/{id}` is one
+  bead's timeline and `GET /api/stuck` the same rows as JSON.
+- `GET /lifecycle` and `GET /api/lifecycle` — the lifecycle view the cockpit pane draws.
 - `GET /api/ops` — the ops dashboard, a mirror of the cockpit's health column, readable on a phone.
-- `GET /` — the page, with its scripts embedded in the binary at compile time. One thing to
-  install, one thing to start, no asset directory to keep in sync.
+- `GET /` redirects to `/stuck`.
 
-**The server serves the graph and nothing else** — no layout, no buckets, no ranking. All of
-that measured 2 ms in the browser at the live corpus and 60 ms at a hundred times it, so the
-page derives every view: where the work lives (a treemap by repository), what blocks what
-(dependency chains), how it has proceeded (churn), flow, build, and ops.
-
-**Its query carries a budget.** A query that overruns is *refused* rather than served late:
-serving a stale snapshot would be kinder to one reader and fatal to the design, because it
-hides the one signal that says a query per request has stopped being cheap enough. The work
-either side of the query is reported next to it as `refresh_ms` — a refresh that grew slow by
-growing its payload rather than its query would otherwise be invisible.
+**Every read carries a budget.** A query that overruns is killed and the page says so, rather
+than serving a stale answer as live.
 
 It **refuses to start without a database** rather than letting `bd` discover one from its
 working directory, which would come up healthy serving a different harness's graph.
@@ -418,7 +411,7 @@ WARN does not.
 | 2 | the world is not halted | fails |
 | 3 | the database is readable and shipped statutes are in force | fails |
 | 4 | `sentinel --report` names an open plan bead | WARN if none |
-| 5 | Loom answers 200 at `/api/beads` inside its budget | fails |
+| 5 | Loom answers 200 at `/stuck` inside its budget | fails |
 | 6 | the configured agent binary is present | WARN by design — an ephemeral install is valid without a credentialled agent |
 | 7 | the two tagged tmux panes are present | WARN by design — the loop runs without a terminal surface |
 

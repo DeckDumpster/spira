@@ -1,4 +1,4 @@
-//! The Loom server. One route today; the static page joins it as a second.
+//! The Loom server.
 
 use loom::{router, Config, Loom};
 use std::process::ExitCode;
@@ -35,9 +35,8 @@ async fn main() -> ExitCode {
     // a log line naming what was ASKED FOR cannot be used to reach the thing that is running.
     match listener.local_addr() {
         Ok(a) => eprintln!(
-            "loom: serving http://{a}/ and /api/beads and /api/ops — budget {} ms, {} s cache",
-            cfg.budget.as_millis(),
-            cfg.cache.as_secs()
+            "loom: serving http://{a}/stuck, /lifecycle and /api/ops — budget {} ms",
+            cfg.budget.as_millis()
         ),
         Err(e) => eprintln!("loom: listening, but cannot name the address: {e}"),
     }

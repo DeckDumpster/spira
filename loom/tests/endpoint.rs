@@ -1,17 +1,7 @@
 //! The endpoint driven over a real socket, against a `spira-lc` it spawns as a real process.
 //!
-//! HERMETIC BY DEFAULT. The `spira-lc` these tests spawn is a shell script that answers
-//! `ops-view ops_live` and `ops-view ops_recent` from canned files in the shape the store's
-//! views emit (BIGINT columns as strings, `holds` as a JSON string, a row filed before titles
-//! were mirrored with a null title). The real views are exercised against a real store by
-//! `spira/test-ops-read-model.sh`.
-//!
-//! The fixture: sp-aaa ready, sp-bbb ready with a title needing escaping and two holds, sp-ccc
-//! working, sp-ddd with no mirrored title yet, and sp-zzz landed an hour ago.
-//!
 //! Every assertion that something is ABSENT is paired with one that the same check can see
-//! something present: an invocation counter is shown moving before its stillness means
-//! anything, and the budget is shown admitting a query before it is shown refusing one.
+//! something present.
 
 use loom::{router, Config, Loom};
 use serde_json::Value;
@@ -34,90 +24,6 @@ fn scratch(kind: &str) -> testkit::TempDir {
 /// test thread spawns a child makes the exec fail with ETXTBSY (testkit/DESIGN.md).
 fn script(path: &PathBuf, body: &str) {
     testkit::write_exe(path, body);
-}
-
-const LIVE: &str = r#"[
- {"bead_id":"sp-aaa","state":"READY","holds":"[]","holder":null,"lease_until":null,"since":null,"updated_at":"1791480000","priority":"1","title":"open bead"},
- {"bead_id":"sp-bbb","state":"READY","holds":"[\"manual\",\"wait\"]","holder":null,"lease_until":null,"since":null,"updated_at":"1791480001","priority":"1","title":"beta \"quoted\" and a \\ backslash"},
- {"bead_id":"sp-ccc","state":"WORKING","holds":"[]","holder":"aeon-1","lease_until":"1791483000","since":null,"updated_at":"1791480002","priority":"2","title":"working bead"},
- {"bead_id":"sp-ddd","state":"SUBMITTED","holds":"[]","holder":null,"lease_until":null,"since":null,"updated_at":"1791480003","priority":null,"title":null}
-]"#;
-const RECENT: &str = r#"[
- {"bead_id":"sp-zzz","state":"LANDED","since":"1791476400","updated_at":"1791476401","priority":"1","title":"landed bead"}
-]"#;
-
-/// The first element holds the fixture's directory: keep it for as long as the path is used.
-fn fixture_with(live: &str, recent: &str) -> (testkit::TempDir, String) {
-    let dir = scratch("fake");
-    std::fs::write(dir.join("live.json"), live).expect("the live answer");
-    std::fs::write(dir.join("recent.json"), recent).expect("the recent answer");
-    let lc = dir.join("spira-lc");
-    script(
-        &lc,
-        &format!(
-            "#!/bin/sh\n\
-             [ \"$1\" = ops-view ] || {{ echo \"fake spira-lc: unexpected query: $*\" >&2; exit 2; }}\n\
-             case \"$2\" in\n\
-               ops_live) exec cat {d}/live.json;;\n\
-               ops_recent) exec cat {d}/recent.json;;\n\
-               *) echo \"fake spira-lc: unexpected view: $2\" >&2; exit 2;;\n\
-             esac\n",
-            d = dir.display()
-        ),
-    );
-    let lc = lc.to_string_lossy().into_owned();
-    (dir, lc)
-}
-
-fn fixture() -> (testkit::TempDir, String) {
-    fixture_with(LIVE, RECENT)
-}
-
-/// An `spira-lc` that never answers inside any budget a test sets. `exec` so the process loom
-/// kills on overrun is the sleeper itself, not a shell that would orphan it.
-fn slow_lc() -> (testkit::TempDir, String) {
-    let dir = scratch("slow");
-    let lc = dir.join("spira-lc");
-    script(&lc, "#!/bin/sh\nexec sleep 30\n");
-    let lc = lc.to_string_lossy().into_owned();
-    (dir, lc)
-}
-
-/// A shim that records every call and then execs the real one.
-///
-/// COUNTING INVOCATIONS, NEVER TIMING THEM. "The second request was fast" is satisfied by a
-/// warm page cache, a lucky scheduler or a query that failed early; only the count answers
-/// whether the process boundary was crossed.
-fn counting_lc(real: &str) -> (testkit::TempDir, String, PathBuf) {
-    let dir = scratch("shim");
-    let counter = dir.join("calls");
-    std::fs::write(&counter, b"").expect("an empty counter");
-    let shim = dir.join("spira-lc");
-    script(
-        &shim,
-        &format!("#!/bin/sh\nprintf 'x\\n' >> {}\nexec {} \"$@\"\n", counter.display(), real),
-    );
-    let shim = shim.to_string_lossy().into_owned();
-    (dir, shim, counter)
-}
-
-fn calls(counter: &PathBuf) -> usize {
-    std::fs::read_to_string(counter).map(|s| s.lines().count()).unwrap_or(0)
-}
-
-/// Every value is pinned AWAY from the shipped default, so an assertion here cannot be
-/// satisfied by code that has the default written in rather than reading the key.
-fn cfg(lc: &str, budget_ms: u64, cache_s: u64) -> Config {
-    Config {
-        lc: lc.to_string(),
-        extra_path: vec![],
-        budget: Duration::from_millis(budget_ms),
-        cache: Duration::from_secs(cache_s),
-        addr: String::new(),
-        run: String::new(),
-        instance: "test".to_string(),
-        systemctl: "systemctl".to_string(),
-    }
 }
 
 async fn spawn(cfg: Config) -> SocketAddr {
@@ -155,149 +61,30 @@ async fn get(addr: SocketAddr, path: &str) -> (u16, String) {
     (code, body.to_string())
 }
 
-async fn json(addr: SocketAddr) -> (u16, Value) {
-    let (code, body) = get(addr, "/api/beads").await;
-    let v = serde_json::from_str(&body).unwrap_or_else(|e| panic!("body is not JSON ({e}): {body}"));
-    (code, v)
-}
-
-fn find<'a>(v: &'a Value, id: &str) -> &'a Value {
-    v["beads"].as_array().expect("a bead array").iter().find(|b| b["id"] == id).unwrap_or_else(|| panic!("{id} missing from {v}"))
-}
-
 #[tokio::test]
-async fn the_payload_is_the_lifecycle_views_shaped_for_the_page() {
-    let (_dir, lc) = fixture();
-    let addr = spawn(cfg(&lc, 20_000, 30)).await;
-    let (code, v) = json(addr).await;
-    assert_eq!(code, 200, "{v}");
+async fn the_retired_list_view_is_gone_and_no_loom_route_reads_bd_listings() {
+    let dir = scratch("retired");
+    let counter = dir.join("calls");
+    std::fs::write(&counter, b"").expect("an empty counter");
+    let real = fake_lc(&dir.to_path_buf());
+    let shim = dir.join("shim-lc");
+    script(&shim, &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexec {} \"$@\"\n", counter.display(), real));
+    let mut c = ops_cfg("");
+    c.lc = shim.to_string_lossy().into_owned();
+    let addr = spawn(c).await;
 
-    // PRESENT FIRST, then the landing the page reads as closed.
-    assert_eq!(v["count"], 5);
-    assert_eq!(find(&v, "sp-aaa")["status"], "open");
-    assert_eq!(find(&v, "sp-ccc")["status"], "in_progress");
-    assert_eq!(find(&v, "sp-ccc")["assignee"], "aeon-1");
-    assert_eq!(find(&v, "sp-zzz")["status"], "closed");
-
-    let beta = find(&v, "sp-bbb");
-    assert_eq!(beta["title"], "beta \"quoted\" and a \\ backslash", "the splice still produces a document");
-    assert_eq!(beta["holds"], serde_json::json!(["wait", "manual"]));
-    assert_eq!(beta["priority"], 1);
-    assert_eq!(find(&v, "sp-aaa")["updated_at"], "2026-10-08T17:20:00Z");
-
-    let ddd = find(&v, "sp-ddd");
-    assert_eq!(ddd["title"], "sp-ddd", "an unmirrored title shows the id");
-    assert_eq!(ddd["priority"], 3);
-
-    assert_eq!(v["edges"], serde_json::json!([]));
-    assert_eq!(v["budget_ms"], 20_000);
-    assert_eq!(v["cache_s"], 30);
-    assert!(v["query_ms"].is_u64() && v["refresh_ms"].is_u64());
-}
-
-#[tokio::test]
-async fn a_twelve_thousand_row_answer_renders_within_budget() {
-    let rows: Vec<String> = (0..12_000)
-        .map(|i| format!(r#"{{"bead_id":"sp-b{i}","state":"READY","holds":"[]","updated_at":"1791480000","priority":"2","title":"t{i}"}}"#))
-        .collect();
-    let (_dir, lc) = fixture_with(&format!("[{}]", rows.join(",")), "[]");
-    let addr = spawn(cfg(&lc, 1_500, 30)).await;
-    let (code, v) = json(addr).await;
-    assert_eq!(code, 200, "{v}");
-    assert_eq!(v["count"], 12_000);
-    assert!(v["refresh_ms"].as_u64().unwrap() < 1_500);
-}
-
-#[tokio::test]
-async fn two_requests_inside_the_window_cost_one_refresh() {
-    let (_dir, lc) = fixture();
-    let (_shim_dir, shim, counter) = counting_lc(&lc);
-    let addr = spawn(cfg(&shim, 20_000, 60)).await;
-    assert_eq!(calls(&counter), 0, "nothing runs before anybody looks");
-
-    let (code, _) = json(addr).await;
-    assert_eq!(code, 200);
-    let cold = calls(&counter);
-    assert_eq!(cold, 2, "one read per view answers the whole page");
-
-    let (code, v) = json(addr).await;
-    assert_eq!(code, 200);
-    assert_eq!(calls(&counter), cold, "the second request inside the window crossed the process boundary again");
-    assert!(v["age_ms"].as_u64().expect("an age") < 60_000);
-
-    // THE POSITIVE CONTROL. The counter is shown MOVING under an expired window, so its
-    // stillness above is a property of the cache rather than of a shim nobody wired up.
-    let (_shim_dir, shim2, counter2) = counting_lc(&lc);
-    let addr2 = spawn(cfg(&shim2, 20_000, 0)).await;
-    let (code, _) = json(addr2).await;
-    assert_eq!(code, 200);
-    assert_eq!(calls(&counter2), 2);
-    let (code, _) = json(addr2).await;
-    assert_eq!(code, 200);
-    assert_eq!(calls(&counter2), 4, "a zero-length window must refresh every time");
-}
-
-#[tokio::test]
-async fn a_query_over_budget_is_refused_rather_than_served_late() {
-    let (_dir, lc) = fixture();
-    let (_slow_dir, slow) = slow_lc();
-    let (_shim_dir, shim, counter) = counting_lc(&slow);
-
-    let addr = spawn(cfg(&shim, 1_500, 30)).await;
-    let (code, v) = json(addr).await;
-    assert_eq!(code, 503, "an over-budget query must be refused: {v}");
-    assert_eq!(v["error"], "over budget");
-    assert_eq!(v["budget_ms"], 1_500);
-    assert!(calls(&counter) >= 1, "it was refused because the query overran, not because nothing was tried");
-    let (code, _) = json(addr).await;
-    assert_eq!(code, 503, "nothing stale is served in its place");
-
-    let addr2 = spawn(cfg(&lc, 20_000, 30)).await;
-    let (code, v) = json(addr2).await;
-    assert_eq!(code, 200, "{v}");
-}
-
-#[tokio::test]
-async fn a_query_that_fails_is_reported_as_such_and_not_as_an_empty_graph() {
-    let (_dir, lc) = fixture_with("cannot tell", "[]");
-    let addr = spawn(cfg(&lc, 20_000, 30)).await;
-    let (code, v) = json(addr).await;
-    assert_eq!(code, 502, "{v}");
-    assert_eq!(v["error"], "query failed");
-    assert!(v["detail"].as_str().map(|d| !d.is_empty()).unwrap_or(false), "a failure must carry its reason: {v}");
-
-    let addr = spawn(cfg("/nonexistent/spira-lc", 20_000, 30)).await;
-    let (code, _) = json(addr).await;
-    assert_eq!(code, 502);
-}
-
-#[tokio::test]
-async fn the_static_page_and_its_scripts_are_served() {
-    let (_dir, lc) = fixture();
-    let addr = spawn(cfg(&lc, 20_000, 30)).await;
-    // PRESENCE FIRST. The page must be there before its absence means anything.
-    let (code, body) = get(addr, "/").await;
-    assert_eq!(code, 200, "the page must be at /");
-    assert!(body.contains("</html>"), "/ must serve an HTML document: {body:.200}");
-
-    let (code, js) = get(addr, "/model.js").await;
-    assert_eq!(code, 200, "the model script must be at /model.js");
-    assert!(!js.is_empty(), "/model.js must not be empty");
-
-    let (code, app) = get(addr, "/app.js").await;
-    assert_eq!(code, 200, "the painter script must be at /app.js");
-    assert!(!app.is_empty(), "/app.js must not be empty");
-
-    // POSITIVE CONTROL for the absence assertions that follow. /api/beads is known to answer;
-    // a route that 404s on every path would pass the absent-route checks above.
-    let (code, _) = json(addr).await;
-    assert_eq!(code, 200, "/api/beads must still answer");
-
-    // AN ABSENT PATH MUST 404, not serve the page as a catch-all. A router that delivers the
-    // page for every unknown URL hides broken links — a typo in the scripts' own relative path
-    // would be served the page, not a 404 that names the problem.
-    let (code, _) = get(addr, "/nonexistent.css").await;
-    assert_eq!(code, 404, "/nonexistent.css must 404, not catch-all to the page");
+    // POSITIVE CONTROL: the replacement page answers through the same shim.
+    assert_eq!(get(addr, "/stuck").await.0, 200);
+    for path in ["/api/beads", "/model.js", "/app.js"] {
+        assert_eq!(get(addr, path).await.0, 404, "{path} must no longer be served");
+    }
+    let before = std::fs::read_to_string(&counter).unwrap();
+    let (code, _) = get(addr, "/").await;
+    assert_eq!(code, 303, "/ hands over to the stuck page");
+    assert_eq!(std::fs::read_to_string(&counter).unwrap(), before, "/ must not query the store");
+    let calls = std::fs::read_to_string(&counter).unwrap();
+    assert!(calls.contains("ops-gantt"), "the shim saw the stuck page's reads: {calls}");
+    assert!(!calls.contains("list") && !calls.contains("ops_live") && !calls.contains("ops_recent"), "{calls}");
 }
 
 // ── /api/ops ─────────────────────────────────────────────────────────────────
