@@ -225,4 +225,33 @@ want "D2: ws=/ refusal mentions containment" "containment" "$out_d2"
 
 # ===========================================================================
 echo
+echo "E (G12) — symlinks are resolved before the path check; ssh:// and git@ remotes are real:"
+# ===========================================================================
+LINK_OUT="$WS/link-out"; ln -s "$REPO_OUTSIDE" "$LINK_OUT"
+MAP_LINK_OUT="$TMP/map-link-out"
+printf 'repo-link | %s | main | origin/main | |\n' "$LINK_OUT" >"$MAP_LINK_OUT"
+out="$(load test "$MAP_LINK_OUT" 2>&1)"; rc=$?
+is   "E1: a path under the workspaces root that links OUT of it is refused" "1" "$rc"
+want "E1: refusal names the entry" "repo-link" "$out"
+
+REPO_IN="$WS/repo-in"; git init -q "$REPO_IN"; git -C "$REPO_IN" commit -q --allow-empty -m in
+LINK_IN="$TMP/link-in"; ln -s "$REPO_IN" "$LINK_IN"
+MAP_LINK_IN="$TMP/map-link-in"
+printf 'repo-in | %s | main | origin/main | |\n' "$LINK_IN" >"$MAP_LINK_IN"
+out="$(load test "$MAP_LINK_IN" 2>&1)"; rc=$?
+is   "E2: a path outside the root that links INTO it is accepted (rc=0)" "0" "$rc"
+want "E2: prints 'loaded'" "loaded" "$out"
+
+for url in "ssh://git@example.invalid/x/y.git" "git@example.invalid:x/y.git"; do
+    tag="${url%%[:/]*}"; tag="${tag%%@*}"
+    R="$WS/repo-$tag"; git init -q "$R"; git -C "$R" commit -q --allow-empty -m r
+    git -C "$R" remote add origin "$url"
+    M="$TMP/map-$tag"; printf 'repo-%s | %s | main | origin/main | |\n' "$tag" "$R" >"$M"
+    out="$(load test "$M" 2>&1)"; rc=$?
+    is   "E3: $url remote is refused" "1" "$rc"
+    want "E3: $url refusal mentions containment" "containment" "$out"
+done
+
+# ===========================================================================
+echo
 tl_summary

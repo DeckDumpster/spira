@@ -116,6 +116,14 @@ git -C "$GH" init -q
 hook_repo="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
     bash -c ". '$GH/spira/conf.sh' >/dev/null 2>&1; printf '%s' \"\$SPIRA_REPO\"" 2>/dev/null)"
 is "SPIRA_REPO is the checkout's top even with GIT_DIR exported" "$(cd "$GH" && pwd -P)" "$hook_repo"
+# G8: spira_require names each missing program and fails; a present one passes.
+req_present="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
+    bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; spira_require bash; echo rc=\$?" 2>&1)"
+want "spira_require: a present program returns 0" "rc=0" "$req_present"
+req_absent="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
+    bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; spira_require no-such-prog-g8; echo rc=\$?" 2>&1)"
+want "spira_require: a missing program is named" "no-such-prog-g8" "$req_absent"
+nowant "spira_require: a missing program does not return 0" "rc=0" "$req_absent"
 
 # ==========================================================================
 # STORE BINDING AND SCHEMA GUARD (merged from test-bd-resolve.sh and test-bd-lock-retry.sh)

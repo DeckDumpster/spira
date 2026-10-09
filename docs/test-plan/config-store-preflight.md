@@ -28,6 +28,12 @@ This page lands the catalogue and the `# tier:` / `# covers:` tags on the surviv
 - **Not done here, still open:** the S1 schema-verdict seam with its T1 table, the merges of bd-resolve/bd-lock-retry into test-conf and of repo-label/lanes into one repo-map suite, the S5 containment injection and S6 source-time cost work, and the gaps G3–G12. They change production code or retire suites that other branches touch (`spira/conf.sh`, `spira/lib.sh` are in flight on other beads), so they are filed as follow-ups rather than done blind.
 - **Missing suites** named by the old plan (test-roster-warn, test-schema-migration-guard, test-literal-lint, test-install-bd-init-cwd) no longer exist; UCs 17, 22 and 23 are marked uncovered.
 
+## Gaps G3–G12
+
+- **Closed by a test here:** G8 (`spira_require` in test-conf), G9 (build pin equals the `SPIRA_BD_TAG` default, in test-build-bd-release), G12 (symlink in/out of the workspaces root and `ssh://` / `git@` remotes, in test-containment).
+- **Superseded by the Rust cutover:** G3 and G4 (the schema guard and config-file search moved to `spira-config`), G5–G7 (doctor is a Rust crate), and G11 (the answer-cursor consumers were deleted). Their tests belong in those crates; UC-02, 27–32 and 34 stay marked uncovered.
+- **Left as stated:** G10 — test-schema-apply's server half still reports "NOT COVERED HERE" on stderr when no server fixture exists; the suite does not yet emit a TAP skip for it.
+
 ## Cost
 
 No suite-seconds were measured: the old 640 s baseline predates the cutover and this change only edits header comments, so the after figure equals the before.
