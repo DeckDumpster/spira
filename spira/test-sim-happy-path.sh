@@ -42,9 +42,11 @@ sim_in_repo() {  # sim_in_repo <args...> — sim from the fixture repo, no produ
 
 dump() {  # dump <world> — what the world did, for a red run
     local w="$1"
+    printf '%s\n' "${RUN_OUT:-}" | tail -4 | cut -c1-260 | sed 's/^/# run: /'
     [ -f "$w/exec.log" ] || return 0
-    grep '^=== ' "$w/exec.log" | grep -v '(probe)' | tail -12 | cut -c1-170 | sed 's/^/# ran: /'
-    grep -v '^$\|^===\|beads\|bd:\|^  \|^warning' "$w/exec.log" | tail -10 | cut -c1-220 | sed 's/^/# log: /'
+    grep -c '^=== ' "$w/exec.log" | sed 's/^/# commands run: /'
+    grep -A8 'pr=$(gh' "$w/exec.log" | grep -v 'probe' | grep '^===\|^sim\|^gh\|rror\|usage' | cut -c1-200 | tail -8 | sed 's/^/# step: /'
+    grep '^=== ' "$w/exec.log" | grep -v '(probe)' | awk '{print $3,$4,$5,$6,$7}' | tail -10 | sed 's/^/# ran: /'
 }
 
 # --- 1. the happy path, timed ----------------------------------------------------------------
@@ -53,13 +55,7 @@ out="$(sim_in_repo run "$SCENARIO" --seed "$SEED" --keep 2>&1)"; rc=$?
 ELAPSED=$((SECONDS - START))
 W="$(ls -d "$T"/sim-run-*-"$SEED" 2>/dev/null | head -1)"
 wantrc "sim run happy-path exits 0" 0 "$rc"
-if [ "$rc" != 0 ]; then
-    printf '%s\n' "$out" | tail -8 | cut -c1-300 | sed 's/^/# run: /'
-    [ -n "$W" ] && dump "$W"
-fi
-[ -n "$W" ] && grep '^=== ' "$W/exec.log" | sed -E 's/^=== t=([0-9]+) (.*): exit status: ([0-9]+) in ([0-9]+)ms/\4 \2 rc=\3 t=\1/' | sort -rn | head -12 | cut -c1-110 | sed 's/^/# slow: /'
-[ -n "$W" ] && echo "# probe ms: $(grep '(probe)' "$W/exec.log" | sed -E 's/.* in ([0-9]+)ms/\1/' | paste -sd+ | bc) others ms: $(grep '^=== ' "$W/exec.log" | grep -v '(probe)' | sed -E 's/.* in ([0-9]+)ms/\1/' | paste -sd+ | bc)"
-[ -n "$W" ] && echo "# commands: $(grep -c '^=== ' "$W/exec.log") events: $(wc -l < "$W/trace/events.jsonl")"
+[ "$rc" = 0 ] || RUN_OUT="$out"
 [ "$ELAPSED" -le 60 ] && ok "the run took ${ELAPSED}s (<= 60s)" || bad "the run took ${ELAPSED}s (<= 60s)" "${ELAPSED}s"
 want "sim run prints the seed first" "sim seed: $SEED" "$out"
 
@@ -71,8 +67,8 @@ fi
 probe="$(sim_in_repo probe "$W" 2>&1)"
 want "the bead is LANDED" '"lc_state":"LANDED"' "$(printf '%s' "$probe" | tr -d ' ')"
 want "its tip is on local/main" '"on_local_main":true' "$(printf '%s' "$probe" | tr -d ' ')"
-want "the publish PR is merged" '"state": "MERGED"' "$(cat "$W/gh/state.json")"
-want "the forge holds a release tag" '"name": "spira-release-' "$(cat "$W/gh/state.json")"
+is "the publish PR is merged" 1 "$(grep -c '"state": "MERGED"' "$W/gh/state.json")"
+is "the forge holds a release tag" 1 "$(grep -c '"name": "spira-release-' "$W/gh/state.json")"
 [ -s "$W/trace/events.jsonl" ] && ok "the run recorded events" || bad "the run recorded events" "no events.jsonl"
 
 # --- 3. replay --------------------------------------------------------------------------------
@@ -91,4 +87,5 @@ wantrc "control: a scenario that never files its bead exits non-zero" 1 "$rc"
 want "control: the failure names the unreached goal and the seed" "goal sp-hp01:LANDED unreached: seed 3" "$out"
 for w in "$T"/sim-run-*-3; do [ -d "$w" ] && sim_in_repo world down "$w" >/dev/null 2>&1; done
 
+[ "$_TL_FAIL" -gt 0 ] && [ -n "${W:-}" ] && dump "$W"
 tl_summary
