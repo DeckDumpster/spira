@@ -44,7 +44,6 @@ pub struct Env {
     pub queue_dir: PathBuf,
     pub db: Option<PathBuf>,
     pub bd: String,
-    pub express_label: String,
     /// `SPIRA_FORGE` — the forge seam `find_repo` hands to `Repo.forge` (bare name on the
     /// launcher's PATH, sp-gypjk; resolved once, here, not re-read per repo).
     pub forge: PathBuf,
@@ -238,7 +237,7 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
 
 // ---------------------------------------------------------------------------------------
 // The round pool: the lifecycle machine's unheld SUBMITTED and CERTIFIED beads, narrowed to this repo, with
-// title/priority/express filled in from the bead store. Same construction as queue-watch's
+// title/priority from the bead store and express from the lifecycle row. Same construction as queue-watch's
 // snapshot(), which this borrows from directly.
 // ---------------------------------------------------------------------------------------
 
@@ -251,8 +250,8 @@ fn holds_empty(r: &serde_json::Value) -> bool {
     }
 }
 
-fn read_pool(env: &Env) -> Result<Vec<(String, String, u64)>, String> {
-    let mut pool: Vec<(String, String, u64)> = Vec::new();
+fn read_pool(env: &Env) -> Result<Vec<(String, String, u64, bool)>, String> {
+    let mut pool: Vec<(String, String, u64, bool)> = Vec::new();
     for state in ["CERTIFIED", "SUBMITTED"] {
         let out = lcq(env, &["list", "--state", state])?;
         let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
@@ -268,7 +267,13 @@ fn read_pool(env: &Env) -> Result<Vec<(String, String, u64)>, String> {
                     _ => None,
                 })
                 .unwrap_or(0);
-            Some((id, tip, epoch))
+            let express = match r.get("express") {
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(serde_json::Value::Number(n)) => n.as_u64() == Some(1),
+                Some(serde_json::Value::String(t)) => matches!(t.as_str(), "1" | "true"),
+                _ => false,
+            };
+            Some((id, tip, epoch, express))
         }));
     }
     pool.sort();
@@ -321,7 +326,7 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 
 /// The round pool for `repo`: every unheld SUBMITTED or CERTIFIED bead whose tip is still the
 /// live tip of `refs/heads/spira/<id>` in this repo's own checkout, with title/priority/
-/// express filled in from one bulk `bd show`.
+/// with express read from the lifecycle row and the rest from one bulk `bd show`.
 ///
 /// Membership is the lifecycle machine's SUBMITTED/CERTIFIED state with no hold, and no gate
 /// verdict: the round's full suite is the trial. bd's status and the retired submitted label
@@ -331,38 +336,32 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let certified = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
-    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, _)| tip_current(tip, id, &branches)).collect();
-    let ids: Vec<String> = certified.iter().map(|(id, _, _)| id.clone()).collect();
+    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, _, _)| tip_current(tip, id, &branches)).collect();
+    let ids: Vec<String> = certified.iter().map(|(id, _, _, _)| id.clone()).collect();
     let v = bd_show(env, &ids)?;
     let items = match v {
         serde_json::Value::Array(a) => a,
         o => vec![o],
     };
-    let mut by_id: BTreeMap<String, (Option<u8>, String, bool)> = BTreeMap::new();
+    let mut by_id: BTreeMap<String, (Option<u8>, String)> = BTreeMap::new();
     let mut texts: BTreeMap<String, (bool, String)> = BTreeMap::new();
     for it in items {
         let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
-        let labels: Vec<&str> = it
-            .get("labels")
-            .and_then(|l| l.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-            .unwrap_or_default();
-        let express = labels.contains(&env.express_label.as_str());
         let priority = it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8);
         let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
         let own_ref = it.get("external_ref").and_then(|x| x.as_str()).unwrap_or("");
         let text = format!("{title}\n{}", it.get("description").and_then(|d| d.as_str()).unwrap_or(""));
         texts.insert(id.to_string(), (own_ref.starts_with(&format!("basefail:{}:", repo.name)), text));
-        by_id.insert(id.to_string(), (priority, title, express));
+        by_id.insert(id.to_string(), (priority, title));
     }
     let fixes = base_fix_ids(env, repo, &texts);
     let mut out = Vec::new();
-    for (id, tip, epoch) in certified {
-        let Some((priority, title, express)) = by_id.get(&id) else { continue };
+    for (id, tip, epoch, express) in certified {
+        let Some((priority, title)) = by_id.get(&id) else { continue };
         let stack = read_stack(env, &id);
         let base_fix = fixes.contains(&id);
         let priority = if base_fix { Some(0) } else { *priority };
-        out.push(Member { id, tip, title: title.clone(), priority, express: *express, base_fix, certified_at: epoch, stack });
+        out.push(Member { id, tip, title: title.clone(), priority, express, base_fix, certified_at: epoch, stack });
     }
     Ok(out)
 }
@@ -2178,11 +2177,11 @@ mod lifecycle_tests {
     #[test]
     fn the_round_pool_is_the_machines_unheld_submitted_and_certified_beads() {
         let d = scratch("certified");
-        let reply = r#"[{"bead_id":"sp-b","tip":"bbbb","updated_at":1790000002},{"bead_id":"sp-a","tip":"aaaa","updated_at":"1790000001"},{"bead_id":"sp-n","tip":null,"updated_at":null}]"#;
+        let reply = r#"[{"bead_id":"sp-b","tip":"bbbb","updated_at":1790000002,"express":"1"},{"bead_id":"sp-a","tip":"aaaa","updated_at":"1790000001"},{"bead_id":"sp-n","tip":null,"updated_at":null}]"#;
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
-            vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001), ("sp-b".into(), "bbbb".into(), 1790000002), ("sp-n".into(), "none".into(), 0)]
+            vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001, false), ("sp-b".into(), "bbbb".into(), 1790000002, true), ("sp-n".into(), "none".into(), 0, false)]
         );
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
         assert!(log.contains("list --state CERTIFIED") && log.contains("list --state SUBMITTED"), "{log}");
@@ -2197,7 +2196,7 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
-            vec![("sp-j".to_string(), "jjjj".to_string(), 4), ("sp-s".into(), "ssss".into(), 3)]
+            vec![("sp-j".to_string(), "jjjj".to_string(), 4, false), ("sp-s".into(), "ssss".into(), 3, false)]
         );
     }
 
@@ -2722,7 +2721,6 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         queue_dir: dir.join("queue"),
         db: None,
         bd: "bd".into(),
-        express_label: "express".into(),
         forge: PathBuf::from("forge"),
         tsd_bin: None,
         round_vm: dir.join("round-vm"),

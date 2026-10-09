@@ -169,7 +169,6 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
         db: o.db.clone(),
         bd: cfg("SPIRA_BD")?,
-        express_label: cfg("SPIRA_EXPRESS_LABEL")?,
         forge: PathBuf::from(cfg("SPIRA_FORGE")?),
         // Every harness tool by name, on the launcher's PATH (sp-gypjk).
         tsd_bin: Some(PathBuf::from("tsd-write")),

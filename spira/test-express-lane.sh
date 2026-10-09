@@ -47,6 +47,18 @@ tl_config SPIRA_REPO_MAP="$SH/repo-map"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 
+mkdir -p "$TMP/lcx"
+cat > "$TMP/lcx/spira-lc" <<'LCX'
+#!/usr/bin/env bash
+case "${1:-}" in
+    express) mkdir -p "$SPIRA_RUN/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}" ;;
+    unexpress) rm -f "$SPIRA_RUN/lc-express/${2:?}" ;;
+esac
+exit 0
+LCX
+chmod +x "$TMP/lcx/spira-lc"
+export SPIRA_RUN SPIRA_LC_BIN="$TMP/lcx/spira-lc"
+
 B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 labels_of() {
     B show "$1" --json 2>/dev/null | python3 -c '
@@ -91,6 +103,7 @@ BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
     want "file --express: express label present" "express" "$LABELS"
+    is "file --express: the lifecycle row is marked express" "yes" "$([ -f "$RUN/lc-express/$BID" ] && echo yes || echo no)"
 else
     bad "file --express: could not create bead" "output: $out"
 fi
@@ -165,6 +178,7 @@ if [ -n "$BID" ]; then
         bash "$SH/bead.sh" amend "$BID" --express 2>&1 >/dev/null || true
     LABELS="$(labels_of "$BID")"
     want "amend --express: express label added" "express" "$LABELS"
+    is "amend --express: the lifecycle row is marked express" "yes" "$([ -f "$RUN/lc-express/$BID" ] && echo yes || echo no)"
 else
     bad "amend --express: could not create bead" "output: $out"
 fi

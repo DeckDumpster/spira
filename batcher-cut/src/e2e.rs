@@ -182,7 +182,6 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         queue_dir: run.join("queue"),
         db: None,
         bd: "bd".into(),
-        express_label: "express".into(),
         forge: PathBuf::new(),
         tsd_bin: None,
         round_vm: stub,

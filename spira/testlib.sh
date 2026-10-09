@@ -748,6 +748,8 @@ lc_aeon_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
+    express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
+    unexpress) rm -f "${SPIRA_RUN:?}/lc-express/${2:?}"; exit 0 ;;
     hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"
         mkdir -p "$SPIRA_RUN/lc-hold"; printf '%s %s %s\n' "${3:-}" "${4:-}" "${5:-}" > "$SPIRA_RUN/lc-hold/${2:-}"; exit 0 ;;
     reopen)

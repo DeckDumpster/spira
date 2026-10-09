@@ -37,7 +37,7 @@ fn json_col(row: &Value, col: &str) -> Value {
 
 pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express FROM bead WHERE bead_id = '{}'",
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -65,6 +65,7 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         stack,
         stack_depth: number(row, "stack_depth").unwrap_or(0) as u32,
         since: number(row, "since"),
+        express: number(row, "express").is_some_and(|n| n != 0),
     }))
 }
 
@@ -72,7 +73,7 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
     let holds_json = Value::Array(row.holds.iter().map(|h| Value::String(h.as_str().to_string())).collect());
     let stack_json = Value::Object(row.stack.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect());
     format!(
-        "state = '{}', tip = {}, gate_key = {}, holder = {}, persona = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, stack = '{}', stack_depth = {}, since = {}, updated_at = {}",
+        "state = '{}', tip = {}, gate_key = {}, holder = {}, persona = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, stack = '{}', stack_depth = {}, since = {}, express = {}, updated_at = {}",
         row.state.as_str(),
         opt_str(&row.tip),
         opt_str(&row.gate_key),
@@ -85,6 +86,7 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
         stack_json,
         row.stack_depth,
         opt_num(row.since),
+        u8::from(row.express),
         crate::db::now_epoch(),
     )
 }

@@ -290,7 +290,7 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
     };
     let bead_rows = match conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, updated_at FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, express, updated_at FROM bead WHERE bead_id = '{}'",
         rows::escape(bead_id)
     )) {
         Ok(r) => r,
@@ -321,6 +321,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     }
     let state = flag(args, "--state");
     let hold = flag(args, "--hold");
+    let express = args.iter().any(|a| a == "--express");
     // --hold <kind>: beads currently carrying that hold (design §3.1: "Holds are a
     // dimension, not states"), e.g. every poison-held bead regardless of its underlying
     // state — the bulk query CHECK 4's stale-clear sweep needs instead of a per-bead
@@ -333,13 +334,16 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         if let Some(kind) = &hold {
             c.push(format!("JSON_CONTAINS({col}holds, '\"{}\"')", rows::escape(kind)));
         }
+        if express {
+            c.push(format!("{col}express = 1"));
+        }
         c.iter().map(|x| format!(" AND {x}")).collect()
     };
     let where_clause = filters("").replacen(" AND ", " WHERE ", 1);
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth FROM bead{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express FROM bead{where_clause} ORDER BY bead_id"
     );
     let mut beads = match conn.query(&sql) {
         Ok(r) => r,
