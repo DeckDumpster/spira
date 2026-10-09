@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# tier: T2
+# requires: testenv
+# covers: spira/sim/src/world.rs
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
+[ -n "${SPIRA_RELEASE:-}" ] || bail "SPIRA_RELEASE is not set"
+SIM="$SPIRA_RELEASE/bin/sim"
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+REPO="$T/repo"
+git clone -q "$HERE/.." "$REPO" 2>&1 | tail -2
+NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
+W="$T/w"
+(cd "$REPO" && env "${NOLOC[@]}" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" world up "$W") 2>&1 | tail -5
+in_world() {
+    local -a kv=()
+    local line
+    while IFS= read -r line; do [ -n "$line" ] && kv+=("$line"); done < "$W/config/sim.env"
+    (cd "$W/work" && env "${NOLOC[@]}" SPIRA_TOML="$W/config/sim.toml" "${kv[@]}" PATH="$W/bin:$W/release/bin:$PATH" "$@")
+}
+show() { in_world spira-lc show "$1" 2>&1 | tr -d '\n ' | head -c 600; echo; }
+run() { echo "### $*"; in_world "$@" 2>&1 | tail -${TAILN:-25}; echo "### rc=${PIPESTATUS[0]}"; }
+B=sp-h1
+run spira-lc create-bead $B
+run spira-lc event bead $B --expect READY --version 0 --actor sim --kind '{"Claim":{"holder":"aeon-1","lease_until":4102444800}}'
+git -C "$W/work" worktree add -q -b spira/$B "$W/wt-$B" local/main
+echo hi > "$W/wt-$B/h.txt"; git -C "$W/wt-$B" add h.txt
+git -C "$W/wt-$B" -c user.name=a -c user.email=a@a commit -q -m "$B: sim commit"
+run bash -c "cd $W/wt-$B && SPIRA_WORK_BEAD_ID=$B work submit"
+show $B
+for cmd in "landing-pass --pass" "gate-worker run" "batcher rounds" "landing-pass --pass" "gate-worker run" "batcher rounds" "queue publish-settle"; do
+  run $cmd
+  show $B
+done
+run spira-lc list
+run git -C $W/work branch -a -v
+run git -C $W/work tag
+run ls $W/run $W/gh
+bad "dump" "forced"
+tl_summary
