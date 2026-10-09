@@ -260,6 +260,7 @@ fn harness(f: &Fake, root: &str) {
     // sp-xjnzl: every ordinary build_image call needs a spira-config to stage for
     // doctor-check; tests of that staging itself (a_cold_build_*) set it up by hand instead.
     f.with_spira_config_buildable(root);
+    f.file(&format!("{root}/spira-config/tests/fixtures/complete.toml"), "[spira]\n");
 }
 
 fn args(v: &[&str]) -> Vec<String> {
@@ -657,7 +658,10 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert_eq!(
         *f.copies.borrow(),
-        vec![(PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone())]
+        vec![
+            (PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone()),
+            (PathBuf::from("/h/spira-config/tests/fixtures/complete.toml"), PathBuf::from("/t/ctx/testenv/.doctor-check.toml")),
+        ]
     );
     assert!(!f.is_file(&dest), "left behind in the checkout after a green build");
     assert!(!f.errs().contains("no spira-config next to this binary"));
@@ -669,7 +673,7 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
     f.with_spira_config_sibling("/build/target/release/testenv");
     f.build_rc.set(1);
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
-    assert_eq!(f.copies.borrow().len(), 1);
+    assert_eq!(f.copies.borrow().len(), 2);
     assert!(!f.is_file(&dest), "left behind in the checkout after a red build");
 }
 
@@ -687,7 +691,7 @@ fn a_cold_build_with_no_sibling_builds_spira_config_on_demand() {
     let c = conf("/h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert_eq!(*f.build_spira_config_calls.borrow(), vec![PathBuf::from("/h")]);
-    assert_eq!(f.copies.borrow().len(), 1, "the on-demand build still gets staged into the build context");
+    assert_eq!(f.copies.borrow().len(), 2, "the on-demand build still gets staged into the build context");
     assert!(!f.is_file(&PathBuf::from("/t/ctx/testenv/.doctor-check-spira-config")), "cleaned up after the build");
 }
 
