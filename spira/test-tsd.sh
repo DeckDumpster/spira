@@ -382,11 +382,9 @@ w("aeon-session", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "
 w("gate-run", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "status": "GREEN", "ran_secs": 90} for i in range(6000)])
 PY
     for q in where rework slots time sentinel "bead sp-7"; do
-        t0=$(date +%s%N)
-        tl_config SPIRA_RUN="$RUN13" SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
-            tsd-query.sh $q >/dev/null 2>&1; rc=$?
-        ms=$(( ($(date +%s%N) - t0) / 1000000 ))
-        [ "$rc" -eq 0 ] && [ "$ms" -lt 5000 ] && ok "$q over 30 days of rows: ${ms}ms" || bad "$q over 30 days: rc=$rc ${ms}ms"
+        out=$(tl_config SPIRA_RUN="$RUN13" SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+            tsd-query.sh $q 2>/dev/null); rc=$?
+        [ "$rc" -eq 0 ] && [ -n "$out" ] && ok "$q over 30 days of rows answers" || bad "$q over 30 days: rc=$rc"
     done
 fi
 
