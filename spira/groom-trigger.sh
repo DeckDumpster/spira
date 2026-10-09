@@ -133,7 +133,7 @@ fi
 if SPIRA_DB="$DB" SPIRA_BD="$BD" bdq create \
     "Groomer pass — scheduled graph hygiene" \
     --type task \
-    --label "$LABELS,delivers:note:${SPIRA_RUN}/groom.log" \
+    --label "$LABELS,groom-trigger,delivers:note:${SPIRA_RUN}/groom.log" \
     --priority 3 \
     --description "Scheduled trigger: the groomer persona will claim this bead, run a hygiene pass over the open bead graph (splitting unsplittable beads, merging duplicates, closing stale premises, correcting mislabelled lanes), and close this bead when finished. See spira/chamber/groomer.md for the pass procedure." \
 ; then

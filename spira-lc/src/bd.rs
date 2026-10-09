@@ -46,6 +46,17 @@ pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
     Ok(labels.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:").map(str::to_string)))
 }
 
+/// Every label on `bead_id`, read from bd.
+pub fn labels(bead_id: &str) -> Result<Vec<String>, String> {
+    let out = run(&["show", bead_id, "--json"])?;
+    let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+    let doc = match &parsed {
+        serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+        v => v.clone(),
+    };
+    Ok(doc.get("labels").and_then(|l| l.as_array()).map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default())
+}
+
 /// The live [`crate::callers::Bd`]: bd itself, resolved as [`run`] resolves it.
 pub struct LiveBd;
 

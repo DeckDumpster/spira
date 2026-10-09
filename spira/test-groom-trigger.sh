@@ -233,7 +233,8 @@ want "custom groomer label in create args"          "hygiene"   "$(cat "$BD_LOG"
 # partition labels only (strip delivers:* labels whose path may contain the default
 # scope name as a directory component — e.g. /path/to/.runtime/spira/groom.log).
 label_arg="$(grep 'create' "$BD_LOG" | grep -oP '(?<=--label )\S+')"
-partition_labels="$(printf '%s' "${label_arg:-}" | tr ',' '\n' | grep -v '^delivers:' | paste -sd, -)"
+partition_labels="$(printf '%s' "${label_arg:-}" | tr ',' '\n' | grep -v -e '^delivers:' -e '^groom-trigger$' | paste -sd, -)"
+want   "trigger marker in --label"                  "groom-trigger" "$label_arg"
 nowant "default scope label not in --label" "spira"  "${partition_labels:-}"
 nowant "default groom label not in --label" ",groom" "${partition_labels:-}"
 

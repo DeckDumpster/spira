@@ -237,6 +237,28 @@ row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead 
 want "done: state is DONE" "\"state\":\"DONE\"" "$row"
 want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
+# ── groomer done: Done only on a bead carrying the groom-trigger marker ──────────────
+groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_FAYTH="groomer" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "${@:2}"; }
+GWORK="$(bead.sh file "groomer claimed a work bead" --for builder --repo testrepo)"
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GWORK" "${SPIRA_GROOMER_LABEL:-groom}" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+seed_bead "$GWORK"
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GWORK'" >/dev/null 2>&1
+out="$(groom_as "$GWORK" done --delivers "note:groom.log" 2>&1)"; rc=$?
+is "groomer done on an unmarked work bead: refused (exit 3)" "3" "$rc"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GWORK'" -r json 2>&1)"
+want "groomer done on an unmarked work bead: READY again" "\"state\":\"READY\"" "$row"
+nowant "groomer done on an unmarked work bead: never DONE" "\"state\":\"DONE\"" "$row"
+want "groomer done on an unmarked work bead: the refusal says why" "not a groom trigger" "$out"
+
+GTRIG="$(bead.sh file "groomer trigger fixture" --for builder --repo testrepo)"
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GTRIG" groom-trigger >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+seed_bead "$GTRIG"
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GTRIG'" >/dev/null 2>&1
+out="$(groom_as "$GTRIG" done --delivers "note:groom.log" 2>&1)"; rc=$?
+is "POSITIVE CONTROL: groomer done on a marked trigger: exits 0" "0" "$rc"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GTRIG'" -r json 2>&1)"
+want "POSITIVE CONTROL: groomer done on a marked trigger: DONE" "\"state\":\"DONE\"" "$row"
+
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
 BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo)"
 seed_bead "$BLID"
