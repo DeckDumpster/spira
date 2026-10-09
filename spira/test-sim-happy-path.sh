@@ -57,6 +57,8 @@ if [ "$rc" != 0 ]; then
     printf '%s\n' "$out" | tail -8 | cut -c1-300 | sed 's/^/# run: /'
     [ -n "$W" ] && dump "$W"
 fi
+[ -n "$W" ] && grep '^=== ' "$W/exec.log" | sed -E 's/^=== t=([0-9]+) (.*): exit status: ([0-9]+) in ([0-9]+)ms/\4 \2 rc=\3 t=\1/' | sort -rn | head -12 | cut -c1-110 | sed 's/^/# slow: /'
+[ -n "$W" ] && echo "# commands: $(grep -c '^=== ' "$W/exec.log") events: $(wc -l < "$W/trace/events.jsonl")"
 [ "$ELAPSED" -le 60 ] && ok "the run took ${ELAPSED}s (<= 60s)" || bad "the run took ${ELAPSED}s (<= 60s)" "${ELAPSED}s"
 want "sim run prints the seed first" "sim seed: $SEED" "$out"
 
