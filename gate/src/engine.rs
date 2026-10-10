@@ -610,6 +610,21 @@ impl<'w, W: World> Trial<'w, W> {
                 declared_skips.join(" ")
             ));
         }
+        let timing = w
+            .read(&Path::new(&self.s.run).join("tsd/suite-timing.jsonl"))
+            .map(|t| suite_select::timing::p90s(&t, 20).by_suite)
+            .unwrap_or_default();
+        let (kept, over) = compose::defer_over_budget(
+            &kept,
+            &timing,
+            phase_cap("gate").unwrap_or(0),
+        );
+        for (s, t) in &over {
+            w.eprint(&format!(
+                "gate: re-entry: {s} deferred to the round — recorded {t}s, past what is left of the gate's {}s suite budget; the round runs it",
+                phase_cap("gate").unwrap_or(0)
+            ));
+        }
         re.required = kept;
         // The base trial runs only the named suites the base has: a suite this branch adds
         // cannot be red on the base, and naming it there faults the runner ("unknown suite"),

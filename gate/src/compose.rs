@@ -583,6 +583,29 @@ pub fn drop_declared_skips(required: &[String], allowlist: &str) -> (Vec<String>
     required.iter().cloned().partition(|s| !declared.contains(s.as_str()))
 }
 
+/// Split `required` into the suites that fit `budget` seconds, by their recorded wall time
+/// (`secs`), and the ones deferred to the round with that time. A suite with no recorded time
+/// is kept: nothing says it is slow.
+pub fn defer_over_budget(
+    required: &[String],
+    secs: &HashMap<String, f64>,
+    budget: u64,
+) -> (Vec<String>, Vec<(String, u64)>) {
+    let mut left = budget as f64;
+    let (mut kept, mut deferred) = (Vec::new(), Vec::new());
+    for s in required {
+        match secs.get(s) {
+            Some(&t) if t > left => deferred.push((s.clone(), t.ceil() as u64)),
+            Some(&t) => {
+                left -= t;
+                kept.push(s.clone());
+            }
+            None => kept.push(s.clone()),
+        }
+    }
+    (kept, deferred)
+}
+
 /// The required suites that `out` does not show satisfied, in `required`'s order. A suite
 /// reported twice counts by its last report (the re-entry phase re-runs what the gate string
 /// deferred).
@@ -1122,6 +1145,19 @@ cargo: test tests::x ... ok";
             unproven("  test-a.sh ok 3s\n  test-a.sh RED rc=1", &req),
             req
         );
+    }
+
+    #[test]
+    fn a_named_suite_recorded_over_the_remaining_budget_is_deferred_with_its_time() {
+        let secs: HashMap<String, f64> =
+            [("test-a.sh", 100.0), ("test-b.sh", 120.0), ("test-c.sh", 30.0)]
+                .iter()
+                .map(|(k, v)| (k.to_string(), *v))
+                .collect();
+        let (kept, deferred) =
+            defer_over_budget(&v(&["test-a.sh", "test-b.sh", "test-c.sh", "test-new.sh"]), &secs, 190);
+        assert_eq!(kept, v(&["test-a.sh", "test-c.sh", "test-new.sh"]));
+        assert_eq!(deferred, vec![("test-b.sh".to_string(), 120)]);
     }
 
     #[test]
