@@ -69,6 +69,8 @@ struct FakeGit {
     unit_ensure: bool,
     /// A config delta that only the release built from this sha carries.
     delta_for: Option<(String, String)>,
+    /// Files only the release built from the given sha carries: `(sha, path, body)`.
+    extra_only: Vec<(String, String, String)>,
     ancestors: RefCell<BTreeSet<(String, String)>>,
 }
 
@@ -116,6 +118,11 @@ impl Git for FakeGit {
         if let Some((only, body)) = &self.delta_for {
             if only == sha {
                 file(&into.join("spira/config-delta.toml"), body);
+            }
+        }
+        for (only, p, body) in &self.extra_only {
+            if only == sha {
+                file(&into.join(p), body);
             }
         }
         for (p, body, x) in &self.extra {
@@ -1778,6 +1785,63 @@ fn config_delta_that_leaves_a_required_key_unset_refuses_naming_it_and_changes_n
     assert!(e.contains("config has no new_key") && e.contains("nothing changed"), "{e}");
     assert_eq!(w.current().as_deref(), Some(A));
     assert_eq!(cfg_text(&w), before);
+}
+
+fn registry_key(name: &str, ty: &str, default: Option<&str>) -> (String, String, bool) {
+    let stmt = default.map(|d| format!("    : \"${{{name}:={d}}}\"\n")).unwrap_or_else(|| "    # NO DEFAULT\n".into());
+    (format!("spira/conf.d/{name}"), format!("TYPE={ty}\nGROUP=test\nDOC=a key\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n{stmt}SPIRA_CONF_DEFAULT_EOF\n"), false)
+}
+
+#[test]
+fn a_registry_key_with_no_delta_entry_is_defaulted_into_the_config_at_activation() {
+    let mut g = delta_git("");
+    g.delta_for = None;
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "u32", Some("32768")));
+    g.extra.push(registry_key("SPIRA_OLD_KEY", "u32", Some("5")));
+    let w = World::with_git(g);
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 9\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    assert!(!loads(&w, B), "control: the config as found does not load under the new release");
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 32768") && cfg_text(&w).contains("old_key = 9"), "{}", cfg_text(&w));
+    assert!(loads(&w, B), "a unit that resolves config starts");
+    assert!(w.cfg.state_dir().unwrap().join("config-undo").join(B).exists(), "the defaulted key can be rolled back");
+}
+
+#[test]
+fn a_no_default_key_the_active_release_already_declares_does_not_refuse_activation() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_OLD_NODEFAULT", "string", None));
+    let new = registry_key("SPIRA_NEW_KEY", "u32", Some("7"));
+    g.extra_only.push((B.to_string(), new.0, new.1));
+    let w = World::with_git(g);
+    let cfg = Path::new(&w.cfg.toml_spec().unwrap()).to_path_buf();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\nold_nodefault = \"x\"\n");
+    build_with_schema(&w, A, &[], &[]);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\n");
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(B));
+    assert!(cfg_text(&w).contains("new_key = 7") && !cfg_text(&w).contains("old_nodefault"), "{}", cfg_text(&w));
+}
+
+#[test]
+fn a_registry_key_with_no_default_is_left_out_and_activation_proceeds() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "string", None));
+    g.extra.push(registry_key("SPIRA_COMPUTED_KEY", "string", Some("$SPIRA_RUN/x")));
+    let w = World::with_git(g);
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).expect("an optional key never refuses activation");
+    assert_eq!(w.current().as_deref(), Some(B));
+    let after = cfg_text(&w);
+    assert!(!after.contains("new_key") && !after.contains("computed_key"), "nothing invented for an optional key: {after}");
 }
 
 #[test]
