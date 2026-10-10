@@ -206,8 +206,9 @@ impl Conf {
 
     /// The ops pane is the lifecycle lens (`lc-view`, sp-lpw5ol), which replaced `health`:
     /// it reads state only from the lifecycle machine and publishes the phone page's snapshot.
+    /// Interactive since sp-5j35g5: it reads keys and clicks, and sizes itself to the pane.
     pub fn health_cmd(&self) -> String {
-        format!("{}lc-view loop 10", self.rel_prefix())
+        format!("{}lc-view tui 15", self.rel_prefix())
     }
 
     pub fn down_marker(&self) -> PathBuf {

@@ -10,6 +10,7 @@
 //! header names as the reason it is one function and not five.
 
 pub mod lcview;
+pub mod lctui;
 pub mod conf;
 pub mod db;
 pub mod health;

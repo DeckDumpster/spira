@@ -40,6 +40,12 @@ pub struct Row {
 pub struct Meta {
     pub title: String,
     pub priority: Option<i64>,
+    /// The bead's labels; `needs-ryan` marks a question waiting on the operator, never work.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// The tail of the bead's notes, where Sift, ejects and the gate leave their evidence.
+    #[serde(default)]
+    pub notes_tail: String,
 }
 
 /// The tail of one aeon's session log: its last meaningful lines and the log's mtime.
@@ -131,6 +137,30 @@ pub struct BatchRow {
     pub state: String,
     pub last_at: i64,
     pub members: Vec<String>,
+    /// When the round was opened, and the members it has ejected so far (each eject costs the
+    /// round another certification pass).
+    #[serde(default)]
+    pub opened_at: i64,
+    #[serde(default)]
+    pub ejected: Vec<String>,
+    /// When each eject was recorded (open rounds only); ejects minutes apart are one attribution.
+    #[serde(default)]
+    pub eject_at: Vec<i64>,
+}
+
+/// One live aeon: its unit, main pid, when it started, and its phase from its process tree
+/// (session while its agent runs, else closeout and the step: build-fence, ...).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LiveAeon {
+    pub unit: String,
+    pub pid: i64,
+    pub started: i64,
+    pub phase: String,
+}
+
+/// The pid a lifecycle holder names: `aeon-<name>@<pid>.<start>`.
+pub fn holder_pid(holder: &str) -> Option<i64> {
+    holder.split_once('@')?.1.split('.').next()?.parse().ok()
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -144,8 +174,26 @@ pub struct Snapshot {
     /// Bead ids whose own commit (`<id>:` subject, or a round's `merge <id> (`) is on the base.
     pub on_base: HashMap<String, String>,
     pub ceiling: usize,
+    /// The aeons actually live (their systemd units), with what each is doing; `None` when it
+    /// could not be read, and NOW falls back to WORKING beads.
+    #[serde(default)]
+    pub live: Option<Vec<LiveAeon>>,
     /// Log tails of WORKING beads, by bead id; a bead with no log is absent.
     pub tails: HashMap<String, Tail>,
+    /// The label that marks a question for the operator (SPIRA_ASK_LABEL); such a bead is in
+    /// DECIDE, never counted as work.
+    #[serde(default)]
+    pub ask_label: String,
+    /// Why a round last ejected each bead, newest eject per bead (the batch's own reason).
+    #[serde(default)]
+    pub eject_why: BTreeMap<String, String>,
+    /// The ids the claim tool would claim right now (interim until the one claimable-set read,
+    /// sp-cuyg5f, serves both). `None` when it has not answered: NEXT then says it does not
+    /// know rather than guess, since a guess listed a blocked bead as claimable.
+    #[serde(default)]
+    pub claimable: Option<Vec<String>>,
+    #[serde(default)]
+    pub progress: Option<PassProgress>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
     #[serde(default)]
@@ -156,6 +204,42 @@ pub struct Snapshot {
     pub dwell: Vec<DwellRow>,
     #[serde(default)]
     pub batches: Vec<BatchRow>,
+}
+
+/// A source that failed this pass keeps its last good read instead of drawing an empty
+/// section: one timed-out `spira-lc list` made ROUND read "none open" and NOW "?" for a
+/// refresh (per Ryan 2026-10-09: "i just collapsed it ... and then it just disappeared").
+/// The failure is still named in the frame, with how old the data shown is.
+pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
+    if new.errors.is_empty() {
+        return;
+    }
+    let mut kept = false;
+    macro_rules! keep {
+        ($f:ident) => {
+            if new.$f.is_empty() && !last.$f.is_empty() {
+                new.$f = last.$f.clone();
+                kept = true;
+            }
+        };
+    }
+    keep!(rows);
+    keep!(meta);
+    keep!(graph);
+    keep!(edges);
+    keep!(dwell);
+    keep!(batches);
+    if new.live.is_none() && last.live.is_some() {
+        new.live = last.live.clone();
+        kept = true;
+    }
+    if new.claimable.is_none() && last.claimable.is_some() {
+        new.claimable = last.claimable.clone();
+        kept = true;
+    }
+    if kept {
+        new.errors.push(format!("showing the last good read from {} ago", age(new.now - last.now)));
+    }
 }
 
 /// The ids a commit subject names as its own work: `sp-x: …` or `… merge sp-x (…`.
@@ -194,6 +278,9 @@ pub fn own_ids(subject: &str) -> Vec<String> {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Item {
     pub id: String,
+    /// Why the bead is where it is, at length, for the expandable detail under it.
+    #[serde(default)]
+    pub why: String,
     pub prio: String,
     pub title: String,
     pub who: String,
@@ -226,6 +313,10 @@ pub struct PipeLine {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SmEdge {
     pub event: String,
+    /// Each event behind this move, with its refusals from this state in the last hour and the
+    /// newest refusal's reason (the store counts applied moves per edge, not per event).
+    #[serde(default)]
+    pub events: Vec<(String, i64, String)>,
     pub to: String,
     pub rate_1h: i64,
     pub main: bool,
@@ -235,6 +326,9 @@ pub struct SmEdge {
 pub struct SmState {
     pub name: String,
     pub count: usize,
+    /// The beads in this state, oldest first (LANDED: the last 24 h, newest first).
+    #[serde(default)]
+    pub beads: Vec<Item>,
     pub detail: String,
     pub red: bool,
     pub edges: Vec<SmEdge>,
@@ -256,6 +350,81 @@ pub struct SmBatch {
     pub count: usize,
     pub detail: String,
     pub red: bool,
+}
+
+/// The open landing round, the first thing the operator looks for (Ryan, 2026-10-09: "what's in
+/// the round? ... i can't see what it's called ... how many attempts ... how long it's been running").
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RoundView {
+    pub name: String,
+    pub state: String,
+    pub age: String,
+    /// Certification passes so far: one, plus one per eject.
+    pub passes: usize,
+    pub ejected: Vec<String>,
+    pub members: Vec<RoundMember>,
+}
+
+/// A certification pass's live progress, from the progress file the cert path writes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PassProgress {
+    pub round: String,
+    pub pass: u32,
+    /// fences | build | suites | done
+    pub phase: String,
+    #[serde(default)]
+    pub verdict: String,
+    pub done: u32,
+    pub total: u32,
+    #[serde(default)]
+    pub red: Vec<String>,
+    pub build_started: i64,
+    pub suites_started: i64,
+    pub cap: i64,
+    pub updated_at: i64,
+}
+
+impl PassProgress {
+    /// Read the progress file in either writer's shape. round-vm (sp-3feiym) writes `round`
+    /// as the head sha, `pass` as a sha and `verdict: null`; the Concierge's interim writer
+    /// wrote a round name and a pass number. A strict parse of the one shape dropped the
+    /// other, and the pass row vanished whenever round-vm had written last (2026-10-09).
+    pub fn from_json(v: &serde_json::Value) -> Option<PassProgress> {
+        let n = |k: &str| v[k].as_i64();
+        Some(PassProgress {
+            round: v["round"].as_str()?.to_string(),
+            pass: v["pass"].as_u64().map(|p| p as u32).unwrap_or(0),
+            phase: v["phase"].as_str()?.to_string(),
+            verdict: v["verdict"].as_str().unwrap_or("").to_string(),
+            done: n("done").unwrap_or(0) as u32,
+            total: n("total").unwrap_or(0) as u32,
+            red: v["red"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
+            build_started: n("build_started").unwrap_or(0),
+            suites_started: n("suites_started").unwrap_or(0),
+            cap: n("cap").unwrap_or(900),
+            updated_at: n("updated_at")?,
+        })
+    }
+
+    /// A pass is running while it is building or testing and its writer is still fresh.
+    pub fn running(&self, now: i64) -> bool {
+        // fences and build write no progress between their start and their end, so a quiet
+        // writer is only stale after 15 minutes there; suites update every 5 s.
+        match self.phase.as_str() {
+            "fences" | "build" => now - self.updated_at <= 900,
+            "suites" => now - self.updated_at <= 90,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RoundMember {
+    pub id: String,
+    pub prio: String,
+    pub title: String,
+    /// How many recent rounds have ejected this bead.
+    pub ejects: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -283,6 +452,8 @@ pub struct View {
     pub pipe: Vec<PipeLine>,
     pub rework_items: Vec<Item>,
     pub next_count: usize,
+    /// The claim tool did not answer, so NEXT is unknown, not empty.
+    pub next_unknown: bool,
     pub next: Vec<Item>,
     pub blocked: Vec<Item>,
     pub recent: Vec<Item>,
@@ -290,6 +461,11 @@ pub struct View {
     pub terminal: String,
     pub refused: Vec<SmRefusal>,
     pub batch: Vec<SmBatch>,
+    pub round: Option<RoundView>,
+    pub progress: Option<PassProgress>,
+    pub now: i64,
+    /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
+    pub decide: Vec<Item>,
 }
 
 const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
@@ -336,10 +512,15 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
         let mut parts: Vec<String> = Vec::new();
         let mut red = false;
         if matches!(name, "READY" | "REWORK") {
-            let (mut claimable, mut blocked, mut held, mut poison) = (0, 0, 0, 0);
+            // Every bead in exactly one bucket, so the parts sum to the count, and "claimable"
+            // is the claim tool's own set, the same NEXT reads (per Ryan 2026-10-09).
+            let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.iter().any(|l| *l == s.ask_label));
+            let (mut claimable, mut ask, mut blocked, mut held, mut poison, mut landed, mut unclaimable) = (0, 0, 0, 0, 0, 0, 0);
             let mut blockers: BTreeMap<String, usize> = BTreeMap::new();
             for r in &rows {
-                if r.holds.iter().any(|h| h == "poison") {
+                if is_ask(&r.id) {
+                    ask += 1;
+                } else if r.holds.iter().any(|h| h == "poison") {
                     poison += 1;
                 } else if r.holds.iter().any(|h| h == "wait") {
                     blocked += 1;
@@ -348,18 +529,27 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
                     }
                 } else if !r.holds.is_empty() {
                     held += 1;
-                } else if !on_base(&r.id) {
+                } else if on_base(&r.id) {
+                    landed += 1;
+                } else if s.claimable.as_ref().is_some_and(|ids| ids.iter().any(|i| *i == r.id)) {
                     claimable += 1;
+                } else {
+                    unclaimable += 1;
                 }
             }
-            parts.push(format!("claimable {claimable}"));
+            if s.claimable.is_some() {
+                parts.push(format!("claimable {claimable}"));
+            } else {
+                parts.push("claimable unknown".into());
+            }
             if blocked > 0 {
                 let mut top: Vec<(usize, String)> = blockers.into_iter().map(|(b, n)| (n, b)).collect();
                 top.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
                 let names = top.iter().take(2).map(|(_, b)| b.clone()).collect::<Vec<_>>().join(" ");
                 parts.push(if names.is_empty() { format!("blocked {blocked}") } else { format!("blocked {blocked} ← {names}") });
             }
-            for (label, n) in [("held", held), ("poison", poison)] {
+            let not_taken = if s.claimable.is_some() { "unclaimable" } else { "unheld" };
+            for (label, n) in [("held", held), ("poison", poison), ("ask", ask), ("drift", landed), (not_taken, unclaimable)] {
                 if n > 0 {
                     parts.push(format!("{label} {n}"));
                 }
@@ -399,10 +589,21 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
         for to in tos {
             let events: Vec<String> = s.graph.iter().filter(|g| g.from == name && g.to == to).map(|g| kebab(&g.event)).collect();
             let rate = s.edges.iter().filter(|e| e.kind == "applied" && e.from_state == name && e.to_state.as_deref() == Some(to)).map(|e| e.n_1h).sum();
-            edges.push(SmEdge { event: events.join("/"), to: to.into(), rate_1h: rate, main: Some(to) == next });
+            let detail = s
+                .graph
+                .iter()
+                .filter(|g| g.from == name && g.to == to)
+                .map(|g| {
+                    let refused: Vec<&EdgeRow> =
+                        s.edges.iter().filter(|e| e.kind == "refused" && e.from_state == name && e.event.as_deref().is_some_and(|x| kebab(x) == kebab(&g.event))).collect();
+                    let why = refused.iter().find_map(|e| e.refusal.clone()).unwrap_or_default();
+                    (kebab(&g.event), refused.iter().map(|e| e.n_1h).sum(), why)
+                })
+                .collect();
+            edges.push(SmEdge { event: events.join("/"), events: detail, to: to.into(), rate_1h: rate, main: Some(to) == next });
         }
         let no_rework_exit = NEEDS_REWORK_EXIT.contains(&name) && !s.graph.is_empty() && !s.graph.iter().any(|g| g.from == name && g.to == "REWORK");
-        out.push(SmState { name: name.into(), count, detail: join_parts(parts), red, edges, no_rework_exit });
+        out.push(SmState { name: name.into(), count, detail: join_parts(parts), red, edges, no_rework_exit, beads: Vec::new() });
     }
     out
 }
@@ -440,7 +641,31 @@ fn batch_block(s: &Snapshot) -> Vec<SmBatch> {
     out
 }
 
-fn age(secs: i64) -> String {
+/// Certification passes a round has taken, as the store knows them: the first, plus one per
+/// attribution (ejects within ten minutes of each other were decided from one red pass).
+pub fn passes(eject_at: &[i64]) -> usize {
+    let mut at = eject_at.to_vec();
+    at.sort();
+    1 + at.windows(2).filter(|w| w[1] - w[0] > 600).count() + usize::from(!at.is_empty())
+}
+
+/// The evidence for why a bead came back: the round's eject reason when it was ejected, else the
+/// newest note line that says why (Sift's send-back, a red, a conflict), else the newest line.
+pub fn rework_why(s: &Snapshot, id: &str) -> String {
+    if let Some(w) = s.eject_why.get(id) {
+        return w.clone();
+    }
+    let notes = s.meta.get(id).map(|m| m.notes_tail.as_str()).unwrap_or("");
+    let lines: Vec<&str> = notes.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let says_why = |l: &&&str| {
+        let l = l.to_lowercase();
+        ["sent this back", "sift", "red", "fail", "conflict", "rebase", "eject", "reject", "rework"].iter().any(|k| l.contains(k))
+            && !l.starts_with("resumed by") && !l.starts_with("deferred by")
+    };
+    lines.iter().rev().find(says_why).or(lines.last()).map(|l| l.to_string()).unwrap_or_default()
+}
+
+pub fn age(secs: i64) -> String {
     let s = secs.max(0);
     if s < 90 {
         format!("{s}s")
@@ -453,7 +678,7 @@ fn age(secs: i64) -> String {
     }
 }
 
-fn cut(s: &str, n: usize) -> String {
+pub fn cut(s: &str, n: usize) -> String {
     if s.chars().count() > n {
         format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
     } else {
@@ -516,13 +741,67 @@ pub fn view(s: &Snapshot) -> View {
     ];
 
     v.machine = state_machine(s, &|id| s.on_base.contains_key(id));
+    for st in v.machine.iter_mut() {
+        let mut rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == st.name).collect();
+        if st.name == "LANDED" {
+            rows.retain(|r| day(r));
+            rows.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
+        } else {
+            rows.sort_by_key(|r| r.since);
+        }
+        st.beads = rows
+            .iter()
+            .take(40)
+            .map(|r| {
+                let mut it = item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, r.reason.clone().unwrap_or_default());
+                if st.name == "REWORK" {
+                    it.why = rework_why(s, &r.id);
+                }
+                it
+            })
+            .collect();
+    }
     v.terminal = TERMINAL
         .iter()
         .map(|t| format!("{t} {}", s.rows.iter().filter(|r| r.state == *t && day(r)).count()))
         .collect::<Vec<_>>()
         .join(" · ");
     v.refused = refusals(s);
+    v.progress = s.progress.clone();
+    v.now = s.now;
     v.batch = batch_block(s);
+    // The newest round, open or not: when none is running the pane says how the last one ended.
+    v.round = s
+        .batches
+        .iter()
+        .max_by_key(|b| b.opened_at.max(b.last_at))
+        .map(|b| {
+            let opened = if b.opened_at > 0 { b.opened_at } else { b.last_at };
+            let ejects_of = |id: &str| s.batches.iter().filter(|o| o.ejected.iter().any(|e| e == id)).count();
+            RoundView {
+                name: b.id.clone(),
+                state: if OPEN_BATCH.contains(&b.state.as_str()) { b.state.clone() } else { format!("{} {} ago", b.state, age(s.now - b.last_at)) },
+                age: age(s.now - opened),
+                passes: passes(&b.eject_at),
+                ejected: b.ejected.clone(),
+                members: b
+                    .members
+                    .iter()
+                    .filter(|m| !b.ejected.contains(m))
+                    .map(|m| RoundMember { id: m.clone(), prio: prio(m), title: title(m), ejects: ejects_of(m) })
+                    .collect(),
+            }
+        });
+    // round-vm's writer names the round by its head sha and the pass by a sha: one VM round
+    // runs at a time, so a sha-named pass is the open round's current pass.
+    if let (Some(p), Some(r)) = (v.progress.as_mut(), v.round.as_ref()) {
+        if p.round.len() == 40 && p.round.chars().all(|c| c.is_ascii_hexdigit()) {
+            p.round = r.name.clone();
+            if p.pass == 0 {
+                p.pass = r.passes as u32;
+            }
+        }
+    }
 
     let mut by_kind: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for r in s.rows.iter().filter(|r| !r.holds.is_empty() && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED")) {
@@ -546,30 +825,56 @@ pub fn view(s: &Snapshot) -> View {
     drift.sort();
     v.drift = drift;
 
-    let mut wk: Vec<&Row> = s.rows.iter().filter(|r| r.state == "WORKING").collect();
-    wk.sort_by_key(|r| r.since);
-    v.now_items = wk
-        .iter()
-        .map(|r| {
-            let lease = r.lease_until.map(|l| if l > s.now { format!("lease {}", age(l - s.now)) } else { "lease EXPIRED".into() }).unwrap_or_default();
-            let mut it = item(r, r.since, lease);
-            if r.holder.is_some() {
-                match s.tails.get(&r.id) {
-                    Some(t) if !t.lines.is_empty() => {
-                        let a = s.now - t.mtime;
-                        it.out = t.lines.clone();
-                        it.out_age = age(a);
-                        it.out_level = if a >= STALE_BAD_S { "bad" } else if a >= STALE_WARN_S { "warn" } else { "ok" }.into();
-                    }
-                    _ => {
-                        it.out = vec!["no output yet".into()];
-                        it.out_level = "none".into();
-                    }
+    let with_tail = |mut it: Item, r: &Row| {
+        if r.holder.is_some() {
+            match s.tails.get(&r.id) {
+                Some(t) if !t.lines.is_empty() => {
+                    let a = s.now - t.mtime;
+                    it.out = t.lines.clone();
+                    it.out_age = age(a);
+                    it.out_level = if a >= STALE_BAD_S { "bad" } else if a >= STALE_WARN_S { "warn" } else { "ok" }.into();
+                }
+                _ => {
+                    it.out = vec!["no output yet".into()];
+                    it.out_level = "none".into();
                 }
             }
-            it
-        })
-        .collect();
+        }
+        it
+    };
+    match &s.live {
+        // NOW is the aeons actually live (per Ryan 2026-10-09), each with its bead and phase: an
+        // aeon in closeout holds a slot after its bead has left WORKING.
+        Some(live) => {
+            let mut live = live.clone();
+            live.sort_by_key(|a| a.started);
+            v.now_items = live
+                .iter()
+                .map(|a| {
+                    let phase = format!("{} {}", a.phase, age(s.now - a.started));
+                    match s.rows.iter().find(|r| r.holder.as_deref().and_then(holder_pid) == Some(a.pid)) {
+                        Some(r) => {
+                            let mut it = with_tail(item(r, a.started, phase), r);
+                            it.age = age(s.now - a.started);
+                            it
+                        }
+                        None => Item { id: "?".into(), who: a.unit.trim_start_matches("spira-aeon-").trim_end_matches(".service").into(), note: phase, age: age(s.now - a.started), ..Default::default() },
+                    }
+                })
+                .collect();
+        }
+        None => {
+            let mut wk: Vec<&Row> = s.rows.iter().filter(|r| r.state == "WORKING").collect();
+            wk.sort_by_key(|r| r.since);
+            v.now_items = wk
+                .iter()
+                .map(|r| {
+                    let lease = r.lease_until.map(|l| if l > s.now { format!("lease {}", age(l - s.now)) } else { "lease EXPIRED".into() }).unwrap_or_default();
+                    with_tail(item(r, r.since, lease), r)
+                })
+                .collect();
+        }
+    }
 
     for st in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
         let mut rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == st).collect();
@@ -590,10 +895,19 @@ pub fn view(s: &Snapshot) -> View {
     v.rework_items = rw.iter().map(|r| item(r, r.updated_at, r.reason.clone().unwrap_or_default())).collect();
 
     let blocked_row = |r: &Row| r.blocker.as_deref().is_some_and(|b| !b.is_empty());
+    let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.iter().any(|l| *l == s.ask_label));
+    let mut asks: Vec<&Row> = s.rows.iter().filter(|r| is_ask(&r.id) && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED" | "DONE")).collect();
+    asks.sort_by_key(|r| r.since);
+    v.decide = asks.iter().map(|r| item(r, r.since, String::new())).collect();
     let mut nx: Vec<&Row> = ready
         .iter()
         .copied()
-        .filter(|r| r.claimable.unwrap_or(r.holds.is_empty() && !s.on_base.contains_key(&r.id)) && !blocked_row(r))
+        .filter(|r| match &s.claimable {
+            // Drift (its commit already on the base) is never NEXT, even if the claim tool,
+            // which cannot see the base, would take it; it shows under DRIFT instead.
+            Some(ids) => ids.iter().any(|i| *i == r.id) && !is_ask(&r.id) && !s.on_base.contains_key(&r.id),
+            None => false,
+        })
         .collect();
     nx.sort_by_key(|r| (!r.rework, s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
     v.blocked = ready
@@ -602,6 +916,7 @@ pub fn view(s: &Snapshot) -> View {
         .map(|r| item(r, r.since, format!("{} <- {}", r.id, r.blocker.as_deref().unwrap_or(""))))
         .collect();
     v.next_count = nx.len();
+    v.next_unknown = s.claimable.is_none();
     v.next = nx.iter().take(12).map(|r| item(r, r.since, String::new())).collect();
 
     let mut rc: Vec<&Row> = s.rows.iter().collect();
@@ -760,154 +1075,155 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// The same `View` as a self-contained, phone-width HTML page. `stale` is the snapshot's age in
-/// seconds when it is old enough to distrust; the page says so rather than showing old numbers
-/// as live.
-pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
-    let mut h = String::new();
-    h.push_str(&format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>\
-<meta http-equiv=refresh content='{refresh_s}'><title>Spira lifecycle</title><style>{CSS}</style></head><body>"
-    ));
-    h.push_str(&format!(
-        "<header><b>LIFECYCLE</b> <span class=dim>{}</span> · release <b>{}</b> · <span class={}>{}</span> · aeons <b>{}/{}</b></header>",
-        esc(&v.clock),
-        esc(&v.release),
-        if v.world_running { "ok" } else { "bad" },
-        if v.world_running { "world RUNNING".to_string() } else { esc(&format!("world {}", v.world)) },
-        v.working,
-        v.ceiling
-    ));
-    if let Some(age_s) = stale {
-        h.push_str(&format!("<p class='banner bad'>Snapshot is {} old — the pane's collector is not running.</p>", age(age_s)));
-    }
-    for e in &v.errors {
-        h.push_str(&format!("<p class='banner bad'>source failed: {}</p>", esc(e)));
-    }
-    h.push_str("<section><h2>Flow</h2><div class=flow>");
-    for (i, (st, n)) in v.flow.iter().enumerate() {
-        let extra = if i == 0 && v.ready_held > 0 {
-            format!("<small class={}>{} held · {}%</small>", if v.held_pct >= 25 { "bad" } else { "warn" }, v.ready_held, v.held_pct)
-        } else {
-            String::new()
-        };
-        h.push_str(&format!("<div class=stage><span>{}</span><b>{n}</b>{extra}</div>", esc(st)));
-    }
-    h.push_str(&format!(
-        "</div><p class=dim><span class=warn>REWORK {}</span> · DROPPED {}/24h · SUPERSEDED {}/24h · LANDED {} all time</p></section>",
-        v.rework, v.dropped_24h, v.superseded_24h, v.landed_total
-    ));
-    if !v.holds.is_empty() {
-        h.push_str("<section><h2>Holds</h2><table>");
-        for g in &v.holds {
-            let tops = g.top.iter().map(|(n, r)| format!("{n}× {}", esc(r))).collect::<Vec<_>>().join("<br>");
-            h.push_str(&format!(
-                "<tr><td class={}>{}</td><td class=num>{}</td><td>{tops}</td></tr>",
-                if g.kind == "poison" { "bad" } else { "warn" },
-                esc(&g.kind),
-                g.count
-            ));
-        }
-        h.push_str("</table></section>");
-    }
-    if !v.drift.is_empty() {
-        h.push_str(&format!(
-            "<section class=bad><h2>Drift</h2><p>{} bead(s) READY/REWORK whose own commit is on {}: {}</p></section>",
-            v.drift.len(),
-            esc(&v.base),
-            esc(&v.drift.join(" "))
-        ));
-    }
-    let table = |title: &str, sub: &str, items: &[Item], cols: &dyn Fn(&Item) -> String| -> String {
-        let mut t = format!("<section><h2>{title} <small class=dim>{sub}</small></h2><table>");
-        if items.is_empty() {
-            t.push_str("<tr><td class=dim>nothing</td></tr>");
-        }
-        for i in items {
-            t.push_str(&cols(i));
-        }
-        t.push_str("</table></section>");
-        t
-    };
-    h.push_str(&table("Now", "working — holder · bead · lease", &v.now_items, &|i| {
-        format!(
-            "<tr><td class=who>{}<br><span class=dim>{}</span></td><td><b>{}</b>{} <span class=dim>{}</span><br>{}{}</td><td class=dim>{}<br>{}</td></tr>",
-            esc(&i.who),
-            esc(&i.persona),
-            esc(&i.id),
-            if i.rework { " <b class=warn>REWORK</b>" } else { "" },
-            esc(&i.prio),
-            esc(&i.title),
-            out_html(i),
-            esc(&i.age),
-            esc(&i.note)
-        )
-    }));
-    h.push_str("<section><h2>Pipeline <small class=dim>submitted waits on a gate · certified on a round</small></h2><table>");
-    if v.pipe.is_empty() {
-        h.push_str("<tr><td class=dim>nothing waiting</td></tr>");
-    }
-    for p in &v.pipe {
-        let ids = p.items.iter().map(|i| format!("{} <span class=dim>{}</span>", esc(&i.id), esc(&i.age))).collect::<Vec<_>>().join(" · ");
-        h.push_str(&format!("<tr><td>{}</td><td class=num>{}</td><td><span class=dim>oldest {}</span><br>{ids}</td></tr>", esc(&p.state), p.count, esc(&p.oldest)));
-    }
-    h.push_str("</table></section>");
-    h.push_str(&table("Rework", "sent back — why", &v.rework_items[..v.rework_items.len().min(10)], &|i| {
-        format!("<tr><td><b>{}</b> <span class=dim>{} · {}</span><br><span class=warn>{}</span></td></tr>", esc(&i.id), esc(&i.prio), esc(&i.age), esc(&i.note))
-    }));
-    h.push_str(&table(&format!("Next ({})", v.next_count), "ready, unheld, not on the base — by priority", &v.next, &|i| {
-        format!("<tr><td class=num>{}</td><td><b>{}</b><br>{}</td></tr>", esc(&i.prio), esc(&i.id), esc(&i.title))
-    }));
-    if !v.blocked.is_empty() {
-        h.push_str(&table(&format!("Blocked ({})", v.blocked.len()), "ready, waiting on an unmet dependency", &v.blocked, &|i| {
-            format!("<tr><td class=num>{}</td><td><b>{}</b><br>{}</td></tr>", esc(&i.prio), esc(&i.note), esc(&i.title))
-        }));
-    }
-    h.push_str(&table("Recent", "last transitions", &v.recent, &|i| {
-        let c = match i.state.as_str() {
-            "LANDED" => "ok",
-            "REWORK" | "DROPPED" => "warn",
-            _ => "",
-        };
-        format!("<tr><td class=dim>{}</td><td><b>{}</b> <span class={c}>{}</span><br>{}</td></tr>", esc(&i.age), esc(&i.id), esc(&i.state), esc(&i.title))
-    }));
-    h.push_str(&format!(
-        "<footer class=dim>source: spira-lc (state) · work list (titles) · {} commits (drift) — no bd · refreshes every {refresh_s}s</footer></body></html>",
-        esc(&v.base)
-    ));
-    h
+/// The phone page (`/lifecycle`): the pane's own tree, rendered by `lctui::render_page`, so the
+/// two cannot drift. Kept under this name because loom calls it.
+pub fn render_html(v: &View, stale: Option<i64>, poll_s: u64) -> String {
+    crate::lctui::render_page(v, stale, poll_s)
 }
-
-fn out_html(i: &Item) -> String {
-    if i.out.is_empty() {
-        return String::new();
-    }
-    let age = if i.out_age.is_empty() { String::new() } else { format!(" · {} ago", esc(&i.out_age)) };
-    let lines = i.out.iter().map(|l| esc(&cut(l, 140))).collect::<Vec<_>>().join("<br>");
-    format!("<div class='out {}'>{lines}<small>{age}</small></div>", esc(&i.out_level))
-}
-
-const CSS: &str = ":root{--bg:#fff;--fg:#111;--dim:#6b7280;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--line:#e5e7eb}\
-@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e5e7eb;--dim:#9ca3af;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--line:#1f2937}}\
-body{background:var(--bg);color:var(--fg);font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:12px 16px;max-width:900px}\
-header{font-size:15px;margin-bottom:8px}h2{font-size:14px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.05em}\
-section{border-top:1px solid var(--line);padding-top:4px}table{width:100%;border-collapse:collapse}td{padding:4px 6px 4px 0;vertical-align:top;border-bottom:1px solid var(--line)}\
-.num{text-align:right;font-weight:bold;width:3em}.who{color:#0891b2;width:6em}.dim{color:var(--dim)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}\
-.out{margin-top:2px;font-size:12px;word-break:break-word}.out.none,.out.ok{color:var(--dim)}.out.warn{color:var(--warn)}.out.bad{color:var(--bad)}\
-.banner{padding:6px 8px;border:1px solid var(--bad);border-radius:4px}.flow{display:flex;flex-wrap:wrap;gap:6px}\
-.stage{border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:5.5em;display:flex;flex-direction:column}.stage span{font-size:11px;color:var(--dim)}.stage b{font-size:20px}\
-footer{margin-top:14px;font-size:12px}";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The page's visible text: tags dropped, entities decoded.
+    fn page_text(v: &View) -> String {
+        let h = render_html(v, None, 10);
+        let body = &h[h.find("<body>").unwrap_or(0)..h.find("<script>").unwrap_or(h.len())];
+        let mut out = String::new();
+        let mut tag = false;
+        for c in body.chars() {
+            match c {
+                '<' => tag = true,
+                '>' => tag = false,
+                _ if !tag => out.push(c),
+                _ => {}
+            }
+        }
+        out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+    }
+
+    /// The page draws every line of the pane's tree (the sync guarantee, per Ryan 2026-10-09).
+    fn assert_page_draws_the_tree(v: &View) {
+        let text = page_text(v);
+        fn walk(n: &[crate::lctui::Node], text: &str) {
+            for x in n {
+                let line = crate::lctui::strip_for_test(&x.line);
+                assert!(text.contains(line.trim_end()), "the page lacks the pane line {line:?}");
+                walk(&x.kids, text);
+            }
+        }
+        walk(&crate::lctui::tree(v), &text);
+    }
 
     fn row(id: &str, st: &str, since: i64) -> Row {
         Row { id: id.into(), state: st.into(), since, updated_at: since, ..Default::default() }
     }
 
     fn snap(rows: Vec<Row>) -> Snapshot {
-        Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, ..Default::default() }
+        // The claim tool's answer a fixture assumes unless it says otherwise: every unheld
+        // READY/REWORK bead is claimable.
+        let claimable = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && r.holds.is_empty()).map(|r| r.id.clone()).collect();
+        Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, claimable: Some(claimable), ..Default::default() }
+    }
+
+    #[test]
+    fn the_progress_file_reads_in_round_vms_shape_and_the_interim_one() {
+        let rvm = serde_json::json!({"round":"dfd19c066c083a9d27e5c96a5eb2d287ab3ec5fc","pass":"a8fed047ab22f7b53f78603e3a54657c6c921c8e","phase":"suites","verdict":null,"done":299,"total":451,"red":["test-x.sh"],"build_started":1,"suites_started":2,"cap":900,"updated_at":3});
+        let p = PassProgress::from_json(&rvm).expect("round-vm's shape parses");
+        assert_eq!((p.done, p.total, p.pass, p.verdict.as_str()), (299, 451, 0, ""));
+        let old = serde_json::json!({"round":"r-auto-102","pass":4,"phase":"done","verdict":"green","done":451,"total":451,"red":[],"build_started":1,"suites_started":2,"cap":900,"updated_at":3});
+        assert_eq!(PassProgress::from_json(&old).unwrap().pass, 4);
+    }
+
+    #[test]
+    fn a_failed_source_keeps_its_last_good_read_and_says_so() {
+        let mut last = Snapshot { now: 100, ..Default::default() };
+        last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
+        last.batches.push(BatchRow { id: "r-1".into(), state: "OPEN".into(), ..Default::default() });
+        let mut new = Snapshot { now: 160, errors: vec!["spira-lc list: exit 124".into()], ..Default::default() };
+        carry_forward(&mut new, &last);
+        assert_eq!(new.rows.len(), 1);
+        assert_eq!(new.batches.len(), 1);
+        assert!(new.errors.iter().any(|e| e.contains("last good read")), "{:?}", new.errors);
+        let mut clean = Snapshot { now: 160, ..Default::default() };
+        carry_forward(&mut clean, &last);
+        assert!(clean.rows.is_empty(), "with no failure an empty read is the truth");
+    }
+
+    #[test]
+    fn ready_buckets_sum_to_its_count_and_claimable_is_the_claim_tools_set() {
+        let mut held = row("sp-held", "READY", 3);
+        held.holds = vec!["manual".into()];
+        let mut waiting = row("sp-wait", "READY", 4);
+        waiting.holds = vec!["wait".into()];
+        let mut s = snap(vec![row("sp-free", "READY", 1), row("sp-dep", "READY", 2), held, waiting, row("sp-ask", "READY", 5)]);
+        s.ask_label = "fixture-ask-label".into();
+        s.meta.insert("sp-ask".into(), Meta { labels: vec![s.ask_label.clone()], ..Default::default() });
+        s.claimable = Some(vec!["sp-free".into()]);
+        let st = state_machine(&s, &|_| false).into_iter().find(|x| x.name == "READY").unwrap();
+        assert_eq!(st.count, 5);
+        for part in ["claimable 1", "blocked 1", "held 1", "ask 1", "unclaimable 1"] {
+            assert!(st.detail.contains(part), "{part} in {}", st.detail);
+        }
+        s.claimable = None;
+        let st = state_machine(&s, &|_| false).into_iter().find(|x| x.name == "READY").unwrap();
+        assert!(st.detail.contains("claimable unknown"), "{}", st.detail);
+    }
+
+    #[test]
+    fn now_is_the_live_aeons_with_their_phase_even_after_their_bead_left_working() {
+        let mut w = row("sp-w", "WORKING", 99_000);
+        w.holder = Some("aeon-ixion@111.5".into());
+        let mut c = row("sp-c", "SUBMITTED", 99_500);
+        c.holder = Some("aeon-sandy@222.7".into());
+        let mut mine = row("sp-mine", "WORKING", 1);
+        mine.holder = Some("concierge".into());
+        let mut s = snap(vec![w, c, mine]);
+        s.live = Some(vec![
+            LiveAeon { unit: "spira-aeon-builder-1.service".into(), pid: 111, started: 99_000, phase: "session".into() },
+            LiveAeon { unit: "spira-aeon-builder-2.service".into(), pid: 222, started: 98_000, phase: "closeout · build-fence".into() },
+        ]);
+        let v = view(&s);
+        assert_eq!(v.now_items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-c", "sp-w"], "live aeons only, oldest first; the Concierge's claim is not an aeon");
+        assert!(v.now_items[0].note.starts_with("closeout · build-fence"), "{:?}", v.now_items[0].note);
+        assert_eq!(holder_pid("aeon-ixion@111.5"), Some(111));
+        assert_eq!(holder_pid("concierge"), None);
+    }
+
+    #[test]
+    fn next_is_exactly_what_the_claim_tool_would_claim_when_it_answered() {
+        let mut s = snap(vec![row("sp-free", "READY", 1), row("sp-blocked", "READY", 2)]);
+        s.claimable = Some(vec!["sp-free".into()]);
+        let v = view(&s);
+        assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-free"], "a bead the claim tool would not take is not NEXT");
+        s.claimable = None;
+        let v = view(&s);
+        assert!(v.next_unknown && v.next.is_empty(), "without the claim tool's answer NEXT says it does not know, never guesses");
+    }
+
+    #[test]
+    fn rework_why_prefers_the_eject_reason_then_the_note_that_says_why() {
+        let mut s = snap(vec![row("sp-a", "REWORK", 1), row("sp-b", "REWORK", 1)]);
+        s.meta.insert("sp-a".into(), Meta { notes_tail: "Sift sent this back: fence red\nResumed by detect_file_overlaps: cleared".into(), ..Default::default() });
+        s.meta.insert("sp-b".into(), Meta { notes_tail: "Sift sent this back: fence red".into(), ..Default::default() });
+        s.eject_why.insert("sp-b".into(), "r-auto-9: test-x #3 red".into());
+        assert_eq!(rework_why(&s, "sp-a"), "Sift sent this back: fence red", "an overlap notice is not the why");
+        assert_eq!(rework_why(&s, "sp-b"), "r-auto-9: test-x #3 red", "a round's eject reason wins");
+    }
+
+    #[test]
+    fn a_question_for_the_operator_is_in_decide_and_never_counted_as_claimable_work() {
+        let mut s = snap(vec![row("sp-ask1", "READY", 90_000), row("sp-work1", "READY", 91_000), row("sp-done-ask", "DROPPED", 80_000)]);
+        s.ask_label = "fixture-ask-label".into();
+        s.claimable = Some(vec!["sp-ask1".into(), "sp-work1".into()]); // even listed, an ask is never NEXT
+        for id in ["sp-ask1", "sp-done-ask"] {
+            s.meta.insert(id.into(), Meta { title: "Statute: something".into(), priority: Some(2), labels: vec![s.ask_label.clone()], ..Default::default() });
+        }
+        s.meta.insert("sp-work1".into(), Meta { title: "real work".into(), priority: Some(1), ..Default::default() });
+        let v = view(&s);
+        assert_eq!(v.decide.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-ask1"], "open asks only");
+        assert_eq!(v.next_count, 1, "only the work bead is claimable");
+        assert_eq!(v.next[0].id, "sp-work1");
     }
 
     fn plain(lines: &[String]) -> String {
@@ -929,8 +1245,9 @@ mod tests {
         let mut held = row("sp-held", "READY", 10);
         held.holds = vec!["ask".into()];
         let mut s = snap(vec![row("sp-low", "READY", 1), row("sp-high", "READY", 5), held, row("sp-landed", "LANDED", 3)]);
-        s.meta.insert("sp-low".into(), Meta { title: "low".into(), priority: Some(2) });
-        s.meta.insert("sp-high".into(), Meta { title: "high".into(), priority: Some(0) });
+        s.claimable = Some(vec!["sp-low".into(), "sp-high".into()]);
+        s.meta.insert("sp-low".into(), Meta { title: "low".into(), priority: Some(2), ..Default::default() });
+        s.meta.insert("sp-high".into(), Meta { title: "high".into(), priority: Some(0), ..Default::default() });
         let v = view(&s);
         assert_eq!(v.next_count, 2);
         assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-high", "sp-low"]);
@@ -969,6 +1286,7 @@ mod tests {
         let v = view(&s);
         assert!(plain(&render(&v, 100)).contains("source failed: spira-lc list: exit 1"));
         assert!(render_html(&v, None, 10).contains("source failed: spira-lc list: exit 1"));
+        assert!(render_html(&v, None, 10).contains("<a href=/stuck>"), "the lifecycle page links to where work is stuck");
     }
 
     #[test]
@@ -979,14 +1297,11 @@ mod tests {
         s.on_base.insert("sp-x".into(), "c".into());
         let v = view(&s);
         let pane = plain(&render(&v, 120));
-        let page = render_html(&v, None, 10);
         for (st, n) in &v.flow {
             let line = v.machine.iter().find(|m| m.name == st.trim_end_matches("/24h")).map(|m| format!("{:<14}{:>4}", m.name, m.count));
             assert!(line.is_some_and(|l| pane.contains(&l)), "pane lacks {st} {n}");
-            assert!(page.contains(&format!("<span>{st}</span><b>{n}</b>")), "page lacks {st} {n}");
         }
-        assert!(pane.contains("DRIFT 1") && page.contains("1 bead(s) READY/REWORK"));
-        assert!(page.contains(&format!("Next ({})", v.next_count)));
+        assert_page_draws_the_tree(&v);
     }
 
     fn now_row(id: &str, persona: Option<&str>, rework: bool) -> Row {
@@ -1007,9 +1322,7 @@ mod tests {
         assert!(l[at("sp-rw")].contains("REWORK") && l[at("sp-rw") + 1].trim() == "ops", "{pane}");
         assert!(!l[at("sp-fresh")].contains("REWORK") && l[at("sp-fresh") + 1].trim() == "guardian", "{pane}");
         assert_eq!(l[at("sp-nul") + 1].trim(), "—", "a NULL persona is a dash, not omitted");
-        let page = render_html(&v, None, 10);
-        assert!(page.contains("<b class=warn>REWORK</b>") && page.contains("<span class=dim>ops</span>") && page.contains("<span class=dim>—</span>"));
-        assert_eq!(page.matches("REWORK</b>").count(), 1);
+        assert_page_draws_the_tree(&v);
         assert!(render(&v, 120).iter().any(|x| x.contains(&format!("{YEL}{B}REWORK{R}"))), "colour on the tag");
     }
 
@@ -1026,14 +1339,15 @@ mod tests {
         bl.blocker = Some("sp-o4s4t4".into());
         bl.claimable = Some(false);
         let mut s = snap(vec![fresh, rw, no, bl]);
-        s.meta.insert("sp-fresh".into(), Meta { title: "f".into(), priority: Some(0) });
-        s.meta.insert("sp-rw".into(), Meta { title: "r".into(), priority: Some(2) });
+        s.claimable = Some(vec!["sp-fresh".into(), "sp-rw".into()]);
+        s.meta.insert("sp-fresh".into(), Meta { title: "f".into(), priority: Some(0), ..Default::default() });
+        s.meta.insert("sp-rw".into(), Meta { title: "r".into(), priority: Some(2), ..Default::default() });
         let v = view(&s);
         assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-rw", "sp-fresh"]);
         assert_eq!(v.next_count, 2);
         let pane = plain(&render(&v, 120));
         assert!(pane.contains("BLOCKED 1") && pane.contains("sp-hq1v76 <- sp-o4s4t4"), "{pane}");
-        assert!(render_html(&v, None, 10).contains("sp-hq1v76 &lt;- sp-o4s4t4"));
+        assert_page_draws_the_tree(&v);
     }
 
     fn log_line(kind: &str, body: &str) -> String {
@@ -1080,8 +1394,8 @@ mod tests {
         let pane = plain(&render(&v, 120));
         assert!(pane.contains("one\n      two 2m ago"), "{pane}");
         assert_eq!(v.now_items[0].out_level, "ok");
-        let page = render_html(&v, None, 10);
-        assert!(page.contains("class='out ok'>one<br>two<small> · 2m ago"), "{page}");
+        assert_page_draws_the_tree(&v);
+        assert!(page_text(&v).contains("two 2m ago"), "the tail and its age reach the page");
     }
 
     #[test]
@@ -1090,7 +1404,7 @@ mod tests {
             let v = view(&working(Some(Tail { lines: vec!["x".into()], mtime: 100_000 - age_s })));
             assert_eq!(v.now_items[0].out_level, level, "{age_s}s");
             assert!(render(&v, 120).iter().any(|l| l.starts_with(&format!("      {color}x"))), "{age_s}s");
-            assert!(render_html(&v, None, 10).contains(&format!("class='out {level}'")));
+            assert_page_draws_the_tree(&v);
         }
     }
 
@@ -1117,7 +1431,7 @@ mod tests {
     #[test]
     fn the_snapshot_survives_a_round_trip_through_the_file_loom_reads() {
         let mut s = snap(vec![row("sp-a", "READY", 1)]);
-        s.meta.insert("sp-a".into(), Meta { title: "t".into(), priority: Some(1) });
+        s.meta.insert("sp-a".into(), Meta { title: "t".into(), priority: Some(1), ..Default::default() });
         let back: Snapshot = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(serde_json::to_string(&view(&back)).unwrap(), serde_json::to_string(&view(&s)).unwrap());
     }
@@ -1252,7 +1566,7 @@ BATCH
     fn stranded_delivery_is_split_into_open_batch_and_orphaned() {
         let mut s = healthy();
         s.rows = (0..5).map(|i| row(&format!("sp-d{i}"), "IN_DELIVERY", 99_000)).collect();
-        s.batches = vec![BatchRow { id: "r-1".into(), state: "CI_RUNNING".into(), last_at: 99_000, members: vec!["sp-d0".into(), "sp-d1".into()] }];
+        s.batches = vec![BatchRow { id: "r-1".into(), state: "CI_RUNNING".into(), last_at: 99_000, members: vec!["sp-d0".into(), "sp-d1".into()], ..Default::default() }];
         let f = squash(&machine_lines(&s).join("\n"));
         assert!(f.contains("IN_DELIVERY 5 in open batch 2 · orphaned 3 ●"), "{f}");
         s.rows.truncate(2);
@@ -1279,8 +1593,8 @@ BATCH
         let mut s = healthy();
         s.dwell.push(dwell("sp-x", "IN_DELIVERY", 99_000, 1_800));
         s.batches = vec![
-            BatchRow { id: "r-1".into(), state: "GREEN".into(), last_at: 100_000 - 4 * 3600, members: vec![] },
-            BatchRow { id: "r-0".into(), state: "LANDED".into(), last_at: 90_000, members: vec![] },
+            BatchRow { id: "r-1".into(), state: "GREEN".into(), last_at: 100_000 - 4 * 3600, members: vec![], ..Default::default() },
+            BatchRow { id: "r-0".into(), state: "LANDED".into(), last_at: 90_000, members: vec![], ..Default::default() },
         ];
         let f = squash(&plain(&render(&view(&s), 120)));
         assert!(f.contains("GREEN 1 stuck 4h ●"), "{f}");

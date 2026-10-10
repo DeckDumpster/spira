@@ -142,17 +142,37 @@ fn lifecycle_snapshot(loom: &Loom) -> Result<(cockpit_ops::lcview::Snapshot, i64
 /// Older than this, the page says the collector has stopped rather than showing old numbers as live.
 const LIFECYCLE_STALE_S: i64 = 60;
 
-async fn lifecycle_page_route(State(loom): State<Arc<Loom>>) -> Response {
-    let (status, body) = match lifecycle_snapshot(&loom) {
-        Ok((snap, age)) => {
+async fn lifecycle_page_route(
+    State(loom): State<Arc<Loom>>,
+    uri: axum::http::Uri,
+) -> Response {
+    let fragment = uri.query().is_some_and(|q| q.split('&').any(|kv| kv == "fragment" || kv.starts_with("fragment=")));
+    let (status, ctype, body) = match lifecycle_snapshot(&loom) {
+        Ok((mut snap, age)) => {
+            // The pass's progress is read fresh on every request, not from the pane's last
+            // snapshot, so the page's test progress is live (per Ryan 2026-10-09).
+            if let Some(p) = std::fs::read(std::path::Path::new(&loom.config().run).join("round-progress.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                .and_then(|v| cockpit_ops::lcview::PassProgress::from_json(&v))
+            {
+                snap.progress = Some(p);
+                snap.now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(snap.now);
+            }
             let v = cockpit_ops::lcview::view(&snap);
-            (StatusCode::OK, cockpit_ops::lcview::render_html(&v, (age > LIFECYCLE_STALE_S).then_some(age), 10))
+            let stale = (age > LIFECYCLE_STALE_S).then_some(age);
+            if fragment {
+                (StatusCode::OK, "application/json", cockpit_ops::lctui::render_fragment(&v, stale))
+            } else {
+                (StatusCode::OK, "text/html; charset=utf-8", cockpit_ops::lcview::render_html(&v, stale, 5))
+            }
         }
-        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, format!("<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=10><p>lifecycle view unavailable: {e}</p>")),
+        Err(e) if fragment => (StatusCode::SERVICE_UNAVAILABLE, "application/json", serde_json::json!({ "banner": format!("<div class='line bad'>lifecycle view unavailable: {e}</div>"), "tree": "" }).to_string()),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, "text/html; charset=utf-8", format!("<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=10><p>lifecycle view unavailable: {e}</p>")),
     };
     Response::builder()
         .status(status)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CONTENT_TYPE, ctype)
         .header(header::CACHE_CONTROL, "no-store")
         .body(body.into())
         .expect("a response with a valid status and headers")

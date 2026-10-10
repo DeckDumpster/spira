@@ -128,8 +128,8 @@ pane() {  # pane <name> <toml-for-the-server-or-empty> — `layout up` in a fres
 
 OUT="$(pane good "$SPIRA_TOML")"
 [ -n "$(printf '%s' "$OUT" | tr -d '[:space:]')" ] && ok "the ops pane rendered" || bad "the ops pane rendered" "empty pane; layout said: $(cat "$TMP/layout-good.out")"
-for label in "STATE MACHINE" NOW PIPE NEXT RECENT; do
-    printf '%s\n' "$OUT" | grep -qE "^ ?${label}( |$)" && ok "the $label section rendered" || bad "the $label section rendered" "$OUT"
+for label in ROUND NOW STATES NEXT RECENT; do
+    printf '%s\n' "$OUT" | grep -qE "^ *([^ ]+ )? *${label}( |$)" && ok "the $label section rendered" || bad "the $label section rendered" "$OUT"
 done
 nowant "no STOPPED banner" "STOPPED" "$OUT"
 nowant "no refusal line" "config unresolved" "$OUT"
