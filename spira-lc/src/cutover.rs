@@ -225,6 +225,10 @@ pub fn cmd_promote(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(r) => r,
         Err(early) => return early,
     };
+    let delivery_rows = match fetch_cuttable_deliveries(conn, &members) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
     let at = crate::db::now_epoch();
     let promote_ev = batch::BatchEvent {
         expect: batch::BatchState::Staged,
@@ -243,20 +247,10 @@ pub fn cmd_promote(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: batch_row.version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "Promote".into(),
-            expect: "STAGED".into(),
-            from_state: "STAGED".into(),
-            refusal: None,
-            evidence: serde_json::to_value(&promote_ev.kind).unwrap_or_default(),
-            actor: actor.clone(),
-            at,
-        },
+        event: EventRecord::of_apply("batch", batch_id, "Promote", "STAGED", batch_row.state.as_str(), None, serde_json::to_value(&promote_ev.kind).unwrap_or_default(), &actor, at),
     }];
     let mut preamble = String::new();
-    match member_added_steps(batch_id, outcome.row, &members, &bead_rows, &actor, at, &mut preamble, "promote") {
+    match member_added_steps(batch_id, outcome.row, &members, &bead_rows, &delivery_rows, &actor, at, &mut preamble, "promote") {
         Ok(more) => steps.extend(more),
         Err(early) => return early,
     }
