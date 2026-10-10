@@ -518,6 +518,7 @@ impl H {
             external_ref: None,
             title: String::new(),
             notes: Vec::new(),
+            express: labels.contains(&"express"),
         };
         self.beads.rows.borrow_mut().insert(id.into(), b.clone());
         b

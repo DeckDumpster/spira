@@ -82,7 +82,6 @@ pub struct Settings {
     pub verdict_ttl: u64,
     pub verdicts: PathBuf,
     pub deferral_escalate_at: u32,
-    pub express_label: String,
     pub cutover_label: String,
     pub submitted_label: String,
     pub rebase_escalate_at: u32,
@@ -146,7 +145,6 @@ impl Settings {
             verdict_ttl: 86_400,
             verdicts: run.join("verdicts"),
             deferral_escalate_at: 5,
-            express_label: "express".into(),
             cutover_label: "cutover-round".into(),
             submitted_label: "spira-submitted".into(),
             rebase_escalate_at: 3,
@@ -195,6 +193,9 @@ pub struct BeadRow {
     /// snapshot with no `notes` key deserializes to an empty list, not a parse error.
     #[serde(default)]
     pub notes: Vec<String>,
+    /// Express, from the lifecycle row — never a bd label.
+    #[serde(default)]
+    pub express: bool,
 }
 
 fn no_state() -> String {
@@ -268,7 +269,7 @@ impl BeadRow {
             .map(String::from);
         let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let notes = normalize_notes(v.get("notes"));
-        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes })
+        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes, express: false })
     }
 
     /// The builder has handed this bead on (its lifecycle row is SUBMITTED onward).

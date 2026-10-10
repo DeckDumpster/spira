@@ -111,7 +111,7 @@ fn value_as_i64(v: &serde_json::Value) -> Option<i64> {
 /// cut nothing for nine hours with 40 branches certified and waiting). So unparseable
 /// `prio_json` returns every row in its ORIGINAL order, never dropped, with a warning
 /// naming why ranking was skipped.
-pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express_label: &str) -> (Vec<RankedRow>, Option<String>) {
+pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express: &HashSet<String>) -> (Vec<RankedRow>, Option<String>) {
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(prio_json);
     let Ok(parsed) = parsed else {
         let unranked = rows
@@ -125,7 +125,6 @@ pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express_
         other => vec![other],
     };
     let mut prio_map: HashMap<String, i64> = HashMap::new();
-    let mut express_set: HashSet<String> = HashSet::new();
     for x in items {
         if !x.is_object() {
             continue;
@@ -133,15 +132,11 @@ pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express_
         let Some(id) = x.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else { continue };
         let prio = x.get("priority").and_then(value_as_i64).unwrap_or(9);
         prio_map.insert(id.to_string(), prio);
-        let has_label = x.get("labels").and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|l| l.as_str() == Some(express_label)));
-        if has_label {
-            express_set.insert(id.to_string());
-        }
     }
     let mut keyed: Vec<(i64, i64, i64, i64, String, String)> = rows
         .iter()
         .map(|(id, tip, epoch, is_trans)| {
-            let express = if express_set.contains(id) { 0 } else { 1 };
+            let express = if express.contains(id) { 0 } else { 1 };
             let prio = *prio_map.get(id).unwrap_or(&9);
             let trans = if *is_trans { 0 } else { 1 };
             (express, prio, trans, *epoch, id.clone(), tip.clone())
@@ -333,7 +328,7 @@ mod tests {
     #[test]
     fn unparseable_prio_json_fails_open_in_original_order_with_a_warning() {
         let rows = [row("sp-a", "ta", 6, false), row("sp-b", "tb", 5, true)];
-        let (ranked, warn) = sort_rows(&rows, "{not json", "express");
+        let (ranked, warn) = sort_rows(&rows, "{not json", &HashSet::new());
         assert!(warn.unwrap().contains("ranking failed"));
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-a", "sp-b"], "original order preserved, nothing dropped");
@@ -345,7 +340,7 @@ mod tests {
     #[test]
     fn priority_orders_rows_and_wins_over_a_transition_tiebreak() {
         let rows = [row("sp-p1", "t1", 2, true), row("sp-p0", "t2", 1, false)];
-        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]"#, "express");
+        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]"#, &HashSet::new());
         assert!(warn.is_none());
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-p0", "sp-p1"], "a P0 without a transition still sorts ahead of a P1 with one");
@@ -354,7 +349,7 @@ mod tests {
     #[test]
     fn within_one_priority_a_transition_sorts_first_despite_a_later_epoch() {
         let rows = [row("sp-p", "tp", 1, false), row("sp-t", "tt", 2, true)];
-        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]"#, "express");
+        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]"#, &HashSet::new());
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-t", "sp-p"]);
     }
@@ -362,7 +357,7 @@ mod tests {
     #[test]
     fn express_ranks_ahead_of_everything_else() {
         let rows = [row("sp-hi-prio", "t1", 1, false), row("sp-express", "t2", 9, false)];
-        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-hi-prio","priority":0},{"id":"sp-express","priority":9,"labels":["express"]}]"#, "express");
+        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-hi-prio","priority":0},{"id":"sp-express","priority":9}]"#, &HashSet::from(["sp-express".to_string()]));
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-express", "sp-hi-prio"]);
     }
@@ -370,7 +365,7 @@ mod tests {
     #[test]
     fn malformed_prio_entries_default_to_priority_nine_rather_than_crashing() {
         let rows = [row("sp-a", "ta", 1, false)];
-        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-a","priority":"not-a-number"}]"#, "express");
+        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-a","priority":"not-a-number"}]"#, &HashSet::new());
         assert!(warn.is_none());
         assert_eq!(ranked[0].prio, 9);
     }

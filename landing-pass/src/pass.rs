@@ -283,7 +283,7 @@ impl<'a> Pass<'a> {
             }
         };
         let rows: Vec<OrderRow> =
-            refs.iter().map(|(b, _)| OrderRow::of(b, beads.get(b.trim_start_matches("spira/")), &self.s.express_label)).collect();
+            refs.iter().map(|(b, _)| OrderRow::of(b, beads.get(b.trim_start_matches("spira/")))).collect();
         let order = certify_order(name, &rows);
         let by_branch: HashMap<&str, &OrderRow> = rows.iter().map(|r| (r.branch.as_str(), r)).collect();
         let fix_front: Vec<&str> =
@@ -727,7 +727,7 @@ impl<'a> Pass<'a> {
         pending.extend(added.iter().cloned());
         let rows: Vec<OrderRow> = pending
             .iter()
-            .map(|b| OrderRow::of(b, w.beads.get(b.trim_start_matches("spira/")), &self.s.express_label))
+            .map(|b| OrderRow::of(b, w.beads.get(b.trim_start_matches("spira/"))))
             .collect();
         *pending = certify_order(&repo.name, &rows);
         self.log(&format!("CHECK6 {}: candidates refreshed — {} newly ready: {}", repo.name, added.len(), added.join(" ")));

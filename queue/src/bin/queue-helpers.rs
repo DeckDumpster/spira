@@ -17,10 +17,11 @@
 //! first (bd, spira-lc, conf.sh) for a plain git/mail operation would make a config
 //! problem elsewhere break a leaf call that never touches any of it.
 
+use queue::ports::Lc;
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: queue-helpers certified-list <repo-path> | queue-helpers sort-rows <repo-path> <base-sha> --prio-file <path> [--express-label <label>] | queue-helpers git-push <repo-path> [push-args...]";
+const USAGE: &str = "usage: queue-helpers certified-list <repo-path> | queue-helpers sort-rows <repo-path> <base-sha> --prio-file <path> | queue-helpers git-push <repo-path> [push-args...]";
 
 fn run_certified_list(args: &[String]) -> ExitCode {
     let Some(repo) = args.first().filter(|s| !s.is_empty()) else {
@@ -36,17 +37,12 @@ fn run_certified_list(args: &[String]) -> ExitCode {
 fn run_sort_rows(args: &[String]) -> ExitCode {
     let mut pos = Vec::new();
     let mut prio_file: Option<String> = None;
-    let mut express_label = "express".to_string();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--prio-file" => {
                 i += 1;
                 prio_file = args.get(i).cloned();
-            }
-            "--express-label" => {
-                i += 1;
-                express_label = args.get(i).cloned().unwrap_or_default();
             }
             other => pos.push(other.to_string()),
         }
@@ -72,7 +68,14 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
             (id, tip, epoch, is_trans)
         })
         .collect();
-    let (ranked, warning) = queue::ops::helpers::sort_rows(&with_trans, &prio_json, &express_label);
+    let express: std::collections::HashSet<String> = match (queue::real::RealLc { bin: Some("spira-lc".into()) }).express_ids() {
+        Ok(ids) => ids.into_iter().collect(),
+        Err(e) => {
+            eprintln!("queue-helpers sort-rows: express set unreadable ({e}) -- ranking without it");
+            Default::default()
+        }
+    };
+    let (ranked, warning) = queue::ops::helpers::sort_rows(&with_trans, &prio_json, &express);
     if let Some(w) = warning {
         eprintln!("{w}");
     }

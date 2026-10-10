@@ -1280,3 +1280,11 @@ fn release_claim_writes_only_to_a_working_row() {
         assert_eq!(calls.lines().any(|l| l.starts_with("release ")), writes, "{state}: {calls}");
     }
 }
+
+#[test]
+fn express_is_a_bool_flag_and_never_swallows_what_follows() {
+    let raw: Vec<String> = ["labels", "", "--express"].iter().map(|s| s.to_string()).collect();
+    let a = Args::parse(&raw).expect("--express takes no value");
+    assert!(a.has("--express"));
+    assert_eq!(a.pos, vec!["labels".to_string(), String::new()]);
+}

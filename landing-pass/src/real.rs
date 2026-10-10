@@ -172,7 +172,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         verdict_ttl: num("verdict_ttl", 0).max(0) as u64,
         verdicts: path_opt("verdicts").unwrap_or_else(|| PathBuf::from(&run).join("verdicts")),
         deferral_escalate_at: num("deferral_at", 5).max(0) as u32,
-        express_label: g("express_label"),
         cutover_label: g("cutover_label"),
         submitted_label: g("submitted_label"),
         rebase_escalate_at: num("rebase_escalate_at", 3).max(0) as u32,
@@ -598,6 +597,7 @@ impl RealBeads {
         let lc = spira_config::lc_state::index(lc);
         for r in rows.iter_mut() {
             r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
+            r.express = lc.get(&r.id).is_some_and(|x| x.express);
         }
         Ok(())
     }
@@ -1288,7 +1288,7 @@ mod lifecycle_join_tests {
         let p = dir.join("spira-lc");
         testkit::write_exe(
             &p,
-            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\"}]' ;; esac\n",
+            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; esac\n",
         );
         p
     }
@@ -1308,6 +1308,8 @@ mod lifecycle_join_tests {
         let rows = b.show(&["sp-w".to_string(), "sp-x".to_string(), "sp-y".to_string()]).unwrap();
         let st: Vec<(&str, bool)> = rows.iter().map(|r| (r.state.as_str(), r.handed_on())).collect();
         assert_eq!(st, vec![("WORKING", false), ("SUBMITTED", true), ("-", false)]);
+        let ex: Vec<bool> = rows.iter().map(|r| r.express).collect();
+        assert_eq!(ex, vec![false, true, false], "express is the lifecycle row's column, not a bd label");
     }
 
     /// A machine that cannot answer is an Err, never a row read as handed on.

@@ -24,7 +24,7 @@ pub enum Mode {
     LandEscalate,
     /// `summon_fayth` alone (wave 4.27, family G): lib.sh's own shim target, and
     /// czar-pass's direct call — no lib.sh sourcing at all any more.
-    Summon { fayth: String, pool: Option<i64>, require_label: String },
+    Summon { fayth: String, pool: Option<i64>, require_express: bool },
     /// `summon_argv` alone: `aeon --escape`'s own seam reaches it through lib.sh's shim.
     SummonArgv { fayth: String },
     /// `world_gate` alone: ditto.
@@ -90,7 +90,7 @@ impl Mode {
             Some("--summon") => Mode::Summon {
                 fayth: args.get(1).cloned().unwrap_or_default(),
                 pool: args.get(2).filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
-                require_label: args.get(3).cloned().unwrap_or_default(),
+                require_express: args.get(3).is_some_and(|s| !s.is_empty()),
             },
             Some("--summon-argv") => Mode::SummonArgv { fayth: args.get(1).cloned().unwrap_or_default() },
             Some("--world-gate") => Mode::WorldGate {
@@ -369,7 +369,7 @@ impl<'a> Sentinel<'a> {
             Mode::SummonOnly => self.summon_only(),
             Mode::OpenChildren { dry } => self.open_children_only(*dry),
             Mode::LandEscalate => self.land_escalate_cmd(),
-            Mode::Summon { fayth, pool, require_label } => self.summon_cmd(fayth, *pool, require_label),
+            Mode::Summon { fayth, pool, require_express } => self.summon_cmd(fayth, *pool, *require_express),
             Mode::SummonArgv { fayth } => self.summon_argv_cmd(fayth),
             Mode::WorldGate { fayth, prefix } => self.world_gate_cmd(fayth, prefix),
             Mode::NamedUnitStop { glob } => self.named_unit_stop_cmd(glob),

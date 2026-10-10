@@ -2,6 +2,7 @@
 //! spira-lc, the config (spira-config library only), the clock, the environment, stdio.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
@@ -333,7 +334,6 @@ impl Lib for RealLib {
         let git_name = spira_config::process::cfg("SPIRA_GIT_NAME")?;
         let git_email = spira_config::process::cfg("SPIRA_GIT_EMAIL")?;
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
-        let express_label = spira_config::process::cfg("SPIRA_EXPRESS_LABEL")?;
         let round_wall_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
         let s = Settings {
             home: PathBuf::from(g("home")),
@@ -365,7 +365,6 @@ impl Lib for RealLib {
             git_name,
             git_email,
             mailbox,
-            express_label,
             round_wall_secs,
         };
         let path = reg.root(&name);
@@ -490,7 +489,7 @@ impl Lib for RealLib {
             ans
         }
     }
-    fn sort_rows(&self, express_label: &str, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(&self, express: &HashSet<String>, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
         // In-process (sp-hwjsq, "wave 4.32"): queue_sort_rows and its internal
         // queue_is_suite_transition, both ported here. queue_is_suite_transition has no
         // caller left at all once this goes in-process, so lib.sh's copy is retired
@@ -503,7 +502,7 @@ impl Lib for RealLib {
                 (id, tip, epoch, is_trans)
             })
             .collect();
-        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, express_label);
+        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, express);
         if let Some(w) = warning {
             eprintln!("{w}");
         }
@@ -847,6 +846,11 @@ impl Lc for RealLc {
         };
         serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
     }
+    fn express_ids(&self) -> Result<Vec<String>, String> {
+        let out = self.stdout(&["list", "--express"])?;
+        let rows: Vec<LcBeadRow> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))?;
+        Ok(rows.into_iter().map(|r| r.bead_id).collect())
+    }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
         let out = self.stdout(&["show", bead]).ok()?;
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
@@ -1034,7 +1038,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         ("SPIRA_GIT_NAME", "spira"),
         ("SPIRA_GIT_EMAIL", "spira@spira.invalid"),
         ("SPIRA_MAIL_SESSION_MAILBOX", "concierge"),
-        ("SPIRA_EXPRESS_LABEL", "express"),
     ];
 
     /// Declares `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given), plus
@@ -1060,7 +1063,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     }
 
     /// `context()` reads SPIRA_CERTIFY_SUITES/SPIRA_GIT_NAME/SPIRA_GIT_EMAIL/
-    /// SPIRA_MAIL_SESSION_MAILBOX/SPIRA_EXPRESS_LABEL through spira-config's one door
+    /// SPIRA_MAIL_SESSION_MAILBOX through spira-config's one door
     /// (law-one-source-of-config), not the stubbed lib.sh above — a `context()`-exercising
     /// test needs a resolvable `$SPIRA_TOML` for these five, which in turn needs
     /// `$SPIRA_HOME` to point at a REAL `conf.d` (`registry::load` refuses a directory with
@@ -1174,7 +1177,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         assert_eq!(s.git_name, "spira");
         assert_eq!(s.git_email, "spira@spira.invalid");
         assert_eq!(s.mailbox, "concierge");
-        assert_eq!(s.express_label, "express");
         assert_eq!(r.path, Some(repo.clone()));
         assert_eq!(r.mode, LandMode::QueueLocal);
         assert_eq!(r.map_land, "queue.local");
@@ -1246,7 +1248,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // the real `git diff` behind queue_is_suite_transition fails closed (not a
         // transition) for both rows, same as the bash stub it replaced always answered.
         assert_eq!(
-            lib.sort_rows("express", Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
+            lib.sort_rows(&HashSet::new(), Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
             vec![("sp-b".to_string(), "tb".to_string()), ("sp-a".to_string(), "ta".to_string())]
         );
     }
@@ -1279,7 +1281,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // sp-t carries the LATER epoch (2 vs. 1): the transition tiebreak must still put it
         // first, ahead of certification age — sp-ihxa0's "tiebreak only within a priority"
         // rule, not a rank of its own that could outrank arrival order the other way.
-        let out = lib.sort_rows("express", &repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
+        let out = lib.sort_rows(&HashSet::new(), &repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
         // sp-t (the transition) ranks first within the same (default) priority, despite
         // its later epoch.
         assert_eq!(out, vec![("sp-t".to_string(), trans_tip), ("sp-p".to_string(), base)]);

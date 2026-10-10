@@ -447,9 +447,6 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         }
     };
 
-    // Transitional: the label is still read by consumers not yet moved to the lifecycle row.
-    let express_label = cfg_label("SPIRA_EXPRESS_LABEL");
-
     if submitted && kind != "work" {
         eprintln!("bead: --submitted applies only to work beads");
         return 2;
@@ -495,7 +492,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
 
-        let mut labels = work_labels(&fayth_labels, &repo, &express_label, express);
+        let mut labels = work_labels(&fayth_labels, &repo);
         if submitted {
             labels.push(',');
             labels.push_str(&cfg_label("SPIRA_SUBMITTED_LABEL"));
@@ -532,13 +529,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         } else {
             None
         };
-        let labels = non_work_labels(
-            &scope_label,
-            insight_label.as_deref(),
-            repo.as_deref(),
-            &express_label,
-            express,
-        );
+        let labels = non_work_labels(&scope_label, insight_label.as_deref(), repo.as_deref());
 
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
@@ -647,7 +638,6 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
     }
     if express {
-        rc |= bdq_status(home, &s(&["label", "add", &id, &cfg_label("SPIRA_EXPRESS_LABEL")]));
         match spira_config::lifecycle_row::set_express(&id, true) {
             Ok(()) => changed.push_str("Marked express."),
             Err(e) => {

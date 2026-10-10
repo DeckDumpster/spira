@@ -108,25 +108,14 @@ pub fn lane_check(
 // ---------------------------------------------------------------------------------------
 
 /// The `-l` label list for a `work`-kind filing: the persona's own `FAYTH_LABELS`, plus
-/// `repo:<repo>`, plus the express label when asked.
-pub fn work_labels(fayth_labels: &str, repo: &str, express_label: &str, express: bool) -> String {
-    let mut out = format!("{fayth_labels},repo:{repo}");
-    if express {
-        out.push(',');
-        out.push_str(express_label);
-    }
-    out
+/// `repo:<repo>`. Express is lifecycle state, never a label.
+pub fn work_labels(fayth_labels: &str, repo: &str) -> String {
+    format!("{fayth_labels},repo:{repo}")
 }
 
 /// The `-l` label list for a non-`work` kind: the scope label, `insight` for the `insight`
-/// kind, `repo:<repo>` when a repo was given, and the express label when asked.
-pub fn non_work_labels(
-    scope_label: &str,
-    insight_label: Option<&str>,
-    repo: Option<&str>,
-    express_label: &str,
-    express: bool,
-) -> String {
+/// kind, and `repo:<repo>` when a repo was given.
+pub fn non_work_labels(scope_label: &str, insight_label: Option<&str>, repo: Option<&str>) -> String {
     let mut out = scope_label.to_string();
     if let Some(ins) = insight_label {
         out.push(',');
@@ -135,10 +124,6 @@ pub fn non_work_labels(
     if let Some(r) = repo {
         out.push_str(",repo:");
         out.push_str(r);
-    }
-    if express {
-        out.push(',');
-        out.push_str(express_label);
     }
     out
 }
@@ -537,34 +522,27 @@ mod tests {
     // -- label composition ----------------------------------------------------------------
 
     #[test]
-    fn work_labels_appends_repo_and_express() {
-        assert_eq!(
-            work_labels("testscope,plan", "testrepo", "express", false),
-            "testscope,plan,repo:testrepo"
-        );
-        assert_eq!(
-            work_labels("testscope,plan", "testrepo", "express", true),
-            "testscope,plan,repo:testrepo,express"
-        );
+    fn work_labels_appends_repo_and_never_express() {
+        assert_eq!(work_labels("testscope,plan", "testrepo"), "testscope,plan,repo:testrepo");
     }
 
     #[test]
     fn non_work_labels_event_has_no_partition() {
-        let got = non_work_labels("testscope", None, None, "express", false);
+        let got = non_work_labels("testscope", None, None);
         assert_eq!(got, "testscope");
         assert!(!got.contains("plan"));
     }
 
     #[test]
     fn non_work_labels_insight_carries_its_label() {
-        let got = non_work_labels("testscope", Some("insight"), None, "express", false);
+        let got = non_work_labels("testscope", Some("insight"), None);
         assert_eq!(got, "testscope,insight");
     }
 
     #[test]
-    fn non_work_labels_repo_and_express() {
-        let got = non_work_labels("testscope", None, Some("testrepo"), "express", true);
-        assert_eq!(got, "testscope,repo:testrepo,express");
+    fn non_work_labels_carry_the_repo() {
+        let got = non_work_labels("testscope", None, Some("testrepo"));
+        assert_eq!(got, "testscope,repo:testrepo");
     }
 
     // -- lint judge -------------------------------------------------------------------------

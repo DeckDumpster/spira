@@ -194,7 +194,6 @@ impl World {
             ("SPIRA_MAX_LIVE_AEONS", ""),
             ("SPIRA_LANES_MAX_LIVE", ""),
             ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
-            ("SPIRA_EXPRESS_LABEL", "express"),
             ("SPIRA_SUMMON_LOCK_WAIT", "30"),
             ("SPIRA_LANES", "ops groomer qa maechen czar warden"),
             ("SPIRA_REPO_MAP", ""),
@@ -241,7 +240,6 @@ impl World {
             max_live_aeons: opt("SPIRA_MAX_LIVE_AEONS"),
             lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
             queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
-            express_label: get("SPIRA_EXPRESS_LABEL"),
             summon_lock_wait: get("SPIRA_SUMMON_LOCK_WAIT").parse().unwrap_or(30),
             lanes: get("SPIRA_LANES"),
             repo_map: get("SPIRA_REPO_MAP"),
@@ -880,7 +878,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -901,7 +899,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: "express".into() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: true },
         &[("PATH", &format!("{}:/usr/bin:/bin", bin.display()))],
         None,
     );
@@ -912,8 +910,8 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
     assert!(launch.args.contains(&w.home.to_string_lossy().into_owned()));
     assert!(launch.args.contains(&"builder".to_string()));
     assert!(launch.args.iter().any(|a| a.starts_with("--unit=spira-aeon-builder-")));
-    assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_LABEL=express".to_string()));
-    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to 'express'"), "{}", sink.text());
+    assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_EXPRESS=1".to_string()));
+    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to express"), "{}", sink.text());
 }
 
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `fayth_ready`'s own rc contract
@@ -941,7 +939,7 @@ fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -1066,8 +1064,8 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
 
 /// A `spira-claim` stub answering `fayth-exclude` (empty — no exclusions in this
 /// fixture), `fayth-ready` (ordinary per-fayth readiness; "builder" alone is ready) and
-/// `ready-count` (the express-composed query `express_ready_in_task_pool` issues — ready
-/// only when the label list it was handed carries ",express").
+/// `ready-count` (the express query `express_ready_in_task_pool` issues — ready only when
+/// it was handed `--express`).
 fn stub_express_claim(r: &FakeRunner) {
     r.on(|s| {
         if s.prog != "spira-claim" {
@@ -1078,7 +1076,7 @@ fn stub_express_claim(r: &FakeRunner) {
         match verb {
             "fayth-exclude" => ok(""),
             "fayth-ready" => ok(if arg1 == "builder" { "1" } else { "0" }),
-            "ready-count" => ok(if arg1.contains(",express") { "1" } else { "0" }),
+            "ready-count" => ok(if s.args.iter().any(|a| a == "--express") { "1" } else { "0" }),
             _ => None,
         }
     });
@@ -1108,15 +1106,15 @@ fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
     assert!(
-        sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to 'express')"),
+        sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to express)"),
         "{}",
         sink.text()
     );
     assert!(sink.has("ACT summoned a builder aeon"), "{}", sink.text());
     let launch = r.find(|s| s.prog == "systemd-run").expect("systemd-run must have been called");
     assert!(
-        launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_LABEL=express"),
-        "express grant must restrict the summoned aeon to the express label: {:?}",
+        launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_EXPRESS=1"),
+        "express grant must restrict the summoned aeon to express: {:?}",
         launch.args
     );
     // Exactly one summon: the express grant sets the pool to EXACTLY 1 — a second ready
@@ -1163,9 +1161,8 @@ fn no_express_ready_stays_throttled() {
 /// `${VAR:+...}` guard) — exactly `builder.fayth`'s own real shape — and nothing in this
 /// fixture resolves it (no `spira.toml`, no `conf.d` registry under `w.home`), so
 /// `fayth_predicate` refuses rather than handing back an empty label
-/// `express_ready_in_task_pool` would otherwise compose into `",express"` and query as
-/// "anything carrying the express label" — the whole queue's worth of express-tagged
-/// work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
+/// `express_ready_in_task_pool` would otherwise query as "anything express" — the whole
+/// queue's worth of express work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
 /// must never reach `ready-count` for builder at all.
 #[test]
 fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {

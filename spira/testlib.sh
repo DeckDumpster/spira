@@ -569,6 +569,8 @@ lc_fact_count() {
 # ($SPIRA_ASK_LABEL) → an ask hold; epics and events have no row. A fixture row may say
 # `"_lc_state"` / `"_lc_holds"` to set its row outright, or `"_lc_rowless": true` for none;
 # for a real store (which drops unknown fields), `<dir>/states` lines `<id> <STATE>` do it.
+# Express is the row's `express` column: a fixture row's `"_lc_express": true`, or an id on a
+# line of `<dir>/express`; `list --express` keeps only those.
 # Sets SPIRA_LC_BIN; pass it (and LC_MIRROR_CLOSED, if set) through any `env -i`.
 lc_mirror_bd() {
     local dir="${1:?lc_mirror_bd needs a directory}"
@@ -619,6 +621,11 @@ try:
             pinned[f[0]] = f[1]
 except (OSError, KeyError):
     pass
+express = set()
+try:
+    express = set(open(os.path.join(os.environ["LC_MIRROR_DIR"], "express")).read().split())
+except (OSError, KeyError):
+    pass
 rows = []
 for b in beads:
     if not isinstance(b, dict) or not b.get("id") or b.get("_lc_rowless"):
@@ -631,13 +638,15 @@ for b in beads:
     if holds is None:
         holds = (["poison"] if "spira-poison" in labels else []) + (["ask"] if ask and ask in labels else [])
     rows.append({"bead_id": b["id"], "state": state, "holds": holds,
-                 "holder": (b.get("assignee") or None) if state == "WORKING" else None})
+                 "holder": (b.get("assignee") or None) if state == "WORKING" else None,
+                 "express": 1 if (b.get("_lc_express") or b["id"] in express) else 0})
 if verb == "list":
     a = sys.argv[2:]
     opt = {a[k]: a[k + 1] for k in range(len(a) - 1) if a[k] in ("--state", "--ids")}
     states = opt["--state"].split(",") if "--state" in opt else None
     ids = opt["--ids"].split(",") if "--ids" in opt else None
-    print(json.dumps([r for r in rows if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids)]))
+    only_express = "--express" in a
+    print(json.dumps([r for r in rows if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids) and (not only_express or r["express"])]))
 elif verb == "show":
     hit = [r for r in rows if r["bead_id"] == (sys.argv[2] if len(sys.argv) > 2 else "")]
     if not hit:

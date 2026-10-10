@@ -57,7 +57,6 @@ if [ -n "$__aeon_fayth_file" ]; then
     . "$__aeon_fayth_file" || exit 98
 fi
 FAYTH="$__aeon_fayth_name"
-[ -n "${SPIRA_REQUIRE_LABEL:-}" ] && FAYTH_LABELS="${FAYTH_LABELS:+$FAYTH_LABELS,}$SPIRA_REQUIRE_LABEL"
 
 _aeon_snapshot() {
     env -0
@@ -80,7 +79,7 @@ _aeon_fayth_ready() {
     fayth_ready "$FAYTH"
 }
 _aeon_ready_set() {
-    _spira_claim fayth-ready "$FAYTH" --json
+    _spira_claim fayth-ready "$FAYTH" --json ${SPIRA_REQUIRE_EXPRESS:+--express}
 }
 _aeon_summon_argv() {
     summon_argv "$FAYTH"
@@ -280,27 +279,31 @@ mod tests {
     }
 
     /// The fixed script against a stand-in lib.sh: the allowlist refuses, the args arrive
-    /// intact (spaces, newlines, empty), the fayth is sourced and SPIRA_REQUIRE_LABEL folded.
+    /// intact (spaces, newlines, empty), the fayth is sourced and SPIRA_REQUIRE_EXPRESS reaches the ready-set call.
     #[test]
     fn fixed_script_sources_lib_and_fayth_and_passes_args_on_stdin() {
         let dir = testkit::TempDir::new("aeon-seam");
         let lib = dir.join("lib.sh");
         let mut f = std::fs::File::create(&lib).unwrap();
-        writeln!(f, "READY_ARGS=(ready --limit 0)\nfayth_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\naeon_count() {{ printf '%s|' \"$@\"; printf '%s' \"$FAYTH_LABELS\"; }}").unwrap();
+        writeln!(f, "READY_ARGS=(ready --limit 0)\nfayth_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\naeon_count() {{ printf '%s|' \"$@\"; printf '%s' \"$FAYTH_LABELS\"; }}\n_spira_claim() {{ printf '%s|' \"$@\"; }}").unwrap();
         std::fs::write(dir.join("b.fayth"), "FAYTH_LABELS=spira,plan\nFAYTH_EXCLUDE_LABELS=p\n").unwrap();
         let mut orig = BTreeMap::new();
         orig.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        orig.insert("SPIRA_REQUIRE_LABEL".to_string(), "express".to_string());
+        let plain = Env::new(orig.clone(), BTreeMap::new());
+        orig.insert("SPIRA_REQUIRE_EXPRESS".to_string(), "1".to_string());
         let env = Env::new(orig, BTreeMap::new());
         let seam = BashSeam { lib: lib.clone(), fayth_file: dir.join("b.fayth"), fayth: "builder".into(), env: &env };
         let o = seam.call("aeon_count", &["a b\nc".into(), "".into()]);
-        assert_eq!(o.stdout, "a b\nc||spira,plan,express");
+        assert_eq!(o.stdout, "a b\nc||spira,plan");
         let o = seam.call("rm_rf_everything", &[]);
         assert_eq!(o.code, 97);
         let o = seam.call("_aeon_snapshot", &["FAYTH_LABELS".into(), "NOPE".into()]);
         let s = parse_snapshot(&o.stdout).unwrap();
-        assert_eq!(s.vars.get("FAYTH_LABELS").unwrap(), "spira,plan,express");
+        assert_eq!(s.vars.get("FAYTH_LABELS").unwrap(), "spira,plan");
         assert!(!s.vars.contains_key("NOPE"));
+        assert_eq!(seam.call("_aeon_ready_set", &[]).stdout, "fayth-ready|builder|--json|--express|");
+        let plain_seam = BashSeam { lib: lib.clone(), fayth_file: dir.join("b.fayth"), fayth: "builder".into(), env: &plain };
+        assert_eq!(plain_seam.call("_aeon_ready_set", &[]).stdout, "fayth-ready|builder|--json|");
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
         assert_eq!(s.claim_exclude, "x:builder:p");
         let _ = std::fs::remove_dir_all(&dir);
