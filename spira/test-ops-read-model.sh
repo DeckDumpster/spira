@@ -136,6 +136,10 @@ is "ops_recent is the landings of the last day" 40 "$(view_ids ops_recent | wc -
 is "ops_round is the open batch's members only" "sp-b1 sp-b2" "$(view_ids ops_round)"
 want "a view carries the mirrored title" '"title":"t0"' "$(spira-lc ops-view ops_live)"
 spira-lc ops-view bead >/dev/null 2>&1; wantrc "ops-view names only the three views" 2 $?
+snap="$(spira-lc ops-snapshot)"
+snap_keys="$(printf '%s' "$snap" | python3 -I -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin))))')"
+is "ops-snapshot carries every section the pane draws" "batches dwell dwell_p95 edges ejects graph live now recent" "$snap_keys"
+want "ops-snapshot live rows carry since and title" '"since"' "$(printf '%s' "$snap" | python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["live"][:1]))')"
 
 untitled() { lcfix_sql -r csv -q "SELECT COUNT(*) FROM ops_live WHERE title IS NULL" | sed -n 2p; }
 before="$(untitled)"
